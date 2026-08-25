@@ -23,11 +23,17 @@ extern "C" {
 typedef struct linkg_packet      linkg_packet_t;      // 数据包对象
 typedef struct linkg_packet_pool linkg_packet_pool_t; // 数据包内存池
 
-/****************************** 数据包标志 ******************************/
+/****************************** 业务标志 ******************************/
 
-#define LINKG_PACKET_FLAG_NONE     0U        // 普通数据，无特殊业务标志
+#define LINKG_PACKET_FLAG_NONE      0U       // 普通数据，无特殊业务标志
 #define LINKG_PACKET_FLAG_REALTIME (1U << 0) // 实时低延时数据
 #define LINKG_PACKET_FLAG_VIDEO    (1U << 1) // 视频实时媒体数据
+
+/****************************** 发送标志 ******************************/
+
+#define LINKG_PACKET_FLAG_TX_GROUP_FIRST (1U << 16) // 原子发送组首帧
+#define LINKG_PACKET_FLAG_TX_GROUP_LAST  (1U << 17) // 原子发送组尾帧
+#define LINKG_PACKET_FLAG_TX_GROUP_MASK  (LINKG_PACKET_FLAG_TX_GROUP_FIRST | LINKG_PACKET_FLAG_TX_GROUP_LAST) // 原子发送组标志
 
 /****************************** 内存池配置 ******************************/
 
