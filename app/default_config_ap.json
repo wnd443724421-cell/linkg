@@ -1,0 +1,77 @@
+{
+    "device": {
+        "role": "ap"
+    },
+    "network": {
+        "node_id": 1,
+        "ethernet": {
+            "ip": "192.168.1.1",
+            "netmask": "255.255.255.0"
+        },
+        "traffic_rules": [
+            {
+                "class": "realtime",
+                "protocol": "udp",
+                "start": 14550,
+                "end": 14555
+            },
+            {
+                "class": "video",
+                "protocol": "udp",
+                "start": 5600,
+                "end": 5610
+            },
+            {
+                "class": "realtime",
+                "protocol": "tcp",
+                "start": 8000,
+                "end": 8010
+            }
+        ]
+    },
+    "links": {
+        "wifi": {
+            "enabled": true,
+            "ap": {
+                "ssid": "LinkG",
+                "password": "12345678",
+                "channel": 161,
+                "security": "wpa2-psk"
+            },
+            "sta": {
+                "ssid": "LinkG",
+                "password": "12345678",
+                "security": "wpa2-psk"
+            },
+            "wideband": {
+                "work_mode": "wide",
+                "narrow_params": {
+                    "mode": "fixed",
+                    "bandwidth": 10,
+                    "manual_rate": 1
+                },
+                "wide_params": {
+                    "ap_bandwidth": 40
+                }
+            }
+        },
+        "cellular": {
+            "enabled": false,
+            "network_mode": "auto",
+            "apn": "",
+            "pin": ""
+        }
+    },
+    "paths": {
+        "wifi": {
+            "enabled": true,
+            "mode": "direct",
+            "priority": 0
+        },
+        "cellular": {
+            "enabled": false,
+            "mode": "direct",
+            "priority": 1
+        }
+    }
+}
