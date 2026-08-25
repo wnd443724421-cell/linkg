@@ -593,7 +593,7 @@ ret = linkg_network_interface_get_global_ipv6(LINKG_RESOURCE_INTERFACE_CELLULAR,
 
 ```c
 ret = linkg_route_set_ipv4(&report->node.ethernet,
-                           &report->node.tun_address);
+                           &report->node.node_address);
 ```
 
 禁止为了“看起来整齐”机械做到一参数一行。

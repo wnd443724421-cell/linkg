@@ -47,19 +47,19 @@ typedef void (*linkg_path_released_func_t)(linkg_path_t *path, void *user_data);
 
 struct linkg_path
 {
-    pthread_mutex_t           stats_lock;         // 路径累计统计保护锁
-    linkg_path_stats_t        stats;              // 路径累计统计
+    pthread_mutex_t            stats_lock;         // 路径累计统计保护锁
+    linkg_path_stats_t         stats;              // 路径累计统计
 
-    uint32_t                  link_id;            // 承载链路ID
-    linkg_path_endpoint_t     next_hop;           // 下一跳端点
+    uint32_t                   link_id;            // 承载链路ID
+    linkg_path_endpoint_t      next_hop;           // 下一跳端点
 
-    _Atomic uint32_t          reference_count;    // 当前异步持有引用数量
-    _Atomic linkg_path_state_t state;             // 路径生命周期状态
+    _Atomic uint32_t           reference_count;    // 当前异步持有引用数量
+    _Atomic linkg_path_state_t state;              // 路径生命周期状态
 
-    linkg_path_released_func_t released;          // 异步释放完成回调
+    linkg_path_released_func_t released;           // 异步释放完成回调
     void                      *released_user_data; // 回调私有数据
 
-    bool                       initialized;       // 路径对象是否已经初始化
+    bool                       initialized;        // 路径对象是否已经初始化
 };
 
 /****************************** 生命周期 ******************************/

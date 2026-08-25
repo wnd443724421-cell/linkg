@@ -30,7 +30,7 @@ typedef struct
 {
     pthread_mutex_t        lock;                         // 节点和Path生命周期保护锁
     linkg_node_info_t      local;                        // 本机节点信息
-    linkg_node_peer_slot_t peers[LINKG_NODE_PEER_MAX];  // 直接对端固定槽位
+    linkg_node_peer_slot_t peers[LINKG_NODE_PEER_MAX];   // 直接对端固定槽位
     uint32_t               peer_count;                   // 当前在线直接对端数量
     bool                   initialized;                  // 节点模块是否已经初始化
 } linkg_node_context_t;
@@ -79,7 +79,7 @@ static bool _linkg_node_info_valid(const linkg_node_info_t *info)
         return false;
     }
 
-    if (!linkg_network_ipv4_address_valid(&info->tun_address))
+    if (!linkg_network_ipv4_address_valid(&info->node_address))
     {
         return false;
     }
@@ -198,11 +198,11 @@ static bool _linkg_node_endpoint_equal(const linkg_path_endpoint_t *left, const 
  *
  * @note 调用方必须持有Node状态锁。
  */
-static linkg_node_peer_slot_t *_linkg_node_find_peer_locked(const struct in_addr *tun_address)
+static linkg_node_peer_slot_t *_linkg_node_find_peer_locked(const struct in_addr *node_address)
 {
     uint32_t index;
 
-    if (tun_address == NULL)
+    if (node_address == NULL)
     {
         return NULL;
     }
@@ -214,7 +214,7 @@ static linkg_node_peer_slot_t *_linkg_node_find_peer_locked(const struct in_addr
             continue;
         }
 
-        if (g_node.peers[index].info.tun_address.s_addr == tun_address->s_addr)
+        if (g_node.peers[index].info.node_address.s_addr == node_address->s_addr)
         {
             return &g_node.peers[index];
         }
@@ -236,7 +236,7 @@ static linkg_node_peer_slot_t *_linkg_node_find_unused_peer_locked(void)
     {
         if (!g_node.peers[index].valid &&
             !g_node.peers[index].retiring &&
-            g_node.peers[index].info.tun_address.s_addr == 0U)
+            g_node.peers[index].info.node_address.s_addr == 0U)
         {
             return &g_node.peers[index];
         }
@@ -593,7 +593,7 @@ const linkg_node_info_t *linkg_node_get_local(void)
 /**
  * @brief 获取直接对端节点快照。
  */
-int linkg_node_get_peer_snapshot(const struct in_addr *tun_address, linkg_node_peer_snapshot_t *snapshot)
+int linkg_node_get_peer_snapshot(const struct in_addr *node_address, linkg_node_peer_snapshot_t *snapshot)
 {
     linkg_node_peer_slot_t *slot;
     int ret = 0;
@@ -603,7 +603,7 @@ int linkg_node_get_peer_snapshot(const struct in_addr *tun_address, linkg_node_p
         return -ENODEV;
     }
 
-    if (tun_address == NULL || snapshot == NULL)
+    if (node_address == NULL || snapshot == NULL)
     {
         return -EINVAL;
     }
@@ -616,7 +616,7 @@ int linkg_node_get_peer_snapshot(const struct in_addr *tun_address, linkg_node_p
         return ret;
     }
 
-    slot = _linkg_node_find_peer_locked(tun_address);
+    slot = _linkg_node_find_peer_locked(node_address);
     if (slot == NULL ||
         !slot->valid ||
         slot->retiring)
@@ -652,7 +652,7 @@ int linkg_node_register_peer(const linkg_node_info_t *info)
         return -EINVAL;
     }
 
-    if (info->tun_address.s_addr == g_node.local.tun_address.s_addr)
+    if (info->node_address.s_addr == g_node.local.node_address.s_addr)
     {
         return -EINVAL;
     }
@@ -669,7 +669,7 @@ int linkg_node_register_peer(const linkg_node_info_t *info)
         goto out;
     }
 
-    slot = _linkg_node_find_peer_locked(&info->tun_address);
+    slot = _linkg_node_find_peer_locked(&info->node_address);
     if (slot != NULL)
     {
         if (slot->retiring)
@@ -723,7 +723,7 @@ out:
  *
  * @note Peer先逻辑下线并停止产生新Path引用，已有异步引用完成后由Path回调最终释放Peer槽位。
  */
-int linkg_node_unregister_peer(const struct in_addr *tun_address)
+int linkg_node_unregister_peer(const struct in_addr *node_address)
 {
     linkg_node_peer_slot_t *slot;
     uint32_t index;
@@ -735,7 +735,7 @@ int linkg_node_unregister_peer(const struct in_addr *tun_address)
         return -ENODEV;
     }
 
-    if (tun_address == NULL)
+    if (node_address == NULL)
     {
         return -EINVAL;
     }
@@ -748,7 +748,7 @@ int linkg_node_unregister_peer(const struct in_addr *tun_address)
         return ret;
     }
 
-    slot = _linkg_node_find_peer_locked(tun_address);
+    slot = _linkg_node_find_peer_locked(node_address);
     if (slot == NULL)
     {
         ret = -ENOENT;
@@ -809,7 +809,7 @@ out:
  *
  * @note 同一Peer每个Link只保留一条Path；活动Path只更新Endpoint，不重复创建。
  */
-int linkg_node_register_path(const struct in_addr *tun_address, uint32_t link_id, const linkg_path_endpoint_t *next_hop)
+int linkg_node_register_path(const struct in_addr *node_address, uint32_t link_id, const linkg_path_endpoint_t *next_hop)
 {
     linkg_node_peer_slot_t *slot;
     linkg_path_state_t state;
@@ -822,7 +822,7 @@ int linkg_node_register_path(const struct in_addr *tun_address, uint32_t link_id
         return -ENODEV;
     }
 
-    if (tun_address == NULL || link_id == LINKG_LINK_ID_INVALID || !_linkg_node_endpoint_valid(next_hop))
+    if (node_address == NULL || link_id == LINKG_LINK_ID_INVALID || !_linkg_node_endpoint_valid(next_hop))
     {
         return -EINVAL;
     }
@@ -833,7 +833,7 @@ int linkg_node_register_path(const struct in_addr *tun_address, uint32_t link_id
         return ret;
     }
 
-    slot = _linkg_node_find_peer_locked(tun_address);
+    slot = _linkg_node_find_peer_locked(node_address);
     if (slot == NULL || !slot->valid || slot->retiring)
     {
         ret = -ENOENT;
@@ -904,7 +904,7 @@ out:
  *
  * @note Path存在异步引用时仅进入RETIRED，最后一个引用释放后由回调完成槽位回收。
  */
-int linkg_node_unregister_path(const struct in_addr *tun_address, uint32_t link_id)
+int linkg_node_unregister_path(const struct in_addr *node_address, uint32_t link_id)
 {
     linkg_node_peer_slot_t *slot;
     linkg_path_state_t state;
@@ -917,7 +917,7 @@ int linkg_node_unregister_path(const struct in_addr *tun_address, uint32_t link_
         return -ENODEV;
     }
 
-    if (tun_address == NULL || link_id == LINKG_LINK_ID_INVALID)
+    if (node_address == NULL || link_id == LINKG_LINK_ID_INVALID)
     {
         return -EINVAL;
     }
@@ -928,7 +928,7 @@ int linkg_node_unregister_path(const struct in_addr *tun_address, uint32_t link_
         return ret;
     }
 
-    slot = _linkg_node_find_peer_locked(tun_address);
+    slot = _linkg_node_find_peer_locked(node_address);
     if (slot == NULL || !slot->valid || slot->retiring)
     {
         ret = -ENOENT;
@@ -984,7 +984,7 @@ out:
  * @note 成功后调用方获得reference_count个Path引用，必须对每个引用执行一次linkg_path_release()；
  *       Node锁保证acquire与activate/retire/endpoint更新互斥。
  */
-int linkg_node_acquire_path_batch(const struct in_addr *tun_address, uint32_t link_id, uint32_t reference_count, linkg_path_t **path, linkg_path_endpoint_t *next_hop)
+int linkg_node_acquire_path_batch(const struct in_addr *node_address, uint32_t link_id, uint32_t reference_count, linkg_path_t **path, linkg_path_endpoint_t *next_hop)
 {
     linkg_node_peer_slot_t *slot;
     linkg_path_t *node_path;
@@ -996,7 +996,7 @@ int linkg_node_acquire_path_batch(const struct in_addr *tun_address, uint32_t li
         return -ENODEV;
     }
 
-    if (tun_address == NULL || path == NULL || next_hop == NULL ||
+    if (node_address == NULL || path == NULL || next_hop == NULL ||
         link_id == LINKG_LINK_ID_INVALID || reference_count == 0U)
     {
         return -EINVAL;
@@ -1011,7 +1011,7 @@ int linkg_node_acquire_path_batch(const struct in_addr *tun_address, uint32_t li
         return ret;
     }
 
-    slot = _linkg_node_find_peer_locked(tun_address);
+    slot = _linkg_node_find_peer_locked(node_address);
     if (slot == NULL || !slot->valid || slot->retiring)
     {
         ret = -ENOENT;
@@ -1049,9 +1049,9 @@ out:
  *
  * @note 成功后调用方持有一个Path引用，使用完成后必须调用linkg_path_release()。
  */
-int linkg_node_acquire_path(const struct in_addr *tun_address, uint32_t link_id, linkg_path_t **path, linkg_path_endpoint_t *next_hop)
+int linkg_node_acquire_path(const struct in_addr *node_address, uint32_t link_id, linkg_path_t **path, linkg_path_endpoint_t *next_hop)
 {
-    return linkg_node_acquire_path_batch(tun_address, link_id, 1U, path, next_hop);
+    return linkg_node_acquire_path_batch(node_address, link_id, 1U, path, next_hop);
 }
 
 /**
@@ -1090,7 +1090,7 @@ static int _linkg_node_account_path_rx_locked(uint32_t link_id, const linkg_path
             }
 
             linkg_path_record_rx(path, bytes, packets);
-            *peer_address = slot->info.tun_address;
+            *peer_address = slot->info.node_address;
 
             return 0;
         }

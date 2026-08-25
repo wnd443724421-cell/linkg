@@ -29,7 +29,7 @@ extern "C" {
 
 typedef struct
 {
-    struct in_addr              tun_address; // 节点唯一组网IPv4地址
+    struct in_addr              node_address; // 节点唯一组网IPv4地址
     linkg_device_role_t         role;        // 节点角色
     linkg_network_ipv4_config_t ethernet;    // 节点以太网IPv4配置
 } linkg_node_info_t;
@@ -64,19 +64,19 @@ const linkg_node_info_t *linkg_node_get_local(void);
 
 /****************************** 对端查询 ******************************/
 
-int linkg_node_get_peer_snapshot(const struct in_addr *tun_address, linkg_node_peer_snapshot_t *snapshot);
+int linkg_node_get_peer_snapshot(const struct in_addr *node_address, linkg_node_peer_snapshot_t *snapshot);
 
 /****************************** 对端管理 ******************************/
 
 int linkg_node_register_peer(const linkg_node_info_t *info);
-int linkg_node_unregister_peer(const struct in_addr *tun_address);
+int linkg_node_unregister_peer(const struct in_addr *node_address);
 
 /****************************** 路径管理 ******************************/
 
-int linkg_node_register_path(const struct in_addr *tun_address, uint32_t link_id, const linkg_path_endpoint_t *next_hop);
-int linkg_node_unregister_path(const struct in_addr *tun_address, uint32_t link_id);
-int linkg_node_acquire_path(const struct in_addr *tun_address, uint32_t link_id, linkg_path_t **path, linkg_path_endpoint_t *next_hop);
-int linkg_node_acquire_path_batch(const struct in_addr *tun_address, uint32_t link_id, uint32_t reference_count, linkg_path_t **path, linkg_path_endpoint_t *next_hop);
+int linkg_node_register_path(const struct in_addr *node_address, uint32_t link_id, const linkg_path_endpoint_t *next_hop);
+int linkg_node_unregister_path(const struct in_addr *node_address, uint32_t link_id);
+int linkg_node_acquire_path(const struct in_addr *node_address, uint32_t link_id, linkg_path_t **path, linkg_path_endpoint_t *next_hop);
+int linkg_node_acquire_path_batch(const struct in_addr *node_address, uint32_t link_id, uint32_t reference_count, linkg_path_t **path, linkg_path_endpoint_t *next_hop);
 
 /****************************** 接收统计 ******************************/
 
