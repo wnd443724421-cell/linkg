@@ -22,7 +22,7 @@
 /****************************** 维护参数 ******************************/
 
 #define WIFI_RADIO_CHECK_INTERVAL_MS        1000U  // 无线参数状态检查周期
-#define WIFI_RADIO_FIXED_STABILIZE_MS       1000U  // STA连接后固定速率稳定等待时间
+#define WIFI_RADIO_FIXED_STABILIZE_MS       300U   // STA连接后固定速率稳定等待时间
 #define WIFI_RADIO_MISMATCH_LIMIT           3U     // 连续速率不一致纠正阈值
 #define WIFI_RADIO_REAPPLY_COOLDOWN_MS      3000U  // 无线参数重新应用后的冷却时间
 #define WIFI_RADIO_STATUS_FRESH_MAX_AGE_MS  2500U  // 用于参数收敛的状态最大年龄
@@ -31,12 +31,12 @@
 
 typedef enum
 {
-    WIFI_RADIO_STATE_IDLE = 0,  // 当前无需无线参数维护
-    WIFI_RADIO_STATE_AUTO,      // STA固定窄带断开态已恢复自动速率
-    WIFI_RADIO_STATE_AUTO_RETRY, // 恢复自动速率失败，等待重试
+    WIFI_RADIO_STATE_IDLE = 0,    // 当前无需无线参数维护
+    WIFI_RADIO_STATE_AUTO,        // STA固定窄带断开态已恢复自动速率
+    WIFI_RADIO_STATE_AUTO_RETRY,  // 恢复自动速率失败，等待重试
     WIFI_RADIO_STATE_STABILIZING, // STA连接后等待稳定再锁定固定速率
-    WIFI_RADIO_STATE_FIXED,     // 当前处于固定窄带速率维护
-    WIFI_RADIO_STATE_COOLDOWN   // 无线参数刚被重新应用，暂缓重复纠正
+    WIFI_RADIO_STATE_FIXED,       // 当前处于固定窄带速率维护
+    WIFI_RADIO_STATE_COOLDOWN     // 无线参数刚被重新应用，暂缓重复纠正
 } wifi_radio_state_t;
 
 typedef struct
@@ -611,9 +611,7 @@ int wifi_radio_start(const wifi_runtime_t *runtime, uint64_t now_ms)
 
     if (g_wifi_radio.config.role == LINKG_DEVICE_ROLE_AP)
     {
-        g_wifi_radio.state = _wifi_radio_fixed_enabled()
-            ? WIFI_RADIO_STATE_FIXED
-            : WIFI_RADIO_STATE_IDLE;
+        g_wifi_radio.state = _wifi_radio_fixed_enabled() ? WIFI_RADIO_STATE_FIXED : WIFI_RADIO_STATE_IDLE;
 
         _wifi_radio_schedule(now_ms, WIFI_RADIO_CHECK_INTERVAL_MS);
         return 0;

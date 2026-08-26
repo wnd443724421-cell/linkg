@@ -153,9 +153,7 @@ static void _linkg_network_worker_publish_start(linkg_network_worker_t *worker, 
 /**
  * @brief 发布工作线程运行结果，并在异常退出时将网络服务标记为失败。
  */
-static void _linkg_network_worker_publish_run(linkg_network_worker_t *worker,
-                                               linkg_thread_t *thread,
-                                               int result)
+static void _linkg_network_worker_publish_run(linkg_network_worker_t *worker, linkg_thread_t *thread, int result)
 {
     bool unexpected_exit;
 

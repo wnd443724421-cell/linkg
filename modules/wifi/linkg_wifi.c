@@ -118,9 +118,7 @@ static int _linkg_wifi_apply_interface_runtime(void)
         }
     }
 
-    return linkg_network_interface_set_ipv4(WIFI_PLATFORM_INTERFACE_NAME,
-                                            &g_wifi.ipv4.ip,
-                                            &g_wifi.ipv4.netmask);
+    return linkg_network_interface_set_ipv4(WIFI_PLATFORM_INTERFACE_NAME, &g_wifi.ipv4.ip, &g_wifi.ipv4.netmask);
 }
 
 /****************************** 运行事件 ******************************/

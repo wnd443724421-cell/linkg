@@ -783,8 +783,7 @@ int wifi_monitor_start(uint64_t now_ms, wifi_runtime_event_t *event)
     }
     else
     {
-        _wifi_monitor_set_state(WIFI_MONITOR_STA_COLD_WAIT,
-                                now_ms + WIFI_MONITOR_COLD_CONNECT_WAIT_MS);
+        _wifi_monitor_set_state(WIFI_MONITOR_STA_COLD_WAIT, now_ms + WIFI_MONITOR_COLD_CONNECT_WAIT_MS);
         WIFI_INFO("STA link initialized, state=DISCONNECTED");
     }
 

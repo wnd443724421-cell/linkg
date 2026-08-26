@@ -84,23 +84,16 @@ static int _wifi_runtime_apply_recovery_required(wifi_runtime_t *runtime, const 
         return -EINVAL;
     }
 
-    if (runtime->recovery_state == WIFI_RUNTIME_RECOVERY_RUNNING)
+    if (runtime->recovery_state != WIFI_RUNTIME_RECOVERY_IDLE)
     {
-        return -EBUSY;
+        return runtime->recovery_state == WIFI_RUNTIME_RECOVERY_REQUIRED ? 0 : -EBUSY;
     }
-
-    changed = runtime->recovery_state != WIFI_RUNTIME_RECOVERY_REQUIRED ||
-              runtime->recovery_reason != event->recovery_reason ||
-              runtime->recovery_error != event->error;
 
     runtime->recovery_state  = WIFI_RUNTIME_RECOVERY_REQUIRED;
     runtime->recovery_reason = event->recovery_reason;
     runtime->recovery_error  = event->error;
 
-    if (changed)
-    {
-        _wifi_runtime_commit(runtime, now_ms);
-    }
+    _wifi_runtime_commit(runtime, now_ms);
 
     return 0;
 }
@@ -116,11 +109,6 @@ static int _wifi_runtime_apply_recovery_started(wifi_runtime_t *runtime, uint64_
     }
 
     runtime->recovery_state = WIFI_RUNTIME_RECOVERY_RUNNING;
-
-    if (runtime->role == LINKG_DEVICE_ROLE_STA)
-    {
-        runtime->link_state = WIFI_RUNTIME_LINK_DISCONNECTED;
-    }
 
     _wifi_runtime_commit(runtime, now_ms);
 
@@ -140,11 +128,6 @@ static int _wifi_runtime_apply_recovery_succeeded(wifi_runtime_t *runtime, uint6
     runtime->recovery_state  = WIFI_RUNTIME_RECOVERY_IDLE;
     runtime->recovery_reason = WIFI_RUNTIME_RECOVERY_REASON_NONE;
     runtime->recovery_error  = 0;
-
-    if (runtime->role == LINKG_DEVICE_ROLE_STA)
-    {
-        runtime->link_state = WIFI_RUNTIME_LINK_DISCONNECTED;
-    }
 
     _wifi_runtime_commit(runtime, now_ms);
 
@@ -194,7 +177,6 @@ int wifi_runtime_init(wifi_runtime_t *runtime, linkg_device_role_t role, uint64_
     runtime->recovery_reason = WIFI_RUNTIME_RECOVERY_REASON_NONE;
     runtime->generation      = 1U;
     runtime->updated_ms      = now_ms;
-    runtime->recovery_error  = 0;
 
     return 0;
 }
