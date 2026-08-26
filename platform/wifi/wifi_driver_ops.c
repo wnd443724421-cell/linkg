@@ -64,14 +64,28 @@ static wifi_driver_context_t g_wifi_driver =
 
 /****************************** ABI约束 ******************************/
 
-_Static_assert(sizeof(wal_radio_status_stru) <= UINT16_MAX,
-               "wal_radio_status_stru exceeds ABI struct_size range");
+/****************************** ABI约束 ******************************/
 
 _Static_assert(offsetof(wal_radio_status_stru, version) == 0U,
-               "wal_radio_status_stru.version must be the first field");
+               "wal_radio_status_stru.version ABI offset mismatch");
 
-_Static_assert(offsetof(wal_radio_status_stru, struct_size) == sizeof(uint16_t),
-               "wal_radio_status_stru.struct_size must follow version");
+_Static_assert(offsetof(wal_radio_status_stru, struct_size) == 2U,
+               "wal_radio_status_stru.struct_size ABI offset mismatch");
+
+_Static_assert(sizeof(wal_radio_peer_status_stru) == 64U,
+               "wal_radio_peer_status_stru ABI size mismatch");
+
+_Static_assert(offsetof(wal_radio_peer_status_stru, driver_tx_bytes) == 8U,
+               "wal_radio_peer_status_stru statistics ABI offset mismatch");
+
+_Static_assert(offsetof(wal_radio_peer_status_stru, inactive_ms) == 48U,
+               "wal_radio_peer_status_stru runtime ABI offset mismatch");
+
+_Static_assert(offsetof(wal_radio_status_stru, peers) == 32U,
+               "wal_radio_status_stru.peers ABI offset mismatch");
+
+_Static_assert(sizeof(wal_radio_status_stru) == 1056U,
+               "wal_radio_status_stru ABI size mismatch");
 
 _Static_assert(sizeof(wal_tx_flowctrl_status_stru) <= UINT16_MAX,
                "wal_tx_flowctrl_status_stru exceeds ABI struct_size range");

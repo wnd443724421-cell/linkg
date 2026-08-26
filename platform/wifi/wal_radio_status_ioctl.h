@@ -13,7 +13,7 @@
 /****************************** 接口配置 ******************************/
 
 #define WAL_RADIO_STATUS_IOCTL              (0x89F0 + 5) // 无线状态私有ioctl命令
-#define WAL_RADIO_STATUS_ABI_VERSION        1U           // 接口ABI版本
+#define WAL_RADIO_STATUS_ABI_VERSION        2U           // 接口ABI版本
 #define WAL_RADIO_STATUS_MAC_LENGTH         6U           // 无线MAC地址长度
 #define WAL_RADIO_STATUS_MAX_PEERS          16U          // 单次返回的最大对端数量
 #define WAL_RADIO_STATUS_REFRESH_MS         250U         // 状态缓存刷新周期，单位毫秒
@@ -53,16 +53,17 @@ typedef struct
     uint8_t  mac[WAL_RADIO_STATUS_MAC_LENGTH]; // 对端MAC地址
     int8_t   rssi_dbm;                         // 本机接收对端的信号强度，单位dBm
     uint8_t  flags;                            // 对端状态标志
-    uint32_t inactive_ms;                      // 对端空闲时间，单位毫秒
-    uint32_t tx_rate_kbps;                     // 本机向对端发送的PHY速率
-    uint32_t rx_rate_kbps;                     // 本机接收对端数据的PHY速率
+
     uint64_t driver_tx_bytes;                  // 驱动统计：本机向对端累计发送字节
     uint64_t driver_rx_bytes;                  // 驱动统计：本机从对端累计接收字节
     uint64_t driver_tx_packets;                // 驱动统计：本机向对端累计发送包数
     uint64_t driver_rx_packets;                // 驱动统计：本机从对端累计接收包数
     uint64_t driver_tx_failed;                 // 驱动统计：本机向对端累计发送失败次数
+
+    uint32_t inactive_ms;                      // 对端空闲时间，单位毫秒
+    uint32_t tx_rate_kbps;                     // 本机向对端发送的PHY速率
+    uint32_t rx_rate_kbps;                     // 本机接收对端数据的PHY速率
     uint32_t connected_time_s;                 // 当前连接持续时间，单位秒
-    uint32_t reserved;                         // 保留字段
 } wal_radio_peer_status_stru;
 
 /****************************** 无线状态 ******************************/
@@ -88,8 +89,6 @@ typedef struct
     uint16_t                   channel;                                // 当前工作信道
     uint16_t                   bandwidth_mhz;                          // 当前工作带宽，单位MHz
     int32_t                    noise_dbm;                              // 本机噪声强度，单位dBm
-    uint32_t                   reserved;                               // 保留字段
     wal_radio_peer_status_stru peers[WAL_RADIO_STATUS_MAX_PEERS];      // 当前关联对端列表
 } wal_radio_status_stru;
-
 #endif

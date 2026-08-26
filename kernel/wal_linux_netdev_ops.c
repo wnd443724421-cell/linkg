@@ -34,6 +34,8 @@
 #include "wal_linux_cfgvendor.h"
 #include "wal_dfx.h"
 #include "wal_radio_status_ioctl.h"
+#include "wal_tx_flowctrl_ioctl.h"
+
 #if (_PRE_OS_VERSION_LINUX == _PRE_OS_VERSION)
 #include <linux/notifier.h>
 #include <linux/inetdevice.h>
@@ -1154,15 +1156,15 @@ OAL_STATIC void wal_radio_status_fill_peer(wal_radio_peer_status_stru *peer, con
         return;
     }
 
-    peer->rssi_dbm     = sta_info->signal;
-    peer->inactive_ms  = sta_info->inactive_time;
-    peer->tx_rate_kbps = (uint32_t)sta_info->txrate.legacy * 100U;
-    peer->rx_rate_kbps = (uint32_t)sta_info->rxrate.legacy * 100U;
-    peer->tx_bytes     = sta_info->tx_bytes;
-    peer->rx_bytes     = sta_info->rx_bytes;
-    peer->tx_packets   = sta_info->tx_packets;
-    peer->rx_packets   = sta_info->rx_packets;
-    peer->tx_failed    = sta_info->tx_failed;
+    peer->rssi_dbm           = sta_info->signal;
+    peer->inactive_ms        = sta_info->inactive_time;
+    peer->tx_rate_kbps       = (uint32_t)sta_info->txrate.legacy * 100U;
+    peer->rx_rate_kbps       = (uint32_t)sta_info->rxrate.legacy * 100U;
+    peer->driver_tx_bytes    = sta_info->tx_bytes;
+    peer->driver_rx_bytes    = sta_info->rx_bytes;
+    peer->driver_tx_packets  = sta_info->tx_packets;
+    peer->driver_rx_packets  = sta_info->rx_packets;
+    peer->driver_tx_failed   = sta_info->tx_failed;
 }
 
 /****************************** 无线状态构建 ******************************/
