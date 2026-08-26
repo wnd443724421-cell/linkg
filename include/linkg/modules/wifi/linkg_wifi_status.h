@@ -21,7 +21,16 @@ extern "C" {
 #define LINKG_WIFI_MAC_LENGTH   6U  // Wi-Fi MAC地址长度
 #define LINKG_WIFI_AP_PEER_MAX 16U  // AP最大对端数量
 
-/****************************** 对端状态 ******************************/
+/****************************** 接口状态 ******************************/
+
+typedef enum
+{
+    LINKG_WIFI_INTERFACE_STATE_DOWN = 0, // 无线接口未运行
+    LINKG_WIFI_INTERFACE_STATE_READY,    // 无线接口已运行但无关联对端
+    LINKG_WIFI_INTERFACE_STATE_CONNECTED // 无线接口存在关联对端
+} linkg_wifi_interface_state_t;
+
+/****************************** 对端连接状态 ******************************/
 
 typedef enum
 {
@@ -63,12 +72,13 @@ typedef struct
 
 typedef struct
 {
-    linkg_device_role_t       role;                       // 本机设备角色
-    uint8_t                   mac[LINKG_WIFI_MAC_LENGTH]; // 本机MAC地址
-    linkg_wifi_radio_status_t radio;                      // 当前无线参数
-    int32_t                   chip_temperature_c;         // Wi-Fi芯片温度，单位摄氏度
-    bool                      chip_temperature_valid;     // Wi-Fi芯片温度是否有效
-    uint64_t                  updated_ms;                 // 状态更新时间
+    linkg_device_role_t          role;                       // 本机设备角色
+    linkg_wifi_interface_state_t interface_state;            // 当前无线接口状态
+    uint8_t                      mac[LINKG_WIFI_MAC_LENGTH]; // 本机MAC地址
+    linkg_wifi_radio_status_t    radio;                      // 当前无线参数
+    int32_t                      chip_temperature_c;         // Wi-Fi芯片温度，单位摄氏度
+    bool                         chip_temperature_valid;     // Wi-Fi芯片温度是否有效
+    uint64_t                     updated_ms;                 // 状态更新时间
 } linkg_wifi_local_status_t;
 
 /****************************** 对端状态 ******************************/
@@ -114,7 +124,7 @@ typedef struct
 
 typedef struct
 {
-    bool                      partial; // 本次状态是否存在部分查询失败
+    bool                      partial; // 本次快照是否存在部分状态缺失
     linkg_wifi_local_status_t local;   // 本机Wi-Fi状态
 
     union
