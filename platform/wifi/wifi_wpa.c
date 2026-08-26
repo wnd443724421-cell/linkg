@@ -466,8 +466,7 @@ static int _wifi_wpa_prepare_sta_radio(const linkg_wifi_config_t *config)
 
     if (config->wideband.work_mode == LINKG_WIFI_WORK_MODE_WIDE)
     {
-        return wifi_driver_set_narrow_bandwidth(false,
-                                                LINKG_WIFI_NARROW_BANDWIDTH_MHZ);
+        return wifi_driver_set_narrow_bandwidth(false, LINKG_WIFI_NARROW_BANDWIDTH_MHZ);
     }
 
     if (config->wideband.work_mode != LINKG_WIFI_WORK_MODE_NARROW)
