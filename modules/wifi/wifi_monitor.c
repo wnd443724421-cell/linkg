@@ -93,9 +93,7 @@ static void _wifi_monitor_set_link_event(wifi_runtime_event_t *event, bool conne
         return;
     }
 
-    event->type = connected
-        ? WIFI_RUNTIME_EVENT_STA_CONNECTED
-        : WIFI_RUNTIME_EVENT_STA_DISCONNECTED;
+    event->type = connected ? WIFI_RUNTIME_EVENT_STA_CONNECTED : WIFI_RUNTIME_EVENT_STA_DISCONNECTED;
 }
 
 /**
@@ -220,8 +218,7 @@ static bool _wifi_monitor_start_scan_cycle(uint64_t now_ms)
     g_wifi_monitor.frequency_capture_ms      = 0U;
     g_wifi_monitor.frequency_capture_pending = false;
 
-    _wifi_monitor_set_state(WIFI_MONITOR_STA_SCAN_WAIT,
-                            now_ms + WIFI_MONITOR_SCAN_INTERVAL_MS);
+    _wifi_monitor_set_state(WIFI_MONITOR_STA_SCAN_WAIT, now_ms + WIFI_MONITOR_SCAN_INTERVAL_MS);
 
     if (changed)
     {
@@ -623,8 +620,7 @@ static void _wifi_monitor_handle_wpa_event(wifi_wpa_event_t wpa_event, uint64_t 
             if (g_wifi_monitor.sta_state == WIFI_MONITOR_STA_SCAN_RUNNING)
             {
                 g_wifi_monitor.scan_failure_count = 0U;
-                _wifi_monitor_set_state(WIFI_MONITOR_STA_SCAN_WAIT,
-                                        now_ms + WIFI_MONITOR_SCAN_INTERVAL_MS);
+                _wifi_monitor_set_state(WIFI_MONITOR_STA_SCAN_WAIT, now_ms + WIFI_MONITOR_SCAN_INTERVAL_MS);
             }
             break;
 
@@ -641,8 +637,7 @@ static void _wifi_monitor_handle_wpa_event(wifi_wpa_event_t wpa_event, uint64_t 
         case WIFI_WPA_EVENT_SCAN_STARTED:
             if (g_wifi_monitor.sta_state == WIFI_MONITOR_STA_SCAN_WAIT)
             {
-                _wifi_monitor_set_state(WIFI_MONITOR_STA_SCAN_RUNNING,
-                                        now_ms + WIFI_MONITOR_SCAN_RESULT_TIMEOUT_MS);
+                _wifi_monitor_set_state(WIFI_MONITOR_STA_SCAN_RUNNING, now_ms + WIFI_MONITOR_SCAN_RESULT_TIMEOUT_MS);
             }
             break;
 
@@ -650,9 +645,7 @@ static void _wifi_monitor_handle_wpa_event(wifi_wpa_event_t wpa_event, uint64_t 
             WIFI_WARN("wpa_supplicant terminating, recovery=requested");
             _wifi_monitor_close_listener(true);
             _wifi_monitor_wait_recovery();
-            _wifi_monitor_set_recovery_event(event,
-                                             WIFI_RUNTIME_RECOVERY_REASON_WPA_UNRESPONSIVE,
-                                             -ESHUTDOWN);
+            _wifi_monitor_set_recovery_event(event, WIFI_RUNTIME_RECOVERY_REASON_WPA_UNRESPONSIVE, -ESHUTDOWN);
             break;
 
         case WIFI_WPA_EVENT_UNKNOWN:
@@ -919,11 +912,9 @@ uint64_t wifi_monitor_get_deadline(void)
         return 0U;
     }
 
-    deadline = _wifi_monitor_min_deadline(g_wifi_monitor.state_deadline_ms,
-                                          g_wifi_monitor.frequency_capture_ms);
+    deadline = _wifi_monitor_min_deadline(g_wifi_monitor.state_deadline_ms, g_wifi_monitor.frequency_capture_ms);
 
-    return _wifi_monitor_min_deadline(deadline,
-                                      g_wifi_monitor.wpa_health_check_ms);
+    return _wifi_monitor_min_deadline(deadline, g_wifi_monitor.wpa_health_check_ms);
 }
 
 /**

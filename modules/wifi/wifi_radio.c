@@ -81,8 +81,7 @@ static bool _wifi_radio_narrow_enabled(void)
  */
 static bool _wifi_radio_fixed_enabled(void)
 {
-    return _wifi_radio_narrow_enabled() &&
-           g_wifi_radio.config.narrow_mode == LINKG_WIFI_NARROW_MODE_FIXED;
+    return _wifi_radio_narrow_enabled() && g_wifi_radio.config.narrow_mode == LINKG_WIFI_NARROW_MODE_FIXED;
 }
 
 /**
@@ -520,8 +519,7 @@ static int _wifi_radio_sync_sta_link(const wifi_runtime_t *runtime, uint64_t now
     power_save_ret = wifi_driver_set_sta_power_save(false);
     if (power_save_ret != 0)
     {
-        WIFI_WARN("disable STA power save after connection failed, error=%d",
-                  power_save_ret);
+        WIFI_WARN("disable STA power save after connection failed, error=%d", power_save_ret);
     }
 
     if (!_wifi_radio_fixed_enabled())
