@@ -1,9 +1,9 @@
 /**
  * @file linkg_network_config.c
- * @brief LinkG 网络配置处理接口实现
+ * @brief LinkG网络配置处理接口实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-07-23
+ * @version 1.1.0
+ * @date 2026-08-27
  */
 
 #include "linkg_network_config.h"
@@ -16,6 +16,13 @@
 #include "linkg_json.h"
 #include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
+
+/****************************** 模块常量 ******************************/
+
+#define LINKG_NETWORK_VIRTUAL_IPV4_PREFIX       16U // LinkG虚拟网络固定前缀
+#define LINKG_NETWORK_ETHERNET_IPV4_PREFIX      24U // Ethernet网络固定前缀
+#define LINKG_NETWORK_VIRTUAL_NODE_SHIFT        8U  // 虚拟地址中Node ID位移
+#define LINKG_NETWORK_ETHERNET_GATEWAY_HOST_ID  1U  // LinkG Ethernet固定主机编号
 
 /****************************** 枚举转换 ******************************/
 
@@ -105,14 +112,74 @@ static const char *_network_traffic_class_to_string(linkg_network_traffic_class_
     }
 }
 
-/****************************** 配置校验 ******************************/
+/****************************** 地址辅助 ******************************/
 
 /**
- * @brief 校验节点编号。
+ * @brief 判断IPv4地址是否属于RFC1918私有地址空间。
  */
-static int _network_node_id_validate(uint8_t node_id)
+static bool _network_ipv4_private(const struct in_addr *address)
 {
-    if (node_id < LINKG_RESOURCE_NODE_ID_MIN || node_id > LINKG_RESOURCE_NODE_ID_MAX)
+    uint32_t value;
+
+    if (address == NULL)
+    {
+        return false;
+    }
+
+    value = ntohl(address->s_addr);
+
+    if ((value & 0xFF000000U) == 0x0A000000U)
+    {
+        return true;
+    }
+
+    if ((value & 0xFFF00000U) == 0xAC100000U)
+    {
+        return true;
+    }
+
+    if ((value & 0xFFFF0000U) == 0xC0A80000U)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * @brief 校验IPv4网络基地址及固定前缀。
+ */
+static int _network_ipv4_network_validate(const struct in_addr *network, uint8_t prefix)
+{
+    struct in_addr network_address;
+    struct in_addr netmask;
+
+    if (network == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    if (!linkg_network_ipv4_address_valid(network))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (!_network_ipv4_private(network))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (!linkg_network_ipv4_netmask_from_prefix(prefix, &netmask))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (!linkg_network_ipv4_network_address(network, &netmask, &network_address))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (network_address.s_addr != network->s_addr)
     {
         return CONFIG_ERR_VALIDATE;
     }
@@ -121,21 +188,28 @@ static int _network_node_id_validate(uint8_t node_id)
 }
 
 /**
- * @brief 校验IPv4网络配置。
+ * @brief 根据网络基地址和固定前缀生成IPv4网络配置。
  */
-static int _network_ipv4_config_validate(const linkg_network_ipv4_config_t *config)
+static int _network_ipv4_config_from_network(const struct in_addr *network, uint8_t prefix, linkg_network_ipv4_config_t *out)
 {
-    if (config == NULL)
+    int ret;
+
+    if (network == NULL || out == NULL)
     {
         return CONFIG_ERR_PARAM;
     }
 
-    if (!linkg_network_ipv4_address_valid(&config->ip))
+    ret = _network_ipv4_network_validate(network, prefix);
+    if (ret != CONFIG_OK)
     {
-        return CONFIG_ERR_VALIDATE;
+        return ret;
     }
 
-    if (!linkg_network_ipv4_netmask_valid(&config->netmask))
+    memset(out, 0, sizeof(*out));
+
+    out->ip = *network;
+
+    if (!linkg_network_ipv4_netmask_from_prefix(prefix, &out->netmask))
     {
         return CONFIG_ERR_VALIDATE;
     }
@@ -168,54 +242,98 @@ static int _network_fixed_ipv4_config_get(const char *network, uint8_t prefix, l
     return CONFIG_OK;
 }
 
+/****************************** 配置校验 ******************************/
+
 /**
- * @brief 校验以太网网段是否与LinkG内部网段冲突。
+ * @brief 校验节点编号。
  */
-static int _network_ethernet_subnet_validate(const linkg_network_ipv4_config_t *ethernet)
+static int _network_node_id_validate(uint8_t node_id)
 {
-    linkg_network_ipv4_config_t tun;
-    linkg_network_ipv4_config_t wifi;
-    int                         ret;
-
-    if (ethernet == NULL)
-    {
-        return CONFIG_ERR_PARAM;
-    }
-
-    ret = _network_fixed_ipv4_config_get(
-        LINKG_RESOURCE_TUN_IPV4_NETWORK,
-        LINKG_RESOURCE_TUN_IPV4_PREFIX,
-        &tun);
-
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    ret = _network_fixed_ipv4_config_get(
-        LINKG_RESOURCE_WIFI_IPV4_NETWORK,
-        LINKG_RESOURCE_WIFI_IPV4_PREFIX,
-        &wifi);
-
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    if (linkg_network_ipv4_subnet_overlap(
-            &ethernet->ip,
-            &ethernet->netmask,
-            &tun.ip,
-            &tun.netmask))
+    if (node_id < LINKG_RESOURCE_NODE_ID_MIN || node_id > LINKG_RESOURCE_NODE_ID_MAX)
     {
         return CONFIG_ERR_VALIDATE;
     }
 
-    if (linkg_network_ipv4_subnet_overlap(
-            &ethernet->ip,
-            &ethernet->netmask,
-            &wifi.ip,
-            &wifi.netmask))
+    return CONFIG_OK;
+}
+
+/**
+ * @brief 校验虚拟网络基地址。
+ */
+static int _network_virtual_network_validate(const struct in_addr *network)
+{
+    return _network_ipv4_network_validate(network, LINKG_NETWORK_VIRTUAL_IPV4_PREFIX);
+}
+
+/**
+ * @brief 校验Ethernet网络基地址。
+ */
+static int _network_ethernet_network_validate(const struct in_addr *network)
+{
+    return _network_ipv4_network_validate(network, LINKG_NETWORK_ETHERNET_IPV4_PREFIX);
+}
+
+/**
+ * @brief 校验LinkG各IPv4网络之间是否存在地址冲突。
+ */
+static int _network_subnet_conflict_validate(const linkg_network_config_t *config)
+{
+    linkg_network_ipv4_config_t ethernet;
+    linkg_network_ipv4_config_t tun;
+    linkg_network_ipv4_config_t virtual_network;
+    linkg_network_ipv4_config_t wifi;
+    int                         ret;
+
+    if (config == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    ret = _network_ipv4_config_from_network(&config->virtual_network, LINKG_NETWORK_VIRTUAL_IPV4_PREFIX, &virtual_network);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = _network_ipv4_config_from_network(&config->ethernet_network, LINKG_NETWORK_ETHERNET_IPV4_PREFIX, &ethernet);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = _network_fixed_ipv4_config_get(LINKG_RESOURCE_TUN_IPV4_NETWORK, LINKG_RESOURCE_TUN_IPV4_PREFIX, &tun);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = _network_fixed_ipv4_config_get(LINKG_RESOURCE_WIFI_IPV4_NETWORK, LINKG_RESOURCE_WIFI_IPV4_PREFIX, &wifi);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    if (linkg_network_ipv4_subnet_overlap(&virtual_network.ip, &virtual_network.netmask, &ethernet.ip, &ethernet.netmask))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (linkg_network_ipv4_subnet_overlap(&virtual_network.ip, &virtual_network.netmask, &tun.ip, &tun.netmask))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (linkg_network_ipv4_subnet_overlap(&virtual_network.ip, &virtual_network.netmask, &wifi.ip, &wifi.netmask))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (linkg_network_ipv4_subnet_overlap(&ethernet.ip, &ethernet.netmask, &tun.ip, &tun.netmask))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    if (linkg_network_ipv4_subnet_overlap(&ethernet.ip, &ethernet.netmask, &wifi.ip, &wifi.netmask))
     {
         return CONFIG_ERR_VALIDATE;
     }
@@ -284,9 +402,7 @@ static int _network_traffic_config_validate(const linkg_network_traffic_config_t
 
         /**
          * 同一种协议的端口规则禁止重叠。
-         *
-         * 即使两个规则属于相同traffic class，也没有必要重复定义；
-         * 如果属于不同traffic class，则会造成业务分类歧义。
+         * 相同类型的重复规则没有意义，不同类型的重叠规则会造成业务分类歧义。
          */
         for (right_index = left_index + 1U; right_index < config->count; right_index++)
         {
@@ -297,11 +413,7 @@ static int _network_traffic_config_validate(const linkg_network_traffic_config_t
                 continue;
             }
 
-            if (_network_port_range_overlap(
-                    left->start_port,
-                    left->end_port,
-                    right->start_port,
-                    right->end_port))
+            if (_network_port_range_overlap(left->start_port, left->end_port, right->start_port, right->end_port))
             {
                 return CONFIG_ERR_VALIDATE;
             }
@@ -311,58 +423,33 @@ static int _network_traffic_config_validate(const linkg_network_traffic_config_t
     return CONFIG_OK;
 }
 
-/****************************** 子配置解析 ******************************/
+/****************************** 配置解析 ******************************/
 
 /**
- * @brief 解析IPv4网络配置。
+ * @brief 解析IPv4网络基地址配置。
  */
-static int _network_ipv4_config_parse(const cJSON *node, linkg_network_ipv4_config_t *out)
+static int _network_ipv4_network_parse(const cJSON *node, const char *key, uint8_t prefix, struct in_addr *out)
 {
-    linkg_network_ipv4_config_t temp = {0};
-    char                        value[INET_ADDRSTRLEN];
-    int                         ret;
+    char value[INET_ADDRSTRLEN];
+    int  ret;
 
-    if (node == NULL || out == NULL)
+    if (node == NULL || key == NULL || out == NULL)
     {
         return CONFIG_ERR_PARAM;
     }
 
-    if (!cJSON_IsObject(node))
-    {
-        return CONFIG_ERR_PARSE;
-    }
-
-    ret = linkg_json_get_string(node, "ip", value, sizeof(value));
+    ret = linkg_json_get_string(node, key, value, sizeof(value));
     if (ret != LINKG_JSON_OK)
     {
         return config_json_parse_error(ret);
     }
 
-    if (!linkg_network_ipv4_from_string(value, &temp.ip))
+    if (!linkg_network_ipv4_from_string(value, out))
     {
         return CONFIG_ERR_VALIDATE;
     }
 
-    ret = linkg_json_get_string(node, "netmask", value, sizeof(value));
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
-    if (!linkg_network_ipv4_from_string(value, &temp.netmask))
-    {
-        return CONFIG_ERR_VALIDATE;
-    }
-
-    ret = _network_ipv4_config_validate(&temp);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    *out = temp;
-
-    return CONFIG_OK;
+    return _network_ipv4_network_validate(out, prefix);
 }
 
 /**
@@ -417,61 +504,37 @@ static int _network_traffic_config_parse(const cJSON *node, linkg_network_traffi
 
         rule = &out->rules[index];
 
-        ret = linkg_json_get_string(
-            item,
-            "class",
-            traffic_class,
-            sizeof(traffic_class));
-
+        ret = linkg_json_get_string(item, "class", traffic_class, sizeof(traffic_class));
         if (ret != LINKG_JSON_OK)
         {
             return config_json_parse_error(ret);
         }
 
-        ret = _network_traffic_class_from_string(
-            traffic_class,
-            &rule->traffic_class);
-
+        ret = _network_traffic_class_from_string(traffic_class, &rule->traffic_class);
         if (ret != CONFIG_OK)
         {
             return ret;
         }
 
-        ret = linkg_json_get_string(
-            item,
-            "protocol",
-            protocol,
-            sizeof(protocol));
-
+        ret = linkg_json_get_string(item, "protocol", protocol, sizeof(protocol));
         if (ret != LINKG_JSON_OK)
         {
             return config_json_parse_error(ret);
         }
 
-        ret = _network_port_protocol_from_string(
-            protocol,
-            &rule->protocol);
-
+        ret = _network_port_protocol_from_string(protocol, &rule->protocol);
         if (ret != CONFIG_OK)
         {
             return ret;
         }
 
-        ret = linkg_json_get_uint16(
-            item,
-            "start",
-            &rule->start_port);
-
+        ret = linkg_json_get_uint16(item, "start", &rule->start_port);
         if (ret != LINKG_JSON_OK)
         {
             return config_json_parse_error(ret);
         }
 
-        ret = linkg_json_get_uint16(
-            item,
-            "end",
-            &rule->end_port);
-
+        ret = linkg_json_get_uint16(item, "end", &rule->end_port);
         if (ret != LINKG_JSON_OK)
         {
             return config_json_parse_error(ret);
@@ -486,54 +549,32 @@ static int _network_traffic_config_parse(const cJSON *node, linkg_network_traffi
 /****************************** JSON序列化 ******************************/
 
 /**
- * @brief 将IPv4网络配置转换为JSON对象。
+ * @brief 将IPv4网络基地址转换为JSON字符串字段。
  */
-static int _network_ipv4_config_to_json(cJSON *parent, const char *key, const linkg_network_ipv4_config_t *config)
+static int _network_ipv4_network_to_json(cJSON *parent, const char *key, const struct in_addr *network, uint8_t prefix)
 {
-    char   ip[INET_ADDRSTRLEN];
-    char   netmask[INET_ADDRSTRLEN];
-    cJSON *object;
-    int    ret;
+    char value[INET_ADDRSTRLEN];
+    int  ret;
 
-    if (parent == NULL || key == NULL || config == NULL)
+    if (parent == NULL || key == NULL || network == NULL)
     {
         return CONFIG_ERR_PARAM;
     }
 
-    ret = _network_ipv4_config_validate(config);
+    ret = _network_ipv4_network_validate(network, prefix);
     if (ret != CONFIG_OK)
     {
         return ret;
     }
 
-    if (!linkg_network_ipv4_to_string(&config->ip, ip, sizeof(ip)) ||
-        !linkg_network_ipv4_to_string(&config->netmask, netmask, sizeof(netmask)))
+    if (!linkg_network_ipv4_to_string(network, value, sizeof(value)))
     {
         return CONFIG_ERR_VALIDATE;
     }
 
-    object = cJSON_CreateObject();
-    if (object == NULL)
-    {
-        return CONFIG_ERR_MEMORY;
-    }
-
-    ret = linkg_json_add_string(object, "ip", ip);
-    if (ret == LINKG_JSON_OK)
-    {
-        ret = linkg_json_add_string(object, "netmask", netmask);
-    }
-
+    ret = linkg_json_add_string(parent, key, value);
     if (ret != LINKG_JSON_OK)
     {
-        cJSON_Delete(object);
-        return config_json_write_error(ret);
-    }
-
-    ret = linkg_json_add_object(parent, key, object);
-    if (ret != LINKG_JSON_OK)
-    {
-        cJSON_Delete(object);
         return config_json_write_error(ret);
     }
 
@@ -595,33 +636,20 @@ static int _network_traffic_config_to_json(cJSON *parent, const linkg_network_tr
             return CONFIG_ERR_MEMORY;
         }
 
-        ret = linkg_json_add_string(
-            object,
-            "class",
-            traffic_class);
-
+        ret = linkg_json_add_string(object, "class", traffic_class);
         if (ret == LINKG_JSON_OK)
         {
-            ret = linkg_json_add_string(
-                object,
-                "protocol",
-                protocol);
+            ret = linkg_json_add_string(object, "protocol", protocol);
         }
 
         if (ret == LINKG_JSON_OK)
         {
-            ret = linkg_json_add_uint16(
-                object,
-                "start",
-                rule->start_port);
+            ret = linkg_json_add_uint16(object, "start", rule->start_port);
         }
 
         if (ret == LINKG_JSON_OK)
         {
-            ret = linkg_json_add_uint16(
-                object,
-                "end",
-                rule->end_port);
+            ret = linkg_json_add_uint16(object, "end", rule->end_port);
         }
 
         if (ret != LINKG_JSON_OK)
@@ -639,11 +667,7 @@ static int _network_traffic_config_to_json(cJSON *parent, const linkg_network_tr
         }
     }
 
-    ret = linkg_json_add_array(
-        parent,
-        "traffic_rules",
-        array);
-
+    ret = linkg_json_add_array(parent, "traffic_rules", array);
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(array);
@@ -686,13 +710,19 @@ int linkg_network_config_validate(const linkg_network_config_t *config)
         return ret;
     }
 
-    ret = _network_ipv4_config_validate(&config->ethernet);
+    ret = _network_virtual_network_validate(&config->virtual_network);
     if (ret != CONFIG_OK)
     {
         return ret;
     }
 
-    ret = _network_ethernet_subnet_validate(&config->ethernet);
+    ret = _network_ethernet_network_validate(&config->ethernet_network);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = _network_subnet_conflict_validate(config);
     if (ret != CONFIG_OK)
     {
         return ret;
@@ -707,7 +737,6 @@ int linkg_network_config_validate(const linkg_network_config_t *config)
 int linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out)
 {
     linkg_network_config_t temp;
-    const cJSON           *child;
     uint32_t               node_id;
     int                    ret;
 
@@ -723,49 +752,32 @@ int linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out)
 
     linkg_network_config_set_default(&temp);
 
-    ret = linkg_json_get_uint32(
-        node,
-        "node_id",
-        &node_id);
-
+    ret = linkg_json_get_uint32(node, "node_id", &node_id);
     if (ret != LINKG_JSON_OK)
     {
         return config_json_parse_error(ret);
     }
 
-    if (node_id < LINKG_RESOURCE_NODE_ID_MIN ||
-        node_id > LINKG_RESOURCE_NODE_ID_MAX)
+    if (node_id < LINKG_RESOURCE_NODE_ID_MIN || node_id > LINKG_RESOURCE_NODE_ID_MAX)
     {
         return CONFIG_ERR_VALIDATE;
     }
 
     temp.node_id = (uint8_t)node_id;
 
-    child = NULL;
-
-    ret = linkg_json_get_object(
-        node,
-        "ethernet",
-        &child);
-
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
-    ret = _network_ipv4_config_parse(
-        child,
-        &temp.ethernet);
-
+    ret = _network_ipv4_network_parse(node, "virtual_network", LINKG_NETWORK_VIRTUAL_IPV4_PREFIX, &temp.virtual_network);
     if (ret != CONFIG_OK)
     {
         return ret;
     }
 
-    ret = _network_traffic_config_parse(
-        node,
-        &temp.traffic);
+    ret = _network_ipv4_network_parse(node, "ethernet_network", LINKG_NETWORK_ETHERNET_IPV4_PREFIX, &temp.ethernet_network);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
 
+    ret = _network_traffic_config_parse(node, &temp.traffic);
     if (ret != CONFIG_OK)
     {
         return ret;
@@ -807,43 +819,35 @@ int linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_net
         return CONFIG_ERR_MEMORY;
     }
 
-    ret = linkg_json_add_uint32(
-        object,
-        "node_id",
-        config->node_id);
-
+    ret = linkg_json_add_uint32(object, "node_id", config->node_id);
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(object);
         return config_json_write_error(ret);
     }
 
-    ret = _network_ipv4_config_to_json(
-        object,
-        "ethernet",
-        &config->ethernet);
-
+    ret = _network_ipv4_network_to_json(object, "virtual_network", &config->virtual_network, LINKG_NETWORK_VIRTUAL_IPV4_PREFIX);
     if (ret != CONFIG_OK)
     {
         cJSON_Delete(object);
         return ret;
     }
 
-    ret = _network_traffic_config_to_json(
-        object,
-        &config->traffic);
-
+    ret = _network_ipv4_network_to_json(object, "ethernet_network", &config->ethernet_network, LINKG_NETWORK_ETHERNET_IPV4_PREFIX);
     if (ret != CONFIG_OK)
     {
         cJSON_Delete(object);
         return ret;
     }
 
-    ret = linkg_json_add_object(
-        parent,
-        key,
-        object);
+    ret = _network_traffic_config_to_json(object, &config->traffic);
+    if (ret != CONFIG_OK)
+    {
+        cJSON_Delete(object);
+        return ret;
+    }
 
+    ret = linkg_json_add_object(parent, key, object);
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(object);
@@ -851,6 +855,116 @@ int linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_net
     }
 
     return CONFIG_OK;
+}
+
+/****************************** 配置查询 ******************************/
+
+/**
+ * @brief 获取Ethernet接口IPv4配置。
+ */
+int linkg_network_config_get_ethernet(const linkg_network_config_t *config, linkg_network_ipv4_config_t *ethernet)
+{
+    uint32_t address;
+    int      ret;
+
+    if (config == NULL || ethernet == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    ret = _network_ipv4_config_from_network(&config->ethernet_network, LINKG_NETWORK_ETHERNET_IPV4_PREFIX, ethernet);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    address = ntohl(ethernet->ip.s_addr);
+    address |= LINKG_NETWORK_ETHERNET_GATEWAY_HOST_ID;
+
+    ethernet->ip.s_addr = htonl(address);
+
+    return CONFIG_OK;
+}
+
+/**
+ * @brief 获取Ethernet网络配置。
+ */
+int linkg_network_config_get_ethernet_network(const linkg_network_config_t *config, linkg_network_ipv4_config_t *network)
+{
+    if (config == NULL || network == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    return _network_ipv4_config_from_network(&config->ethernet_network, LINKG_NETWORK_ETHERNET_IPV4_PREFIX, network);
+}
+
+/**
+ * @brief 获取LinkG虚拟聚合网络配置。
+ */
+int linkg_network_config_get_virtual_network(const linkg_network_config_t *config, linkg_network_ipv4_config_t *network)
+{
+    if (config == NULL || network == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    return _network_ipv4_config_from_network(&config->virtual_network, LINKG_NETWORK_VIRTUAL_IPV4_PREFIX, network);
+}
+
+/**
+ * @brief 获取指定节点的虚拟Ethernet子网配置。
+ */
+int linkg_network_config_get_virtual_subnet(const linkg_network_config_t *config, uint8_t node_id, linkg_network_ipv4_config_t *subnet)
+{
+    linkg_network_ipv4_config_t virtual_network;
+    uint32_t                    address;
+    int                         ret;
+
+    if (config == NULL || subnet == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    ret = _network_node_id_validate(node_id);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = linkg_network_config_get_virtual_network(config, &virtual_network);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    memset(subnet, 0, sizeof(*subnet));
+
+    address = ntohl(virtual_network.ip.s_addr);
+    address |= (uint32_t)node_id << LINKG_NETWORK_VIRTUAL_NODE_SHIFT;
+
+    subnet->ip.s_addr = htonl(address);
+
+    if (!linkg_network_ipv4_netmask_from_prefix(LINKG_NETWORK_ETHERNET_IPV4_PREFIX, &subnet->netmask))
+    {
+        memset(subnet, 0, sizeof(*subnet));
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    return CONFIG_OK;
+}
+
+/**
+ * @brief 获取本节点的虚拟Ethernet子网配置。
+ */
+int linkg_network_config_get_local_virtual_subnet(const linkg_network_config_t *config, linkg_network_ipv4_config_t *subnet)
+{
+    if (config == NULL || subnet == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    return linkg_network_config_get_virtual_subnet(config, config->node_id, subnet);
 }
 
 /**
@@ -872,19 +986,14 @@ int linkg_network_config_get_tun(const linkg_network_config_t *config, linkg_net
         return ret;
     }
 
-    ret = _network_fixed_ipv4_config_get(
-        LINKG_RESOURCE_TUN_IPV4_NETWORK,
-        LINKG_RESOURCE_TUN_IPV4_PREFIX,
-        tun);
-
+    ret = _network_fixed_ipv4_config_get(LINKG_RESOURCE_TUN_IPV4_NETWORK, LINKG_RESOURCE_TUN_IPV4_PREFIX, tun);
     if (ret != CONFIG_OK)
     {
         return ret;
     }
 
     address = ntohl(tun->ip.s_addr);
-    address = (address & ntohl(tun->netmask.s_addr)) |
-              (uint32_t)config->node_id;
+    address = (address & ntohl(tun->netmask.s_addr)) | (uint32_t)config->node_id;
 
     tun->ip.s_addr = htonl(address);
 

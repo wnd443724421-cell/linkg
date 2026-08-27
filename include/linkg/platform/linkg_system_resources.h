@@ -13,7 +13,7 @@ extern "C" {
 /****************************** 组网地址 ******************************/
 
 #define LINKG_RESOURCE_NODE_ID_MIN        1U             // 最小节点编号
-#define LINKG_RESOURCE_NODE_ID_MAX        254U           // 最大节点编号
+#define LINKG_RESOURCE_NODE_ID_MAX        16U            // 最大节点编号
 
 #define LINKG_RESOURCE_TUN_IPV4_NETWORK   "172.31.8.0"   // TUN固定IPv4网段
 #define LINKG_RESOURCE_TUN_IPV4_PREFIX    24U            // TUN固定前缀长度

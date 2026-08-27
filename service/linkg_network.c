@@ -436,23 +436,27 @@ static int _linkg_network_get_worker_failure_locked(void)
  */
 static int _linkg_network_ethernet_start(void)
 {
-    int ret;
+    linkg_network_ipv4_config_t ethernet;
+    int                         ret;
 
     if (g_network.ethernet_started)
     {
         return 0;
     }
 
-    ret = linkg_network_interface_wait(LINKG_RESOURCE_INTERFACE_ETHERNET,
-                                       LINKG_NETWORK_ETHERNET_WAIT_TIMEOUT_MS);
+    ret = linkg_network_interface_wait(LINKG_RESOURCE_INTERFACE_ETHERNET, LINKG_NETWORK_ETHERNET_WAIT_TIMEOUT_MS);
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = linkg_network_interface_set_ipv4(LINKG_RESOURCE_INTERFACE_ETHERNET,
-                                           &g_network.network_config.ethernet.ip,
-                                           &g_network.network_config.ethernet.netmask);
+    ret = linkg_network_config_get_ethernet(&g_network.network_config, &ethernet);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_network_interface_set_ipv4(LINKG_RESOURCE_INTERFACE_ETHERNET, &ethernet.ip, &ethernet.netmask);
     if (ret != 0)
     {
         return ret;
@@ -785,9 +789,7 @@ int linkg_network_start(void)
     ret = _linkg_network_ethernet_start();
     if (ret != 0)
     {
-        LINKG_LOG_ERROR("start Ethernet failed, interface=%s, error=%d",
-                        LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        ret);
+        LINKG_LOG_ERROR("start Ethernet failed, interface=%s, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, ret);
         goto fail;
     }
 

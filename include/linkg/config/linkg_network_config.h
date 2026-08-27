@@ -2,8 +2,8 @@
  * @file linkg_network_config.h
  * @brief LinkG网络配置定义及处理接口
  * @author Dawn
- * @version 1.0.0
- * @date 2026-07-23
+ * @version 1.1.0
+ * @date 2026-08-27
  */
 
 #ifndef LINKG_NETWORK_CONFIG_H
@@ -46,21 +46,22 @@ typedef struct
 
 typedef struct
 {
-    uint32_t                     count;                                // 有效规则数量
+    uint32_t                     count;                                 // 有效规则数量
     linkg_network_traffic_rule_t rules[LINKG_NETWORK_TRAFFIC_RULE_MAX]; // 业务流量分类规则
 } linkg_network_traffic_config_t;
 
 typedef struct
 {
-    struct in_addr ip;      // IPv4地址，网络字节序
+    struct in_addr ip;      // IPv4地址或网络地址，网络字节序
     struct in_addr netmask; // IPv4子网掩码，网络字节序
 } linkg_network_ipv4_config_t;
 
 typedef struct
 {
-    uint8_t                        node_id;  // LinkG节点编号
-    linkg_network_ipv4_config_t    ethernet; // 以太网接口配置
-    linkg_network_traffic_config_t traffic;  // 用户业务流量分类配置
+    uint8_t                        node_id;          // LinkG节点编号
+    struct in_addr                 virtual_network;  // 虚拟网络基地址，如172.28.0.0
+    struct in_addr                 ethernet_network; // Ethernet网络基地址，如192.168.1.0
+    linkg_network_traffic_config_t traffic;          // 用户业务流量分类配置
 } linkg_network_config_t;
 
 /****************************** 配置处理 ******************************/
@@ -72,6 +73,10 @@ int  linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_ne
 
 /****************************** 配置查询 ******************************/
 
+int linkg_network_config_get_ethernet(const linkg_network_config_t *config, linkg_network_ipv4_config_t *ethernet);
+int linkg_network_config_get_virtual_network(const linkg_network_config_t *config, linkg_network_ipv4_config_t *network);
+int linkg_network_config_get_virtual_subnet(const linkg_network_config_t *config, uint8_t node_id, linkg_network_ipv4_config_t *subnet);
+int linkg_network_config_get_local_virtual_subnet(const linkg_network_config_t *config, linkg_network_ipv4_config_t *subnet);
 int linkg_network_config_get_tun(const linkg_network_config_t *config, linkg_network_ipv4_config_t *tun);
 
 #ifdef __cplusplus
