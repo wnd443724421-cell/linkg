@@ -30,8 +30,8 @@ extern "C" {
 typedef struct
 {
     struct in_addr              node_address; // 节点唯一组网IPv4地址
-    linkg_device_role_t         role;        // 节点角色
-    linkg_network_ipv4_config_t ethernet;    // 节点以太网IPv4配置
+    linkg_device_role_t         role;         // 节点角色
+    linkg_network_ipv4_config_t ethernet;     // 节点以太网IPv4配置
 } linkg_node_info_t;
 
 /****************************** 对端快照 ******************************/

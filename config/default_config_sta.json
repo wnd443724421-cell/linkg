@@ -4,7 +4,6 @@
     },
     "network": {
         "node_id": 1,
-        "virtual_network": "172.28.0.0",
         "ethernet_network": "192.168.1.0",
         "traffic_rules": [
             {
