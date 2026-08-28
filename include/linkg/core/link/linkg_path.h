@@ -1,9 +1,6 @@
 /**
  * @file linkg_path.h
  * @brief LinkG对端链路路径定义
- * @author Dawn
- * @version 1.4.0
- * @date 2026-08-25
  */
 
 #ifndef LINKG_PATH_H
@@ -41,9 +38,9 @@ typedef struct
 
 /****************************** 链路路径 ******************************/
 
-typedef struct linkg_path linkg_path_t; // 对端链路路径
+typedef struct linkg_path linkg_path_t;
 
-typedef void (*linkg_path_released_func_t)(linkg_path_t *path, void *user_data); // 路径异步释放完成回调
+typedef void (*linkg_path_released_func_t)(linkg_path_t *path, void *user_data);
 
 struct linkg_path
 {

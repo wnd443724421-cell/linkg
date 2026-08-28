@@ -10,6 +10,7 @@
 
 #include "linkg_device_config.h"
 #include "linkg_path.h"
+#include "linkg_system_resources.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,8 +18,8 @@ extern "C" {
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_NODE_PEER_MAX 16U // 最大直接对端数量
-#define LINKG_NODE_PATH_MAX 2U  // 单个直接对端最大路径数量
+#define LINKG_NODE_PEER_MAX LINKG_RESOURCE_NETWORK_STA_MAX // 最大直接对端数量
+#define LINKG_NODE_PATH_MAX 2U                             // 单个直接对端最大路径数量
 
 /****************************** 节点信息 ******************************/
 
