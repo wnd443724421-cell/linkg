@@ -2,8 +2,8 @@
  * @file linkg_node.c
  * @brief LinkG节点管理实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-25
+ * @version 1.2.0
+ * @date 2026-08-28
  */
 
 #include "linkg_node.h"
@@ -89,12 +89,7 @@ static bool _linkg_node_info_valid(const linkg_node_info_t *info)
         return false;
     }
 
-    if (!linkg_network_ipv4_address_valid(&info->ethernet.ip))
-    {
-        return false;
-    }
-
-    return linkg_network_ipv4_netmask_valid(&info->ethernet.netmask);
+    return true;
 }
 
 /**
@@ -1055,7 +1050,7 @@ int linkg_node_acquire_path(const struct in_addr *node_address, uint32_t link_id
 }
 
 /**
- * @brief 根据物理接收来源记录Path接收统计并获取直接Peer地址。
+ * @brief 根据物理接收来源记录Path接收统计并获取直接Peer组网TUN地址。
  *
  * @note 调用方必须持有Node状态锁。
  */
@@ -1100,7 +1095,7 @@ static int _linkg_node_account_path_rx_locked(uint32_t link_id, const linkg_path
 }
 
 /**
- * @brief 批量根据物理接收来源记录Path接收统计并获取直接Peer地址。
+ * @brief 批量根据物理接收来源记录Path接收统计并获取直接Peer组网TUN地址。
  *
  * @note 整批只获取一次Node状态锁，各元素独立通过item.result返回处理结果。
  */
@@ -1150,7 +1145,7 @@ int linkg_node_account_path_rx_batch(uint32_t link_id, linkg_node_path_rx_item_t
 }
 
 /**
- * @brief 根据物理接收来源记录Path接收统计并获取直接Peer地址。
+ * @brief 根据物理接收来源记录Path接收统计并获取直接Peer组网TUN地址。
  *
  * @note 单包接口内部复用批量实现。
  */
