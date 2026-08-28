@@ -1,9 +1,6 @@
 /**
  * @file linkg_network_config.h
  * @brief LinkG网络配置定义及处理接口
- * @author Dawn
- * @version 1.2.0
- * @date 2026-08-27
  */
 
 #ifndef LINKG_NETWORK_CONFIG_H
@@ -58,14 +55,14 @@ typedef struct
 
 typedef struct
 {
-    uint8_t                        node_id;          // LinkG节点编号
+    uint8_t                        node_id;           // LinkG节点编号
     struct in_addr                 ethernet_network; // Ethernet网络基地址，如192.168.1.0
     linkg_network_traffic_config_t traffic;          // 用户业务流量分类配置
 } linkg_network_config_t;
 
 typedef struct
 {
-    struct in_addr virtual_network; // LinkG虚拟网络基地址，如172.28.0.0
+    struct in_addr virtual_network; // 组网虚拟网络基地址，同一组网成员必须一致
 } linkg_network_domain_config_t;
 
 /****************************** 节点配置 ******************************/
