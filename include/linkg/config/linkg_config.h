@@ -25,7 +25,7 @@ typedef struct
 {
     linkg_device_config_t         device;         // 设备配置
     linkg_network_config_t        network;        // 本节点网络配置
-    linkg_network_domain_config_t network_domain; // AP组网域配置，STA不使用
+    linkg_network_domain_config_t network_domain; // 组网域配置，同一组网成员必须保持一致
     linkg_links_config_t          links;          // 接入模块配置
     linkg_paths_config_t          paths;          // 逻辑路径配置
 } linkg_config_t;
