@@ -2,8 +2,8 @@
  * @file linkg_paths_config.c
  * @brief LinkG逻辑路径配置处理实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-25
+ * @version 1.2.0
+ * @date 2026-08-28
  */
 
 #include "linkg_paths_config.h"
@@ -24,7 +24,7 @@
 /**
  * @brief 将路径模式文本转换为枚举值。
  */
-static int _paths_mode_from_string(const char *text, linkg_link_mode_t *mode)
+static int _paths_mode_from_string(const char *text, linkg_path_mode_t *mode)
 {
     if (text == NULL || mode == NULL)
     {
@@ -33,13 +33,13 @@ static int _paths_mode_from_string(const char *text, linkg_link_mode_t *mode)
 
     if (strcmp(text, "direct") == 0)
     {
-        *mode = LINKG_LINK_MODE_DIRECT;
+        *mode = LINKG_PATH_MODE_DIRECT;
         return CONFIG_OK;
     }
 
     if (strcmp(text, "relay") == 0)
     {
-        *mode = LINKG_LINK_MODE_RELAY;
+        *mode = LINKG_PATH_MODE_RELAY;
         return CONFIG_OK;
     }
 
@@ -49,14 +49,14 @@ static int _paths_mode_from_string(const char *text, linkg_link_mode_t *mode)
 /**
  * @brief 将路径模式枚举转换为文本。
  */
-static const char *_paths_mode_to_string(linkg_link_mode_t mode)
+static const char *_paths_mode_to_string(linkg_path_mode_t mode)
 {
     switch (mode)
     {
-        case LINKG_LINK_MODE_DIRECT:
+        case LINKG_PATH_MODE_DIRECT:
             return "direct";
 
-        case LINKG_LINK_MODE_RELAY:
+        case LINKG_PATH_MODE_RELAY:
             return "relay";
 
         default:
@@ -72,7 +72,7 @@ static const char *_paths_mode_to_string(linkg_link_mode_t mode)
 static int _paths_path_parse(const cJSON *node, linkg_path_config_t *out)
 {
     char mode_text[LINKG_PATH_MODE_STRING_MAX];
-    int ret;
+    int  ret;
 
     if (node == NULL || out == NULL)
     {
@@ -121,8 +121,8 @@ static int _paths_path_validate(const linkg_path_config_t *config)
         return CONFIG_ERR_PARAM;
     }
 
-    if (config->mode != LINKG_LINK_MODE_DIRECT &&
-        config->mode != LINKG_LINK_MODE_RELAY)
+    if (config->mode != LINKG_PATH_MODE_DIRECT &&
+        config->mode != LINKG_PATH_MODE_RELAY)
     {
         return CONFIG_ERR_VALIDATE;
     }
@@ -222,11 +222,11 @@ void linkg_paths_config_set_default(linkg_paths_config_t *out)
     memset(out, 0, sizeof(*out));
 
     out->wifi.enabled  = true;
-    out->wifi.mode     = LINKG_LINK_MODE_DIRECT;
+    out->wifi.mode     = LINKG_PATH_MODE_DIRECT;
     out->wifi.priority = LINKG_PATH_WIFI_DEFAULT_PRIORITY;
 
     out->cellular.enabled  = false;
-    out->cellular.mode     = LINKG_LINK_MODE_DIRECT;
+    out->cellular.mode     = LINKG_PATH_MODE_DIRECT;
     out->cellular.priority = LINKG_PATH_CELLULAR_DEFAULT_PRIORITY;
 }
 
