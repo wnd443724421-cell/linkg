@@ -10,10 +10,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "linkg_cellular_config.h"
 #include "linkg_cellular_status.h"
 
-#include "at_channel.h"
+#include "rg255_cmd.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,6 +42,24 @@ typedef struct
     bool                          sinr_valid;   // 当前SINR是否有效
 } rg255_serving_cell_info_t;
 
+/****************************** USB网卡IPv4信息 ******************************/
+
+typedef struct
+{
+    struct in_addr address; // RG255提供给Host的IPv4地址
+    struct in_addr netmask; // RG255提供给Host的IPv4子网掩码
+    struct in_addr gateway; // RG255提供给Host的IPv4网关
+} rg255_network_card_ipv4_info_t;
+
+/****************************** USB网卡IPv6信息 ******************************/
+
+typedef struct
+{
+    struct in6_addr prefix;        // RG255提供给Host的IPv6网络前缀
+    uint8_t         prefix_length; // IPv6前缀长度
+    struct in6_addr gateway;       // RG255提供给Host的IPv6网关
+} rg255_network_card_ipv6_info_t;
+
 /****************************** PDP配置 ******************************/
 
 typedef struct
@@ -56,11 +73,21 @@ typedef struct
 
 typedef struct
 {
-    bool            ipv4_valid; // 模组PDP IPv4地址是否有效
-    struct in_addr  ipv4;       // 模组当前PDP IPv4地址
-    bool            ipv6_valid; // 模组PDP IPv6地址是否有效
-    struct in6_addr ipv6;       // 模组当前PDP IPv6地址
+    bool            ipv4_valid;        // 模组PDP IPv4地址是否有效
+    struct in_addr  ipv4;              // 模组当前PDP IPv4地址
+    bool            global_ipv6_valid; // 模组PDP全局IPv6地址是否有效
+    struct in6_addr global_ipv6;       // 模组当前PDP全局IPv6地址
 } rg255_pdp_address_t;
+
+/****************************** 网络设备状态 ******************************/
+
+typedef struct
+{
+    rg255_netdev_type_t type;        // 当前USB网卡连接方式
+    uint8_t             cid;         // 当前使用的PDP上下文ID
+    bool                urc_enabled; // 是否开启QNETDEV状态URC
+    bool                connected;   // 当前USB网卡是否连接成功
+} rg255_netdev_status_t;
 
 /****************************** SIM查询 ******************************/
 
@@ -74,8 +101,10 @@ int rg255_query_serving_cell(at_channel_t *channel, rg255_serving_cell_info_t *i
 
 /****************************** USB配置查询 ******************************/
 
-int rg255_query_usbnet_mode(at_channel_t *channel, int *mode);
-int rg255_query_nat_enabled(at_channel_t *channel, bool *enabled);
+int rg255_query_usbnet_mode(at_channel_t *channel, rg255_usbnet_mode_t *mode);
+int rg255_query_network_card_mode(at_channel_t *channel, rg255_network_card_mode_t *mode);
+int rg255_query_network_card_ipv4(at_channel_t *channel, rg255_network_card_ipv4_info_t *info);
+int rg255_query_network_card_ipv6(at_channel_t *channel, rg255_network_card_ipv6_info_t *info);
 
 /****************************** PDP查询 ******************************/
 
@@ -85,7 +114,7 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
 
 /****************************** 网络设备查询 ******************************/
 
-int rg255_query_netdev_active(at_channel_t *channel, bool *active);
+int rg255_query_netdev_status(at_channel_t *channel, rg255_netdev_status_t *status);
 
 #ifdef __cplusplus
 }

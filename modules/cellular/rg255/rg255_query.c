@@ -2,7 +2,7 @@
  * @file rg255_query.c
  * @brief RG255查询结果解析实现
  * @author Dawn
- * @version 1.0.0
+ * @version 1.1.0
  * @date 2026-08-28
  */
 
@@ -44,13 +44,22 @@
 #define RG255_QUERY_PREFIX_CGPADDR         "+CGPADDR:"     // PDP地址响应前缀
 #define RG255_QUERY_PREFIX_QNETDEVCTL      "+QNETDEVCTL:"  // 网络设备状态响应前缀
 #define RG255_QUERY_TEXT_MODE_PREF         "mode_pref"     // 网络模式配置键
+#define RG255_QUERY_TEXT_MODE_AUTO         "AUTO"          // 自动网络搜索模式文本
+#define RG255_QUERY_TEXT_MODE_AUTO_RATS    "NR5G-SA:LTE"   // 自动网络搜索模式等效RAT列表
+#define RG255_QUERY_TEXT_MODE_LTE_FIRST    "LTE:NR5G-SA"   // LTE优先混合搜索模式文本
 #define RG255_QUERY_TEXT_USBNET            "usbnet"        // USB网络模式配置键
 #define RG255_QUERY_TEXT_NAT               "nat"           // NAT配置键
+#define RG255_QUERY_TEXT_NETMASKSET        "netmaskset"    // USB网卡网络参数配置键
+#define RG255_QUERY_TEXT_DONGLE            "dongle"        // 网卡模式标识文本
+#define RG255_QUERY_NETMASKSET_IPV4_OPT    2               // 查询USB网卡IPv4参数
+#define RG255_QUERY_NETMASKSET_IPV6_OPT    3               // 查询USB网卡IPv6参数
 #define RG255_QUERY_TEXT_SERVING_CELL      "servingcell"   // 服务小区响应类型
 #define RG255_QUERY_TEXT_LTE               "LTE"           // LTE网络类型文本
 #define RG255_QUERY_TEXT_NR5G_SA           "NR5G-SA"       // 5G SA网络类型文本
 #define RG255_QUERY_TEXT_SEARCH            "SEARCH"        // 服务小区正在搜索文本
 #define RG255_QUERY_TEXT_LIMSRV            "LIMSRV"        // 服务小区受限服务文本
+#define RG255_QUERY_TEXT_NOCONN            "NOCONN"        // 已注册且RRC空闲文本
+#define RG255_QUERY_TEXT_CONNECT           "CONNECT"       // 已注册且RRC连接文本
 #define RG255_QUERY_TEXT_PDP_IPV4          "IP"            // IPv4 PDP类型文本
 #define RG255_QUERY_TEXT_PDP_IPV6          "IPV6"          // IPv6 PDP类型文本
 #define RG255_QUERY_TEXT_PDP_IPV4V6        "IPV4V6"        // 双栈PDP类型文本
@@ -365,6 +374,94 @@ static int _rg255_query_copy_text(char *destination, size_t destination_size, co
 }
 
 /**
+ * @brief 判断IPv6地址是否为可路由全局地址。
+ */
+static bool _rg255_query_is_global_ipv6(const struct in6_addr *address)
+{
+    if (address == NULL)
+    {
+        return false;
+    }
+
+    if (IN6_IS_ADDR_UNSPECIFIED(address) ||
+        IN6_IS_ADDR_LOOPBACK(address) ||
+        IN6_IS_ADDR_LINKLOCAL(address) ||
+        IN6_IS_ADDR_MULTICAST(address))
+    {
+        return false;
+    }
+
+    if ((address->s6_addr[0] & 0xFEU) == 0xFCU)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * @brief 解析单个PDP地址字段并按地址族保存。
+ */
+static int _rg255_query_parse_pdp_address_field(char *field, rg255_pdp_address_t *address)
+{
+    struct in6_addr ipv6;
+    struct in_addr ipv4;
+    char *text;
+    int ret;
+
+    if (field == NULL || address == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = _rg255_query_get_field_text(field, &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (text[0] == '\0')
+    {
+        return 0;
+    }
+
+    ret = inet_pton(AF_INET, text, &ipv4);
+
+    if (ret < 0)
+    {
+        return -errno;
+    }
+
+    if (ret == 1)
+    {
+        address->ipv4 = ipv4;
+        address->ipv4_valid = ipv4.s_addr != htonl(INADDR_ANY);
+        return 0;
+    }
+
+    ret = inet_pton(AF_INET6, text, &ipv6);
+
+    if (ret < 0)
+    {
+        return -errno;
+    }
+
+    if (ret == 1)
+    {
+        if (_rg255_query_is_global_ipv6(&ipv6))
+        {
+            address->global_ipv6 = ipv6;
+            address->global_ipv6_valid = true;
+        }
+
+        return 0;
+    }
+
+    return -EBADMSG;
+}
+
+/**
  * @brief 将CPIN正文映射为LinkG SIM状态。
  */
 static int _rg255_query_map_cpin_state(const char *text, linkg_cellular_sim_state_t *state)
@@ -389,6 +486,18 @@ static int _rg255_query_map_cpin_state(const char *text, linkg_cellular_sim_stat
     if (strcmp(text, "SIM PUK") == 0)
     {
         *state = LINKG_CELLULAR_SIM_STATE_PUK_REQUIRED;
+        return 0;
+    }
+
+    if (strcmp(text, "NOT INSERTED") == 0)
+    {
+        *state = LINKG_CELLULAR_SIM_STATE_ABSENT;
+        return 0;
+    }
+
+    if (strcmp(text, "NOT READY") == 0)
+    {
+        *state = LINKG_CELLULAR_SIM_STATE_NOT_READY;
         return 0;
     }
 
@@ -424,7 +533,8 @@ static int _rg255_query_map_sim_cme_error(char *response, linkg_cellular_sim_sta
         return ret;
     }
 
-    if (strcasecmp(body, "SIM not inserted") == 0)
+    if (strcasecmp(body, "SIM not inserted") == 0 ||
+        strcasecmp(body, "(U)SIM not inserted") == 0)
     {
         *state = LINKG_CELLULAR_SIM_STATE_ABSENT;
         return 0;
@@ -489,59 +599,77 @@ static int _rg255_query_map_sim_cme_error(char *response, linkg_cellular_sim_sta
 /**
  * @brief 将网络模式文本映射为LinkG网络模式。
  */
-static linkg_cellular_network_mode_t _rg255_query_map_network_mode(const char *text)
+static int _rg255_query_map_network_mode(const char *text, linkg_cellular_network_mode_t *mode)
 {
-    if (text == NULL)
+    if (text == NULL || mode == NULL)
     {
-        return LINKG_CELLULAR_NETWORK_MODE_UNKNOWN;
+        return -EINVAL;
     }
 
-    if (strcmp(text, "AUTO") == 0)
+    *mode = LINKG_CELLULAR_NETWORK_MODE_UNKNOWN;
+
+    if (strcmp(text, RG255_QUERY_TEXT_MODE_AUTO) == 0 ||
+        strcmp(text, RG255_QUERY_TEXT_MODE_AUTO_RATS) == 0)
     {
-        return LINKG_CELLULAR_NETWORK_MODE_AUTO;
+        *mode = LINKG_CELLULAR_NETWORK_MODE_AUTO;
+        return 0;
     }
 
     if (strcmp(text, RG255_QUERY_TEXT_LTE) == 0)
     {
-        return LINKG_CELLULAR_NETWORK_MODE_4G;
+        *mode = LINKG_CELLULAR_NETWORK_MODE_4G;
+        return 0;
     }
 
     if (strcmp(text, RG255_QUERY_TEXT_NR5G_SA) == 0)
     {
-        return LINKG_CELLULAR_NETWORK_MODE_5G;
+        *mode = LINKG_CELLULAR_NETWORK_MODE_5G;
+        return 0;
     }
 
-    return LINKG_CELLULAR_NETWORK_MODE_UNKNOWN;
+    if (strcmp(text, RG255_QUERY_TEXT_MODE_LTE_FIRST) == 0)
+    {
+        return -EOPNOTSUPP;
+    }
+
+    return -EBADMSG;
 }
 
 /**
  * @brief 将标准注册状态值映射为LinkG注册状态。
  */
-static linkg_cellular_registration_state_t _rg255_query_map_registration_state(int stat)
+static int _rg255_query_map_registration_state(int stat, linkg_cellular_registration_state_t *state)
 {
+    if (state == NULL)
+    {
+        return -EINVAL;
+    }
+
     switch (stat)
     {
         case 0:
-            return LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED;
+            *state = LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED;
+            return 0;
 
         case 1:
         case 5:
-            return LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED;
+            *state = LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED;
+            return 0;
 
         case 2:
-            return LINKG_CELLULAR_REGISTRATION_STATE_REGISTERING;
+            *state = LINKG_CELLULAR_REGISTRATION_STATE_REGISTERING;
+            return 0;
 
         case 3:
-            return LINKG_CELLULAR_REGISTRATION_STATE_FAILED;
+            *state = LINKG_CELLULAR_REGISTRATION_STATE_FAILED;
+            return 0;
 
         case 4:
-            return LINKG_CELLULAR_REGISTRATION_STATE_UNKNOWN;
-
-        case 8:
-            return LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED;
+            *state = LINKG_CELLULAR_REGISTRATION_STATE_UNKNOWN;
+            return 0;
 
         default:
-            return LINKG_CELLULAR_REGISTRATION_STATE_UNKNOWN;
+            return -EBADMSG;
     }
 }
 
@@ -643,9 +771,8 @@ static int _rg255_query_parse_registration_response(char *response, const char *
     }
 
     (void)n;
-    *state = _rg255_query_map_registration_state(stat);
 
-    return 0;
+    return _rg255_query_map_registration_state(stat, state);
 }
 
 /**
@@ -881,10 +1008,16 @@ static int _rg255_query_parse_serving_cell_response(char *response, rg255_servin
                 return ret;
             }
 
-            if (strcmp(state_text, RG255_QUERY_TEXT_SEARCH) == 0 ||
-                strcmp(state_text, RG255_QUERY_TEXT_LIMSRV) == 0)
+            if (strcmp(state_text, RG255_QUERY_TEXT_SEARCH) == 0)
             {
                 return -ENODATA;
+            }
+
+            if (strcmp(state_text, RG255_QUERY_TEXT_LIMSRV) != 0 &&
+                strcmp(state_text, RG255_QUERY_TEXT_NOCONN) != 0 &&
+                strcmp(state_text, RG255_QUERY_TEXT_CONNECT) != 0)
+            {
+                return -EBADMSG;
             }
         }
 
@@ -977,6 +1110,397 @@ static int _rg255_query_parse_qcfg_int(char *response, const char *expected_key,
     }
 
     return _rg255_query_parse_int(text, value);
+}
+
+/**
+ * @brief 解析AT字段中的IPv4地址。
+ */
+static int _rg255_query_parse_ipv4_field(char *field, struct in_addr *address)
+{
+    char *text;
+    int ret;
+
+    if (field == NULL || address == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = _rg255_query_get_field_text(field, &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (text[0] == '\0')
+    {
+        return -ENODATA;
+    }
+
+    ret = inet_pton(AF_INET, text, address);
+
+    if (ret < 0)
+    {
+        return -errno;
+    }
+
+    if (ret == 0)
+    {
+        return -EBADMSG;
+    }
+
+    if (address->s_addr == htonl(INADDR_ANY))
+    {
+        return -ENODATA;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 解析AT字段中的IPv6地址。
+ *
+ * @note 该辅助函数允许链路本地IPv6地址，用于解析IPv6网关。
+ */
+static int _rg255_query_parse_ipv6_field(char *field, struct in6_addr *address)
+{
+    char *text;
+    int ret;
+
+    if (field == NULL || address == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = _rg255_query_get_field_text(field, &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (text[0] == '\0')
+    {
+        return -ENODATA;
+    }
+
+    ret = inet_pton(AF_INET6, text, address);
+
+    if (ret < 0)
+    {
+        return -errno;
+    }
+
+    if (ret == 0)
+    {
+        return -EBADMSG;
+    }
+
+    if (IN6_IS_ADDR_UNSPECIFIED(address) ||
+        IN6_IS_ADDR_LOOPBACK(address) ||
+        IN6_IS_ADDR_MULTICAST(address))
+    {
+        return -ENODATA;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 将IPv6地址按前缀长度归一化为网络前缀。
+ */
+static void _rg255_query_mask_ipv6_prefix(struct in6_addr *prefix, uint8_t prefix_length)
+{
+    size_t full_bytes;
+    uint8_t remaining_bits;
+    size_t index;
+
+    if (prefix == NULL)
+    {
+        return;
+    }
+
+    full_bytes = prefix_length / 8U;
+    remaining_bits = prefix_length % 8U;
+
+    if (remaining_bits != 0U && full_bytes < sizeof(prefix->s6_addr))
+    {
+        prefix->s6_addr[full_bytes] &= (uint8_t)(0xFFU << (8U - remaining_bits));
+        full_bytes++;
+    }
+
+    for (index = full_bytes; index < sizeof(prefix->s6_addr); index++)
+    {
+        prefix->s6_addr[index] = 0U;
+    }
+}
+
+/**
+ * @brief 解析AT字段中的IPv6网络前缀。
+ */
+static int _rg255_query_parse_ipv6_prefix_field(char *field, struct in6_addr *prefix, uint8_t *prefix_length)
+{
+    char *slash;
+    char *text;
+    int length;
+    int ret;
+
+    if (field == NULL || prefix == NULL || prefix_length == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = _rg255_query_get_field_text(field, &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (text[0] == '\0')
+    {
+        return -ENODATA;
+    }
+
+    slash = strrchr(text, '/');
+
+    if (slash == NULL || slash == text || slash[1] == '\0')
+    {
+        return -EBADMSG;
+    }
+
+    *slash = '\0';
+
+    ret = _rg255_query_parse_int(slash + 1, &length);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (length < 0 || length > 128)
+    {
+        return -ERANGE;
+    }
+
+    ret = inet_pton(AF_INET6, text, prefix);
+
+    if (ret < 0)
+    {
+        return -errno;
+    }
+
+    if (ret == 0)
+    {
+        return -EBADMSG;
+    }
+
+    if (IN6_IS_ADDR_UNSPECIFIED(prefix) && length != 0)
+    {
+        return -ENODATA;
+    }
+
+    *prefix_length = (uint8_t)length;
+    _rg255_query_mask_ipv6_prefix(prefix, *prefix_length);
+
+    return 0;
+}
+
+/**
+ * @brief 解析网卡模式下USB网卡IPv4网络参数响应。
+ */
+static int _rg255_query_parse_network_card_ipv4_response(char *response, rg255_network_card_ipv4_info_t *info)
+{
+    char *fields[RG255_QUERY_FIELD_MAX];
+    char *body;
+    char *key;
+    char *mode_text;
+    char *text;
+    size_t field_count;
+    int opt;
+    int ret;
+
+    if (response == NULL || info == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(info, 0, sizeof(*info));
+
+    ret = _rg255_query_find_line_body(response, RG255_QUERY_PREFIX_QCFG, &body);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_split_csv(body, fields, RG255_QUERY_FIELD_MAX, &field_count);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (field_count < 6U)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_get_field_text(fields[0], &key);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (strcmp(key, RG255_QUERY_TEXT_NETMASKSET) != 0)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_get_field_text(fields[1], &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &opt);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (opt != RG255_QUERY_NETMASKSET_IPV4_OPT)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_get_field_text(fields[2], &mode_text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (strcmp(mode_text, RG255_QUERY_TEXT_DONGLE) != 0)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_parse_ipv4_field(fields[3], &info->address);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_ipv4_field(fields[4], &info->netmask);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_query_parse_ipv4_field(fields[5], &info->gateway);
+}
+
+/**
+ * @brief 解析网卡模式下USB网卡IPv6网络参数响应。
+ */
+static int _rg255_query_parse_network_card_ipv6_response(char *response, rg255_network_card_ipv6_info_t *info)
+{
+    char *fields[RG255_QUERY_FIELD_MAX];
+    char *body;
+    char *key;
+    char *mode_text;
+    char *text;
+    size_t field_count;
+    int opt;
+    int ret;
+
+    if (response == NULL || info == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(info, 0, sizeof(*info));
+
+    ret = _rg255_query_find_line_body(response, RG255_QUERY_PREFIX_QCFG, &body);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_split_csv(body, fields, RG255_QUERY_FIELD_MAX, &field_count);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    /**
+     * 当前只消费prefix和gateway，因此只要求前5个字段完整存在。
+     * 厂家返回的主/备DNS字段由本层忽略，不为未使用信息增加接口负担。
+     */
+    if (field_count < 5U)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_get_field_text(fields[0], &key);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (strcmp(key, RG255_QUERY_TEXT_NETMASKSET) != 0)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_get_field_text(fields[1], &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &opt);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (opt != RG255_QUERY_NETMASKSET_IPV6_OPT)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_get_field_text(fields[2], &mode_text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (strcmp(mode_text, RG255_QUERY_TEXT_DONGLE) != 0)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_parse_ipv6_prefix_field(fields[3], &info->prefix, &info->prefix_length);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_query_parse_ipv6_field(fields[4], &info->gateway);
 }
 
 /**
@@ -1131,9 +1655,7 @@ int rg255_query_network_mode(at_channel_t *channel, linkg_cellular_network_mode_
         return ret;
     }
 
-    *mode = _rg255_query_map_network_mode(text);
-
-    return 0;
+    return _rg255_query_map_network_mode(text, mode);
 }
 
 /**
@@ -1246,11 +1768,12 @@ int rg255_query_serving_cell(at_channel_t *channel, rg255_serving_cell_info_t *i
 /****************************** USB配置查询 ******************************/
 
 /**
- * @brief 查询并解析RG255当前USB网络模式。
+ * @brief 查询并解析RG255当前USB网卡接口协议。
  */
-int rg255_query_usbnet_mode(at_channel_t *channel, int *mode)
+int rg255_query_usbnet_mode(at_channel_t *channel, rg255_usbnet_mode_t *mode)
 {
     char response[RG255_QUERY_RESPONSE_SIZE];
+    int value;
     int ret;
 
     if (channel == NULL || mode == NULL)
@@ -1258,7 +1781,7 @@ int rg255_query_usbnet_mode(at_channel_t *channel, int *mode)
         return -EINVAL;
     }
 
-    *mode = -1;
+    *mode = RG255_USBNET_MODE_UNKNOWN;
     response[0] = '\0';
 
     ret = rg255_cmd_query_usbnet(channel, response, sizeof(response));
@@ -1268,27 +1791,50 @@ int rg255_query_usbnet_mode(at_channel_t *channel, int *mode)
         return ret;
     }
 
-    return _rg255_query_parse_qcfg_int(response, RG255_QUERY_TEXT_USBNET, mode);
+    ret = _rg255_query_parse_qcfg_int(response, RG255_QUERY_TEXT_USBNET, &value);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    switch (value)
+    {
+        case RG255_USBNET_MODE_ECM:
+            *mode = RG255_USBNET_MODE_ECM;
+            return 0;
+
+        case RG255_USBNET_MODE_MBIM:
+            *mode = RG255_USBNET_MODE_MBIM;
+            return 0;
+
+        case RG255_USBNET_MODE_RNDIS:
+            *mode = RG255_USBNET_MODE_RNDIS;
+            return 0;
+
+        default:
+            return -EBADMSG;
+    }
 }
 
 /**
- * @brief 查询并解析RG255当前NAT启用状态。
+ * @brief 查询并解析RG255当前USB网卡工作模式。
  */
-int rg255_query_nat_enabled(at_channel_t *channel, bool *enabled)
+int rg255_query_network_card_mode(at_channel_t *channel, rg255_network_card_mode_t *mode)
 {
     char response[RG255_QUERY_RESPONSE_SIZE];
     int value;
     int ret;
 
-    if (channel == NULL || enabled == NULL)
+    if (channel == NULL || mode == NULL)
     {
         return -EINVAL;
     }
 
-    *enabled = false;
+    *mode = RG255_NETWORK_CARD_MODE_UNKNOWN;
     response[0] = '\0';
 
-    ret = rg255_cmd_query_nat(channel, response, sizeof(response));
+    ret = rg255_cmd_query_network_card_mode(channel, response, sizeof(response));
 
     if (ret != 0)
     {
@@ -1302,19 +1848,75 @@ int rg255_query_nat_enabled(at_channel_t *channel, bool *enabled)
         return ret;
     }
 
-    if (value == 0)
+    if (value == RG255_NETWORK_CARD_MODE_ROUTER)
     {
-        *enabled = false;
+        *mode = RG255_NETWORK_CARD_MODE_ROUTER;
         return 0;
     }
 
-    if (value == 1)
+    if (value == RG255_NETWORK_CARD_MODE_NIC)
     {
-        *enabled = true;
+        *mode = RG255_NETWORK_CARD_MODE_NIC;
         return 0;
     }
 
     return -EBADMSG;
+}
+
+/**
+ * @brief 查询并解析RG255提供给Host USB网卡的IPv4网络参数。
+ *
+ * @note 该查询需要QNETDEV网卡拨号成功后执行。
+ */
+int rg255_query_network_card_ipv4(at_channel_t *channel, rg255_network_card_ipv4_info_t *info)
+{
+    char response[RG255_QUERY_RESPONSE_SIZE];
+    int ret;
+
+    if (channel == NULL || info == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(info, 0, sizeof(*info));
+    response[0] = '\0';
+
+    ret = rg255_cmd_query_network_card_ipv4(channel, response, sizeof(response));
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_query_parse_network_card_ipv4_response(response, info);
+}
+
+/**
+ * @brief 查询并解析RG255提供给Host USB网卡的IPv6网络参数。
+ *
+ * @note 该查询需要QNETDEV网卡拨号成功后执行；返回的是IPv6网络前缀和网关，不是Host完整IPv6地址。
+ */
+int rg255_query_network_card_ipv6(at_channel_t *channel, rg255_network_card_ipv6_info_t *info)
+{
+    char response[RG255_QUERY_RESPONSE_SIZE];
+    int ret;
+
+    if (channel == NULL || info == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(info, 0, sizeof(*info));
+    response[0] = '\0';
+
+    ret = rg255_cmd_query_network_card_ipv6(channel, response, sizeof(response));
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_query_parse_network_card_ipv6_response(response, info);
 }
 
 /****************************** PDP查询 ******************************/
@@ -1408,6 +2010,11 @@ int rg255_query_pdp_config(at_channel_t *channel, rg255_pdp_config_t *config)
         }
 
         config->pdp_type = _rg255_query_map_pdp_type(text);
+
+        if (config->pdp_type == RG255_PDP_TYPE_UNKNOWN)
+        {
+            return -EOPNOTSUPP;
+        }
 
         ret = _rg255_query_get_field_text(fields[2], &text);
 
@@ -1543,6 +2150,7 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
     char *body;
     char *text;
     size_t field_count;
+    size_t index;
     int cid;
     int ret;
 
@@ -1599,54 +2207,13 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
         return -EBADMSG;
     }
 
-    ret = _rg255_query_get_field_text(fields[1], &text);
-
-    if (ret != 0)
+    for (index = 1U; index < field_count; index++)
     {
-        return ret;
-    }
-
-    if (text[0] != '\0')
-    {
-        ret = inet_pton(AF_INET, text, &address->ipv4);
-
-        if (ret < 0)
-        {
-            return -errno;
-        }
-
-        if (ret == 0)
-        {
-            return -EBADMSG;
-        }
-
-        address->ipv4_valid = address->ipv4.s_addr != htonl(INADDR_ANY);
-    }
-
-    if (field_count >= 3U)
-    {
-        ret = _rg255_query_get_field_text(fields[2], &text);
+        ret = _rg255_query_parse_pdp_address_field(fields[index], address);
 
         if (ret != 0)
         {
             return ret;
-        }
-
-        if (text[0] != '\0')
-        {
-            ret = inet_pton(AF_INET6, text, &address->ipv6);
-
-            if (ret < 0)
-            {
-                return -errno;
-            }
-
-            if (ret == 0)
-            {
-                return -EBADMSG;
-            }
-
-            address->ipv6_valid = !IN6_IS_ADDR_UNSPECIFIED(&address->ipv6);
         }
     }
 
@@ -1656,24 +2223,28 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
 /****************************** 网络设备查询 ******************************/
 
 /**
- * @brief 查询并解析RG255 USB网络设备活动状态。
+ * @brief 查询并解析RG255 USB网络设备状态。
  */
-int rg255_query_netdev_active(at_channel_t *channel, bool *active)
+int rg255_query_netdev_status(at_channel_t *channel, rg255_netdev_status_t *status)
 {
     char response[RG255_QUERY_RESPONSE_SIZE];
     char *fields[RG255_QUERY_FIELD_MAX];
     char *body;
     char *text;
     size_t field_count;
+    int type;
+    int cid;
+    int urc_enabled;
     int state;
     int ret;
 
-    if (channel == NULL || active == NULL)
+    if (channel == NULL || status == NULL)
     {
         return -EINVAL;
     }
 
-    *active = false;
+    memset(status, 0, sizeof(*status));
+    status->type = RG255_NETDEV_TYPE_UNKNOWN;
     response[0] = '\0';
 
     ret = rg255_cmd_query_netdev(channel, response, sizeof(response));
@@ -1702,6 +2273,86 @@ int rg255_query_netdev_active(at_channel_t *channel, bool *active)
         return -EBADMSG;
     }
 
+    ret = _rg255_query_get_field_text(fields[0], &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &type);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    switch (type)
+    {
+        case RG255_NETDEV_TYPE_DISCONNECT:
+            status->type = RG255_NETDEV_TYPE_DISCONNECT;
+            break;
+
+        case RG255_NETDEV_TYPE_ONCE:
+            status->type = RG255_NETDEV_TYPE_ONCE;
+            break;
+
+        case RG255_NETDEV_TYPE_AUTO:
+            status->type = RG255_NETDEV_TYPE_AUTO;
+            break;
+
+        default:
+            return -EBADMSG;
+    }
+
+    ret = _rg255_query_get_field_text(fields[1], &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &cid);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (cid < 1 || cid > 11)
+    {
+        return -EBADMSG;
+    }
+
+    status->cid = (uint8_t)cid;
+
+    ret = _rg255_query_get_field_text(fields[2], &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &urc_enabled);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (urc_enabled == 0)
+    {
+        status->urc_enabled = false;
+    }
+    else if (urc_enabled == 1)
+    {
+        status->urc_enabled = true;
+    }
+    else
+    {
+        return -EBADMSG;
+    }
+
     ret = _rg255_query_get_field_text(fields[3], &text);
 
     if (ret != 0)
@@ -1718,13 +2369,13 @@ int rg255_query_netdev_active(at_channel_t *channel, bool *active)
 
     if (state == 0)
     {
-        *active = false;
+        status->connected = false;
         return 0;
     }
 
     if (state == 1)
     {
-        *active = true;
+        status->connected = true;
         return 0;
     }
 

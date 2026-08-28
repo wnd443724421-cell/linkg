@@ -2,7 +2,7 @@
  * @file linkg_network_ops.c
  * @brief LinkG网络通用能力及接口操作实现
  * @author Dawn
- * @version 1.0.0
+ * @version 1.1.0
  * @date 2026-07-23
  */
 
@@ -12,25 +12,27 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <ifaddrs.h>
 #include <limits.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 #include <net/if.h>
+#include <net/if_arp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <ifaddrs.h>
-#include <net/if_arp.h>
 
 #include "linkg_file.h"
 #include "linkg_time.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_NETWORK_WAIT_INTERVAL_MS 50U      // 网络接口等待检查周期
-#define LINKG_NETWORK_US_PER_MS        1000ULL  // 每毫秒包含的微秒数
-
+#define LINKG_NETWORK_WAIT_INTERVAL_MS      50U                                     // 网络接口等待检查周期
+#define LINKG_NETWORK_US_PER_MS             1000ULL                                 // 每毫秒包含的微秒数
+#define LINKG_NETWORK_ROUTE_BUFFER_SIZE     16384U                                  // 路由Netlink接收缓存大小
 #define LINKG_NETWORK_IPV4_FORWARD_PATH     "/proc/sys/net/ipv4/ip_forward"         // IPv4转发控制
 #define LINKG_NETWORK_IPV6_ACCEPT_RA_FORMAT "/proc/sys/net/ipv6/conf/%s/accept_ra"  // IPv6 RA接收控制
 #define LINKG_NETWORK_SYSCTL_PATH_SIZE      128U                                    // sysctl路径缓存大小
@@ -166,6 +168,386 @@ static void _network_sockaddr_ipv4_init(struct sockaddr_in *socket_address, cons
 
     socket_address->sin_family = AF_INET;
     socket_address->sin_addr   = *address;
+}
+
+
+/**
+ * @brief 判断IPv6地址是否属于指定网络前缀。
+ */
+static bool _network_ipv6_prefix_match(const struct in6_addr *address, const struct in6_addr *prefix, uint8_t prefix_length)
+{
+    size_t  full_bytes;
+    uint8_t remaining_bits;
+    uint8_t mask;
+
+    if (address == NULL || prefix == NULL || prefix_length > 128U)
+    {
+        return false;
+    }
+
+    full_bytes = prefix_length / 8U;
+    remaining_bits = prefix_length % 8U;
+
+    if (full_bytes > 0U && memcmp(address->s6_addr, prefix->s6_addr, full_bytes) != 0)
+    {
+        return false;
+    }
+
+    if (remaining_bits == 0U)
+    {
+        return true;
+    }
+
+    mask = (uint8_t)(0xFFU << (8U - remaining_bits));
+
+    return (address->s6_addr[full_bytes] & mask) == (prefix->s6_addr[full_bytes] & mask);
+}
+
+/**
+ * @brief 获取网络接口IPv4地址类属性。
+ */
+static int _network_interface_get_ipv4_value(const char *ifname, unsigned long request, struct in_addr *value)
+{
+    const struct sockaddr_in *socket_address;
+    struct ifreq              ifr;
+    int                       fd;
+    int                       ret;
+
+    if (value == NULL || (request != SIOCGIFADDR && request != SIOCGIFNETMASK))
+    {
+        return -EINVAL;
+    }
+
+    memset(value, 0, sizeof(*value));
+
+    ret = _network_ifreq_init(ifname, &ifr);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    fd = _network_control_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+
+    ret = _network_interface_ioctl(fd, request, &ifr);
+    if (ret != 0)
+    {
+        return _network_control_socket_close(fd, ret);
+    }
+
+    socket_address = request == SIOCGIFNETMASK
+        ? (const struct sockaddr_in *)&ifr.ifr_netmask
+        : (const struct sockaddr_in *)&ifr.ifr_addr;
+
+    if (socket_address->sin_family != AF_INET)
+    {
+        return _network_control_socket_close(fd, -EAFNOSUPPORT);
+    }
+
+    *value = socket_address->sin_addr;
+
+    return _network_control_socket_close(fd, 0);
+}
+
+/**
+ * @brief 打开并绑定NETLINK_ROUTE套接字。
+ */
+static int _network_route_socket_open(void)
+{
+    struct sockaddr_nl local_address;
+    int                fd;
+
+    fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    if (fd < 0)
+    {
+        return -errno;
+    }
+
+    memset(&local_address, 0, sizeof(local_address));
+    local_address.nl_family = AF_NETLINK;
+
+    if (bind(fd, (const struct sockaddr *)&local_address, sizeof(local_address)) != 0)
+    {
+        int ret;
+
+        ret = -errno;
+        close(fd);
+        return ret;
+    }
+
+    return fd;
+}
+
+/**
+ * @brief 从RTA属性读取uint32_t数值。
+ */
+static int _network_route_attribute_get_u32(const struct rtattr *attribute, uint32_t *value)
+{
+    if (attribute == NULL || value == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (RTA_PAYLOAD(attribute) < sizeof(*value))
+    {
+        return -EBADMSG;
+    }
+
+    memcpy(value, RTA_DATA(attribute), sizeof(*value));
+
+    return 0;
+}
+
+/**
+ * @brief 查询指定接口和地址族的主路由表默认网关。
+ *
+ * @note 若同一接口存在多条默认路由，优先返回metric最小的路由。
+ */
+static int _network_route_get_default_gateway(const char *ifname, int family, void *gateway, size_t gateway_size)
+{
+    union
+    {
+        struct in_addr  ipv4;
+        struct in6_addr ipv6;
+    } candidate_gateway;
+    struct
+    {
+        struct nlmsghdr header;
+        struct rtmsg    route;
+    } request;
+    struct sockaddr_nl kernel_address;
+    unsigned char      buffer[LINKG_NETWORK_ROUTE_BUFFER_SIZE];
+    uint32_t           best_metric;
+    unsigned int       ifindex;
+    bool               found;
+    int                fd;
+    ssize_t            sent;
+
+    if (!_network_interface_name_valid(ifname) || gateway == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if ((family == AF_INET && gateway_size != sizeof(struct in_addr)) ||
+        (family == AF_INET6 && gateway_size != sizeof(struct in6_addr)) ||
+        (family != AF_INET && family != AF_INET6))
+    {
+        return -EINVAL;
+    }
+
+    memset(gateway, 0, gateway_size);
+
+    ifindex = if_nametoindex(ifname);
+    if (ifindex == 0U)
+    {
+        return -ENODEV;
+    }
+
+    fd = _network_route_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+
+    memset(&request, 0, sizeof(request));
+    request.header.nlmsg_len   = NLMSG_LENGTH(sizeof(request.route));
+    request.header.nlmsg_type  = RTM_GETROUTE;
+    request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    request.header.nlmsg_seq   = 1U;
+    request.route.rtm_family   = (unsigned char)family;
+    request.route.rtm_table    = RT_TABLE_UNSPEC;
+
+    memset(&kernel_address, 0, sizeof(kernel_address));
+    kernel_address.nl_family = AF_NETLINK;
+
+    sent = sendto(fd,
+                  &request,
+                  request.header.nlmsg_len,
+                  0,
+                  (const struct sockaddr *)&kernel_address,
+                  sizeof(kernel_address));
+    if (sent < 0)
+    {
+        return _network_control_socket_close(fd, -errno);
+    }
+
+    if ((size_t)sent != request.header.nlmsg_len)
+    {
+        return _network_control_socket_close(fd, -EIO);
+    }
+
+    found = false;
+    best_metric = UINT32_MAX;
+
+    while (true)
+    {
+        struct nlmsghdr *message;
+        ssize_t          received;
+        int              remaining;
+
+        received = recv(fd, buffer, sizeof(buffer), 0);
+        if (received < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return _network_control_socket_close(fd, -errno);
+        }
+
+        if (received == 0)
+        {
+            return _network_control_socket_close(fd, -EIO);
+        }
+
+        if (received > INT_MAX)
+        {
+            return _network_control_socket_close(fd, -EOVERFLOW);
+        }
+
+        remaining = (int)received;
+        message = (struct nlmsghdr *)buffer;
+
+        while (NLMSG_OK(message, remaining))
+        {
+            struct rtmsg *route;
+            struct rtattr *attribute;
+            uint32_t       route_table;
+            uint32_t       route_ifindex;
+            uint32_t       route_metric;
+            int            attributes_length;
+            bool           gateway_present;
+            int            ret;
+
+            if (message->nlmsg_seq != request.header.nlmsg_seq)
+            {
+                message = NLMSG_NEXT(message, remaining);
+                continue;
+            }
+
+            if (message->nlmsg_type == NLMSG_DONE)
+            {
+                if ((message->nlmsg_flags & NLM_F_DUMP_INTR) != 0U)
+                {
+                    return _network_control_socket_close(fd, -EINTR);
+                }
+
+                return _network_control_socket_close(fd, found ? 0 : -ENOENT);
+            }
+
+            if (message->nlmsg_type == NLMSG_ERROR)
+            {
+                const struct nlmsgerr *netlink_error;
+
+                if (NLMSG_PAYLOAD(message, 0) < sizeof(*netlink_error))
+                {
+                    return _network_control_socket_close(fd, -EBADMSG);
+                }
+
+                netlink_error = (const struct nlmsgerr *)NLMSG_DATA(message);
+                if (netlink_error->error != 0)
+                {
+                    return _network_control_socket_close(fd, netlink_error->error);
+                }
+
+                message = NLMSG_NEXT(message, remaining);
+                continue;
+            }
+
+            if (message->nlmsg_type != RTM_NEWROUTE || NLMSG_PAYLOAD(message, 0) < sizeof(struct rtmsg))
+            {
+                message = NLMSG_NEXT(message, remaining);
+                continue;
+            }
+
+            route = (struct rtmsg *)NLMSG_DATA(message);
+            if (route->rtm_family != family || route->rtm_dst_len != 0U || route->rtm_type != RTN_UNICAST)
+            {
+                message = NLMSG_NEXT(message, remaining);
+                continue;
+            }
+
+            route_table = route->rtm_table;
+            route_ifindex = 0U;
+            route_metric = 0U;
+            gateway_present = false;
+            memset(&candidate_gateway, 0, sizeof(candidate_gateway));
+
+            attributes_length = RTM_PAYLOAD(message);
+            attribute = RTM_RTA(route);
+
+            while (RTA_OK(attribute, attributes_length))
+            {
+                switch (attribute->rta_type)
+                {
+                    case RTA_OIF:
+                        ret = _network_route_attribute_get_u32(attribute, &route_ifindex);
+                        if (ret != 0)
+                        {
+                            return _network_control_socket_close(fd, ret);
+                        }
+                        break;
+
+                    case RTA_PRIORITY:
+                        ret = _network_route_attribute_get_u32(attribute, &route_metric);
+                        if (ret != 0)
+                        {
+                            return _network_control_socket_close(fd, ret);
+                        }
+                        break;
+
+                    case RTA_TABLE:
+                        ret = _network_route_attribute_get_u32(attribute, &route_table);
+                        if (ret != 0)
+                        {
+                            return _network_control_socket_close(fd, ret);
+                        }
+                        break;
+
+                    case RTA_GATEWAY:
+                        if (RTA_PAYLOAD(attribute) < gateway_size)
+                        {
+                            return _network_control_socket_close(fd, -EBADMSG);
+                        }
+
+                        memcpy(&candidate_gateway, RTA_DATA(attribute), gateway_size);
+                        gateway_present = true;
+                        break;
+
+                    default:
+                        break;
+                }
+
+                attribute = RTA_NEXT(attribute, attributes_length);
+            }
+
+            if (attributes_length != 0)
+            {
+                return _network_control_socket_close(fd, -EBADMSG);
+            }
+
+            if (route_table == RT_TABLE_MAIN &&
+                route_ifindex == ifindex &&
+                gateway_present &&
+                (!found || route_metric < best_metric))
+            {
+                memcpy(gateway, &candidate_gateway, gateway_size);
+                best_metric = route_metric;
+                found = true;
+            }
+
+            message = NLMSG_NEXT(message, remaining);
+        }
+
+        if (remaining != 0)
+        {
+            return _network_control_socket_close(fd, -EBADMSG);
+        }
+    }
 }
 
 /****************************** IPv4转换 ******************************/
@@ -349,7 +731,7 @@ bool linkg_network_interface_exists(const char *ifname)
 /**
  * @brief 等待网络接口出现。
  */
-int  linkg_network_interface_wait(const char *ifname, uint32_t timeout_ms)
+int linkg_network_interface_wait(const char *ifname, uint32_t timeout_ms)
 {
     uint64_t start_us;
     uint64_t current_us;
@@ -417,9 +799,48 @@ int  linkg_network_interface_wait(const char *ifname, uint32_t timeout_ms)
 }
 
 /**
+ * @brief 获取网络接口当前启用状态。
+ */
+int linkg_network_interface_is_up(const char *ifname, bool *up)
+{
+    struct ifreq ifr;
+    int          fd;
+    int          ret;
+
+    if (up == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *up = false;
+
+    ret = _network_ifreq_init(ifname, &ifr);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    fd = _network_control_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+
+    ret = _network_interface_ioctl(fd, SIOCGIFFLAGS, &ifr);
+    if (ret != 0)
+    {
+        return _network_control_socket_close(fd, ret);
+    }
+
+    *up = (ifr.ifr_flags & IFF_UP) != 0;
+
+    return _network_control_socket_close(fd, 0);
+}
+
+/**
  * @brief 设置网络接口启用状态。
  */
-int  linkg_network_interface_set_up(const char *ifname, bool up)
+int linkg_network_interface_set_up(const char *ifname, bool up)
 {
     struct ifreq ifr;
     bool         current_up;
@@ -467,7 +888,7 @@ int  linkg_network_interface_set_up(const char *ifname, bool up)
 /**
  * @brief 设置网络接口MTU。
  */
-int  linkg_network_interface_set_mtu(const char *ifname, uint32_t mtu)
+int linkg_network_interface_set_mtu(const char *ifname, uint32_t mtu)
 {
     struct ifreq ifr;
     int          fd;
@@ -498,9 +919,48 @@ int  linkg_network_interface_set_mtu(const char *ifname, uint32_t mtu)
 }
 
 /**
+ * @brief 设置网络接口MAC地址。
+ */
+int linkg_network_interface_set_mac(const char *ifname, const uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
+{
+    struct ifreq ifr;
+    int fd;
+    int ret;
+
+    if (!_network_interface_name_valid(ifname) || mac == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if ((mac[0] & 0x01U) != 0U)
+    {
+        return -EINVAL;
+    }
+
+    ret = _network_ifreq_init(ifname, &ifr);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    fd = _network_control_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+
+    ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
+    memcpy(ifr.ifr_hwaddr.sa_data, mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+
+    ret = _network_interface_ioctl(fd, SIOCSIFHWADDR, &ifr);
+
+    return _network_control_socket_close(fd, ret);
+}
+
+/**
  * @brief 设置网络接口IPv4地址和子网掩码。
  */
-int  linkg_network_interface_set_ipv4(const char *ifname, const struct in_addr *address, const struct in_addr *netmask)
+int linkg_network_interface_set_ipv4(const char *ifname, const struct in_addr *address, const struct in_addr *netmask)
 {
     struct sockaddr_in socket_address;
     struct ifreq       ifr;
@@ -552,67 +1012,23 @@ int  linkg_network_interface_set_ipv4(const char *ifname, const struct in_addr *
 /**
  * @brief 获取网络接口当前IPv4地址。
  */
-int  linkg_network_interface_get_ipv4(const char *ifname, struct in_addr *address)
+int linkg_network_interface_get_ipv4(const char *ifname, struct in_addr *address)
 {
-    const struct sockaddr_in *socket_address;
-    struct ifreq request;
-    size_t name_length;
-    int socket_fd;
-    int ret;
-
-    if (ifname == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (address == NULL)
-    {
-        return -EINVAL;
-    }
-
-    name_length = strnlen(ifname, IFNAMSIZ);
-    if (name_length == 0U || name_length >= IFNAMSIZ)
-    {
-        return -EINVAL;
-    }
-
-    memset(address, 0, sizeof(*address));
-    memset(&request, 0, sizeof(request));
-
-    memcpy(request.ifr_name, ifname, name_length + 1U);
-
-    socket_fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-    if (socket_fd < 0)
-    {
-        return -errno;
-    }
-
-    ret = ioctl(socket_fd, SIOCGIFADDR, &request);
-    if (ret != 0)
-    {
-        ret = -errno;
-        close(socket_fd);
-        return ret;
-    }
-
-    socket_address = (const struct sockaddr_in *)&request.ifr_addr;
-    if (socket_address->sin_family != AF_INET)
-    {
-        close(socket_fd);
-        return -EAFNOSUPPORT;
-    }
-
-    *address = socket_address->sin_addr;
-
-    close(socket_fd);
-
-    return 0;
+    return _network_interface_get_ipv4_value(ifname, SIOCGIFADDR, address);
 }
 
 /**
- * @brief 获取网络接口IPv6地址。
+ * @brief 获取网络接口当前IPv4子网掩码。
  */
-static int _network_interface_get_ipv6(const char *ifname, bool global_only, struct in6_addr *address)
+int linkg_network_interface_get_ipv4_netmask(const char *ifname, struct in_addr *netmask)
+{
+    return _network_interface_get_ipv4_value(ifname, SIOCGIFNETMASK, netmask);
+}
+
+/**
+ * @brief 获取满足指定条件的网络接口IPv6地址。
+ */
+static int _network_interface_get_ipv6(const char *ifname, bool global_only, const struct in6_addr *prefix, uint8_t prefix_length, struct in6_addr *address)
 {
     const struct sockaddr_in6 *socket_address;
     struct ifaddrs            *interfaces;
@@ -620,6 +1036,11 @@ static int _network_interface_get_ipv6(const char *ifname, bool global_only, str
     int                        ret;
 
     if (!_network_interface_name_valid(ifname) || address == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (prefix != NULL && prefix_length > 128U)
     {
         return -EINVAL;
     }
@@ -670,6 +1091,11 @@ static int _network_interface_get_ipv6(const char *ifname, bool global_only, str
             continue;
         }
 
+        if (prefix != NULL && !_network_ipv6_prefix_match(&socket_address->sin6_addr, prefix, prefix_length))
+        {
+            continue;
+        }
+
         *address = socket_address->sin6_addr;
         ret = 0;
         break;
@@ -683,19 +1109,32 @@ static int _network_interface_get_ipv6(const char *ifname, bool global_only, str
 /**
  * @brief 获取网络接口当前IPv6地址。
  *
- * 忽略未指定、回环、组播及链路本地IPv6地址。
+ * @note 忽略未指定、回环、组播及链路本地IPv6地址。
  */
-int  linkg_network_interface_get_ipv6(const char *ifname, struct in6_addr *address)
+int linkg_network_interface_get_ipv6(const char *ifname, struct in6_addr *address)
 {
-    return _network_interface_get_ipv6(ifname, false, address);
+    return _network_interface_get_ipv6(ifname, false, NULL, 0U, address);
 }
 
 /**
  * @brief 获取网络接口当前公网Global IPv6地址。
  */
-int  linkg_network_interface_get_global_ipv6(const char *ifname, struct in6_addr *address)
+int linkg_network_interface_get_global_ipv6(const char *ifname, struct in6_addr *address)
 {
-    return _network_interface_get_ipv6(ifname, true, address);
+    return _network_interface_get_ipv6(ifname, true, NULL, 0U, address);
+}
+
+/**
+ * @brief 获取网络接口指定前缀下的公网Global IPv6地址。
+ */
+int linkg_network_interface_get_global_ipv6_in_prefix(const char *ifname, const struct in6_addr *prefix, uint8_t prefix_length, struct in6_addr *address)
+{
+    if (prefix == NULL || prefix_length > 128U)
+    {
+        return -EINVAL;
+    }
+
+    return _network_interface_get_ipv6(ifname, true, prefix, prefix_length, address);
 }
 
 /**
@@ -703,7 +1142,7 @@ int  linkg_network_interface_get_global_ipv6(const char *ifname, struct in6_addr
  *
  * @note FORCE模式对应Linux accept_ra=2，在IPv6 forwarding开启时仍允许接口接收RA。
  */
-int  linkg_network_interface_ipv6_accept_ra_set(const char *ifname, linkg_network_ipv6_accept_ra_t mode)
+int linkg_network_interface_ipv6_accept_ra_set(const char *ifname, linkg_network_ipv6_accept_ra_t mode)
 {
     char path[LINKG_NETWORK_SYSCTL_PATH_SIZE];
     char value;
@@ -728,7 +1167,7 @@ int  linkg_network_interface_ipv6_accept_ra_set(const char *ifname, linkg_networ
 /**
  * @brief 获取网络接口IPv6 Router Advertisement接收模式。
  */
-int  linkg_network_interface_ipv6_accept_ra_get(const char *ifname, linkg_network_ipv6_accept_ra_t *mode)
+int linkg_network_interface_ipv6_accept_ra_get(const char *ifname, linkg_network_ipv6_accept_ra_t *mode)
 {
     char path[LINKG_NETWORK_SYSCTL_PATH_SIZE];
     FILE *stream;
@@ -822,53 +1261,34 @@ bool linkg_network_ipv4_subnet_overlap(const struct in_addr *left_ip, const stru
     return left_first <= right_last && right_first <= left_last;
 }
 
+/****************************** 路由查询 ******************************/
+
+/**
+ * @brief 获取指定接口主路由表中的IPv4默认网关。
+ */
+int linkg_network_route_get_ipv4_default_gateway(const char *ifname, struct in_addr *gateway)
+{
+    return _network_route_get_default_gateway(ifname, AF_INET, gateway, sizeof(*gateway));
+}
+
+/**
+ * @brief 获取指定接口主路由表中的IPv6默认网关。
+ *
+ * @note IPv6默认网关通常为FE80::/10链路本地地址，这是正常的下一跳形式。
+ */
+int linkg_network_route_get_ipv6_default_gateway(const char *ifname, struct in6_addr *gateway)
+{
+    return _network_route_get_default_gateway(ifname, AF_INET6, gateway, sizeof(*gateway));
+}
+
 /****************************** 系统网络 ******************************/
 
 /**
  * @brief 设置系统IPv4转发状态。
  */
-int  linkg_network_ipv4_forwarding_set(bool enabled)
+int linkg_network_ipv4_forwarding_set(bool enabled)
 {
     const char value = enabled ? '1' : '0';
 
     return linkg_file_write_all(LINKG_NETWORK_IPV4_FORWARD_PATH, &value, sizeof(value));
-}
-
-/**
- * @brief 设置网络接口MAC地址。
- */
-int  linkg_network_interface_set_mac(const char *ifname, const uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
-{
-    struct ifreq ifr;
-    int fd;
-    int ret;
-
-    if (!_network_interface_name_valid(ifname) || mac == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if ((mac[0] & 0x01U) != 0U)
-    {
-        return -EINVAL;
-    }
-
-    ret = _network_ifreq_init(ifname, &ifr);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    fd = _network_control_socket_open();
-    if (fd < 0)
-    {
-        return fd;
-    }
-
-    ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
-    memcpy(ifr.ifr_hwaddr.sa_data, mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
-
-    ret = _network_interface_ioctl(fd, SIOCSIFHWADDR, &ifr);
-
-    return _network_control_socket_close(fd, ret);
 }

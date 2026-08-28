@@ -46,15 +46,23 @@ bool linkg_network_ipv6_address_is_global(const struct in6_addr *address);
 
 bool linkg_network_interface_exists(const char *ifname);
 int  linkg_network_interface_wait(const char *ifname, uint32_t timeout_ms);
+int  linkg_network_interface_is_up(const char *ifname, bool *up);
 int  linkg_network_interface_set_up(const char *ifname, bool up);
 int  linkg_network_interface_set_mtu(const char *ifname, uint32_t mtu);
 int  linkg_network_interface_set_mac(const char *ifname, const uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH]);
 int  linkg_network_interface_set_ipv4(const char *ifname, const struct in_addr *address, const struct in_addr *netmask);
 int  linkg_network_interface_get_ipv4(const char *ifname, struct in_addr *address);
+int  linkg_network_interface_get_ipv4_netmask(const char *ifname, struct in_addr *netmask);
 int  linkg_network_interface_get_ipv6(const char *ifname, struct in6_addr *address);
 int  linkg_network_interface_get_global_ipv6(const char *ifname, struct in6_addr *address);
+int  linkg_network_interface_get_global_ipv6_in_prefix(const char *ifname, const struct in6_addr *prefix, uint8_t prefix_length, struct in6_addr *address);
 int  linkg_network_interface_ipv6_accept_ra_set(const char *ifname, linkg_network_ipv6_accept_ra_t mode);
 int  linkg_network_interface_ipv6_accept_ra_get(const char *ifname, linkg_network_ipv6_accept_ra_t *mode);
+
+/****************************** 路由查询 ******************************/
+
+int linkg_network_route_get_ipv4_default_gateway(const char *ifname, struct in_addr *gateway);
+int linkg_network_route_get_ipv6_default_gateway(const char *ifname, struct in6_addr *gateway);
 
 /****************************** 系统网络 ******************************/
 

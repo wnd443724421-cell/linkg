@@ -2,7 +2,7 @@
  * @file rg255_cmd.c
  * @brief RG255 AT命令封装实现
  * @author Dawn
- * @version 2.0.0
+ * @version 2.1.0
  * @date 2026-08-28
  */
 
@@ -14,15 +14,15 @@
 
 /****************************** 命令常量 ******************************/
 
-#define RG255_CMD_BUFFER_SIZE              160U   // 动态AT命令缓存大小
-#define RG255_CMD_TIMEOUT_DEFAULT_MS       3000   // 普通AT命令超时，单位ms
-#define RG255_CMD_TIMEOUT_QUERY_MS         5000   // 状态查询命令超时，单位ms
-#define RG255_CMD_TIMEOUT_CONFIG_MS        5000   // 配置命令超时，单位ms
-#define RG255_CMD_TIMEOUT_PIN_MS           10000  // SIM PIN输入超时，单位ms
-#define RG255_CMD_TIMEOUT_PDP_ACTIVE_MS    60000  // PDP激活或去激活超时，单位ms
-#define RG255_CMD_TIMEOUT_NETDEV_START_MS  30000  // 网络设备启动超时，单位ms
-#define RG255_CMD_TIMEOUT_NETDEV_STOP_MS   15000  // 网络设备停止超时，单位ms
-#define RG255_CMD_TIMEOUT_RESTART_MS       3000   // 模块重启命令超时，单位ms
+#define RG255_CMD_BUFFER_SIZE                 160U    // 动态AT命令缓存大小
+#define RG255_CMD_TIMEOUT_DEFAULT_MS          3000    // 普通AT命令超时，单位ms
+#define RG255_CMD_TIMEOUT_QUERY_MS            5000    // 普通查询命令超时，单位ms
+#define RG255_CMD_TIMEOUT_CONFIG_MS           5000    // 普通配置命令超时，单位ms
+#define RG255_CMD_TIMEOUT_NETWORK_MODE_MS     10000   // 网络搜索模式查询或设置超时，单位ms
+#define RG255_CMD_TIMEOUT_PIN_MS              5000    // SIM PIN相关命令超时，单位ms
+#define RG255_CMD_TIMEOUT_PDP_ACTIVE_MS       150000  // PDP激活或去激活超时，单位ms
+#define RG255_CMD_TIMEOUT_NETDEV_MS           3000    // USB网络设备控制超时，单位ms
+#define RG255_CMD_TIMEOUT_RESTART_MS          15000   // 模块功能复位命令超时，单位ms
 
 /****************************** 内部辅助 ******************************/
 
@@ -188,7 +188,7 @@ static int _rg255_cmd_validate_apn(const char *apn)
 
     length = strlen(apn);
 
-    if (length > LINKG_CELLULAR_APN_MAX)
+    if (length > LINKG_CELLULAR_APN_MAX || length > RG255_APN_MAX_LENGTH)
     {
         return -EMSGSIZE;
     }
@@ -316,7 +316,7 @@ int rg255_cmd_disable_sleep(at_channel_t *channel)
  */
 int rg255_cmd_query_sim_status(at_channel_t *channel, char *response, int response_size)
 {
-    return _rg255_cmd_exec_query(channel, "AT+CPIN?", RG255_CMD_TIMEOUT_DEFAULT_MS, "+CPIN:", response, response_size);
+    return _rg255_cmd_exec_query(channel, "AT+CPIN?", RG255_CMD_TIMEOUT_PIN_MS, "+CPIN:", response, response_size);
 }
 
 /**
@@ -382,7 +382,7 @@ int rg255_cmd_get_imsi(at_channel_t *channel, char *imsi, int imsi_size)
  */
 int rg255_cmd_query_network_mode(at_channel_t *channel, char *response, int response_size)
 {
-    return _rg255_cmd_exec_query(channel, "AT+QNWPREFCFG=\"mode_pref\"", RG255_CMD_TIMEOUT_QUERY_MS, "+QNWPREFCFG:", response, response_size);
+    return _rg255_cmd_exec_query(channel, "AT+QNWPREFCFG=\"mode_pref\"", RG255_CMD_TIMEOUT_NETWORK_MODE_MS, "+QNWPREFCFG:", response, response_size);
 }
 
 /**
@@ -421,7 +421,7 @@ int rg255_cmd_set_network_mode(at_channel_t *channel, linkg_cellular_network_mod
         return ret;
     }
 
-    return _rg255_cmd_exec(channel, command, RG255_CMD_TIMEOUT_CONFIG_MS);
+    return _rg255_cmd_exec(channel, command, RG255_CMD_TIMEOUT_NETWORK_MODE_MS);
 }
 
 /****************************** 网络注册 ******************************/
@@ -465,18 +465,23 @@ int rg255_cmd_query_usbnet(at_channel_t *channel, char *response, int response_s
 /**
  * @brief 设置USB网络模式。
  */
-int rg255_cmd_set_usbnet(at_channel_t *channel, int mode)
+int rg255_cmd_set_usbnet(at_channel_t *channel, rg255_usbnet_mode_t mode)
 {
     char command[RG255_CMD_BUFFER_SIZE];
     int length;
     int ret;
 
-    if (mode != (int)RG255_USBNET_ECM)
+    if (mode == RG255_USBNET_MODE_MBIM)
+    {
+        return -EOPNOTSUPP;
+    }
+
+    if (mode != RG255_USBNET_MODE_ECM && mode != RG255_USBNET_MODE_RNDIS)
     {
         return -EINVAL;
     }
 
-    length = snprintf(command, sizeof(command), "AT+QCFG=\"usbnet\",%d", mode);
+    length = snprintf(command, sizeof(command), "AT+QCFG=\"usbnet\",%d", (int)mode);
     ret = _rg255_cmd_check_format_result(length, sizeof(command));
 
     if (ret != 0)
@@ -488,24 +493,56 @@ int rg255_cmd_set_usbnet(at_channel_t *channel, int mode)
 }
 
 /**
- * @brief 查询当前NAT模式。
+ * @brief 查询当前USB网卡工作模式。
  */
-int rg255_cmd_query_nat(at_channel_t *channel, char *response, int response_size)
+int rg255_cmd_query_network_card_mode(at_channel_t *channel, char *response, int response_size)
 {
     return _rg255_cmd_exec_query(channel, "AT+QCFG=\"nat\"", RG255_CMD_TIMEOUT_DEFAULT_MS, "+QCFG:", response, response_size);
 }
 
 /**
- * @brief 设置NAT模式。
+ * @brief 设置USB网卡工作模式。
  */
-int rg255_cmd_set_nat(at_channel_t *channel, bool enable)
+int rg255_cmd_set_network_card_mode(at_channel_t *channel, rg255_network_card_mode_t mode)
 {
-    if (enable)
+    char command[RG255_CMD_BUFFER_SIZE];
+    int length;
+    int ret;
+
+    if (mode != RG255_NETWORK_CARD_MODE_ROUTER && mode != RG255_NETWORK_CARD_MODE_NIC)
     {
-        return _rg255_cmd_exec(channel, "AT+QCFG=\"nat\",1", RG255_CMD_TIMEOUT_CONFIG_MS);
+        return -EINVAL;
     }
 
-    return _rg255_cmd_exec(channel, "AT+QCFG=\"nat\",0", RG255_CMD_TIMEOUT_CONFIG_MS);
+    length = snprintf(command, sizeof(command), "AT+QCFG=\"nat\",%d", (int)mode);
+    ret = _rg255_cmd_check_format_result(length, sizeof(command));
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_cmd_exec(channel, command, RG255_CMD_TIMEOUT_CONFIG_MS);
+}
+
+/**
+ * @brief 查询RG255网卡模式下USB网卡的IPv4网络参数。
+ *
+ * @note 该命令需要在QNETDEV网卡拨号成功后执行。
+ */
+int rg255_cmd_query_network_card_ipv4(at_channel_t *channel, char *response, int response_size)
+{
+    return _rg255_cmd_exec_query(channel, "AT+QCFG=\"netmaskset\",2", RG255_CMD_TIMEOUT_DEFAULT_MS, "+QCFG:", response, response_size);
+}
+
+/**
+ * @brief 查询RG255网卡模式下USB网卡的IPv6网络参数。
+ *
+ * @note 该命令需要在QNETDEV网卡拨号成功后执行。
+ */
+int rg255_cmd_query_network_card_ipv6(at_channel_t *channel, char *response, int response_size)
+{
+    return _rg255_cmd_exec_query(channel, "AT+QCFG=\"netmaskset\",3", RG255_CMD_TIMEOUT_DEFAULT_MS, "+QCFG:", response, response_size);
 }
 
 /****************************** PDP配置 ******************************/
@@ -622,7 +659,7 @@ int rg255_cmd_query_pdp_runtime(at_channel_t *channel, char *response, int respo
  */
 int rg255_cmd_start_netdev(at_channel_t *channel)
 {
-    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=1,1,1", RG255_CMD_TIMEOUT_NETDEV_START_MS);
+    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=1,1,1", RG255_CMD_TIMEOUT_NETDEV_MS);
 }
 
 /**
@@ -630,7 +667,7 @@ int rg255_cmd_start_netdev(at_channel_t *channel)
  */
 int rg255_cmd_stop_netdev(at_channel_t *channel)
 {
-    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=0,1,0", RG255_CMD_TIMEOUT_NETDEV_STOP_MS);
+    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=0,1,0", RG255_CMD_TIMEOUT_NETDEV_MS);
 }
 
 /**
@@ -646,7 +683,7 @@ int rg255_cmd_query_netdev(at_channel_t *channel, char *response, int response_s
  */
 int rg255_cmd_enable_netdev_auto_keep(at_channel_t *channel)
 {
-    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=3,1,1", RG255_CMD_TIMEOUT_NETDEV_START_MS);
+    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=3,1,1", RG255_CMD_TIMEOUT_NETDEV_MS);
 }
 
 /****************************** 模块控制 ******************************/
