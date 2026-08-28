@@ -47,9 +47,9 @@ typedef enum
 typedef enum
 {
     RG255_NETDEV_TYPE_UNKNOWN    = -1, // USB网卡连接方式未知
-    RG255_NETDEV_TYPE_DISCONNECT = 0, // 断开USB网卡连接
-    RG255_NETDEV_TYPE_ONCE       = 1, // 单次连接USB网卡
-    RG255_NETDEV_TYPE_AUTO       = 3  // 自动连接USB网卡
+    RG255_NETDEV_TYPE_DISCONNECT = 0,  // 断开USB网卡连接
+    RG255_NETDEV_TYPE_ONCE       = 1,  // 单次连接USB网卡
+    RG255_NETDEV_TYPE_AUTO       = 3   // 自动连接USB网卡
 } rg255_netdev_type_t;
 
 /****************************** 基础命令 ******************************/

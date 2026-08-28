@@ -66,6 +66,9 @@ struct at_channel
     int                            line_length;                           // 当前接收行长度
     int                            transaction_result;                    // 当前事务结果
 
+    uint8_t                        continuation_count;                    // 当前已接收的响应续行数量
+
+    bool                           response_started;                      // 当前事务是否已经收到主响应行
     bool                           transaction_done;                      // 当前事务是否完成
     bool                           line_discarding;                       // 是否正在丢弃超长行
     bool                           started;                               // 通道是否已经启动
@@ -182,11 +185,13 @@ static void _at_channel_reset_transaction_locked(at_channel_t *channel)
     memset(channel->current_command, 0, sizeof(channel->current_command));
     memset(channel->response, 0, sizeof(channel->response));
 
-    channel->transaction_state  = AT_CHANNEL_TRANSACTION_IDLE;
-    channel->response_length    = 0;
-    channel->transaction_result = 0;
-    channel->transaction_done   = false;
-    channel->drain_deadline_us  = 0U;
+    channel->transaction_state   = AT_CHANNEL_TRANSACTION_IDLE;
+    channel->response_length     = 0;
+    channel->transaction_result  = 0;
+    channel->continuation_count  = 0U;
+    channel->response_started    = false;
+    channel->transaction_done    = false;
+    channel->drain_deadline_us   = 0U;
 }
 
 /**
@@ -199,10 +204,12 @@ static void _at_channel_enter_draining_locked(at_channel_t *channel)
     memset(&channel->current_config, 0, sizeof(channel->current_config));
     memset(channel->current_command, 0, sizeof(channel->current_command));
 
-    channel->transaction_state = AT_CHANNEL_TRANSACTION_DRAINING;
-    channel->transaction_done = false;
-    channel->drain_deadline_us = linkg_time_monotonic_us() +
-                                 (uint64_t)AT_CHANNEL_DRAIN_TIMEOUT_MS * 1000ULL;
+    channel->transaction_state  = AT_CHANNEL_TRANSACTION_DRAINING;
+    channel->continuation_count = 0U;
+    channel->response_started   = false;
+    channel->transaction_done   = false;
+    channel->drain_deadline_us  = linkg_time_monotonic_us() +
+                                  (uint64_t)AT_CHANNEL_DRAIN_TIMEOUT_MS * 1000ULL;
 }
 
 /**
@@ -212,8 +219,10 @@ static void _at_channel_enter_draining_locked(at_channel_t *channel)
  */
 static void _at_channel_leave_draining_locked(at_channel_t *channel)
 {
-    channel->transaction_state = AT_CHANNEL_TRANSACTION_IDLE;
-    channel->drain_deadline_us = 0U;
+    channel->transaction_state  = AT_CHANNEL_TRANSACTION_IDLE;
+    channel->continuation_count = 0U;
+    channel->response_started   = false;
+    channel->drain_deadline_us  = 0U;
 }
 
 /**
@@ -599,6 +608,32 @@ static void _at_channel_process_line(at_channel_t *channel, const char *line)
         {
             channel->transaction_result = ret;
         }
+
+        channel->response_started = true;
+
+        pthread_mutex_unlock(&channel->lock);
+        return;
+    }
+
+    /**
+     * 当前命令已经收到主响应后，由命令层判断无前缀续行是否属于当前事务。
+     *
+     * @note continuation_match运行于RX线程且持有channel->lock，
+     *       匹配函数必须快速返回，禁止调用AT通道接口或执行阻塞操作。
+     */
+    if (channel->response_started &&
+        channel->current_config.continuation_match != NULL &&
+        channel->continuation_count < channel->current_config.continuation_max_lines &&
+        channel->current_config.continuation_match(line))
+    {
+        ret = _at_channel_append_response_locked(channel, line);
+
+        if (ret != 0 && channel->transaction_result == 0)
+        {
+            channel->transaction_result = ret;
+        }
+
+        channel->continuation_count++;
 
         pthread_mutex_unlock(&channel->lock);
         return;
@@ -1326,6 +1361,18 @@ int at_channel_exec(at_channel_t *channel, const char *command, const at_command
         return -EINVAL;
     }
 
+    if (config->continuation_match == NULL)
+    {
+        if (config->continuation_max_lines != 0U)
+        {
+            return -EINVAL;
+        }
+    }
+    else if (config->expect_prefix == NULL || config->continuation_max_lines == 0U)
+    {
+        return -EINVAL;
+    }
+
     if (response == NULL && response_size != 0)
     {
         return -EINVAL;
@@ -1409,12 +1456,14 @@ int at_channel_exec(at_channel_t *channel, const char *command, const at_command
     memset(channel->response, 0, sizeof(channel->response));
     memcpy(channel->current_command, command, command_length + 1U);
 
-    channel->current_config = *config;
-    channel->response_length = 0;
-    channel->transaction_result = 0;
-    channel->transaction_done = false;
-    channel->transaction_state = AT_CHANNEL_TRANSACTION_WAITING;
-    channel->drain_deadline_us = 0U;
+    channel->current_config      = *config;
+    channel->response_length     = 0;
+    channel->transaction_result  = 0;
+    channel->continuation_count  = 0U;
+    channel->response_started    = false;
+    channel->transaction_done    = false;
+    channel->transaction_state   = AT_CHANNEL_TRANSACTION_WAITING;
+    channel->drain_deadline_us   = 0U;
 
     /**
      * 在channel->lock保护下完成命令发送。
@@ -1515,6 +1564,8 @@ int at_channel_exec(at_channel_t *channel, const char *command, const at_command
     memset(&channel->current_config, 0, sizeof(channel->current_config));
     memset(channel->current_command, 0, sizeof(channel->current_command));
 
+    channel->continuation_count = 0U;
+    channel->response_started = false;
     channel->transaction_done = false;
 
     pthread_mutex_unlock(&channel->lock);

@@ -756,6 +756,11 @@ static int _rg255_query_parse_registration_response(char *response, const char *
         return ret;
     }
 
+    if (n < 0 || n > 2)
+    {
+        return -EBADMSG;
+    }
+
     ret = _rg255_query_get_field_text(fields[1], &text);
 
     if (ret != 0)
@@ -769,8 +774,6 @@ static int _rg255_query_parse_registration_response(char *response, const char *
     {
         return ret;
     }
-
-    (void)n;
 
     return _rg255_query_map_registration_state(stat, state);
 }
@@ -2183,7 +2186,7 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
         return ret;
     }
 
-    if (field_count < 2U)
+    if (field_count < 1U)
     {
         return -EBADMSG;
     }
@@ -2319,7 +2322,14 @@ int rg255_query_netdev_status(at_channel_t *channel, rg255_netdev_status_t *stat
         return ret;
     }
 
-    if (cid < 1 || cid > 11)
+    if (status->type == RG255_NETDEV_TYPE_DISCONNECT)
+    {
+        if (cid < 0 || cid > 11)
+        {
+            return -EBADMSG;
+        }
+    }
+    else if (cid < 1 || cid > 11)
     {
         return -EBADMSG;
     }

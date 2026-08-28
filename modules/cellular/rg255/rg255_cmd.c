@@ -23,6 +23,7 @@
 #define RG255_CMD_TIMEOUT_PDP_ACTIVE_MS       150000  // PDP激活或去激活超时，单位ms
 #define RG255_CMD_TIMEOUT_NETDEV_MS           3000    // USB网络设备控制超时，单位ms
 #define RG255_CMD_TIMEOUT_RESTART_MS          15000   // 模块功能复位命令超时，单位ms
+#define RG255_CMD_CONTINUATION_MAX_NETMASKSET 1U      // netmaskset IPv6响应最大续行数量
 
 /****************************** 内部辅助 ******************************/
 
@@ -84,9 +85,9 @@ static int _rg255_cmd_exec_plain_text(at_channel_t *channel, const char *command
 }
 
 /**
- * @brief 执行返回指定前缀响应的AT查询命令。
+ * @brief 执行支持命令级续行匹配的AT查询命令。
  */
-static int _rg255_cmd_exec_query(at_channel_t *channel, const char *command, int timeout_ms, const char *expect_prefix, char *response, int response_size)
+static int _rg255_cmd_exec_query_ex(at_channel_t *channel, const char *command, int timeout_ms, const char *expect_prefix, at_response_continuation_match_t continuation_match, unsigned int continuation_max_lines, char *response, int response_size)
 {
     at_command_config_t config;
 
@@ -115,11 +116,62 @@ static int _rg255_cmd_exec_query(at_channel_t *channel, const char *command, int
         return -EINVAL;
     }
 
+    if (continuation_match == NULL && continuation_max_lines != 0U)
+    {
+        return -EINVAL;
+    }
+
     memset(&config, 0, sizeof(config));
     config.timeout_ms = timeout_ms;
     config.expect_prefix = expect_prefix;
+    config.continuation_match = continuation_match;
+    config.continuation_max_lines = continuation_max_lines;
 
     return at_channel_exec(channel, command, &config, response, response_size);
+}
+
+/**
+ * @brief 执行返回指定前缀响应的AT查询命令。
+ */
+static int _rg255_cmd_exec_query(at_channel_t *channel, const char *command, int timeout_ms, const char *expect_prefix, char *response, int response_size)
+{
+    return _rg255_cmd_exec_query_ex(channel, command, timeout_ms, expect_prefix, NULL, 0U, response, response_size);
+}
+
+/**
+ * @brief 判断netmaskset IPv6响应行是否为厂家定义的无前缀续行。
+ *
+ * @note 该函数只识别续行结构 `,"<field>"`，不解析字段业务含义。
+ */
+static bool _rg255_cmd_match_netmaskset_ipv6_continuation(const char *line)
+{
+    size_t index;
+    size_t length;
+
+    if (line == NULL)
+    {
+        return false;
+    }
+
+    length = strlen(line);
+
+    if (length < 3U ||
+        line[0] != ',' ||
+        line[1] != '"' ||
+        line[length - 1U] != '"')
+    {
+        return false;
+    }
+
+    for (index = 2U; index + 1U < length; index++)
+    {
+        if (line[index] == ',' || line[index] == '"')
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -526,9 +578,9 @@ int rg255_cmd_set_network_card_mode(at_channel_t *channel, rg255_network_card_mo
 }
 
 /**
- * @brief 查询RG255网卡模式下USB网卡的IPv4网络参数。
+ * @brief 查询网卡模式下RG255提供给Host的IPv4网络参数。
  *
- * @note 该命令需要在QNETDEV网卡拨号成功后执行。
+ * @note 该命令需要在QNETDEV拨号成功后执行。
  */
 int rg255_cmd_query_network_card_ipv4(at_channel_t *channel, char *response, int response_size)
 {
@@ -536,13 +588,21 @@ int rg255_cmd_query_network_card_ipv4(at_channel_t *channel, char *response, int
 }
 
 /**
- * @brief 查询RG255网卡模式下USB网卡的IPv6网络参数。
+ * @brief 查询网卡模式下RG255提供给Host的IPv6网络参数。
  *
- * @note 该命令需要在QNETDEV网卡拨号成功后执行。
+ * @note RG255AA实机确认该命令可能将最后一个字段拆为不重复+QCFG前缀的第二行，
+ *       因此仅此命令启用命令级响应续行匹配。
  */
 int rg255_cmd_query_network_card_ipv6(at_channel_t *channel, char *response, int response_size)
 {
-    return _rg255_cmd_exec_query(channel, "AT+QCFG=\"netmaskset\",3", RG255_CMD_TIMEOUT_DEFAULT_MS, "+QCFG:", response, response_size);
+    return _rg255_cmd_exec_query_ex(channel,
+                                    "AT+QCFG=\"netmaskset\",3",
+                                    RG255_CMD_TIMEOUT_DEFAULT_MS,
+                                    "+QCFG:",
+                                    _rg255_cmd_match_netmaskset_ipv6_continuation,
+                                    RG255_CMD_CONTINUATION_MAX_NETMASKSET,
+                                    response,
+                                    response_size);
 }
 
 /****************************** PDP配置 ******************************/

@@ -25,7 +25,6 @@
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
 #include "linkg_packet_pool.h"
-#include "linkg_path_stats.h"
 #include "linkg_time.h"
 #include "wifi_flowctrl.h"
 #include "wifi_traffic.h"
@@ -62,7 +61,7 @@
 struct linkg_wifi_tx
 {
     pthread_mutex_t        normal_lock;                           // VIDEO/DATA控制路径串行锁
-    pthread_mutex_t        send_lock;                             // sendmmsg共享资源和Path TX统计锁
+    pthread_mutex_t        send_lock;                             // sendmmsg共享资源和发送telemetry计数保护锁
     linkg_wifi_flowctrl_t *flowctrl;                              // HI1105普通业务流控控制器
     linkg_wifi_tx_queue_t *video_queue;                           // VI等待队列
     linkg_wifi_tx_queue_t *data_queue;                            // BE等待队列
@@ -371,11 +370,11 @@ static void _linkg_wifi_tx_report(linkg_wifi_tx_t *tx, const linkg_wifi_flowctrl
 /****************************** Path统计 ******************************/
 
 /**
- * @brief 记录单个Packet发送失败统计。
+ * @brief 记录单个Packet的最终发送结果。
  *
- * @note 调用方必须持有send_lock。
+ * @note failed、dropped、expired三类统计互斥，只记录其中一种。
  */
-static void _linkg_wifi_tx_record_failed_locked(linkg_path_t *path, const linkg_packet_t *packet, bool dropped, bool expired)
+static void _linkg_wifi_tx_record_terminal(linkg_path_t *path, const linkg_packet_t *packet, bool dropped, bool expired)
 {
     uint64_t bytes;
 
@@ -386,71 +385,74 @@ static void _linkg_wifi_tx_record_failed_locked(linkg_path_t *path, const linkg_
 
     bytes = packet->data_length;
 
-    linkg_path_stats_record_tx_failed(&path->stats, bytes, 1U);
+    if (expired)
+    {
+        linkg_path_record_tx_expired(path, bytes, 1U);
+        return;
+    }
 
     if (dropped)
     {
-        linkg_path_stats_record_tx_data_dropped(&path->stats, bytes, 1U);
+        linkg_path_record_tx_dropped(path, bytes, 1U);
+        return;
     }
 
-    if (expired)
-    {
-        linkg_path_stats_record_tx_data_expired(&path->stats, bytes, 1U);
-    }
+    linkg_path_record_tx_failed(path, bytes, 1U);
 }
 
 /**
- * @brief 批量记录当前同步提交Packet的发送失败统计。
+ * @brief 批量记录当前同步提交Packet的最终发送结果。
  */
-static void _linkg_wifi_tx_record_current_failed(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_packet_t *const *packets, uint32_t count, bool dropped)
+static void _linkg_wifi_tx_record_current(linkg_path_t *path, linkg_packet_t *const *packets, uint32_t count, bool dropped)
 {
     uint32_t index;
 
-    if (tx == NULL || path == NULL || packets == NULL || count == 0U)
+    if (path == NULL || packets == NULL || count == 0U)
     {
         return;
     }
 
-    pthread_mutex_lock(&tx->send_lock);
-
     for (index = 0U; index < count; index++)
     {
-        _linkg_wifi_tx_record_failed_locked(path, packets[index], dropped, false);
+        _linkg_wifi_tx_record_terminal(path, packets[index], dropped, false);
     }
-
-    pthread_mutex_unlock(&tx->send_lock);
 }
 
 /**
- * @brief 批量记录等待队列Packet的发送失败统计。
+ * @brief 批量记录等待队列Packet的最终处理结果。
+ *
+ * @note lower_layer_failed为true时全部记录为底层最终发送失败；
+ *       否则过期元素记录expired，其余元素记录本地主动dropped。
  */
-static void _linkg_wifi_tx_record_queue_failed(linkg_wifi_tx_t *tx, const linkg_wifi_tx_queue_item_t *items, uint32_t count, uint64_t now_us, uint64_t max_age_us)
+static void _linkg_wifi_tx_record_queue(const linkg_wifi_tx_queue_item_t *items, uint32_t count, uint64_t now_us, uint64_t max_age_us, bool lower_layer_failed)
 {
     uint64_t elapsed_us;
     uint32_t index;
     bool expired;
 
-    if (tx == NULL || items == NULL || count == 0U)
+    if (items == NULL || count == 0U)
     {
         return;
     }
 
-    pthread_mutex_lock(&tx->send_lock);
-
     for (index = 0U; index < count; index++)
     {
-        expired = false;
-
-        if (now_us >= items[index].enqueue_us)
+        if (lower_layer_failed)
         {
-            elapsed_us = now_us - items[index].enqueue_us;
-            expired = max_age_us > 0U && elapsed_us >= max_age_us;
+            _linkg_wifi_tx_record_terminal(items[index].path, items[index].packet, false, false);
+            continue;
         }
 
-        _linkg_wifi_tx_record_failed_locked(items[index].path, items[index].packet, false, expired);
-    }
+        expired = false;
 
-    pthread_mutex_unlock(&tx->send_lock);
+        if (max_age_us > 0U && now_us >= items[index].enqueue_us)
+        {
+            elapsed_us = now_us - items[index].enqueue_us;
+            expired = elapsed_us >= max_age_us;
+        }
+
+        _linkg_wifi_tx_record_terminal(items[index].path, items[index].packet, !expired, expired);
+    }
 }
 
 /****************************** 底层发送 ******************************/
@@ -463,6 +465,7 @@ static void _linkg_wifi_tx_record_queue_failed(linkg_wifi_tx_t *tx, const linkg_
 static int _linkg_wifi_tx_send_current(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class, linkg_path_t *path, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, uint32_t *sent_count)
 {
     const struct sockaddr_in *target;
+    uint64_t sent_bytes;
     uint32_t chunk_count;
     uint32_t index;
     uint32_t offset;
@@ -557,10 +560,11 @@ static int _linkg_wifi_tx_send_current(linkg_wifi_tx_t *tx, linkg_wifi_traffic_c
     }
 
     *sent_count = offset;
+    sent_bytes = 0U;
 
     for (index = 0U; index < *sent_count; index++)
     {
-        linkg_path_stats_record_tx_success(&path->stats, packets[index]->data_length, 1U);
+        sent_bytes += packets[index]->data_length;
 
         if (traffic_class != LINKG_WIFI_TRAFFIC_REALTIME)
         {
@@ -570,6 +574,11 @@ static int _linkg_wifi_tx_send_current(linkg_wifi_tx_t *tx, linkg_wifi_traffic_c
     }
 
     pthread_mutex_unlock(&tx->send_lock);
+
+    if (*sent_count > 0U)
+    {
+        linkg_path_record_tx_success(path, sent_bytes, *sent_count);
+    }
 
     return 0;
 }
@@ -678,12 +687,16 @@ static int _linkg_wifi_tx_send_pending(linkg_wifi_tx_t *tx, linkg_wifi_traffic_c
 
     for (index = 0U; index < *sent_count; index++)
     {
-        linkg_path_stats_record_tx_success(&items[index].path->stats, items[index].packet->data_length, 1U);
         tx->normal_sent_packets++;
         tx->normal_sent_bytes += items[index].packet->data_length;
     }
 
     pthread_mutex_unlock(&tx->send_lock);
+
+    for (index = 0U; index < *sent_count; index++)
+    {
+        linkg_path_record_tx_success(items[index].path, items[index].packet->data_length, 1U);
+    }
 
     return 0;
 }
@@ -788,7 +801,7 @@ static void _linkg_wifi_tx_purge_queue(linkg_wifi_tx_t *tx, linkg_wifi_tx_queue_
             return;
         }
 
-        _linkg_wifi_tx_record_queue_failed(tx, items, drop_count, now_us, max_age_us);
+        _linkg_wifi_tx_record_queue(items, drop_count, now_us, max_age_us, false);
         tx->pending_drop_packets += drop_count;
         linkg_wifi_tx_queue_discard_batch(queue, drop_count);
 
@@ -808,7 +821,6 @@ static void _linkg_wifi_tx_flush_queue(linkg_wifi_tx_t *tx, linkg_wifi_tx_queue_
 {
     linkg_wifi_tx_queue_item_t items[LINKG_WIFI_TX_NORMAL_SEND_MAX];
     uint32_t peek_count;
-    uint32_t index;
 
     if (tx == NULL || queue == NULL)
     {
@@ -823,15 +835,7 @@ static void _linkg_wifi_tx_flush_queue(linkg_wifi_tx_t *tx, linkg_wifi_tx_queue_
             return;
         }
 
-        pthread_mutex_lock(&tx->send_lock);
-
-        for (index = 0U; index < peek_count; index++)
-        {
-            _linkg_wifi_tx_record_failed_locked(items[index].path, items[index].packet, false, false);
-        }
-
-        pthread_mutex_unlock(&tx->send_lock);
-
+        _linkg_wifi_tx_record_queue(items, peek_count, 0U, 0U, false);
         linkg_wifi_tx_queue_discard_batch(queue, peek_count);
     }
 }
@@ -902,7 +906,7 @@ static void _linkg_wifi_tx_drain_queue(linkg_wifi_tx_t *tx, linkg_wifi_tx_queue_
                 return;
             }
 
-            _linkg_wifi_tx_record_queue_failed(tx, items, send_count, 0U, 0U);
+            _linkg_wifi_tx_record_queue(items, send_count, 0U, 0U, true);
             tx->pending_drop_packets += send_count;
             linkg_wifi_tx_queue_discard_batch(queue, send_count);
             *blocked = true;
@@ -949,7 +953,7 @@ static uint32_t _linkg_wifi_tx_enqueue_current(linkg_wifi_tx_t *tx, linkg_wifi_t
             results[indices[index]] = ret;
         }
 
-        _linkg_wifi_tx_record_current_failed(tx, path, packets, count, false);
+        _linkg_wifi_tx_record_current(path, packets, count, true);
         return 0U;
     }
 
@@ -965,7 +969,7 @@ static uint32_t _linkg_wifi_tx_enqueue_current(linkg_wifi_tx_t *tx, linkg_wifi_t
             results[indices[index]] = -ENOBUFS;
         }
 
-        _linkg_wifi_tx_record_current_failed(tx, path, &packets[pushed_count], count - pushed_count, true);
+        _linkg_wifi_tx_record_current(path, &packets[pushed_count], count - pushed_count, true);
         tx->pending_drop_packets += count - pushed_count;
     }
 
@@ -1026,7 +1030,7 @@ static uint32_t _linkg_wifi_tx_send_current_normal(linkg_wifi_tx_t *tx, linkg_wi
             results[indices[index]] = ret;
         }
 
-        _linkg_wifi_tx_record_current_failed(tx, path, packets, attempt_count, false);
+        _linkg_wifi_tx_record_current(path, packets, attempt_count, false);
         accepted_count = 0U;
 
         if (attempt_count < count)
@@ -1110,7 +1114,7 @@ static int _linkg_wifi_tx_submit_realtime(linkg_wifi_tx_t *tx, linkg_path_t *pat
             results[valid_indices[index]] = -ENODEV;
         }
 
-        _linkg_wifi_tx_record_current_failed(tx, path, valid_packets, valid_count, false);
+        _linkg_wifi_tx_record_current(path, valid_packets, valid_count, true);
         return 0;
     }
 
@@ -1123,7 +1127,7 @@ static int _linkg_wifi_tx_submit_realtime(linkg_wifi_tx_t *tx, linkg_path_t *pat
             results[valid_indices[index]] = ret;
         }
 
-        _linkg_wifi_tx_record_current_failed(tx, path, valid_packets, valid_count, false);
+        _linkg_wifi_tx_record_current(path, valid_packets, valid_count, false);
         return 0;
     }
 
@@ -1139,7 +1143,7 @@ static int _linkg_wifi_tx_submit_realtime(linkg_wifi_tx_t *tx, linkg_path_t *pat
 
     if (sent_count < valid_count)
     {
-        _linkg_wifi_tx_record_current_failed(tx, path, &valid_packets[sent_count], valid_count - sent_count, false);
+        _linkg_wifi_tx_record_current(path, &valid_packets[sent_count], valid_count - sent_count, false);
     }
 
     return (int)sent_count;
@@ -1210,7 +1214,7 @@ static int _linkg_wifi_tx_submit_normal(linkg_wifi_tx_t *tx, linkg_path_t *path,
             results[valid_indices[index]] = -ENODEV;
         }
 
-        _linkg_wifi_tx_record_current_failed(tx, path, valid_packets, valid_count, false);
+        _linkg_wifi_tx_record_current(path, valid_packets, valid_count, true);
         pthread_mutex_unlock(&tx->normal_lock);
         return 0;
     }

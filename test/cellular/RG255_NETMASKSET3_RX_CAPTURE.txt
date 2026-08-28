@@ -1,0 +1,39 @@
+[CONFIG] device=/dev/ttyUSB1 command=<AT+QCFG="netmaskset",3> TX_suffix=<CR><LF>
+[CONFIG] expected_prefix=<+QCFG:> accept_plain_text=false
+[BUFFERS] uart_read=512 line=512 (max payload=511) response=4096
+[TX] len=24 escaped=AT+QCFG="netmaskset",3<CR><LF>
+[UART_READ 1] len=23 raw_offset=0
+        0000 : 41 54 2B 51 43 46 47 3D 22 6E 65 74 6D 61 73 6B  |AT+QCFG="netmask|
+        0010 : 73 65 74 22 2C 33 0D                             |set",3.|
+        ESCAPED: AT+QCFG="netmaskset",3<CR>
+[UART_READ 2] len=118 raw_offset=23
+        0017 : 0D 0A 2B 51 43 46 47 3A 20 22 6E 65 74 6D 61 73  |..+QCFG: "netmas|
+        0027 : 6B 73 65 74 22 2C 33 2C 22 64 6F 6E 67 6C 65 22  |kset",3,"dongle"|
+        0037 : 2C 22 32 34 30 45 3A 34 37 36 3A 38 43 35 3A 46  |,"240E:476:8C5:F|
+        0047 : 38 44 31 3A 3A 2F 36 34 22 2C 22 46 45 38 30 3A  |8D1::/64","FE80:|
+        0057 : 3A 31 32 33 34 22 2C 22 32 34 30 45 3A 35 36 3A  |:1234","240E:56:|
+        0067 : 34 30 30 30 3A 3A 32 31 38 22 0D 0A 2C 22 32 34  |4000::218"..,"24|
+        0077 : 30 45 3A 35 36 3A 34 30 30 30 3A 38 30 30 30 3A  |0E:56:4000:8000:|
+        0087 : 3A 36 39 22 0D 0A                                |:69"..|
+        ESCAPED: <CR><LF>
++QCFG: "netmaskset",3,"dongle","240E:476:8C5:F8D1::/64","FE80::1234","240E:56:4000::218"<CR><LF>
+,"240E:56:4000:8000::69"<CR><LF>
+[ASSEMBLED_LINE 1] len=22 text=<AT+QCFG="netmaskset",3>
+        transaction=WAITING expected_prefix=<+QCFG:> accept_plain_text=false
+        ROUTE: COMMAND_ECHO_IGNORED
+[ASSEMBLED_LINE 2] len=88 text=<+QCFG: "netmaskset",3,"dongle","240E:476:8C5:F8D1::/64","FE80::1234","240E:56:4000::218">
+        transaction=WAITING expected_prefix=<+QCFG:> accept_plain_text=false
+        ROUTE: COMMAND_RESPONSE (expected prefix matched)
+[ASSEMBLED_LINE 3] len=24 text=<,"240E:56:4000:8000::69">
+        transaction=WAITING expected_prefix=<+QCFG:> accept_plain_text=false
+        ROUTE: URC_CALLBACK (no expected prefix; plain text disabled)
+[UART_READ 3] len=6 raw_offset=141
+        008d : 0D 0A 4F 4B 0D 0A                                |..OK..|
+        ESCAPED: <CR><LF>
+OK<CR><LF>
+[ASSEMBLED_LINE 4] len=2 text=<OK>
+        transaction=WAITING expected_prefix=<+QCFG:> accept_plain_text=false
+        ROUTE: SUCCESS_TERMINAL (transaction complete)
+[SUMMARY] reads=3 raw_bytes=147 assembled_lines=4 transaction_done=true
+[SUMMARY] command_response_len=88 text=<+QCFG: "netmaskset",3,"dongle","240E:476:8C5:F8D1::/64","FE80::1234","240E:56:4000::218">
+[SUMMARY] line_overflow=false response_overflow=false

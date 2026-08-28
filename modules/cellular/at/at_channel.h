@@ -7,6 +7,7 @@
 #define AT_CHANNEL_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "linkg_uart.h"
 
@@ -19,12 +20,15 @@ extern "C" {
 typedef struct at_channel at_channel_t;
 
 typedef void (*at_urc_callback_t)(const char *line, void *context);
+typedef bool (*at_response_continuation_match_t)(const char *line);
 
 typedef struct
 {
-    int         timeout_ms;        // 命令超时时间，单位ms
-    const char *expect_prefix;     // 期望响应行前缀，NULL表示无指定前缀
-    bool        accept_plain_text; // 是否接受无前缀普通文本响应
+    int                              timeout_ms;             // 命令超时时间，单位ms
+    const char                      *expect_prefix;          // 期望响应行前缀，NULL表示无指定前缀
+    bool                             accept_plain_text;      // 是否接受无前缀普通文本响应
+    at_response_continuation_match_t continuation_match;    // 响应续行匹配函数，NULL表示不支持续行
+    uint8_t                          continuation_max_lines; // 最大响应续行数量
 } at_command_config_t;
 
 /****************************** 生命周期 ******************************/

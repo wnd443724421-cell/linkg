@@ -25,7 +25,6 @@
 
 #include "linkg_network_ops.h"
 #include "linkg_packet_pool.h"
-#include "linkg_path_stats.h"
 #include "linkg_time.h"
 
 #include "rg255_tx_queue.h"
@@ -49,7 +48,7 @@
 struct linkg_cellular_tx
 {
     pthread_mutex_t             normal_lock;       // VIDEO/DATA控制路径串行锁
-    pthread_mutex_t             send_lock;         // sendmmsg共享资源和Path TX统计锁
+    pthread_mutex_t             send_lock;         // sendmmsg共享scratch资源保护锁
     linkg_cellular_tx_queue_t  *video_queue;       // VIDEO短等待队列
     linkg_cellular_tx_queue_t  *data_queue;        // DATA短等待队列
     struct mmsghdr             *messages;          // sendmmsg消息数组
@@ -235,11 +234,11 @@ static uint32_t _linkg_cellular_tx_complete_queue_prefix(const linkg_cellular_tx
 /****************************** Path统计 ******************************/
 
 /**
- * @brief 记录单个Packet发送失败统计。
+ * @brief 记录单个Packet的最终发送结果。
  *
- * @note 调用方必须持有send_lock。
+ * @note failed、dropped、expired三类统计互斥，只记录其中一种。
  */
-static void _linkg_cellular_tx_record_failed_locked(linkg_path_t *path, const linkg_packet_t *packet, bool dropped, bool expired)
+static void _linkg_cellular_tx_record_terminal(linkg_path_t *path, const linkg_packet_t *packet, bool dropped, bool expired)
 {
     uint64_t bytes;
 
@@ -250,59 +249,64 @@ static void _linkg_cellular_tx_record_failed_locked(linkg_path_t *path, const li
 
     bytes = packet->data_length;
 
-    linkg_path_stats_record_tx_failed(&path->stats, bytes, 1U);
+    if (expired)
+    {
+        linkg_path_record_tx_expired(path, bytes, 1U);
+        return;
+    }
 
     if (dropped)
     {
-        linkg_path_stats_record_tx_data_dropped(&path->stats, bytes, 1U);
+        linkg_path_record_tx_dropped(path, bytes, 1U);
+        return;
     }
 
-    if (expired)
-    {
-        linkg_path_stats_record_tx_data_expired(&path->stats, bytes, 1U);
-    }
+    linkg_path_record_tx_failed(path, bytes, 1U);
 }
 
 /**
- * @brief 记录当前同步提交Packet发送失败统计。
+ * @brief 批量记录当前同步提交Packet的最终发送结果。
  */
-static void _linkg_cellular_tx_record_current_failed(linkg_cellular_tx_t *tx, linkg_path_t *path, linkg_packet_t *const *packets, uint32_t count, bool dropped)
+static void _linkg_cellular_tx_record_current(linkg_path_t *path, linkg_packet_t *const *packets, uint32_t count, bool dropped)
 {
     uint32_t index;
 
-    if (tx == NULL || path == NULL || packets == NULL || count == 0U)
+    if (path == NULL || packets == NULL || count == 0U)
     {
         return;
     }
 
-    pthread_mutex_lock(&tx->send_lock);
-
     for (index = 0U; index < count; index++)
     {
-        _linkg_cellular_tx_record_failed_locked(path, packets[index], dropped, false);
+        _linkg_cellular_tx_record_terminal(path, packets[index], dropped, false);
     }
-
-    pthread_mutex_unlock(&tx->send_lock);
 }
 
 /**
- * @brief 记录等待队列Packet发送失败统计。
+ * @brief 批量记录等待队列Packet的最终处理结果。
+ *
+ * @note lower_layer_failed为true时全部记录为底层最终发送失败；
+ *       否则过期元素记录expired，其余元素记录本地主动dropped。
  */
-static void _linkg_cellular_tx_record_queue_failed(linkg_cellular_tx_t *tx, const linkg_cellular_tx_queue_item_t *items, uint32_t count, uint64_t now_us, uint64_t max_age_us)
+static void _linkg_cellular_tx_record_queue(const linkg_cellular_tx_queue_item_t *items, uint32_t count, uint64_t now_us, uint64_t max_age_us, bool lower_layer_failed)
 {
     uint64_t elapsed_us;
     uint32_t index;
     bool expired;
 
-    if (tx == NULL || items == NULL || count == 0U)
+    if (items == NULL || count == 0U)
     {
         return;
     }
 
-    pthread_mutex_lock(&tx->send_lock);
-
     for (index = 0U; index < count; index++)
     {
+        if (lower_layer_failed)
+        {
+            _linkg_cellular_tx_record_terminal(items[index].path, items[index].packet, false, false);
+            continue;
+        }
+
         expired = false;
 
         if (max_age_us > 0U && now_us >= items[index].enqueue_us)
@@ -311,10 +315,8 @@ static void _linkg_cellular_tx_record_queue_failed(linkg_cellular_tx_t *tx, cons
             expired = elapsed_us >= max_age_us;
         }
 
-        _linkg_cellular_tx_record_failed_locked(items[index].path, items[index].packet, false, expired);
+        _linkg_cellular_tx_record_terminal(items[index].path, items[index].packet, !expired, expired);
     }
-
-    pthread_mutex_unlock(&tx->send_lock);
 }
 
 /****************************** 底层发送 ******************************/
@@ -365,6 +367,7 @@ static int _linkg_cellular_tx_send_current(linkg_cellular_tx_t *tx, linkg_link_t
     const struct sockaddr_in6 *target;
     unsigned char             *control;
     unsigned int               interface_index;
+    uint64_t                   sent_bytes;
     uint32_t                   chunk_count;
     uint32_t                   index;
     uint32_t                   offset;
@@ -484,13 +487,19 @@ static int _linkg_cellular_tx_send_current(linkg_cellular_tx_t *tx, linkg_link_t
     }
 
     *sent_count = offset;
+    sent_bytes = 0U;
 
     for (index = 0U; index < *sent_count; index++)
     {
-        linkg_path_stats_record_tx_success(&path->stats, packets[index]->data_length, 1U);
+        sent_bytes += packets[index]->data_length;
     }
 
     pthread_mutex_unlock(&tx->send_lock);
+
+    if (*sent_count > 0U)
+    {
+        linkg_path_record_tx_success(path, sent_bytes, *sent_count);
+    }
 
     return 0;
 }
@@ -625,12 +634,12 @@ static int _linkg_cellular_tx_send_pending(linkg_cellular_tx_t *tx, linkg_link_t
 
     *sent_count = offset;
 
+    pthread_mutex_unlock(&tx->send_lock);
+
     for (index = 0U; index < *sent_count; index++)
     {
-        linkg_path_stats_record_tx_success(&items[index].path->stats, items[index].packet->data_length, 1U);
+        linkg_path_record_tx_success(items[index].path, items[index].packet->data_length, 1U);
     }
-
-    pthread_mutex_unlock(&tx->send_lock);
 
     return 0;
 }
@@ -735,7 +744,7 @@ static void _linkg_cellular_tx_purge_queue(linkg_cellular_tx_t *tx, linkg_cellul
             return;
         }
 
-        _linkg_cellular_tx_record_queue_failed(tx, items, drop_count, now_us, max_age_us);
+        _linkg_cellular_tx_record_queue(items, drop_count, now_us, max_age_us, false);
         (void)linkg_cellular_tx_queue_discard_batch(queue, drop_count);
 
         if (drop_count < peek_count)
@@ -754,7 +763,6 @@ static void _linkg_cellular_tx_flush_queue(linkg_cellular_tx_t *tx, linkg_cellul
 {
     linkg_cellular_tx_queue_item_t items[LINKG_CELLULAR_TX_NORMAL_SEND_MAX];
     uint32_t                       peek_count;
-    uint32_t                       index;
 
     if (tx == NULL || queue == NULL)
     {
@@ -769,15 +777,7 @@ static void _linkg_cellular_tx_flush_queue(linkg_cellular_tx_t *tx, linkg_cellul
             return;
         }
 
-        pthread_mutex_lock(&tx->send_lock);
-
-        for (index = 0U; index < peek_count; index++)
-        {
-            _linkg_cellular_tx_record_failed_locked(items[index].path, items[index].packet, false, false);
-        }
-
-        pthread_mutex_unlock(&tx->send_lock);
-
+        _linkg_cellular_tx_record_queue(items, peek_count, 0U, 0U, false);
         (void)linkg_cellular_tx_queue_discard_batch(queue, peek_count);
     }
 }
@@ -848,7 +848,7 @@ static void _linkg_cellular_tx_drain_queue(linkg_cellular_tx_t *tx, linkg_cellul
                 return;
             }
 
-            _linkg_cellular_tx_record_queue_failed(tx, items, send_count, 0U, 0U);
+            _linkg_cellular_tx_record_queue(items, send_count, 0U, 0U, true);
             (void)linkg_cellular_tx_queue_discard_batch(queue, send_count);
             *blocked = true;
             return;
@@ -874,7 +874,7 @@ static void _linkg_cellular_tx_drain_queue(linkg_cellular_tx_t *tx, linkg_cellul
  *
  * @note 调用方必须持有normal_lock。成功入队后Queue接管异步发送责任。
  */
-static uint32_t _linkg_cellular_tx_enqueue_current(linkg_cellular_tx_t *tx, linkg_cellular_tx_queue_t *queue, linkg_path_t *path, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, const uint32_t *indices, uint32_t count, uint64_t enqueue_us, int *results)
+static uint32_t _linkg_cellular_tx_enqueue_current(linkg_cellular_tx_queue_t *queue, linkg_path_t *path, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, const uint32_t *indices, uint32_t count, uint64_t enqueue_us, int *results)
 {
     uint32_t pushed_count;
     uint32_t index;
@@ -894,7 +894,7 @@ static uint32_t _linkg_cellular_tx_enqueue_current(linkg_cellular_tx_t *tx, link
             results[indices[index]] = ret;
         }
 
-        _linkg_cellular_tx_record_current_failed(tx, path, packets, count, false);
+        _linkg_cellular_tx_record_current(path, packets, count, true);
         return 0U;
     }
 
@@ -910,7 +910,7 @@ static uint32_t _linkg_cellular_tx_enqueue_current(linkg_cellular_tx_t *tx, link
             results[indices[index]] = -ENOBUFS;
         }
 
-        _linkg_cellular_tx_record_current_failed(tx, path, &packets[pushed_count], count - pushed_count, true);
+        _linkg_cellular_tx_record_current(path, &packets[pushed_count], count - pushed_count, true);
     }
 
     return pushed_count;
@@ -937,7 +937,7 @@ static uint32_t _linkg_cellular_tx_send_current_normal(linkg_cellular_tx_t *tx, 
 
     if (*remaining == 0U || *blocked)
     {
-        return _linkg_cellular_tx_enqueue_current(tx, queue, path, destination, packets, indices, count, now_us, results);
+        return _linkg_cellular_tx_enqueue_current(queue, path, destination, packets, indices, count, now_us, results);
     }
 
     attempt_count = count;
@@ -950,7 +950,7 @@ static uint32_t _linkg_cellular_tx_send_current_normal(linkg_cellular_tx_t *tx, 
     attempt_count = _linkg_cellular_tx_complete_prefix(packets, count, attempt_count);
     if (attempt_count == 0U)
     {
-        return _linkg_cellular_tx_enqueue_current(tx, queue, path, destination, packets, indices, count, now_us, results);
+        return _linkg_cellular_tx_enqueue_current(queue, path, destination, packets, indices, count, now_us, results);
     }
 
     sent_count = 0U;
@@ -961,7 +961,7 @@ static uint32_t _linkg_cellular_tx_send_current_normal(linkg_cellular_tx_t *tx, 
         if (_linkg_cellular_tx_error_retryable(ret))
         {
             *blocked = true;
-            return _linkg_cellular_tx_enqueue_current(tx, queue, path, destination, packets, indices, count, now_us, results);
+            return _linkg_cellular_tx_enqueue_current(queue, path, destination, packets, indices, count, now_us, results);
         }
 
         for (index = 0U; index < attempt_count; index++)
@@ -969,13 +969,12 @@ static uint32_t _linkg_cellular_tx_send_current_normal(linkg_cellular_tx_t *tx, 
             results[indices[index]] = ret;
         }
 
-        _linkg_cellular_tx_record_current_failed(tx, path, packets, attempt_count, false);
+        _linkg_cellular_tx_record_current(path, packets, attempt_count, false);
         accepted_count = 0U;
 
         if (attempt_count < count)
         {
-            queued_count = _linkg_cellular_tx_enqueue_current(tx,
-                                                               queue,
+            queued_count = _linkg_cellular_tx_enqueue_current(queue,
                                                                path,
                                                                destination,
                                                                &packets[attempt_count],
@@ -1001,8 +1000,7 @@ static uint32_t _linkg_cellular_tx_send_current_normal(linkg_cellular_tx_t *tx, 
 
     if (sent_count < attempt_count)
     {
-        queued_count = _linkg_cellular_tx_enqueue_current(tx,
-                                                           queue,
+        queued_count = _linkg_cellular_tx_enqueue_current(queue,
                                                            path,
                                                            destination,
                                                            &packets[sent_count],
@@ -1017,8 +1015,7 @@ static uint32_t _linkg_cellular_tx_send_current_normal(linkg_cellular_tx_t *tx, 
 
     if (attempt_count < count)
     {
-        queued_count = _linkg_cellular_tx_enqueue_current(tx,
-                                                           queue,
+        queued_count = _linkg_cellular_tx_enqueue_current(queue,
                                                            path,
                                                            destination,
                                                            &packets[attempt_count],
@@ -1078,7 +1075,7 @@ static int _linkg_cellular_tx_submit_realtime(linkg_cellular_tx_t *tx, linkg_pat
             results[valid_indices[index]] = -ENODEV;
         }
 
-        _linkg_cellular_tx_record_current_failed(tx, path, valid_packets, valid_count, false);
+        _linkg_cellular_tx_record_current(path, valid_packets, valid_count, true);
         return 0;
     }
 
@@ -1097,7 +1094,7 @@ static int _linkg_cellular_tx_submit_realtime(linkg_cellular_tx_t *tx, linkg_pat
             results[valid_indices[index]] = ret;
         }
 
-        _linkg_cellular_tx_record_current_failed(tx, path, valid_packets, valid_count, false);
+        _linkg_cellular_tx_record_current(path, valid_packets, valid_count, false);
         return 0;
     }
 
@@ -1113,7 +1110,7 @@ static int _linkg_cellular_tx_submit_realtime(linkg_cellular_tx_t *tx, linkg_pat
 
     if (sent_count < valid_count)
     {
-        _linkg_cellular_tx_record_current_failed(tx, path, &valid_packets[sent_count], valid_count - sent_count, false);
+        _linkg_cellular_tx_record_current(path, &valid_packets[sent_count], valid_count - sent_count, false);
     }
 
     return (int)sent_count;
@@ -1181,7 +1178,7 @@ static int _linkg_cellular_tx_submit_normal(linkg_cellular_tx_t *tx, linkg_path_
             results[valid_indices[index]] = -ENODEV;
         }
 
-        _linkg_cellular_tx_record_current_failed(tx, path, valid_packets, valid_count, false);
+        _linkg_cellular_tx_record_current(path, valid_packets, valid_count, true);
         pthread_mutex_unlock(&tx->normal_lock);
         return 0;
     }
