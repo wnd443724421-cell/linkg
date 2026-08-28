@@ -23,11 +23,10 @@ extern "C" {
 
 typedef struct
 {
-    linkg_device_config_t         device;         // 设备配置
-    linkg_network_config_t        network;        // 本节点网络配置
-    linkg_network_domain_config_t network_domain; // AP组网域配置，STA不使用
-    linkg_links_config_t          links;          // 接入模块配置
-    linkg_paths_config_t          paths;          // 逻辑路径配置
+    linkg_device_config_t  device;  // 设备配置
+    linkg_network_config_t network; // 网络配置
+    linkg_links_config_t   links;   // 接入模块配置
+    linkg_paths_config_t   paths;   // 逻辑路径配置
 } linkg_config_t;
 
 /****************************** 生命周期 ******************************/
@@ -40,7 +39,6 @@ void linkg_config_deinit(void);
 int linkg_config_create_snapshot(linkg_config_t *out);
 int linkg_config_get_device(linkg_device_config_t *out);
 int linkg_config_get_network(linkg_network_config_t *out);
-int linkg_config_get_network_domain(linkg_network_domain_config_t *out);
 int linkg_config_get_links(linkg_links_config_t *out);
 int linkg_config_get_paths(linkg_paths_config_t *out);
 int linkg_config_get_wifi(linkg_wifi_config_t *out);

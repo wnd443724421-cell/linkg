@@ -1,9 +1,6 @@
 /**
  * @file linkg_network_config.h
  * @brief LinkG网络配置定义及处理接口
- * @author Dawn
- * @version 1.2.0
- * @date 2026-08-27
  */
 
 #ifndef LINKG_NETWORK_CONFIG_H
@@ -58,35 +55,26 @@ typedef struct
 
 typedef struct
 {
-    uint8_t                        node_id;          // LinkG节点编号
-    struct in_addr                 ethernet_network; // Ethernet网络基地址，如192.168.1.0
-    linkg_network_traffic_config_t traffic;          // 用户业务流量分类配置
+    uint8_t                        node_id;           // LinkG节点编号
+    struct in_addr                 virtual_network;   // 组网虚拟网络基地址，同一组网成员必须一致
+    struct in_addr                 ethernet_network;  // Ethernet网络基地址，本节点独立配置
+    linkg_network_traffic_config_t traffic;           // 用户业务流量分类配置
 } linkg_network_config_t;
 
-typedef struct
-{
-    struct in_addr virtual_network; // LinkG虚拟网络基地址，如172.28.0.0
-} linkg_network_domain_config_t;
-
-/****************************** 节点配置 ******************************/
+/****************************** 配置处理 ******************************/
 
 void linkg_network_config_set_default(linkg_network_config_t *out);
-int  linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out, linkg_network_domain_config_t *domain);
+int  linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out);
 int  linkg_network_config_validate(const linkg_network_config_t *config);
-int  linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_network_config_t *config, const linkg_network_domain_config_t *domain);
+int  linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_network_config_t *config);
 
-/****************************** 组网配置 ******************************/
-
-void linkg_network_domain_config_set_default(linkg_network_domain_config_t *out);
-int  linkg_network_domain_config_validate(const linkg_network_domain_config_t *domain, const linkg_network_config_t *local);
-
-/****************************** 配置查询 ******************************/
+/****************************** 地址查询 ******************************/
 
 int linkg_network_config_get_ethernet(const linkg_network_config_t *config, linkg_network_ipv4_config_t *ethernet);
 int linkg_network_config_get_ethernet_network(const linkg_network_config_t *config, linkg_network_ipv4_config_t *network);
 int linkg_network_config_get_tun(const linkg_network_config_t *config, linkg_network_ipv4_config_t *tun);
-int linkg_network_domain_config_get_network(const linkg_network_domain_config_t *domain, linkg_network_ipv4_config_t *network);
-int linkg_network_domain_config_get_subnet(const linkg_network_domain_config_t *domain, uint8_t node_id, linkg_network_ipv4_config_t *subnet);
+int linkg_network_config_get_virtual_network(const linkg_network_config_t *config, linkg_network_ipv4_config_t *network);
+int linkg_network_config_get_node_virtual_subnet(const linkg_network_config_t *config, uint8_t node_id, linkg_network_ipv4_config_t *subnet);
 
 #ifdef __cplusplus
 }

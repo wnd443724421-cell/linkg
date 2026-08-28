@@ -2,8 +2,8 @@
  * @file linkg_config.c
  * @brief LinkG全局配置管理接口实现
  * @author Dawn
- * @version 1.2.0
- * @date 2026-08-27
+ * @version 1.3.0
+ * @date 2026-08-28
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -84,7 +84,6 @@ static void _config_set_default(linkg_config_t *out)
 
     linkg_device_config_set_default(&out->device);
     linkg_network_config_set_default(&out->network);
-    linkg_network_domain_config_set_default(&out->network_domain);
     linkg_links_config_set_default(&out->links);
     linkg_paths_config_set_default(&out->paths);
 }
@@ -113,22 +112,6 @@ static int _config_validate(const linkg_config_t *config)
     if (ret != CONFIG_OK)
     {
         return ret;
-    }
-
-    if (config->device.role == LINKG_DEVICE_ROLE_AP)
-    {
-        ret = linkg_network_domain_config_validate(&config->network_domain, &config->network);
-        if (ret != CONFIG_OK)
-        {
-            return ret;
-        }
-    }
-    else if (config->device.role == LINKG_DEVICE_ROLE_STA)
-    {
-        if (config->network_domain.virtual_network.s_addr != 0U)
-        {
-            return CONFIG_ERR_VALIDATE;
-        }
     }
 
     ret = linkg_links_config_validate(&config->links);
@@ -163,10 +146,9 @@ static int _config_validate(const linkg_config_t *config)
  */
 static int _config_parse_json(const cJSON *root, linkg_config_t *out)
 {
-    linkg_network_domain_config_t *network_domain;
-    linkg_config_t                 temp;
-    const cJSON                   *child;
-    int                            ret;
+    linkg_config_t temp;
+    const cJSON   *child;
+    int            ret;
 
     if (root == NULL || out == NULL)
     {
@@ -194,19 +176,6 @@ static int _config_parse_json(const cJSON *root, linkg_config_t *out)
         return ret;
     }
 
-    if (temp.device.role == LINKG_DEVICE_ROLE_AP)
-    {
-        network_domain = &temp.network_domain;
-    }
-    else if (temp.device.role == LINKG_DEVICE_ROLE_STA)
-    {
-        network_domain = NULL;
-    }
-    else
-    {
-        return CONFIG_ERR_VALIDATE;
-    }
-
     child = NULL;
 
     ret = linkg_json_get_object(root, "network", &child);
@@ -215,7 +184,7 @@ static int _config_parse_json(const cJSON *root, linkg_config_t *out)
         return config_json_parse_error(ret);
     }
 
-    ret = linkg_network_config_parse(child, &temp.network, network_domain);
+    ret = linkg_network_config_parse(child, &temp.network);
     if (ret != CONFIG_OK)
     {
         return ret;
@@ -368,7 +337,7 @@ int linkg_config_get_device(linkg_device_config_t *out)
 }
 
 /**
- * @brief 获取本节点网络配置。
+ * @brief 获取网络配置。
  */
 int linkg_config_get_network(linkg_network_config_t *out)
 {
@@ -386,39 +355,6 @@ int linkg_config_get_network(linkg_network_config_t *out)
     }
 
     *out = g_config.current.network;
-
-    pthread_rwlock_unlock(&g_config.lock);
-
-    return CONFIG_OK;
-}
-
-/**
- * @brief 获取AP静态组网域配置。
- *
- * 仅AP静态持有组网域配置，STA的虚拟网络由运行时Discovery从AP获取。
- */
-int linkg_config_get_network_domain(linkg_network_domain_config_t *out)
-{
-    if (out == NULL)
-    {
-        return CONFIG_ERR_PARAM;
-    }
-
-    pthread_rwlock_rdlock(&g_config.lock);
-
-    if (!g_config.initialized)
-    {
-        pthread_rwlock_unlock(&g_config.lock);
-        return CONFIG_ERR_VALIDATE;
-    }
-
-    if (g_config.current.device.role != LINKG_DEVICE_ROLE_AP)
-    {
-        pthread_rwlock_unlock(&g_config.lock);
-        return CONFIG_ERR_VALIDATE;
-    }
-
-    *out = g_config.current.network_domain;
 
     pthread_rwlock_unlock(&g_config.lock);
 
@@ -550,7 +486,7 @@ int linkg_config_replace(const linkg_config_t *config)
 
     pthread_rwlock_wrlock(&g_config.lock);
 
-    g_config.current = temp;
+    g_config.current     = temp;
     g_config.initialized = true;
 
     pthread_rwlock_unlock(&g_config.lock);
@@ -565,11 +501,10 @@ int linkg_config_replace(const linkg_config_t *config)
  */
 int linkg_config_save(const linkg_config_t *config, const char *path)
 {
-    const linkg_network_domain_config_t *network_domain;
-    const char                          *actual_path;
-    cJSON                              *root;
-    char                               *content;
-    int                                 ret;
+    const char *actual_path;
+    cJSON      *root;
+    char       *content;
+    int         ret;
 
     if (config == NULL)
     {
@@ -584,15 +519,6 @@ int linkg_config_save(const linkg_config_t *config, const char *path)
 
     actual_path = path != NULL ? path : LINKG_CONFIG_DEFAULT_PATH;
 
-    if (config->device.role == LINKG_DEVICE_ROLE_AP)
-    {
-        network_domain = &config->network_domain;
-    }
-    else
-    {
-        network_domain = NULL;
-    }
-
     root = cJSON_CreateObject();
     if (root == NULL)
     {
@@ -603,7 +529,7 @@ int linkg_config_save(const linkg_config_t *config, const char *path)
 
     if (ret == CONFIG_OK)
     {
-        ret = linkg_network_config_to_json(root, "network", &config->network, network_domain);
+        ret = linkg_network_config_to_json(root, "network", &config->network);
     }
 
     if (ret == CONFIG_OK)
