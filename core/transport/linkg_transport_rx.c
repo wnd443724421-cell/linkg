@@ -39,6 +39,7 @@ typedef struct
 typedef struct
 {
     linkg_transport_forward_item_t items[LINKG_TRANSPORT_FORWARD_BATCH_MAX]; // AP转发元素
+    bool                           owned[LINKG_TRANSPORT_FORWARD_BATCH_MAX]; // 当前Batch是否持有Packet引用
     uint32_t                       count;                                    // 当前元素数量
 } linkg_transport_forward_batch_t;
 
@@ -262,10 +263,13 @@ static void _linkg_transport_rx_queue_reassembled_delivery(const linkg_transport
 
 /**
  * @brief 同步提交当前AP转发批次。
+ *
+ * Pair Cache输出Packet由当前Batch持有引用，Forward返回后统一释放。
  */
 static void _linkg_transport_rx_flush_forward(linkg_transport_forward_batch_t *batch)
 {
-    int ret;
+    uint32_t index;
+    int      ret;
 
     if (batch == NULL || batch->count == 0U)
     {
@@ -278,13 +282,21 @@ static void _linkg_transport_rx_flush_forward(linkg_transport_forward_batch_t *b
         LINKG_LOG_ERROR("submit transport forward batch failed, count=%u, error=%d", batch->count, ret);
     }
 
-    batch->count = 0U;
+    for (index = 0U; index < batch->count; index++)
+    {
+        if (batch->owned[index] && batch->items[index].packet != NULL)
+        {
+            linkg_packet_release(batch->items[index].packet);
+        }
+    }
+
+    memset(batch, 0, sizeof(*batch));
 }
 
 /**
- * @brief 将非本机目标Transport帧加入当前AP同步转发批次。
+ * @brief 将非分片Transport帧加入当前AP同步转发批次。
  *
- * 分片帧保持完整Transport头和分片扩展头，不在AP执行重组或重新分片。
+ * 当前Packet仅借用Link RX基础引用，不由Forward Batch释放。
  */
 static void _linkg_transport_rx_append_forward(const linkg_transport_header_t *header, linkg_link_rx_item_t *item, uint32_t payload_length, linkg_transport_forward_batch_t *batch)
 {
@@ -307,7 +319,41 @@ static void _linkg_transport_rx_append_forward(const linkg_transport_header_t *h
     forward_item->type                = (linkg_transport_type_t)header->type;
     forward_item->payload_length      = payload_length;
 
+    batch->owned[batch->count] = false;
     batch->count++;
+
+    if (batch->count >= LINKG_TRANSPORT_FORWARD_BATCH_MAX)
+    {
+        _linkg_transport_rx_flush_forward(batch);
+    }
+}
+
+/**
+ * @brief 将完整配对的FIRST和LAST连续加入AP Forward Batch。
+ *
+ * Pair两个Packet引用均由当前Batch接管。
+ * 如果当前Batch只剩一个位置，则先Flush旧Batch，保证Pair不被人为拆开。
+ */
+static void _linkg_transport_rx_append_forward_pair(const linkg_transport_forward_item_t *items, linkg_transport_forward_batch_t *batch)
+{
+    uint32_t index;
+
+    if (items == NULL || batch == NULL)
+    {
+        return;
+    }
+
+    if (batch->count + LINKG_TRANSPORT_FRAGMENT_COUNT_MAX > LINKG_TRANSPORT_FORWARD_BATCH_MAX)
+    {
+        _linkg_transport_rx_flush_forward(batch);
+    }
+
+    for (index = 0U; index < LINKG_TRANSPORT_FRAGMENT_COUNT_MAX; index++)
+    {
+        batch->items[batch->count] = items[index];
+        batch->owned[batch->count] = true;
+        batch->count++;
+    }
 
     if (batch->count >= LINKG_TRANSPORT_FORWARD_BATCH_MAX)
     {
@@ -670,12 +716,16 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
 /**
  * @brief 按物理帧原始接收顺序分发已经通过接收窗口的数据。
  *
- * 本机普通帧直接交付，本机分片只在重组完成时交付，AP非本机目标保持完整Transport帧同步转发。
+ * 本机普通帧直接交付，本机分片执行Reassembly；
+ * AP非本机普通帧直接转发，分片必须完成Pair后才向下一跳提交。
  */
 static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_delivery_batch_t *delivery_batch, linkg_transport_forward_batch_t *forward_batch, linkg_transport_rx_batch_stats_t *stats)
 {
-    uint32_t index;
-    int      ret;
+    linkg_transport_forward_item_t pair_items[LINKG_TRANSPORT_FRAGMENT_COUNT_MAX];
+    uint32_t                       pair_count;
+    uint32_t                       pair_index;
+    uint32_t                       index;
+    int                            ret;
 
     for (index = 0U; index < count; index++)
     {
@@ -706,10 +756,69 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
             continue;
         }
 
-        if (g_transport.local_role == LINKG_DEVICE_ROLE_AP)
+        if (g_transport.local_role != LINKG_DEVICE_ROLE_AP)
+        {
+            continue;
+        }
+
+        if (!states[index].fragmented)
         {
             _linkg_transport_rx_append_forward(&states[index].header, &items[index], states[index].payload_length, forward_batch);
+            continue;
         }
+
+        memset(pair_items, 0, sizeof(pair_items));
+
+        pair_count = 0U;
+
+        ret = linkg_transport_forward_pair_submit(&states[index].header,
+                                                   &states[index].fragment_header,
+                                                   items[index].packet,
+                                                   states[index].payload_length,
+                                                   pair_items,
+                                                   &pair_count);
+        if (ret != 0)
+        {
+            for (pair_index = 0U; pair_index < pair_count; pair_index++)
+            {
+                if (pair_items[pair_index].packet != NULL)
+                {
+                    linkg_packet_release(pair_items[pair_index].packet);
+                }
+            }
+
+            if (ret == -EPROTO || ret == -EINVAL)
+            {
+                stats->invalid_frames++;
+            }
+            else
+            {
+                LINKG_LOG_ERROR("transport forward fragment pair failed, error=%d", ret);
+            }
+
+            continue;
+        }
+
+        if (pair_count == 0U)
+        {
+            continue;
+        }
+
+        if (pair_count != LINKG_TRANSPORT_FRAGMENT_COUNT_MAX)
+        {
+            for (pair_index = 0U; pair_index < pair_count; pair_index++)
+            {
+                if (pair_items[pair_index].packet != NULL)
+                {
+                    linkg_packet_release(pair_items[pair_index].packet);
+                }
+            }
+
+            stats->invalid_frames++;
+            continue;
+        }
+
+        _linkg_transport_rx_append_forward_pair(pair_items, forward_batch);
     }
 }
 

@@ -133,28 +133,42 @@ int linkg_transport_init(void)
     ret = linkg_transport_reassembly_runtime_init();
     if (ret != 0)
     {
-        g_transport.initialized = false;
+        goto fail_lock;
+    }
 
-        pthread_mutex_destroy(&g_transport.lock);
-        memset(&g_transport, 0, sizeof(g_transport));
-
-        return ret;
+    if (g_transport.local_role == LINKG_DEVICE_ROLE_AP)
+    {
+        ret = linkg_transport_forward_pair_runtime_init();
+        if (ret != 0)
+        {
+            goto fail_reassembly;
+        }
     }
 
     ret = linkg_link_manager_register_receive_handler(linkg_transport_receive_batch, NULL);
     if (ret != 0)
     {
-        (void)linkg_transport_reassembly_runtime_deinit();
-
-        g_transport.initialized = false;
-
-        pthread_mutex_destroy(&g_transport.lock);
-        memset(&g_transport, 0, sizeof(g_transport));
-
-        return ret;
+        goto fail_forward_pair;
     }
 
     return 0;
+
+fail_forward_pair:
+    if (g_transport.local_role == LINKG_DEVICE_ROLE_AP)
+    {
+        (void)linkg_transport_forward_pair_runtime_deinit();
+    }
+
+fail_reassembly:
+    (void)linkg_transport_reassembly_runtime_deinit();
+
+fail_lock:
+    g_transport.initialized = false;
+
+    pthread_mutex_destroy(&g_transport.lock);
+    memset(&g_transport, 0, sizeof(g_transport));
+
+    return ret;
 }
 
 /**
@@ -187,6 +201,15 @@ int linkg_transport_deinit(void)
     if (ret != 0)
     {
         return ret;
+    }
+
+    if (g_transport.local_role == LINKG_DEVICE_ROLE_AP)
+    {
+        ret = linkg_transport_forward_pair_runtime_deinit();
+        if (ret != 0)
+        {
+            return ret;
+        }
     }
 
     ret = linkg_transport_reassembly_runtime_deinit();

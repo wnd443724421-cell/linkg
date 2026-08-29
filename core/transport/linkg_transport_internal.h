@@ -30,7 +30,10 @@ extern "C" {
 #define LINKG_TRANSPORT_REASSEMBLY_TTL_US          20000ULL                                       // 不完整数据包最大保留时间
 #define LINKG_TRANSPORT_REASSEMBLY_GC_INTERVAL_US  5000ULL                                        // 重组缓存清理周期
 #define LINKG_TRANSPORT_RX_WINDOW_WORDS            (LINKG_TRANSPORT_RX_WINDOW_BITS / 64U)         // 接收窗口位图字数量
-
+#define LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT      32U                                           // AP分片配对缓存组数
+#define LINKG_TRANSPORT_FORWARD_PAIR_WAYS           2U                                            // AP分片配对组相联路数
+#define LINKG_TRANSPORT_FORWARD_PAIR_TTL_US         20000ULL                                      // AP不完整分片组最大保留时间
+#define LINKG_TRANSPORT_FORWARD_PAIR_GC_INTERVAL_US 5000ULL                                       // AP分片配对缓存清理周期
 /****************************** 接收窗口 ******************************/
 
 typedef enum
@@ -104,26 +107,52 @@ typedef struct
 
 typedef struct
 {
-    linkg_packet_t        *packet;              // 完整Transport帧，同步借用Link RX基础引用
+    linkg_packet_t        *packet;              // 完整Transport帧，引用所有权由调用方管理
     uint32_t               payload_length;      // 当前帧实际Transport载荷长度
     linkg_transport_type_t type;                // Transport数据类型
     uint8_t                destination_node_id; // 最终目标节点编号
 } linkg_transport_forward_item_t;
 
+
+/****************************** AP分片配对 ******************************/
+
+typedef struct
+{
+    linkg_packet_t        *packet;               // 当前已缓存分片，Pair持有一个引用
+    uint64_t               expires_at_us;        // 当前配对项固定过期时间
+    uint32_t               packet_id;            // 原始完整数据包编号
+    uint32_t               payload_length;       // 当前分片Transport载荷长度
+    uint16_t               packet_length;        // 原始完整数据包长度
+    uint16_t               fragment_offset;      // 当前缓存分片偏移
+    linkg_transport_type_t type;                 // Transport数据类型
+    uint8_t                source_node_id;       // 原始发送节点编号
+    uint8_t                destination_node_id;  // 最终目标节点编号
+    bool                   valid;                // 当前配对项是否有效
+} linkg_transport_forward_pair_entry_t;
+
+typedef struct
+{
+    pthread_mutex_t                      lock;                                                                     			 // AP分片配对缓存保护锁
+    linkg_transport_forward_pair_entry_t entries[LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT][LINKG_TRANSPORT_FORWARD_PAIR_WAYS]; // 固定分片配对缓存
+    uint64_t                             last_gc_us;                                                               			 // 最近一次全局清理时间
+    bool                                 initialized;                                                            		     // 配对资源是否已初始化
+} linkg_transport_forward_pair_runtime_t;
+
 /****************************** 模块上下文 ******************************/
 
 typedef struct
 {
-    pthread_mutex_t                      lock;                                 // Transport状态保护锁
-    linkg_transport_peer_t               peers[LINKG_TRANSPORT_PEER_MAX];      // 直接Peer协议状态
-    linkg_transport_handler_t            handlers[LINKG_TRANSPORT_TYPE_COUNT]; // 类型处理函数
-    linkg_transport_global_stats_t       stats;                                // 全局异常统计
-    linkg_transport_reassembly_runtime_t reassembly;                           // 本机分片重组资源
-    uint32_t                             next_packet_id;                       // 下一个原始完整数据包编号
-    uint32_t                             peer_count;                           // 当前有效Peer数量
-    linkg_device_role_t                  local_role;                           // 本机角色
-    uint8_t                              local_node_id;                        // 本机节点编号
-    bool                                 initialized;                          // 模块是否已初始化
+    pthread_mutex_t                        lock;                                 // Transport状态保护锁
+    linkg_transport_peer_t                 peers[LINKG_TRANSPORT_PEER_MAX];      // 直接Peer协议状态
+    linkg_transport_handler_t              handlers[LINKG_TRANSPORT_TYPE_COUNT]; // 类型处理函数
+    linkg_transport_global_stats_t         stats;                                // 全局异常统计
+    linkg_transport_reassembly_runtime_t   reassembly;                           // 本机分片重组资源
+    uint32_t                               next_packet_id;                       // 下一个原始完整数据包编号
+    uint32_t                               peer_count;                           // 当前有效Peer数量
+    linkg_device_role_t                    local_role;                           // 本机角色
+    uint8_t                                local_node_id;                        // 本机节点编号
+	linkg_transport_forward_pair_runtime_t forward_pairs; 					  	 // AP转发分片配对资源
+    bool                                   initialized;                          // 模块是否已初始化
 } linkg_transport_context_t;
 
 extern linkg_transport_context_t g_transport;
@@ -153,13 +182,11 @@ int linkg_transport_reassembly_submit_batch(linkg_transport_reassembly_submit_it
 linkg_transport_peer_t *linkg_transport_find_peer_locked(uint8_t peer_node_id);
 bool                    linkg_transport_type_valid(linkg_transport_type_t type);
 
-/****************************** 发送辅助 ******************************/
-
-int  linkg_transport_tx_prepare(uint8_t destination_node_id, uint8_t *next_hop_node_id, uint32_t *sequence);
-void linkg_transport_tx_record(uint8_t peer_node_id, linkg_transport_type_t type, uint32_t payload_length, bool success);
-
 /****************************** 转发辅助 ******************************/
 
+int linkg_transport_forward_pair_runtime_init(void);
+int linkg_transport_forward_pair_runtime_deinit(void);
+int linkg_transport_forward_pair_submit(const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, linkg_transport_forward_item_t *output_items, uint32_t *output_count);
 int linkg_transport_forward_batch(const linkg_transport_forward_item_t *items, uint32_t count);
 
 #ifdef __cplusplus

@@ -25,25 +25,27 @@
 
 typedef struct
 {
-    uint32_t sequences[LINKG_TRANSPORT_FRAGMENT_COUNT_MAX]; // 当前逻辑包各物理帧逐跳序列号
-    uint32_t packet_id;                                     // 分片原始完整数据包编号
-    uint32_t original_data_offset;                          // Transport处理前数据偏移
-    uint32_t original_data_length;                          // Transport处理前数据长度
-    uint32_t original_flags;                                // Transport处理前Packet标志
-    uint32_t payload_length;                                // 原始逻辑载荷长度
-    uint32_t completed_frames;                              // 已完成调度的物理帧数量
-    uint32_t successful_frames;                             // 成功发送的物理帧数量
-    int      result;                                        // 当前逻辑包最终发送结果
-    uint8_t  peer_node_id;                                  // 当前直接Peer节点编号
-    uint8_t  frame_count;                                   // 当前逻辑包产生的物理帧数量
-    bool     prepared;                                      // Peer和发送编号是否准备完成
-    bool     fragmented;                                    // 是否进行LinkG内部分片
+    uint32_t sequences[LINKG_TRANSPORT_FRAGMENT_COUNT_MAX];             // 当前逻辑包各物理帧逐跳序列号
+    uint32_t frame_payload_lengths[LINKG_TRANSPORT_FRAGMENT_COUNT_MAX]; // 当前逻辑包各Transport帧载荷长度
+    int      frame_results[LINKG_TRANSPORT_FRAGMENT_COUNT_MAX];         // 当前逻辑包各Transport帧发送结果
+    uint32_t packet_id;                                                 // 分片原始完整数据包编号
+    uint32_t original_data_offset;                                      // Transport处理前数据偏移
+    uint32_t original_data_length;                                      // Transport处理前数据长度
+    uint32_t original_flags;                                            // Transport处理前Packet标志
+    uint32_t completed_frames;                                          // 已完成调度的Transport帧数量
+    uint32_t successful_frames;                                         // 成功发送的Transport帧数量
+    int      result;                                                    // 当前逻辑包最终发送结果
+    uint8_t  peer_node_id;                                              // 当前直接Peer节点编号
+    uint8_t  frame_count;                                               // 当前逻辑包产生的Transport帧数量
+    bool     prepared;                                                  // Peer和发送编号是否准备完成
+    bool     fragmented;                                                // 是否进行LinkG内部分片
 } linkg_transport_tx_state_t;
 
 typedef struct
 {
-    linkg_packet_t *owned_packet; // Transport临时申请的数据包，NULL表示借用原Packet
+    linkg_packet_t *owned_packet;  // Transport临时申请的数据包，NULL表示借用原Packet
     uint32_t        logical_index; // 所属逻辑数据包索引
+    uint8_t         frame_index;   // 所属逻辑包内部物理帧索引
 } linkg_transport_tx_frame_state_t;
 
 typedef struct
@@ -199,6 +201,7 @@ static int _linkg_transport_tx_validate_batch(const linkg_transport_tx_item_t *i
 static void _linkg_transport_tx_init_states(const linkg_transport_tx_item_t *items, linkg_transport_tx_state_t *states, uint32_t count)
 {
     linkg_packet_t *packet;
+    uint32_t        frame_index;
     uint32_t        index;
 
     memset(states, 0, (size_t)count * sizeof(*states));
@@ -210,10 +213,24 @@ static void _linkg_transport_tx_init_states(const linkg_transport_tx_item_t *ite
         states[index].original_data_offset = packet->data_offset;
         states[index].original_data_length = packet->data_length;
         states[index].original_flags       = packet->flags;
-        states[index].payload_length       = packet->data_length;
         states[index].fragmented           = packet->data_length > LINKG_TRANSPORT_PAYLOAD_MAX_SIZE;
         states[index].frame_count          = states[index].fragmented ? LINKG_TRANSPORT_FRAGMENT_COUNT_MAX : 1U;
         states[index].result               = -EINPROGRESS;
+
+        if (states[index].fragmented)
+        {
+            states[index].frame_payload_lengths[0] = LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE;
+            states[index].frame_payload_lengths[1] = packet->data_length - LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE;
+        }
+        else
+        {
+            states[index].frame_payload_lengths[0] = packet->data_length;
+        }
+
+        for (frame_index = 0U; frame_index < states[index].frame_count; frame_index++)
+        {
+            states[index].frame_results[frame_index] = -EINPROGRESS;
+        }
     }
 }
 
@@ -328,7 +345,7 @@ static void _linkg_transport_tx_build_header(linkg_transport_header_t *header, c
 /**
  * @brief 向物理帧批次加入一个Transport帧。
  */
-static int _linkg_transport_tx_frame_batch_push(linkg_transport_tx_frame_batch_t *batch, uint8_t peer_node_id, linkg_packet_t *packet, uint32_t logical_index, linkg_packet_t *owned_packet)
+static int _linkg_transport_tx_frame_batch_push(linkg_transport_tx_frame_batch_t *batch, uint8_t peer_node_id, linkg_packet_t *packet, uint32_t logical_index, uint8_t frame_index, linkg_packet_t *owned_packet)
 {
     uint32_t index;
 
@@ -353,8 +370,9 @@ static int _linkg_transport_tx_frame_batch_push(linkg_transport_tx_frame_batch_t
     batch->scheduler_items[index].next_hop_node_id = peer_node_id;
     batch->scheduler_items[index].result           = -EINPROGRESS;
 
-    batch->frame_states[index].owned_packet  = owned_packet;
+    batch->frame_states[index].owned_packet = owned_packet;
     batch->frame_states[index].logical_index = logical_index;
+    batch->frame_states[index].frame_index = frame_index;
 
     batch->count++;
 
@@ -362,12 +380,13 @@ static int _linkg_transport_tx_frame_batch_push(linkg_transport_tx_frame_batch_t
 }
 
 /**
- * @brief 同步提交当前物理帧批次并归并逻辑包发送结果。
+ * @brief 同步提交当前Transport帧批次并归并逻辑包发送结果。
  */
 static void _linkg_transport_tx_flush_frames(linkg_transport_tx_frame_batch_t *batch, const linkg_transport_tx_item_t *items, linkg_transport_tx_state_t *states, linkg_scheduler_policy_t policy, uint32_t specified_link_id)
 {
     linkg_transport_tx_state_t *state;
     uint32_t                    logical_index;
+    uint32_t                    frame_index;
     uint32_t                    index;
     int                         frame_result;
     int                         ret;
@@ -382,6 +401,7 @@ static void _linkg_transport_tx_flush_frames(linkg_transport_tx_frame_batch_t *b
     for (index = 0U; index < batch->count; index++)
     {
         logical_index = batch->frame_states[index].logical_index;
+        frame_index   = batch->frame_states[index].frame_index;
         state         = &states[logical_index];
 
         frame_result = ret < 0 ? ret : batch->scheduler_items[index].result;
@@ -391,6 +411,7 @@ static void _linkg_transport_tx_flush_frames(linkg_transport_tx_frame_batch_t *b
             frame_result = -EIO;
         }
 
+        state->frame_results[frame_index] = frame_result;
         state->completed_frames++;
 
         if (frame_result == 0)
@@ -449,7 +470,7 @@ static int _linkg_transport_tx_queue_normal(const linkg_transport_tx_item_t *ite
         return ret;
     }
 
-    ret = _linkg_transport_tx_frame_batch_push(batch, states[logical_index].peer_node_id, packet, logical_index, NULL);
+    ret = _linkg_transport_tx_frame_batch_push(batch, states[logical_index].peer_node_id, packet, logical_index, 0U, NULL);
     if (ret != 0)
     {
         states[logical_index].result = ret;
@@ -554,7 +575,7 @@ static int _linkg_transport_tx_queue_fragmented(const linkg_transport_tx_item_t 
         return ret;
     }
 
-    ret = _linkg_transport_tx_frame_batch_push(batch, states[logical_index].peer_node_id, packet, logical_index, NULL);
+    ret = _linkg_transport_tx_frame_batch_push(batch, states[logical_index].peer_node_id, packet, logical_index, 0U, NULL);
     if (ret != 0)
     {
         linkg_packet_release(tail_packet);
@@ -563,7 +584,7 @@ static int _linkg_transport_tx_queue_fragmented(const linkg_transport_tx_item_t 
         return ret;
     }
 
-    ret = _linkg_transport_tx_frame_batch_push(batch, states[logical_index].peer_node_id, tail_packet, logical_index, tail_packet);
+    ret = _linkg_transport_tx_frame_batch_push(batch, states[logical_index].peer_node_id, tail_packet, logical_index, 1U, tail_packet);
     if (ret != 0)
     {
         batch->count--;
@@ -584,9 +605,9 @@ static int _linkg_transport_tx_queue_fragmented(const linkg_transport_tx_item_t 
 }
 
 /**
- * @brief 批量记录Transport逻辑发送统计。
+ * @brief 批量记录Transport帧发送统计。
  *
- * 分片数据仍按一个逻辑Packet统计，字节数使用分片前完整载荷长度。
+ * 每个Transport Frame独立记录成功、失败和实际载荷字节数。
  */
 static void _linkg_transport_tx_record_batch(const linkg_transport_tx_state_t *states, uint32_t count, linkg_transport_type_t type)
 {
@@ -594,6 +615,7 @@ static void _linkg_transport_tx_record_batch(const linkg_transport_tx_state_t *s
     linkg_transport_peer_t       *cached_peer;
     linkg_transport_peer_t       *peer;
     uint64_t                      now_ms;
+    uint32_t                      frame_index;
     uint32_t                      index;
     uint8_t                       cached_peer_node_id;
     bool                          cache_valid;
@@ -633,23 +655,26 @@ static void _linkg_transport_tx_record_batch(const linkg_transport_tx_state_t *s
 
         type_stats = &peer->stats.types[type];
 
-        if (states[index].result == 0)
+        for (frame_index = 0U; frame_index < states[index].frame_count; frame_index++)
         {
-            type_stats->tx_packets++;
-            type_stats->tx_bytes += states[index].payload_length;
-
-            if (!now_valid)
+            if (states[index].frame_results[frame_index] == 0)
             {
-                now_ms    = linkg_time_elapsed_ms();
-                now_valid = true;
-            }
+                type_stats->tx_packets++;
+                type_stats->tx_bytes += states[index].frame_payload_lengths[frame_index];
 
-            peer->stats.last_tx_ms = now_ms;
-        }
-        else
-        {
-            type_stats->tx_failed_packets++;
-            type_stats->tx_failed_bytes += states[index].payload_length;
+                if (!now_valid)
+                {
+                    now_ms    = linkg_time_elapsed_ms();
+                    now_valid = true;
+                }
+
+                peer->stats.last_tx_ms = now_ms;
+            }
+            else
+            {
+                type_stats->tx_failed_packets++;
+                type_stats->tx_failed_bytes += states[index].frame_payload_lengths[frame_index];
+            }
         }
     }
 
@@ -667,6 +692,7 @@ static int _linkg_transport_send_chunk(const linkg_transport_tx_item_t *items, u
     uint32_t                         index;
     int                              first_error;
     int                              ret;
+	uint32_t 						 frame_index;
 
     memset(&frame_batch, 0, sizeof(frame_batch));
 
@@ -723,6 +749,19 @@ static int _linkg_transport_send_chunk(const linkg_transport_tx_item_t *items, u
             states[index].result = -EIO;
 
             _linkg_transport_tx_restore_packet(items, states, index);
+        }
+
+        if (states[index].prepared)
+        {
+            for (frame_index = 0U; frame_index < states[index].frame_count; frame_index++)
+            {
+                if (states[index].frame_results[frame_index] == -EINPROGRESS)
+                {
+                    states[index].frame_results[frame_index] = states[index].result != 0 ?
+                                                               states[index].result :
+                                                               -EIO;
+                }
+            }
         }
 
         if (states[index].result != 0 && first_error == 0)
