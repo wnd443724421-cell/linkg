@@ -32,73 +32,73 @@
 #include "linkg_time.h"
 #include "linkg_transport.h"
 
+/****************************** 兼容定义 ******************************/
+
 // 兼容尚未安装私有UAPI头的用户态构建环境。
 #ifndef LQ_TUN_IOC_READ_BATCH
-#define LQ_TUN_BATCH_MAX            1024U
-#define LQ_TUN_BATCH_TIMEOUT_MAX_US 1000U
+
+#define LQ_TUN_BATCH_MAX                          1024U                                                    // 内核批量接口最大包数
+#define LQ_TUN_BATCH_TIMEOUT_MAX_US               1000U                                                    // 内核批量读取最大等待时间
+#define LQ_TUN_IOC_READ_BATCH                     _IOWR('T', 240, struct lq_tun_batch_read)                // TUN批量读取ioctl
+#define LQ_TUN_IOC_WRITE_BATCH                    _IOWR('T', 241, struct lq_tun_batch_write)               // TUN批量写入ioctl
 
 struct lq_tun_batch_entry
 {
-    __aligned_u64 data;
-    __u32         length;
-    __u32         capacity;
+    __aligned_u64 data;     // 用户态数据缓冲区地址
+    __u32         length;   // 当前实际数据长度
+    __u32         capacity; // 当前数据缓冲区容量
 };
 
 struct lq_tun_batch_read
 {
-    __aligned_u64 entries;
-    __u32         max_pkts;
-    __u32         min_pkts;
-    __u32         timeout_us;
-    __u32         read_pkts;
-    __u32         read_bytes;
-    __s32         status;
+    __aligned_u64 entries;    // 用户态批量条目数组地址
+    __u32         max_pkts;   // 单次允许读取的最大包数
+    __u32         min_pkts;   // 批量聚合最小目标包数
+    __u32         timeout_us; // 批量聚合最大等待时间
+    __u32         read_pkts;  // 实际读取包数
+    __u32         read_bytes; // 实际读取字节数
+    __s32         status;     // 内核批量读取状态
 };
-
-#define LQ_TUN_IOC_READ_BATCH _IOWR('T', 240, struct lq_tun_batch_read)
 
 struct lq_tun_batch_write
 {
-    __aligned_u64 entries;
-    __u32         pkt_count;
-    __u32         written_pkts;
-    __u32         written_bytes;
-    __s32         status;
+    __aligned_u64 entries;       // 用户态批量条目数组地址
+    __u32         pkt_count;     // 请求写入包数
+    __u32         written_pkts;  // 实际写入包数
+    __u32         written_bytes; // 实际写入字节数
+    __s32         status;        // 内核批量写入状态
 };
 
-#define LQ_TUN_IOC_WRITE_BATCH _IOWR('T', 241, struct lq_tun_batch_write)
 #endif
 
-/****************************** 内部常量 ******************************/
+/****************************** 模块常量 ******************************/
 
-#define LINKG_TUN_DEVICE_PATH                 "/dev/net/tun" // TUN字符设备路径
-#define LINKG_TUN_THREAD_NAME                 "tun-rx"       // TUN读取线程名称
+#define LINKG_TUN_DEVICE_PATH                     "/dev/net/tun"                                          // TUN字符设备路径
+#define LINKG_TUN_THREAD_NAME                     "tun-rx"                                                // TUN读取线程名称
 
 #ifndef LINKG_TUN_THREAD_CPU_CORE
-#define LINKG_TUN_THREAD_CPU_CORE             1             // TUN读取线程绑定CPU1
+#define LINKG_TUN_THREAD_CPU_CORE                 1                                                       // TUN读取线程绑定CPU1
 #endif
 
 #ifndef LINKG_TUN_THREAD_SCHED_PRIORITY
-#define LINKG_TUN_THREAD_SCHED_PRIORITY       0             // 0表示保持SCHED_OTHER
+#define LINKG_TUN_THREAD_SCHED_PRIORITY           0                                                       // 0表示保持SCHED_OTHER
 #endif
 
-#define LINKG_TUN_BATCH_SIZE                  16U            // 单次批量读写最大包数
-#define LINKG_TUN_BATCH_MIN_PKTS              5U             // 批量读取最小聚合目标
-#define LINKG_TUN_BATCH_TIMEOUT_US            60U            // 批量读取最大聚合等待时间
-#define LINKG_TUN_TX_QUEUE_LENGTH             32U            // TUN内核发送队列长度
-#define LINKG_TUN_POLL_FD_COUNT               2U             // poll描述符数量
-#define LINKG_TUN_POOL_RETRY_MS               1U             // 数据包池耗尽重试间隔
-
-#define LINKG_TUN_IPV4_HEADER_MIN             20U            // IPv4最小头长度
-#define LINKG_TUN_IPV4_VERSION                4U             // IPv4版本号
-#define LINKG_TUN_IPV4_FRAGMENT_OFFSET_MASK   0x1FFFU        // IPv4分片偏移掩码
-#define LINKG_TUN_L4_PORT_BYTES               4U             // 源端口和目的端口总长度
-#define LINKG_TUN_SSH_PORT                    22U            // SSH固定实时端口
-
-#define LINKG_TUN_VIRTUAL_NODE_SHIFT          8U             // 虚拟地址中Node ID位移
-#define LINKG_TUN_VIRTUAL_HOST_MASK           0xFFU          // 节点虚拟子网Host位掩码
-#define LINKG_TUN_VIRTUAL_HOST_NETWORK        0U             // 节点虚拟子网网络地址Host
-#define LINKG_TUN_VIRTUAL_HOST_BROADCAST      255U           // 节点虚拟子网广播地址Host
+#define LINKG_TUN_BATCH_SIZE                      16U                                                     // 单次批量读写最大包数
+#define LINKG_TUN_BATCH_MIN_PKTS                  5U                                                      // 批量读取最小聚合目标
+#define LINKG_TUN_BATCH_TIMEOUT_US                60U                                                     // 批量读取最大聚合等待时间
+#define LINKG_TUN_TX_QUEUE_LENGTH                 32U                                                     // TUN内核发送队列长度
+#define LINKG_TUN_POLL_FD_COUNT                   2U                                                      // poll描述符数量
+#define LINKG_TUN_POOL_RETRY_MS                   1U                                                      // 数据包池耗尽重试间隔
+#define LINKG_TUN_IPV4_HEADER_MIN                 20U                                                     // IPv4最小头长度
+#define LINKG_TUN_IPV4_VERSION                    4U                                                      // IPv4版本号
+#define LINKG_TUN_IPV4_FRAGMENT_OFFSET_MASK       0x1FFFU                                                 // IPv4分片偏移掩码
+#define LINKG_TUN_L4_PORT_BYTES                   4U                                                      // 源端口和目的端口总长度
+#define LINKG_TUN_SSH_PORT                        22U                                                     // SSH固定实时端口
+#define LINKG_TUN_VIRTUAL_NODE_SHIFT              8U                                                      // 虚拟地址中Node ID位移
+#define LINKG_TUN_VIRTUAL_HOST_MASK               0xFFU                                                   // 节点虚拟子网Host位掩码
+#define LINKG_TUN_VIRTUAL_HOST_NETWORK            0U                                                      // 节点虚拟子网网络地址Host
+#define LINKG_TUN_VIRTUAL_HOST_BROADCAST          255U                                                    // 节点虚拟子网广播地址Host
 
 _Static_assert(LINKG_TUN_BATCH_SIZE <= LQ_TUN_BATCH_MAX, "TUN batch size exceeds kernel ABI limit");
 _Static_assert(LINKG_TUN_BATCH_TIMEOUT_US <= LQ_TUN_BATCH_TIMEOUT_MAX_US, "TUN batch timeout exceeds kernel ABI limit");
@@ -108,12 +108,11 @@ _Static_assert(sizeof(struct lq_tun_batch_write) == 24U, "invalid TUN batch writ
 
 /****************************** 日志定义 ******************************/
 
-#define LINKG_TUN_LOG_TAG "TUN"
-
-#define LINKG_TUN_DEBUG(fmt, ...) LINKG_LOG_DEBUG("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)
-#define LINKG_TUN_INFO(fmt, ...)  LINKG_LOG_INFO("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)
-#define LINKG_TUN_WARN(fmt, ...)  LINKG_LOG_WARN("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)
-#define LINKG_TUN_ERROR(fmt, ...) LINKG_LOG_ERROR("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)
+#define LINKG_TUN_LOG_TAG                         "TUN"                                                   		// TUN模块日志标签
+#define LINKG_TUN_DEBUG(fmt, ...)                 LINKG_LOG_DEBUG("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__) // TUN调试日志
+#define LINKG_TUN_INFO(fmt, ...)                  LINKG_LOG_INFO("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)  // TUN信息日志
+#define LINKG_TUN_WARN(fmt, ...)                  LINKG_LOG_WARN("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)  // TUN警告日志
+#define LINKG_TUN_ERROR(fmt, ...)                 LINKG_LOG_ERROR("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__) // TUN错误日志
 
 /****************************** 内部类型 ******************************/
 
@@ -129,30 +128,32 @@ typedef struct
 
 typedef enum
 {
-    LINKG_TUN_TRAFFIC_CLASS_DATA = 0, // 普通数据，映射DATA
-    LINKG_TUN_TRAFFIC_CLASS_VIDEO,    // 视频业务，映射VIDEO
-    LINKG_TUN_TRAFFIC_CLASS_REALTIME  // 实时业务，映射REALTIME
+    LINKG_TUN_TRAFFIC_CLASS_DATA     = 0, // 普通数据，映射DATA
+    LINKG_TUN_TRAFFIC_CLASS_VIDEO,        // 视频业务，映射VIDEO
+    LINKG_TUN_TRAFFIC_CLASS_REALTIME      // 实时业务，映射REALTIME
 } linkg_tun_traffic_class_t;
 
 typedef struct
 {
-    pthread_mutex_t                lock;                                      // TUN生命周期和写入路径保护锁
-    linkg_thread_t                 read_thread;                               // TUN读取线程
-    linkg_packet_pool_t           *packet_pool;                               // 外部Packet Pool，不拥有生命周期
-    linkg_network_ipv4_config_t    tun_ipv4;                                  // linkg0自身IPv4配置
-    linkg_network_ipv4_config_t    virtual_network;                           // LinkG用户虚拟聚合网络
-    linkg_network_traffic_config_t traffic;                                   // 用户业务分类配置
-    linkg_packet_t                *read_packets[LINKG_TUN_BATCH_SIZE];        // 批量读取Packet
-    struct lq_tun_batch_entry      read_entries[LINKG_TUN_BATCH_SIZE];        // 内核批量读取ABI条目
-    linkg_transport_tx_item_t      tx_items[LINKG_TUN_BATCH_SIZE];            // Transport逻辑发送批次
-    int                            fd;                                        // TUN设备描述符
-    uint8_t                        local_node_id;                             // 本机逻辑节点编号
-    bool                           initialized;                               // 模块是否初始化
-    bool                           started;                                   // TUN数据面是否启动
-    bool                           write_failed;                              // TUN写入路径故障状态
+    pthread_mutex_t                lock;                                       // TUN生命周期和写入路径保护锁
+    linkg_thread_t                 read_thread;                                // TUN读取线程
+    linkg_packet_pool_t           *packet_pool;                                // 外部Packet Pool，不拥有生命周期
+    linkg_network_ipv4_config_t    tun_ipv4;                                   // linkg0自身IPv4配置
+    linkg_network_ipv4_config_t    virtual_network;                            // LinkG用户虚拟聚合网络
+    linkg_network_traffic_config_t traffic;                                    // 用户业务分类配置
+    linkg_packet_t                *read_packets[LINKG_TUN_BATCH_SIZE];         // 批量读取Packet
+    struct lq_tun_batch_entry      read_entries[LINKG_TUN_BATCH_SIZE];         // 内核批量读取ABI条目
+    linkg_transport_tx_item_t      tx_items[LINKG_TUN_BATCH_SIZE];             // Transport逻辑发送批次
+    int                            fd;                                         // TUN设备描述符
+    uint8_t                        local_node_id;                              // 本机逻辑节点编号
+    bool                           initialized;                                // 模块是否初始化
+    bool                           started;                                    // TUN数据面是否启动
+    bool                           write_failed;                               // TUN写入路径故障状态
 } linkg_tun_context_t;
 
-static linkg_tun_context_t g_tun;
+/****************************** 全局上下文 ******************************/
+
+static linkg_tun_context_t g_tun; // TUN模块全局上下文
 
 /****************************** IPv4解析 ******************************/
 
@@ -398,19 +399,22 @@ static void _linkg_tun_packet_set_traffic_class(linkg_packet_t *packet, linkg_tu
 /****************************** 目标解析 ******************************/
 
 /**
- * @brief 将用户虚拟IPv4目的地址解析为最终逻辑Node ID。
+ * @brief 将TUN读取的IPv4目的地址解析为最终逻辑Node ID。
  *
- * 当前虚拟地址结构固定为：
- * virtual_network /16 → <network>.<node_id>.<host>
+ * 支持两类LinkG目的地址：
+ * 1. TUN节点地址：tun_network /24 → <network>.<node_id>
+ * 2. 用户虚拟地址：virtual_network /16 → <network>.<node_id>.<host>
  *
- * TUN只负责地址到逻辑Node ID的确定性映射；
- * 节点在线状态由Linux动态路由和后续Node/Scheduler共同约束。
+ * TUN只负责地址到最终逻辑Node ID的确定性映射；
+ * 节点在线状态由Linux路由和后续Node/Scheduler共同约束。
  */
 static int _linkg_tun_resolve_destination_node_id(const struct in_addr *destination, uint8_t *node_id)
 {
     uint32_t address;
-    uint32_t network;
-    uint32_t netmask;
+    uint32_t tun_network;
+    uint32_t tun_netmask;
+    uint32_t virtual_network;
+    uint32_t virtual_netmask;
     uint32_t host_part;
     uint32_t endpoint_host;
     uint8_t  resolved_node_id;
@@ -420,16 +424,55 @@ static int _linkg_tun_resolve_destination_node_id(const struct in_addr *destinat
         return -EINVAL;
     }
 
-    address = ntohl(destination->s_addr);
-    network = ntohl(g_tun.virtual_network.ip.s_addr);
-    netmask = ntohl(g_tun.virtual_network.netmask.s_addr);
+    address         = ntohl(destination->s_addr);
+    tun_network     = ntohl(g_tun.tun_ipv4.ip.s_addr);
+    tun_netmask     = ntohl(g_tun.tun_ipv4.netmask.s_addr);
+    virtual_network = ntohl(g_tun.virtual_network.ip.s_addr);
+    virtual_netmask = ntohl(g_tun.virtual_network.netmask.s_addr);
 
-    if ((address & netmask) != (network & netmask))
+    /**
+     * LinkG TUN节点地址：
+     * 172.31.8.<node_id>
+     *
+     * TUN固定为/24，Host部分直接等于Node ID。
+     */
+    if ((address & tun_netmask) == (tun_network & tun_netmask))
+    {
+        host_part = address & ~tun_netmask;
+
+        if (host_part > UINT8_MAX)
+        {
+            return -EHOSTUNREACH;
+        }
+
+        resolved_node_id = (uint8_t)host_part;
+
+        if (resolved_node_id < LINKG_RESOURCE_NODE_ID_MIN ||
+            resolved_node_id > LINKG_RESOURCE_NODE_ID_MAX)
+        {
+            return -EHOSTUNREACH;
+        }
+
+        if (resolved_node_id == g_tun.local_node_id)
+        {
+            return -EHOSTUNREACH;
+        }
+
+        *node_id = resolved_node_id;
+
+        return 0;
+    }
+
+    /**
+     * 用户虚拟地址：
+     * 172.28.<node_id>.<host>
+     */
+    if ((address & virtual_netmask) != (virtual_network & virtual_netmask))
     {
         return -EHOSTUNREACH;
     }
 
-    host_part = address & ~netmask;
+    host_part = address & ~virtual_netmask;
 
     resolved_node_id = (uint8_t)((host_part >> LINKG_TUN_VIRTUAL_NODE_SHIFT) & UINT8_MAX);
     endpoint_host    = host_part & LINKG_TUN_VIRTUAL_HOST_MASK;
@@ -486,7 +529,9 @@ static int _linkg_tun_open(void)
     if (ioctl(fd, TUNSETIFF, &ifr) != 0)
     {
         ret = -errno;
+
         close(fd);
+
         return ret;
     }
 
@@ -512,9 +557,7 @@ static int _linkg_tun_configure_interface(void)
         return ret;
     }
 
-    ret = linkg_network_interface_set_ipv4(LINKG_RESOURCE_INTERFACE_TUN,
-                                           &g_tun.tun_ipv4.ip,
-                                           &g_tun.tun_ipv4.netmask);
+    ret = linkg_network_interface_set_ipv4(LINKG_RESOURCE_INTERFACE_TUN, &g_tun.tun_ipv4.ip, &g_tun.tun_ipv4.netmask);
     if (ret != 0)
     {
         return ret;
@@ -634,13 +677,13 @@ static int _linkg_tun_read_batch(uint32_t packet_count, uint32_t *read_count)
  */
 static void _linkg_tun_process_read_batch(uint32_t packet_count)
 {
-    linkg_tun_ipv4_info_t      info;
-    linkg_packet_t            *packet;
-    linkg_tun_traffic_class_t  traffic_class;
-    uint32_t                   tx_count;
-    uint32_t                   index;
-    uint8_t                    destination_node_id;
-    int                        ret;
+    linkg_tun_ipv4_info_t     info;
+    linkg_packet_t           *packet;
+    linkg_tun_traffic_class_t traffic_class;
+    uint32_t                  tx_count;
+    uint32_t                  index;
+    uint8_t                   destination_node_id;
+    int                       ret;
 
     tx_count = 0U;
 
@@ -680,11 +723,7 @@ static void _linkg_tun_process_read_batch(uint32_t packet_count)
         return;
     }
 
-    ret = linkg_transport_send_batch(g_tun.tx_items,
-                                     tx_count,
-                                     LINKG_TRANSPORT_TYPE_USER_DATA,
-                                     LINKG_SCHEDULER_POLICY_DEFAULT,
-                                     LINKG_LINK_ID_INVALID);
+    ret = linkg_transport_send_batch(g_tun.tx_items, tx_count, LINKG_TRANSPORT_TYPE_USER_DATA, LINKG_SCHEDULER_POLICY_DEFAULT, LINKG_LINK_ID_INVALID);
     if (ret != 0)
     {
         LINKG_TUN_DEBUG("transport send batch completed with error, count=%u, error=%d", tx_count, ret);
@@ -784,6 +823,8 @@ static int _linkg_tun_write_batch(const linkg_transport_delivery_t *items, uint3
 
     return 0;
 }
+
+/****************************** Transport接收 ******************************/
 
 /**
  * @brief Transport USER_DATA本机交付回调。
@@ -932,9 +973,7 @@ static void _linkg_tun_read_thread(linkg_thread_t *thread, void *user_data)
 
         while (linkg_thread_is_running(thread))
         {
-            allocated_count = linkg_packet_pool_alloc_batch(g_tun.packet_pool,
-                                                             g_tun.read_packets,
-                                                             LINKG_TUN_BATCH_SIZE);
+            allocated_count = linkg_packet_pool_alloc_batch(g_tun.packet_pool, g_tun.read_packets, LINKG_TUN_BATCH_SIZE);
             if (allocated_count == 0U)
             {
                 (void)linkg_time_sleep_ms(LINKG_TUN_POOL_RETRY_MS);
@@ -950,9 +989,7 @@ static void _linkg_tun_read_thread(linkg_thread_t *thread, void *user_data)
                 _linkg_tun_process_read_batch(read_count);
             }
 
-            linkg_packet_pool_release_batch(g_tun.packet_pool,
-                                            g_tun.read_packets,
-                                            allocated_count);
+            linkg_packet_pool_release_batch(g_tun.packet_pool, g_tun.read_packets, allocated_count);
 
             if (ret == -EAGAIN || ret == -EWOULDBLOCK)
             {
@@ -961,10 +998,7 @@ static void _linkg_tun_read_thread(linkg_thread_t *thread, void *user_data)
 
             if (ret != 0)
             {
-                LINKG_TUN_ERROR("read batch failed, capacity=%u, received=%u, error=%d",
-                                allocated_count,
-                                read_count,
-                                ret);
+                LINKG_TUN_ERROR("read batch failed, capacity=%u, received=%u, error=%d", allocated_count, read_count, ret);
                 goto exit;
             }
 
@@ -1034,16 +1068,12 @@ int linkg_tun_init(linkg_packet_pool_t *packet_pool)
     thread_config.affinity_enabled = true;
 
 #if LINKG_TUN_THREAD_SCHED_PRIORITY > 0
-    thread_config.sched_policy        = SCHED_RR;
-    thread_config.sched_priority      = LINKG_TUN_THREAD_SCHED_PRIORITY;
-    thread_config.scheduling_enabled  = true;
+    thread_config.sched_policy       = SCHED_RR;
+    thread_config.sched_priority     = LINKG_TUN_THREAD_SCHED_PRIORITY;
+    thread_config.scheduling_enabled = true;
 #endif
 
-    ret = linkg_thread_init_with_config(&g_tun.read_thread,
-                                        LINKG_TUN_THREAD_NAME,
-                                        _linkg_tun_read_thread,
-                                        NULL,
-                                        &thread_config);
+    ret = linkg_thread_init_with_config(&g_tun.read_thread, LINKG_TUN_THREAD_NAME, _linkg_tun_read_thread, NULL, &thread_config);
     if (ret != 0)
     {
         pthread_mutex_destroy(&g_tun.lock);
@@ -1053,9 +1083,7 @@ int linkg_tun_init(linkg_packet_pool_t *packet_pool)
 
     g_tun.initialized = true;
 
-    ret = linkg_transport_register_handler(LINKG_TRANSPORT_TYPE_USER_DATA,
-                                           _linkg_tun_transport_receive,
-                                           NULL);
+    ret = linkg_transport_register_handler(LINKG_TRANSPORT_TYPE_USER_DATA, _linkg_tun_transport_receive, NULL);
     if (ret != 0)
     {
         g_tun.initialized = false;
@@ -1147,7 +1175,7 @@ int linkg_tun_start(void)
     ret = pthread_mutex_lock(&g_tun.lock);
     if (ret != 0)
     {
-        _linkg_tun_close_fd(fd);
+        (void)_linkg_tun_close_fd(fd);
         return -ret;
     }
 
@@ -1183,10 +1211,7 @@ int linkg_tun_start(void)
 
     pthread_mutex_unlock(&g_tun.lock);
 
-    LINKG_TUN_INFO("module started, interface=%s, node_id=%u, mtu=%u",
-                   LINKG_RESOURCE_INTERFACE_TUN,
-                   g_tun.local_node_id,
-                   LINKG_RESOURCE_TUN_MTU);
+    LINKG_TUN_INFO("module started, interface=%s, node_id=%u, mtu=%u", LINKG_RESOURCE_INTERFACE_TUN, g_tun.local_node_id, LINKG_RESOURCE_TUN_MTU);
 
     return 0;
 
