@@ -1,12 +1,12 @@
 /**
- * @file linkg_transport_window.c
+ * @file transport_window.c
  * @brief LinkG传输层接收去重窗口
  * @author Dawn
  * @version 1.1.0
  * @date 2026-08-29
  */
 
-#include "linkg_transport_internal.h"
+#include "transport_internal.h"
 
 #include <stdint.h>
 #include <string.h>

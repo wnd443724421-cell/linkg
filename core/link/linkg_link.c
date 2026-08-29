@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "linkg_link_internal.h"
+#include "link_internal.h"
 #include "linkg_log.h"
 
 /****************************** 生命周期 ******************************/

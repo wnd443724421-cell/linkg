@@ -24,7 +24,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-#include "linkg_link_internal.h"
+#include "link_internal.h"
 #include "linkg_network_ops.h"
 #include "linkg_packet_pool.h"
 #include "linkg_system_resources.h"

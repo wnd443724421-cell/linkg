@@ -1,5 +1,5 @@
 /**
- * @file linkg_discovery_local.c
+ * @file discovery_local.c
  * @brief LinkG设备发现本机状态实现
  * @author Dawn
  * @version 1.0.0
@@ -20,7 +20,7 @@
 #include "linkg_node.h"
 #include "linkg_system_resources.h"
 
-#include "linkg_discovery_internal.h"
+#include "discovery_internal.h"
 
 /****************************** 内部接口 ******************************/
 

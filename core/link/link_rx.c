@@ -1,5 +1,5 @@
 /**
- * @file linkg_link_rx.c
+ * @file link_rx.c
  * @brief LinkG链路接收处理实现
  * @author Dawn
  * @version 1.1.0
@@ -16,7 +16,7 @@
 #include "linkg_packet_pool.h"
 #include "linkg_time.h"
 
-#include "linkg_link_internal.h"
+#include "link_internal.h"
 
 /****************************** 模块常量 ******************************/
 

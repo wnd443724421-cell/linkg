@@ -1,12 +1,12 @@
 /**
- * @file linkg_transport_tx.c
+ * @file transport_tx.c
  * @brief LinkG逻辑传输层发送实现
  * @author Dawn
  * @version 1.1.0
  * @date 2026-08-29
  */
 
-#include "linkg_transport_internal.h"
+#include "transport_internal.h"
 
 #include <errno.h>
 #include <string.h>

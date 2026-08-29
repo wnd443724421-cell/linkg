@@ -1,20 +1,20 @@
 /**
- * @file linkg_discovery_internal.h
+ * @file discovery_internal.h
  * @brief LinkG设备发现模块内部定义
  * @author Dawn
  * @version 1.0.0
  * @date 2026-08-14
  */
 
-#ifndef LINKG_DISCOVERY_INTERNAL_H
-#define LINKG_DISCOVERY_INTERNAL_H
+#ifndef DISCOVERY_INTERNAL_H
+#define DISCOVERY_INTERNAL_H
 
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "linkg_discovery.h"
-#include "linkg_discovery_channel.h"
+#include "discovery_channel.h"
 #include "linkg_link.h"
 #include "linkg_system_resources.h"
 

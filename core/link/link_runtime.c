@@ -1,12 +1,12 @@
 /**
- * @file linkg_link_runtime.c
+ * @file link_runtime.c
  * @brief LinkG链路运行资源实现
  * @author Dawn
  * @version 1.1.0
  * @date 2026-08-28
  */
 
-#include "linkg_link_internal.h"
+#include "link_internal.h"
 
 #include <errno.h>
 #include <stdlib.h>

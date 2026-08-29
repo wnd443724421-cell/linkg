@@ -1,12 +1,12 @@
 /**
- * @file linkg_transport_reassembly.c
+ * @file transport_reassembly.c
  * @brief LinkG传输层分片重组实现
  * @author Dawn
  * @version 1.3.0
  * @date 2026-08-29
  */
 
-#include "linkg_transport_internal.h"
+#include "transport_internal.h"
 
 #include <errno.h>
 #include <string.h>

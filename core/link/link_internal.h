@@ -1,10 +1,10 @@
 /**
- * @file linkg_link_internal.h
+ * @file link_internal.h
  * @brief LinkG链路基类内部定义
  */
 
-#ifndef LINKG_LINK_INTERNAL_H
-#define LINKG_LINK_INTERNAL_H
+#ifndef LINK_INTERNAL_H
+#define LINK_INTERNAL_H
 
 #include <pthread.h>
 #include <stdbool.h>

@@ -1,10 +1,10 @@
 /**
- * @file linkg_network_internal.h
+ * @file network_internal.h
  * @brief LinkG网络服务内部定义
  */
 
-#ifndef LINKG_NETWORK_INTERNAL_H
-#define LINKG_NETWORK_INTERNAL_H
+#ifndef NETWORK_INTERNAL_H
+#define NETWORK_INTERNAL_H
 
 #include <pthread.h>
 #include <stdbool.h>

@@ -27,7 +27,7 @@
 #include "linkg_network_ops.h"
 #include "linkg_packet_pool.h"
 
-#include "linkg_link_internal.h"
+#include "link_internal.h"
 #include "wifi_platform_internal.h"
 #include "wifi_traffic.h"
 #include "wifi_tx.h"

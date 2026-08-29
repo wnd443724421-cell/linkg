@@ -1,12 +1,12 @@
 /**
- * @file linkg_transport_forward.c
+ * @file transport_forward.c
  * @brief LinkG AP同步批量转发实现
  * @author Dawn
  * @version 1.1.0
  * @date 2026-08-29
  */
 
-#include "linkg_transport_internal.h"
+#include "transport_internal.h"
 
 #include <errno.h>
 #include <string.h>

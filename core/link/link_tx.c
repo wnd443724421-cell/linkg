@@ -1,5 +1,5 @@
 /**
- * @file linkg_link_tx.c
+ * @file link_tx.c
  * @brief LinkG链路发送处理实现
  * @author Dawn
  * @version 1.1.0
@@ -13,7 +13,7 @@
 #include "linkg_log.h"
 #include "linkg_packet_pool.h"
 
-#include "linkg_link_internal.h"
+#include "link_internal.h"
 
 /****************************** 内部辅助 ******************************/
 

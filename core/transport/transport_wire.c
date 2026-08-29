@@ -1,12 +1,12 @@
 /**
- * @file linkg_transport_wire.c
+ * @file transport_wire.c
  * @brief LinkG传输协议头处理
  * @author Dawn
  * @version 1.1.0
  * @date 2026-08-29
  */
 
-#include "linkg_transport_internal.h"
+#include "transport_internal.h"
 
 #include <arpa/inet.h>
 #include <errno.h>

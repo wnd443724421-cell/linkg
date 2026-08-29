@@ -21,7 +21,7 @@
 
 #include "linkg_cellular.h"
 
-#include "linkg_network_internal.h"
+#include "network_internal.h"
 
 /****************************** 模块常量 ******************************/
 

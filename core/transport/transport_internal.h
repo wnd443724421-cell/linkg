@@ -1,10 +1,10 @@
 /**
- * @file linkg_transport_internal.h
+ * @file transport_internal.h
  * @brief LinkG传输层内部定义
  */
 
-#ifndef LINKG_TRANSPORT_INTERNAL_H
-#define LINKG_TRANSPORT_INTERNAL_H
+#ifndef TRANSPORT_INTERNAL_H
+#define TRANSPORT_INTERNAL_H
 
 #include <pthread.h>
 #include <stdbool.h>
