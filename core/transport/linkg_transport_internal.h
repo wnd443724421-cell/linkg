@@ -88,10 +88,10 @@ typedef struct
 
 typedef struct
 {
-    pthread_mutex_t                    lock;                                                        // 重组缓存保护锁
+    pthread_mutex_t                    lock;                                                        				   // 重组缓存保护锁
     linkg_transport_reassembly_entry_t entries[LINKG_TRANSPORT_REASSEMBLY_SET_COUNT][LINKG_TRANSPORT_REASSEMBLY_WAYS]; // 固定重组缓存
-    uint64_t                           last_gc_us;                                                   // 最近一次全局清理时间
-    bool                               initialized;                                                  // 重组资源是否已初始化
+    uint64_t                           last_gc_us;                                                					   // 最近一次全局清理时间
+    bool                               initialized;                                               					   // 重组资源是否已初始化
 } linkg_transport_reassembly_runtime_t;
 
 typedef struct

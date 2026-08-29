@@ -12,10 +12,10 @@
 #include <string.h>
 
 #include "linkg_log.h"
+#include "linkg_packet_pool.h"
 #include "linkg_scheduler.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
-#include "linkg_packet_pool.h"
 
 /****************************** 内部类型 ******************************/
 
@@ -27,9 +27,11 @@ typedef struct
     bool     prepared;     // Peer和Sequence是否准备完成
 } linkg_transport_forward_state_t;
 
-/****************************** 分片配对 ******************************/
+_Static_assert((LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT &
+                (LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT - 1U)) == 0U,
+               "forward pair set count must be power of two");
 
-_Static_assert((LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT & (LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT - 1U)) == 0U, "forward pair set count must be power of two");
+/****************************** 分片配对 ******************************/
 
 /**
  * @brief 计算AP分片配对缓存组索引。
@@ -68,7 +70,12 @@ static bool _linkg_transport_forward_pair_match(const linkg_transport_forward_pa
  */
 static bool _linkg_transport_forward_pair_expired(const linkg_transport_forward_pair_entry_t *entry, uint64_t now_us)
 {
-    return entry != NULL && entry->valid && entry->expires_at_us <= now_us;
+    if (entry == NULL || !entry->valid)
+    {
+        return false;
+    }
+
+    return entry->expires_at_us <= now_us;
 }
 
 /**
@@ -90,7 +97,7 @@ static void _linkg_transport_forward_pair_entry_clear(linkg_transport_forward_pa
 }
 
 /**
- * @brief 释放不完整配对项并累计丢弃统计。
+ * @brief 释放不完整配对项并累计本次丢弃统计。
  */
 static void _linkg_transport_forward_pair_entry_drop(linkg_transport_forward_pair_entry_t *entry, uint64_t *dropped_bytes, uint64_t *dropped_frames)
 {
@@ -101,8 +108,15 @@ static void _linkg_transport_forward_pair_entry_drop(linkg_transport_forward_pai
 
     if (entry->packet != NULL)
     {
-        *dropped_bytes += entry->payload_length;
-        (*dropped_frames)++;
+        if (dropped_bytes != NULL)
+        {
+            *dropped_bytes += entry->payload_length;
+        }
+
+        if (dropped_frames != NULL)
+        {
+            (*dropped_frames)++;
+        }
     }
 
     _linkg_transport_forward_pair_entry_clear(entry);
@@ -161,6 +175,8 @@ static void _linkg_transport_forward_pair_gc_locked(uint64_t now_us, uint64_t *d
 
 /**
  * @brief 创建新的AP不完整分片配对项。
+ *
+ * Pair缓存额外持有当前Packet一个引用，Link RX原始引用保持不变。
  */
 static int _linkg_transport_forward_pair_create_locked(linkg_transport_forward_pair_entry_t *entry, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, uint64_t now_us)
 {
@@ -188,9 +204,10 @@ static int _linkg_transport_forward_pair_create_locked(linkg_transport_forward_p
 }
 
 /**
- * @brief 完成AP分片配对并移交两个Packet引用。
+ * @brief 完成AP两片配对并移交两个Packet引用。
  *
- * 输出始终按照FIRST、LAST顺序排列。
+ * 无论实际到达顺序如何，输出始终严格按照FIRST、LAST顺序排列。
+ * entry原有引用和当前Packet新增引用均移交给output_items调用方。
  */
 static int _linkg_transport_forward_pair_complete_locked(linkg_transport_forward_pair_entry_t *entry, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, linkg_transport_forward_item_t *output_items, uint32_t *output_count)
 {
@@ -199,7 +216,12 @@ static int _linkg_transport_forward_pair_complete_locked(linkg_transport_forward
     uint32_t        first_payload_length;
     uint32_t        tail_payload_length;
 
-    if (entry == NULL || header == NULL || fragment_header == NULL || packet == NULL || output_items == NULL || output_count == NULL)
+    if (entry == NULL ||
+        header == NULL ||
+        fragment_header == NULL ||
+        packet == NULL ||
+        output_items == NULL ||
+        output_count == NULL)
     {
         return -EINVAL;
     }
@@ -237,7 +259,7 @@ static int _linkg_transport_forward_pair_complete_locked(linkg_transport_forward
     output_items[1].type                = (linkg_transport_type_t)header->type;
     output_items[1].destination_node_id = header->destination_node_id;
 
-    // entry持有的Packet引用已经转移给output_items，不在此释放。
+    // entry持有的引用已经移交给output_items，清空时不得再次release。
     entry->packet = NULL;
 
     memset(entry, 0, sizeof(*entry));
@@ -249,6 +271,9 @@ static int _linkg_transport_forward_pair_complete_locked(linkg_transport_forward
 
 /**
  * @brief 在已持锁状态下提交一个AP转发分片。
+ *
+ * 返回0且output_count为0表示继续等待另一片；
+ * 返回0且output_count为2表示已经完成FIRST/LAST配对。
  */
 static int _linkg_transport_forward_pair_submit_locked(const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, uint64_t now_us, linkg_transport_forward_item_t *output_items, uint32_t *output_count, uint64_t *dropped_bytes, uint64_t *dropped_frames)
 {
@@ -259,6 +284,15 @@ static int _linkg_transport_forward_pair_submit_locked(const linkg_transport_hea
     linkg_transport_forward_pair_entry_t *new_entry;
     uint32_t                              set;
     uint32_t                              way;
+
+    if (header == NULL ||
+        fragment_header == NULL ||
+        packet == NULL ||
+        output_items == NULL ||
+        output_count == NULL)
+    {
+        return -EINVAL;
+    }
 
     *output_count = 0U;
 
@@ -321,20 +355,184 @@ static int _linkg_transport_forward_pair_submit_locked(const linkg_transport_hea
         return -EPROTO;
     }
 
-    // 同一个分片重复到达不刷新Pair TTL。
+    // 同一片再次出现直接忽略，不刷新Pair固定TTL。
     if (entry->fragment_offset == fragment_header->fragment_offset)
     {
         return 0;
     }
 
-    if (entry->fragment_offset != 0U &&
-        entry->fragment_offset != LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE)
+    return _linkg_transport_forward_pair_complete_locked(entry,
+                                                          header,
+                                                          fragment_header,
+                                                          packet,
+                                                          payload_length,
+                                                          output_items,
+                                                          output_count);
+}
+
+/****************************** Pair生命周期 ******************************/
+
+/**
+ * @brief 初始化AP转发分片配对资源。
+ */
+int linkg_transport_forward_pair_runtime_init(void)
+{
+    int ret;
+
+    if (g_transport.forward_pairs.initialized)
     {
-        _linkg_transport_forward_pair_entry_drop(entry, dropped_bytes, dropped_frames);
-        return -EPROTO;
+        return -EALREADY;
     }
 
-    return _linkg_transport_forward_pair_complete_locked(entry, header, fragment_header, packet, payload_length, output_items, output_count);
+    memset(&g_transport.forward_pairs, 0, sizeof(g_transport.forward_pairs));
+
+    ret = pthread_mutex_init(&g_transport.forward_pairs.lock, NULL);
+    if (ret != 0)
+    {
+        memset(&g_transport.forward_pairs, 0, sizeof(g_transport.forward_pairs));
+        return -ret;
+    }
+
+    g_transport.forward_pairs.initialized = true;
+
+    return 0;
+}
+
+/**
+ * @brief 释放全部AP转发分片配对资源。
+ *
+ * 调用前Link RX数据面必须已经停止，不得再有新的Pair Submit进入。
+ */
+int linkg_transport_forward_pair_runtime_deinit(void)
+{
+    linkg_transport_forward_pair_entry_t *entry;
+    uint64_t                              dropped_bytes;
+    uint64_t                              dropped_frames;
+    uint32_t                              set;
+    uint32_t                              way;
+    int                                   ret;
+
+    if (!g_transport.forward_pairs.initialized)
+    {
+        return 0;
+    }
+
+    dropped_bytes  = 0U;
+    dropped_frames = 0U;
+
+    ret = pthread_mutex_lock(&g_transport.forward_pairs.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    for (set = 0U; set < LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT; set++)
+    {
+        for (way = 0U; way < LINKG_TRANSPORT_FORWARD_PAIR_WAYS; way++)
+        {
+            entry = &g_transport.forward_pairs.entries[set][way];
+
+            _linkg_transport_forward_pair_entry_drop(entry, &dropped_bytes, &dropped_frames);
+        }
+    }
+
+    g_transport.forward_pairs.initialized = false;
+
+    ret = pthread_mutex_unlock(&g_transport.forward_pairs.lock);
+    if (ret != 0)
+    {
+        g_transport.forward_pairs.initialized = true;
+        return -ret;
+    }
+
+    _linkg_transport_forward_record_incomplete(dropped_bytes, dropped_frames);
+
+    ret = pthread_mutex_destroy(&g_transport.forward_pairs.lock);
+    if (ret != 0)
+    {
+        g_transport.forward_pairs.initialized = true;
+        return -ret;
+    }
+
+    memset(&g_transport.forward_pairs, 0, sizeof(g_transport.forward_pairs));
+
+    return 0;
+}
+
+/****************************** Pair提交 ******************************/
+
+/**
+ * @brief 提交一个AP转发分片并尝试完成两片配对。
+ *
+ * 当前Packet在进入Pair Cache时由缓存额外retain；
+ * output_count为2时两个输出Packet引用均移交给调用方负责最终release。
+ */
+int linkg_transport_forward_pair_submit(const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, linkg_transport_forward_item_t *output_items, uint32_t *output_count)
+{
+    uint64_t dropped_bytes;
+    uint64_t dropped_frames;
+    uint64_t now_us;
+    int      unlock_ret;
+    int      ret;
+
+    if (!g_transport.initialized || !g_transport.forward_pairs.initialized)
+    {
+        return -ENODEV;
+    }
+
+    if (g_transport.local_role != LINKG_DEVICE_ROLE_AP)
+    {
+        return -EPERM;
+    }
+
+    if (header == NULL ||
+        fragment_header == NULL ||
+        packet == NULL ||
+        output_items == NULL ||
+        output_count == NULL ||
+        payload_length == 0U)
+    {
+        return -EINVAL;
+    }
+
+    if ((header->flags & LINKG_TRANSPORT_FLAG_FRAGMENT) == 0U)
+    {
+        return -EINVAL;
+    }
+
+    *output_count  = 0U;
+    dropped_bytes  = 0U;
+    dropped_frames = 0U;
+    now_us         = linkg_time_elapsed_us();
+
+    ret = pthread_mutex_lock(&g_transport.forward_pairs.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    _linkg_transport_forward_pair_gc_locked(now_us, &dropped_bytes, &dropped_frames);
+
+    ret = _linkg_transport_forward_pair_submit_locked(header,
+                                                       fragment_header,
+                                                       packet,
+                                                       payload_length,
+                                                       now_us,
+                                                       output_items,
+                                                       output_count,
+                                                       &dropped_bytes,
+                                                       &dropped_frames);
+
+    unlock_ret = pthread_mutex_unlock(&g_transport.forward_pairs.lock);
+
+    _linkg_transport_forward_record_incomplete(dropped_bytes, dropped_frames);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return unlock_ret == 0 ? 0 : -unlock_ret;
 }
 
 /****************************** 内部辅助 ******************************/
@@ -344,7 +542,8 @@ static int _linkg_transport_forward_pair_submit_locked(const linkg_transport_hea
  */
 static bool _linkg_transport_forward_node_id_valid(uint8_t node_id)
 {
-    return node_id >= LINKG_RESOURCE_NODE_ID_MIN && node_id <= LINKG_RESOURCE_NODE_ID_MAX;
+    return node_id >= LINKG_RESOURCE_NODE_ID_MIN &&
+           node_id <= LINKG_RESOURCE_NODE_ID_MAX;
 }
 
 /**
@@ -460,7 +659,7 @@ static int _linkg_transport_forward_prepare_batch(const linkg_transport_forward_
 }
 
 /**
- * @brief 批量记录AP同步转发TX统计。
+ * @brief 批量记录AP同步转发Transport帧TX统计。
  *
  * RX统计已经在Transport接收窗口阶段完成，此处只记录转发产生的新一跳TX结果。
  */
@@ -537,8 +736,9 @@ static void _linkg_transport_forward_record_batch(const linkg_transport_forward_
 /**
  * @brief 同步批量转发AP收到的非本机目标Transport帧。
  *
- * 当前函数同步借用Link RX持有的Packet引用，不retain且不跨线程保存。
- * 转发保持原始Transport端到端身份、packet_id和分片边界，只更新当前新一跳sequence。
+ * 当前函数只在调用期间借用Packet引用，不修改Packet引用所有权。
+ * 转发保持原始source_node_id、destination_node_id、packet_id和分片边界，
+ * 仅重新分配当前下一跳Transport sequence。
  */
 int linkg_transport_forward_batch(const linkg_transport_forward_item_t *items, uint32_t count)
 {
@@ -591,7 +791,10 @@ int linkg_transport_forward_batch(const linkg_transport_forward_item_t *items, u
 
     if (scheduler_count > 0U)
     {
-        ret = linkg_scheduler_submit_batch(scheduler_items, scheduler_count, LINKG_SCHEDULER_POLICY_DEFAULT, LINKG_LINK_ID_INVALID);
+        ret = linkg_scheduler_submit_batch(scheduler_items,
+                                           scheduler_count,
+                                           LINKG_SCHEDULER_POLICY_DEFAULT,
+                                           LINKG_LINK_ID_INVALID);
 
         if (ret < 0)
         {

@@ -370,9 +370,9 @@ static int _linkg_transport_tx_frame_batch_push(linkg_transport_tx_frame_batch_t
     batch->scheduler_items[index].next_hop_node_id = peer_node_id;
     batch->scheduler_items[index].result           = -EINPROGRESS;
 
-    batch->frame_states[index].owned_packet = owned_packet;
-    batch->frame_states[index].logical_index = logical_index;
-    batch->frame_states[index].frame_index = frame_index;
+	batch->frame_states[index].owned_packet  = owned_packet;
+	batch->frame_states[index].logical_index = logical_index;
+	batch->frame_states[index].frame_index   = frame_index;
 
     batch->count++;
 
