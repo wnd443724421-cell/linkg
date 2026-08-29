@@ -27,11 +27,11 @@
 
 typedef struct
 {
-    pthread_mutex_t       lock;        // 状态互斥锁
-    linkg_thread_t        thread;      // 状态采集线程
-    at_channel_t         *channel;     // 当前AT通信通道
-    cellular_status_info_t info;       // 当前唯一状态快照
-    bool                  initialized; // 模块是否已经初始化
+    pthread_mutex_t        lock;        // 状态互斥锁
+    linkg_thread_t         thread;      // 状态采集线程
+    at_channel_t          *channel;     // 当前AT通信通道
+    cellular_status_info_t info;        // 当前唯一状态快照
+    bool                   initialized; // 模块是否已经初始化
 } cellular_status_context_t;
 
 static cellular_status_context_t g_cellular_status =

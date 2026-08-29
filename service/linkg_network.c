@@ -19,7 +19,7 @@
 #include "linkg_system_resources.h"
 #include "linkg_wifi.h"
 
-#include "rg255.h"
+#include "linkg_cellular.h"
 
 #include "linkg_network_internal.h"
 

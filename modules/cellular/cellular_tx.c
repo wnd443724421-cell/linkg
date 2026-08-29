@@ -1,14 +1,14 @@
 /**
- * @file rg255_tx.c
+ * @file cellular_tx.c
  * @brief LinkG蜂窝链路发送模块实现
  * @author Dawn
  * @version 1.1.0
  * @date 2026-08-28
  */
 
-#define _GNU_SOURCE
+#define _GNU_SOURCE // 启用GNU扩展接口
 
-#include "rg255_tx.h"
+#include "cellular_tx.h"
 
 #include <errno.h>
 #include <net/if.h>
@@ -27,9 +27,9 @@
 #include "linkg_packet_pool.h"
 #include "linkg_time.h"
 
-#include "rg255_tx_queue.h"
+#include "cellular_tx_queue.h"
 
-/****************************** 发送参数 ******************************/
+/****************************** 模块常量 ******************************/
 
 #define LINKG_CELLULAR_TX_IPV6_HEADER_SIZE       40U                           // IPv6固定头部长度
 #define LINKG_CELLULAR_TX_UDP_HEADER_SIZE        8U                            // UDP头部长度
@@ -39,7 +39,7 @@
 #define LINKG_CELLULAR_TX_VIDEO_QUEUE_CAPACITY   96U                           // VIDEO等待队列容量
 #define LINKG_CELLULAR_TX_DATA_QUEUE_CAPACITY    96U                           // DATA等待队列容量
 #define LINKG_CELLULAR_TX_VIDEO_MAX_AGE_US       100000ULL                     // VIDEO等待队列最大驻留时间
-#define LINKG_CELLULAR_TX_DATA_MAX_AGE_US        200000ULL                     // DATA等待队列最大驻留时间
+#define LINKG_CELLULAR_TX_DATA_MAX_AGE_US        150000ULL                     // DATA等待队列最大驻留时间
 #define LINKG_CELLULAR_TX_SENDMMSG_CHUNK_MAX     32U                           // Normal单次sendmmsg最大消息数量
 #define LINKG_CELLULAR_TX_CONTROL_SIZE           CMSG_SPACE(sizeof(struct in6_pktinfo)) // 单个IPv6 PKTINFO控制区大小
 
@@ -48,7 +48,7 @@
 struct linkg_cellular_tx
 {
     pthread_mutex_t             normal_lock;       // VIDEO/DATA控制路径串行锁
-    pthread_mutex_t             send_lock;         // sendmmsg共享scratch资源保护锁
+    pthread_mutex_t             send_lock;         // 发送锁，保护sendmmsg共享发送缓冲区
     linkg_cellular_tx_queue_t  *video_queue;       // VIDEO短等待队列
     linkg_cellular_tx_queue_t  *data_queue;        // DATA短等待队列
     struct mmsghdr             *messages;          // sendmmsg消息数组

@@ -29,7 +29,7 @@
 #include "linkg_packet_pool.h"
 #include "linkg_system_resources.h"
 
-#include "rg255_tx.h"
+#include "cellular_tx.h"
 
 /****************************** 数据限制 ******************************/
 

@@ -6,7 +6,7 @@
  * @date 2026-08-28
  */
 
-#include "rg255_tx_queue.h"
+#include "cellular_tx_queue.h"
 
 #include <errno.h>
 #include <stdlib.h>

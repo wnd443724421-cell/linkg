@@ -66,7 +66,7 @@ typedef struct
 {
     uint8_t          cid;                               // PDP上下文ID
     rg255_pdp_type_t pdp_type;                          // PDP协议类型
-    char             apn[LINKG_CELLULAR_APN_MAX + 1U]; // 当前APN
+    char             apn[LINKG_CELLULAR_APN_MAX + 1U];  // 当前APN
 } rg255_pdp_config_t;
 
 /****************************** PDP地址 ******************************/

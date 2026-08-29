@@ -41,11 +41,11 @@
 #define LINKG_WIFI_TX_TELEMETRY_INTERVAL_US    250000ULL                     // 流控调试遥测最小输出间隔
 
 #ifndef LINKG_WIFI_TX_VIDEO_QUEUE_CAPACITY
-#define LINKG_WIFI_TX_VIDEO_QUEUE_CAPACITY     8U                            // VIDEO等待队列容量
+#define LINKG_WIFI_TX_VIDEO_QUEUE_CAPACITY     32U                            // VIDEO等待队列容量
 #endif
 
 #ifndef LINKG_WIFI_TX_DATA_QUEUE_CAPACITY
-#define LINKG_WIFI_TX_DATA_QUEUE_CAPACITY      8U                            // DATA等待队列容量
+#define LINKG_WIFI_TX_DATA_QUEUE_CAPACITY      32U                            // DATA等待队列容量
 #endif
 
 #ifndef LINKG_WIFI_TX_DATA_MAX_AGE_US
@@ -523,8 +523,7 @@ static int _linkg_wifi_tx_send_current(linkg_wifi_tx_t *tx, linkg_wifi_traffic_c
 
         do
         {
-            ret = sendmmsg(socket_fd, &tx->messages[offset], chunk_count,
-                           MSG_DONTWAIT | MSG_NOSIGNAL);
+            ret = sendmmsg(socket_fd, &tx->messages[offset], chunk_count, MSG_DONTWAIT | MSG_NOSIGNAL);
         }
         while (ret < 0 && errno == EINTR);
 
