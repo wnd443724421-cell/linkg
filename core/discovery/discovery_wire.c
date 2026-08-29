@@ -209,11 +209,12 @@ static int _linkg_discovery_wire_decode_endpoint(const uint8_t *buffer, linkg_pa
  * @brief 将设备完整状态编码为Wire Payload。
  *
  * Wire布局：
- * session_id        8B
- * revision          8B
- * node_id           1B
- * role              1B
- * wifi_endpoint    19B
+ * session_id         8B
+ * revision           8B
+ * node_id            1B
+ * role               1B
+ * path_flags         1B
+ * wifi_endpoint     19B
  * cellular_endpoint 19B
  */
 int linkg_discovery_wire_encode_report(const linkg_discovery_report_t *report, uint8_t *buffer, uint32_t capacity)
@@ -243,6 +244,7 @@ int linkg_discovery_wire_encode_report(const linkg_discovery_report_t *report, u
 
     buffer[offset++] = report->node.node_id;
     buffer[offset++] = (uint8_t)report->node.role;
+    buffer[offset++] = report->path_flags;
 
     ret = _linkg_discovery_wire_encode_endpoint(&report->wifi_endpoint, &buffer[offset]);
     if (ret != 0)
@@ -298,6 +300,7 @@ int linkg_discovery_wire_decode_report(const uint8_t *buffer, uint32_t length, l
 
     report->node.node_id = buffer[offset++];
     report->node.role    = (linkg_device_role_t)buffer[offset++];
+    report->path_flags   = buffer[offset++];
 
     ret = _linkg_discovery_wire_decode_endpoint(&buffer[offset], &report->wifi_endpoint);
     if (ret != 0)
@@ -337,7 +340,7 @@ int linkg_discovery_wire_encode_header(const linkg_discovery_wire_header_t *head
         return -EINVAL;
     }
 
-    if (capacity < DISCOVERY_WIRE_HEADER_SIZE)
+    if (capacity < LINKG_DISCOVERY_WIRE_HEADER_SIZE)
     {
         return -ENOSPC;
     }
@@ -353,7 +356,7 @@ int linkg_discovery_wire_encode_header(const linkg_discovery_wire_header_t *head
     _linkg_discovery_wire_write_u16(&buffer[offset], header->payload_length);
     offset += sizeof(uint16_t);
 
-    if (offset != DISCOVERY_WIRE_HEADER_SIZE)
+    if (offset != LINKG_DISCOVERY_WIRE_HEADER_SIZE)
     {
         return -EIO;
     }
@@ -373,7 +376,7 @@ int linkg_discovery_wire_decode_header(const uint8_t *buffer, uint32_t length, l
         return -EINVAL;
     }
 
-    if (length < DISCOVERY_WIRE_HEADER_SIZE)
+    if (length < LINKG_DISCOVERY_WIRE_HEADER_SIZE)
     {
         return -EMSGSIZE;
     }
@@ -391,7 +394,7 @@ int linkg_discovery_wire_decode_header(const uint8_t *buffer, uint32_t length, l
     header->payload_length = _linkg_discovery_wire_read_u16(&buffer[offset]);
     offset += sizeof(uint16_t);
 
-    if (offset != DISCOVERY_WIRE_HEADER_SIZE)
+    if (offset != LINKG_DISCOVERY_WIRE_HEADER_SIZE)
     {
         return -EIO;
     }
@@ -435,8 +438,8 @@ int linkg_discovery_wire_encode_sta_report(const linkg_discovery_report_t *repor
     }
 
     ret = linkg_discovery_wire_encode_report(report,
-                                             &buffer[DISCOVERY_WIRE_HEADER_SIZE],
-                                             capacity - DISCOVERY_WIRE_HEADER_SIZE);
+                                             &buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE],
+                                             capacity - LINKG_DISCOVERY_WIRE_HEADER_SIZE);
     if (ret != 0)
     {
         return ret;
@@ -461,7 +464,7 @@ int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t lengt
         return -EINVAL;
     }
 
-    if (length < DISCOVERY_WIRE_HEADER_SIZE)
+    if (length < LINKG_DISCOVERY_WIRE_HEADER_SIZE)
     {
         return -EMSGSIZE;
     }
@@ -484,14 +487,14 @@ int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t lengt
         return -EMSGSIZE;
     }
 
-    expected_length = DISCOVERY_WIRE_HEADER_SIZE + (uint32_t)header.payload_length;
+    expected_length = LINKG_DISCOVERY_WIRE_HEADER_SIZE + (uint32_t)header.payload_length;
 
     if (length != expected_length)
     {
         return -EMSGSIZE;
     }
 
-    return linkg_discovery_wire_decode_report(&buffer[DISCOVERY_WIRE_HEADER_SIZE],
+    return linkg_discovery_wire_decode_report(&buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE],
                                               header.payload_length,
                                               report);
 }
@@ -531,7 +534,7 @@ int linkg_discovery_wire_encode_ap_sync(const linkg_discovery_ap_sync_t *sync, u
     payload_length = LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE +
                      sync->node_count * LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE;
 
-    packet_length = DISCOVERY_WIRE_HEADER_SIZE + payload_length;
+    packet_length = LINKG_DISCOVERY_WIRE_HEADER_SIZE + payload_length;
 
     if (capacity < packet_length)
     {
@@ -551,7 +554,7 @@ int linkg_discovery_wire_encode_ap_sync(const linkg_discovery_ap_sync_t *sync, u
         return ret;
     }
 
-    offset = DISCOVERY_WIRE_HEADER_SIZE;
+    offset = LINKG_DISCOVERY_WIRE_HEADER_SIZE;
 
     ret = linkg_discovery_wire_encode_report(&sync->ap, &buffer[offset], capacity - offset);
     if (ret != 0)
@@ -599,7 +602,7 @@ int linkg_discovery_wire_decode_ap_sync(const uint8_t *buffer, uint32_t length, 
         return -EINVAL;
     }
 
-    if (length < DISCOVERY_WIRE_HEADER_SIZE)
+    if (length < LINKG_DISCOVERY_WIRE_HEADER_SIZE)
     {
         return -EMSGSIZE;
     }
@@ -622,7 +625,7 @@ int linkg_discovery_wire_decode_ap_sync(const uint8_t *buffer, uint32_t length, 
         return -EMSGSIZE;
     }
 
-    expected_packet_length = DISCOVERY_WIRE_HEADER_SIZE +
+    expected_packet_length = LINKG_DISCOVERY_WIRE_HEADER_SIZE +
                              (uint32_t)header.payload_length;
 
     if (length != expected_packet_length)
@@ -632,7 +635,7 @@ int linkg_discovery_wire_decode_ap_sync(const uint8_t *buffer, uint32_t length, 
 
     memset(sync, 0, sizeof(*sync));
 
-    offset = DISCOVERY_WIRE_HEADER_SIZE;
+    offset = LINKG_DISCOVERY_WIRE_HEADER_SIZE;
 
     ret = linkg_discovery_wire_decode_report(&buffer[offset],
                                              LINKG_DISCOVERY_WIRE_REPORT_SIZE,
@@ -717,7 +720,7 @@ int linkg_discovery_wire_encode_peer_leave(const linkg_discovery_leave_t *leave,
         return ret;
     }
 
-    offset = DISCOVERY_WIRE_HEADER_SIZE;
+    offset = LINKG_DISCOVERY_WIRE_HEADER_SIZE;
 
     _linkg_discovery_wire_write_u64(&buffer[offset], leave->session_id);
     offset += sizeof(uint64_t);
@@ -776,7 +779,7 @@ int linkg_discovery_wire_decode_peer_leave(const uint8_t *buffer, uint32_t lengt
 
     memset(leave, 0, sizeof(*leave));
 
-    offset = DISCOVERY_WIRE_HEADER_SIZE;
+    offset = LINKG_DISCOVERY_WIRE_HEADER_SIZE;
 
     leave->session_id = _linkg_discovery_wire_read_u64(&buffer[offset]);
     offset += sizeof(uint64_t);

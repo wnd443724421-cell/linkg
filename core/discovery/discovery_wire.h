@@ -8,8 +8,9 @@
 
 #include <stdint.h>
 
-#include "linkg_discovery.h"
 #include "linkg_system_resources.h"
+
+#include "discovery_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,17 +19,17 @@ extern "C" {
 /****************************** 协议常量 ******************************/
 
 #define LINKG_DISCOVERY_WIRE_MAGIC                 0x4C474453U // Discovery协议标识"LGDS"
-#define LINKG_DISCOVERY_WIRE_VERSION               1U          // Discovery协议版本
-#define DISCOVERY_WIRE_HEADER_SIZE           8U          // Wire公共头固定长度
+#define LINKG_DISCOVERY_WIRE_VERSION               2U          // Discovery协议版本
+#define LINKG_DISCOVERY_WIRE_HEADER_SIZE           8U          // Wire公共头固定长度
 #define LINKG_DISCOVERY_WIRE_ENDPOINT_ADDRESS_SIZE 16U         // Wire端点地址固定长度
 #define LINKG_DISCOVERY_WIRE_ENDPOINT_SIZE         19U         // Wire端点固定长度
-#define LINKG_DISCOVERY_WIRE_REPORT_SIZE           56U         // 设备完整状态Payload固定长度
+#define LINKG_DISCOVERY_WIRE_REPORT_SIZE           57U         // 设备完整状态Payload固定长度
 #define LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE    1U          // 单个拓扑Node ID固定长度
-#define LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE     68U         // AP同步Payload固定部分长度
+#define LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE     69U         // AP同步Payload固定部分长度
 #define LINKG_DISCOVERY_WIRE_LEAVE_PAYLOAD_SIZE    17U         // Peer注销Payload固定长度
-#define LINKG_DISCOVERY_WIRE_STA_REPORT_SIZE       (DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_REPORT_SIZE) 		// STA状态报文固定长度
-#define LINKG_DISCOVERY_WIRE_PEER_LEAVE_SIZE       (DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_LEAVE_PAYLOAD_SIZE) // Peer注销报文固定长度
-#define LINKG_DISCOVERY_WIRE_AP_SYNC_MAX_SIZE      (DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE + LINKG_RESOURCE_NETWORK_STA_MAX * LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE) // AP同步报文最大长度
+#define LINKG_DISCOVERY_WIRE_STA_REPORT_SIZE       (LINKG_DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_REPORT_SIZE)
+#define LINKG_DISCOVERY_WIRE_PEER_LEAVE_SIZE       (LINKG_DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_LEAVE_PAYLOAD_SIZE)
+#define LINKG_DISCOVERY_WIRE_AP_SYNC_MAX_SIZE      (LINKG_DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE + LINKG_RESOURCE_NETWORK_STA_MAX * LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE)
 
 /****************************** 消息类型 ******************************/
 

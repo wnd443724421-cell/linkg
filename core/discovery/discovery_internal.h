@@ -13,10 +13,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "linkg_discovery.h"
-#include "discovery_channel.h"
 #include "linkg_link.h"
 #include "linkg_system_resources.h"
+
+#include "discovery_channel.h"
+#include "discovery_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,9 +61,9 @@ typedef struct
 
 typedef struct
 {
-    bool                                registered; // Discovery Channel是否已经注册
-    linkg_discovery_channel_send_func_t send;       // Wire报文发送函数
-    void                               *user_data;  // Channel私有数据
+    bool                                      registered; // Discovery Channel是否已经注册
+    linkg_discovery_channel_send_leave_func_t send;       // Wire报文发送函数
+    void                                     *user_data;  // Channel私有数据
 } linkg_discovery_channel_state_t;
 
 /****************************** 拓扑状态 ******************************/
@@ -96,10 +97,7 @@ extern linkg_discovery_context_t g_discovery;
 
 /****************************** 本机状态 ******************************/
 
-bool _linkg_discovery_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right);
-int  _linkg_discovery_generate_session_id(uint64_t *session_id);
 int  _linkg_discovery_build_local_report(linkg_discovery_report_t *report);
-int  _linkg_discovery_prepare_local_endpoints(linkg_discovery_report_t *report);
 int  _linkg_discovery_refresh_local_endpoints(void);
 int  _linkg_discovery_build_local_leave_locked(linkg_discovery_leave_t *leave);
 

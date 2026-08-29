@@ -8,12 +8,12 @@
 
 #include <errno.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/random.h>
 
-#include "linkg_discovery.h"
 #include "linkg_link.h"
 #include "linkg_link_manager.h"
 #include "linkg_network_ops.h"
@@ -22,6 +22,10 @@
 
 #include "discovery_internal.h"
 
+/****************************** 内部状态 ******************************/
+
+static pthread_mutex_t g_discovery_local_refresh_lock = PTHREAD_MUTEX_INITIALIZER;
+
 /****************************** 内部接口 ******************************/
 
 /**
@@ -29,112 +33,22 @@
  *
  * 调用方必须持有Discovery状态锁。
  */
-static void _linkg_discovery_advance_local_revision_locked(void)
+static int _linkg_discovery_advance_local_revision_locked(void)
 {
+    if (g_discovery.local_report.revision == UINT64_MAX)
+    {
+        return -EOVERFLOW;
+    }
+
     g_discovery.local_report.revision++;
 
-    if (g_discovery.local_report.revision == 0U)
-    {
-        g_discovery.local_report.revision = 1U;
-    }
-}
-
-/**
- * @brief 准备本机Wi-Fi数据端点。
- */
-static int _linkg_discovery_prepare_wifi_endpoint(linkg_path_endpoint_t *endpoint)
-{
-    struct sockaddr_in *address;
-    struct in_addr      wifi_address;
-    uint32_t            link_id;
-    int                 ret;
-
-    if (endpoint == NULL)
-    {
-        return -EINVAL;
-    }
-
-    memset(endpoint, 0, sizeof(*endpoint));
-
-    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
-    if (link_id == LINKG_LINK_ID_INVALID)
-    {
-        return 0;
-    }
-
-    ret = linkg_network_interface_get_ipv4(LINKG_RESOURCE_INTERFACE_WIFI, &wifi_address);
-    if (ret == -ENODEV || ret == -EADDRNOTAVAIL)
-    {
-        return 0;
-    }
-
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    address = (struct sockaddr_in *)&endpoint->address;
-
-    address->sin_family = AF_INET;
-    address->sin_addr   = wifi_address;
-    address->sin_port   = htons(LINKG_RESOURCE_UDP_PORT_WIFI_DATA);
-
-    endpoint->length = sizeof(*address);
-
     return 0;
 }
-
-/**
- * @brief 准备本机蜂窝数据端点。
- */
-static int _linkg_discovery_prepare_cellular_endpoint(linkg_path_endpoint_t *endpoint)
-{
-    struct sockaddr_in6 *address;
-    struct in6_addr      cellular_address;
-    uint32_t             link_id;
-    int                  ret;
-
-    if (endpoint == NULL)
-    {
-        return -EINVAL;
-    }
-
-    memset(endpoint, 0, sizeof(*endpoint));
-
-    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
-    if (link_id == LINKG_LINK_ID_INVALID)
-    {
-        return 0;
-    }
-
-    ret = linkg_network_interface_get_global_ipv6(LINKG_RESOURCE_INTERFACE_CELLULAR, &cellular_address);
-    if (ret == -ENODEV || ret == -EADDRNOTAVAIL)
-    {
-        return 0;
-    }
-
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    address = (struct sockaddr_in6 *)&endpoint->address;
-
-    address->sin6_family = AF_INET6;
-    address->sin6_addr   = cellular_address;
-    address->sin6_port   = htons(LINKG_RESOURCE_UDP_PORT_CELLULAR_DATA);
-
-    endpoint->length = sizeof(*address);
-
-    return 0;
-}
-
-/****************************** 本机状态 ******************************/
 
 /**
  * @brief 判断两个Discovery Path Endpoint是否相同。
  */
-bool _linkg_discovery_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right)
+static bool _linkg_discovery_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right)
 {
     const struct sockaddr_in  *left_ipv4;
     const struct sockaddr_in  *right_ipv4;
@@ -200,13 +114,13 @@ bool _linkg_discovery_endpoint_equal(const linkg_path_endpoint_t *left, const li
                memcmp(&left_ipv6->sin6_addr, &right_ipv6->sin6_addr, sizeof(left_ipv6->sin6_addr)) == 0;
     }
 
-    return memcmp(&left->address, &right->address, left->length) == 0;
+    return false;
 }
 
 /**
  * @brief 生成新的Discovery会话标识。
  */
-int _linkg_discovery_generate_session_id(uint64_t *session_id)
+static int _linkg_discovery_generate_session_id(uint64_t *session_id)
 {
     uint8_t *buffer;
     size_t   offset;
@@ -250,34 +164,173 @@ int _linkg_discovery_generate_session_id(uint64_t *session_id)
 }
 
 /**
- * @brief 准备本机当前Discovery数据端点。
+ * @brief 准备本机Wi-Fi数据端点。
+ *
+ * @return 1表示当前Endpoint有效；
+ *         0表示当前Endpoint明确未就绪；
+ *         负值表示本次Endpoint状态查询失败。
  */
-int _linkg_discovery_prepare_local_endpoints(linkg_discovery_report_t *report)
+static int _linkg_discovery_prepare_wifi_endpoint(linkg_path_endpoint_t *endpoint)
 {
-    int ret;
+    struct sockaddr_in *address;
+    struct in_addr      wifi_address;
+    uint32_t            link_id;
+    int                 ret;
+
+    if (endpoint == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(endpoint, 0, sizeof(*endpoint));
+
+    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    if (link_id == LINKG_LINK_ID_INVALID)
+    {
+        return 0;
+    }
+
+    ret = linkg_network_interface_get_ipv4(LINKG_RESOURCE_INTERFACE_WIFI, &wifi_address);
+    if (ret == -ENODEV || ret == -EADDRNOTAVAIL)
+    {
+        return 0;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    address = (struct sockaddr_in *)&endpoint->address;
+
+    address->sin_family = AF_INET;
+    address->sin_addr   = wifi_address;
+    address->sin_port   = htons(LINKG_RESOURCE_UDP_PORT_WIFI_DATA);
+
+    endpoint->length = sizeof(*address);
+
+    return 1;
+}
+
+/**
+ * @brief 准备本机Cellular数据端点。
+ *
+ * @return 1表示当前Endpoint有效；
+ *         0表示当前Endpoint明确未就绪；
+ *         负值表示本次Endpoint状态查询失败。
+ */
+static int _linkg_discovery_prepare_cellular_endpoint(linkg_path_endpoint_t *endpoint)
+{
+    struct sockaddr_in6 *address;
+    struct in6_addr      cellular_address;
+    uint32_t             link_id;
+    int                  ret;
+
+    if (endpoint == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(endpoint, 0, sizeof(*endpoint));
+
+    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
+    if (link_id == LINKG_LINK_ID_INVALID)
+    {
+        return 0;
+    }
+
+    ret = linkg_network_interface_get_global_ipv6(LINKG_RESOURCE_INTERFACE_CELLULAR, &cellular_address);
+    if (ret == -ENODEV || ret == -EADDRNOTAVAIL)
+    {
+        return 0;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    address = (struct sockaddr_in6 *)&endpoint->address;
+
+    address->sin6_family = AF_INET6;
+    address->sin6_addr   = cellular_address;
+    address->sin6_port   = htons(LINKG_RESOURCE_UDP_PORT_CELLULAR_DATA);
+
+    endpoint->length = sizeof(*address);
+
+    return 1;
+}
+
+/**
+ * @brief 准备本机Discovery初始数据端点。
+ *
+ * 初始状态至少需要存在一个有效数据Path。
+ */
+static int _linkg_discovery_prepare_initial_endpoints(linkg_discovery_report_t *report)
+{
+    linkg_path_endpoint_t wifi_endpoint;
+    linkg_path_endpoint_t cellular_endpoint;
+    int                   wifi_state;
+    int                   cellular_state;
+    int                   first_error;
 
     if (report == NULL)
     {
         return -EINVAL;
     }
 
-    ret = _linkg_discovery_prepare_wifi_endpoint(&report->wifi_endpoint);
-    if (ret != 0)
+    memset(&wifi_endpoint, 0, sizeof(wifi_endpoint));
+    memset(&cellular_endpoint, 0, sizeof(cellular_endpoint));
+
+    memset(&report->wifi_endpoint, 0, sizeof(report->wifi_endpoint));
+    memset(&report->cellular_endpoint, 0, sizeof(report->cellular_endpoint));
+
+    report->path_flags &= (uint8_t)~LINKG_DISCOVERY_PATH_VALID_MASK;
+
+    first_error = 0;
+
+    wifi_state = _linkg_discovery_prepare_wifi_endpoint(&wifi_endpoint);
+    if (wifi_state > 0)
     {
-        return ret;
+        report->wifi_endpoint = wifi_endpoint;
+        report->path_flags |= LINKG_DISCOVERY_PATH_WIFI_VALID;
+    }
+    else if (wifi_state < 0)
+    {
+        first_error = wifi_state;
     }
 
-    ret = _linkg_discovery_prepare_cellular_endpoint(&report->cellular_endpoint);
-    if (ret != 0)
+    cellular_state = _linkg_discovery_prepare_cellular_endpoint(&cellular_endpoint);
+    if (cellular_state > 0)
     {
-        return ret;
+        report->cellular_endpoint = cellular_endpoint;
+        report->path_flags |= LINKG_DISCOVERY_PATH_CELLULAR_VALID;
+    }
+    else if (cellular_state < 0 && first_error == 0)
+    {
+        first_error = cellular_state;
     }
 
-    return 0;
+    if ((report->path_flags & LINKG_DISCOVERY_PATH_VALID_MASK) != 0U)
+    {
+        return 0;
+    }
+
+    if (first_error != 0)
+    {
+        return first_error;
+    }
+
+    return -ENETDOWN;
 }
+
+/****************************** 本机状态 ******************************/
 
 /**
  * @brief 构建本机Discovery完整初始状态。
+ *
+ * 每次构建均创建新的Discovery运行会话，初始状态至少需要存在一个
+ * 有效数据Path。
  */
 int _linkg_discovery_build_local_report(linkg_discovery_report_t *report)
 {
@@ -299,6 +352,12 @@ int _linkg_discovery_build_local_report(linkg_discovery_report_t *report)
 
     report->node = *local_node;
 
+    ret = _linkg_discovery_prepare_initial_endpoints(report);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     ret = _linkg_discovery_generate_session_id(&report->session_id);
     if (ret != 0)
     {
@@ -307,63 +366,137 @@ int _linkg_discovery_build_local_report(linkg_discovery_report_t *report)
 
     report->revision = 1U;
 
-    ret = _linkg_discovery_prepare_local_endpoints(report);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
     return 0;
 }
 
 /**
  * @brief 刷新本机当前Discovery数据端点。
  *
- * Endpoint发生实际变化时更新完整本机状态并推进一次revision。
+ * Wi-Fi和Cellular状态独立采集。明确无有效Endpoint时清除对应Path，
+ * 本次状态查询失败时保留最近一次已发布状态。任意一个或多个Path
+ * 实际变化时仅推进一次revision。
  */
 int _linkg_discovery_refresh_local_endpoints(void)
 {
-    linkg_discovery_report_t current;
-    bool                     wifi_changed;
-    bool                     cellular_changed;
-    int                      ret;
+    linkg_path_endpoint_t wifi_endpoint;
+    linkg_path_endpoint_t cellular_endpoint;
+    bool                  wifi_changed;
+    bool                  cellular_changed;
+    bool                  wifi_valid;
+    bool                  cellular_valid;
+    int                   wifi_state;
+    int                   cellular_state;
+    int                   ret;
 
     if (!g_discovery.initialized)
     {
         return -ENODEV;
     }
 
-    memset(&current, 0, sizeof(current));
-
-    ret = _linkg_discovery_prepare_local_endpoints(&current);
-    if (ret != 0)
-    {
-        return ret;
-    }
+    pthread_mutex_lock(&g_discovery_local_refresh_lock);
 
     pthread_mutex_lock(&g_discovery.lock);
 
     if (!g_discovery.running)
     {
         pthread_mutex_unlock(&g_discovery.lock);
+        pthread_mutex_unlock(&g_discovery_local_refresh_lock);
         return -ESHUTDOWN;
     }
 
-    wifi_changed = !_linkg_discovery_endpoint_equal(&g_discovery.local_report.wifi_endpoint, &current.wifi_endpoint);
-    cellular_changed = !_linkg_discovery_endpoint_equal(&g_discovery.local_report.cellular_endpoint, &current.cellular_endpoint);
+    pthread_mutex_unlock(&g_discovery.lock);
+
+    memset(&wifi_endpoint, 0, sizeof(wifi_endpoint));
+    memset(&cellular_endpoint, 0, sizeof(cellular_endpoint));
+
+    wifi_state     = _linkg_discovery_prepare_wifi_endpoint(&wifi_endpoint);
+    cellular_state = _linkg_discovery_prepare_cellular_endpoint(&cellular_endpoint);
+
+    pthread_mutex_lock(&g_discovery.lock);
+
+    if (!g_discovery.running)
+    {
+        pthread_mutex_unlock(&g_discovery.lock);
+        pthread_mutex_unlock(&g_discovery_local_refresh_lock);
+        return -ESHUTDOWN;
+    }
+
+    wifi_changed     = false;
+    cellular_changed = false;
+
+    if (wifi_state >= 0)
+    {
+        wifi_valid = (g_discovery.local_report.path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) != 0U;
+
+        if (wifi_state > 0)
+        {
+            wifi_changed = !wifi_valid || !_linkg_discovery_endpoint_equal(&g_discovery.local_report.wifi_endpoint, &wifi_endpoint);
+        }
+        else
+        {
+            wifi_changed = wifi_valid || g_discovery.local_report.wifi_endpoint.length != 0U;
+        }
+    }
+
+    if (cellular_state >= 0)
+    {
+        cellular_valid = (g_discovery.local_report.path_flags & LINKG_DISCOVERY_PATH_CELLULAR_VALID) != 0U;
+
+        if (cellular_state > 0)
+        {
+            cellular_changed = !cellular_valid || !_linkg_discovery_endpoint_equal(&g_discovery.local_report.cellular_endpoint, &cellular_endpoint);
+        }
+        else
+        {
+            cellular_changed = cellular_valid || g_discovery.local_report.cellular_endpoint.length != 0U;
+        }
+    }
 
     if (!wifi_changed && !cellular_changed)
     {
         pthread_mutex_unlock(&g_discovery.lock);
+        pthread_mutex_unlock(&g_discovery_local_refresh_lock);
         return 0;
     }
 
-    g_discovery.local_report.wifi_endpoint     = current.wifi_endpoint;
-    g_discovery.local_report.cellular_endpoint = current.cellular_endpoint;
+    ret = _linkg_discovery_advance_local_revision_locked();
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_discovery.lock);
+        pthread_mutex_unlock(&g_discovery_local_refresh_lock);
+        return ret;
+    }
 
-    _linkg_discovery_advance_local_revision_locked();
+    if (wifi_state >= 0)
+    {
+        if (wifi_state > 0)
+        {
+            g_discovery.local_report.wifi_endpoint = wifi_endpoint;
+            g_discovery.local_report.path_flags |= LINKG_DISCOVERY_PATH_WIFI_VALID;
+        }
+        else
+        {
+            memset(&g_discovery.local_report.wifi_endpoint, 0, sizeof(g_discovery.local_report.wifi_endpoint));
+            g_discovery.local_report.path_flags &= (uint8_t)~LINKG_DISCOVERY_PATH_WIFI_VALID;
+        }
+    }
+
+    if (cellular_state >= 0)
+    {
+        if (cellular_state > 0)
+        {
+            g_discovery.local_report.cellular_endpoint = cellular_endpoint;
+            g_discovery.local_report.path_flags |= LINKG_DISCOVERY_PATH_CELLULAR_VALID;
+        }
+        else
+        {
+            memset(&g_discovery.local_report.cellular_endpoint, 0, sizeof(g_discovery.local_report.cellular_endpoint));
+            g_discovery.local_report.path_flags &= (uint8_t)~LINKG_DISCOVERY_PATH_CELLULAR_VALID;
+        }
+    }
 
     pthread_mutex_unlock(&g_discovery.lock);
+    pthread_mutex_unlock(&g_discovery_local_refresh_lock);
 
     return 0;
 }
