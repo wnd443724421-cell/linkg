@@ -38,7 +38,7 @@ extern "C" {
 #define LINKG_RESOURCE_UDP_PORT_CELLULAR_REALTIME  5004U // 蜂窝实时数据UDP端口
 #define LINKG_RESOURCE_UDP_PORT_CELLULAR_VIDEO     5005U // 蜂窝视频数据UDP端口
 #define LINKG_RESOURCE_UDP_PORT_WIFI_DISCOVERY     5006U // Wi-Fi设备发现UDP端口
-#define LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY 5007U // 蜂窝路径存活心跳UDP端口
+#define LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY 5007U // 蜂窝设备发现UDP端口
 
 /****************************** 网络接口 ******************************/
 

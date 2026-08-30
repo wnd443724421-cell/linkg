@@ -364,7 +364,7 @@ int rg255_cmd_disable_sleep(at_channel_t *channel)
 /****************************** SIM接口 ******************************/
 
 /**
- * @brief 查询当前SIM状态。
+ * @brief 查询当前SIM PIN及可用状态。
  */
 int rg255_cmd_query_sim_pin_status(at_channel_t *channel, char *response, int response_size)
 {
@@ -425,6 +425,67 @@ int rg255_cmd_get_imsi(at_channel_t *channel, char *imsi, int imsi_size)
     }
 
     return _rg255_cmd_validate_imsi(imsi);
+}
+
+/**
+ * @brief 查询SIM插拔检测配置。
+ */
+int rg255_cmd_query_sim_detect(at_channel_t *channel, char *response, int response_size)
+{
+    return _rg255_cmd_exec_query(channel, "AT+QSIMDET?", RG255_CMD_TIMEOUT_DEFAULT_MS, "+QSIMDET:", response, response_size);
+}
+
+/**
+ * @brief 设置SIM插拔检测状态及插入有效电平。
+ *
+ * @note 配置自动保存，模块重启后生效。
+ */
+int rg255_cmd_set_sim_detect(at_channel_t *channel, bool enable, rg255_sim_insert_level_t insert_level)
+{
+    char command[RG255_CMD_BUFFER_SIZE];
+    int state;
+    int length;
+    int ret;
+
+    if (insert_level != RG255_SIM_INSERT_LEVEL_LOW &&
+        insert_level != RG255_SIM_INSERT_LEVEL_HIGH)
+    {
+        return -EINVAL;
+    }
+
+    state = enable ? 1 : 0;
+    length = snprintf(command, sizeof(command), "AT+QSIMDET=%d,%d", state, (int)insert_level);
+    ret = _rg255_cmd_check_format_result(length, sizeof(command));
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_cmd_exec(channel, command, RG255_CMD_TIMEOUT_CONFIG_MS);
+}
+
+/**
+ * @brief 查询SIM状态URC配置及当前插拔状态。
+ */
+int rg255_cmd_query_sim_status_urc(at_channel_t *channel, char *response, int response_size)
+{
+    return _rg255_cmd_exec_query(channel, "AT+QSIMSTAT?", RG255_CMD_TIMEOUT_DEFAULT_MS, "+QSIMSTAT:", response, response_size);
+}
+
+/**
+ * @brief 设置SIM插拔状态URC上报。
+ *
+ * @note 配置自动保存，模块重启后生效。
+ */
+int rg255_cmd_set_sim_status_urc(at_channel_t *channel, bool enable)
+{
+    if (enable)
+    {
+        return _rg255_cmd_exec(channel, "AT+QSIMSTAT=1", RG255_CMD_TIMEOUT_CONFIG_MS);
+    }
+
+    return _rg255_cmd_exec(channel, "AT+QSIMSTAT=0", RG255_CMD_TIMEOUT_CONFIG_MS);
 }
 
 /****************************** 网络模式 ******************************/
