@@ -3,9 +3,9 @@
         "role": "sta"
     },
     "network": {
-        "node_id": 2,
+        "node_id": 20,
         "virtual_network": "172.28.0.0",
-        "ethernet_network": "192.168.1.0",
+        "ethernet_network": "192.168.2.0",
         "traffic_rules": [
             {
                 "class": "realtime",

@@ -35,6 +35,7 @@ typedef struct
 {
     linkg_network_ipv4_config_t virtual_network;      // LinkG虚拟聚合网络
     linkg_network_ipv4_config_t local_virtual_subnet; // 本节点虚拟Endpoint子网
+    linkg_network_ipv4_config_t tun_network;          // LinkG TUN节点网络
     linkg_network_ipv4_config_t ethernet_network;     // 本节点Ethernet网络
     linkg_network_ipv4_config_t ethernet;             // 本节点Ethernet接口IPv4配置
     uint8_t                     node_id;              // 本节点编号
@@ -84,13 +85,20 @@ static int _linkg_nat_build_context(const linkg_network_config_t *network_config
         return -EINVAL;
     }
 
-    ret = linkg_network_config_get_node_virtual_subnet(network_config,
-                                                       network_config->node_id,
-                                                       &context->local_virtual_subnet);
+    ret = linkg_network_config_get_node_virtual_subnet(network_config, network_config->node_id, &context->local_virtual_subnet);
     if (ret != 0)
     {
         return -EINVAL;
     }
+
+    ret = linkg_network_config_get_tun(network_config, &context->tun_network);
+    if (ret != 0)
+    {
+        return -EINVAL;
+    }
+
+    // 将本节点TUN地址规范化为TUN网络地址。
+    context->tun_network.ip.s_addr &= context->tun_network.netmask.s_addr;
 
     ret = linkg_network_config_get_ethernet_network(network_config, &context->ethernet_network);
     if (ret != 0)
@@ -347,79 +355,27 @@ static void _linkg_nat_rules_cleanup_stale(void)
                         NULL);
 }
 
-/****************************** NAT规则 ******************************/
-
-/**
- * @brief 安装Ethernet发送到LinkG虚拟网络的Source NETMAP规则。
- *
- * 将本地Ethernet主机地址映射为本节点虚拟Endpoint地址，
- * 保持IPv4 Host部分不变后通过linkg0发送到远端节点。
- */
-static int _linkg_nat_source_netmap_add(void)
-{
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
-    char virtual_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    int  ret;
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network,
-                                         ethernet_network,
-                                         sizeof(ethernet_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet,
-                                         local_virtual_subnet,
-                                         sizeof(local_virtual_subnet));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.virtual_network,
-                                         virtual_network,
-                                         sizeof(virtual_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_POSTROUTING,
-                        "-s", ethernet_network,
-                        "-d", virtual_network,
-                        "-o", LINKG_RESOURCE_INTERFACE_TUN,
-                        "-j", "NETMAP",
-                        "--to", local_virtual_subnet,
-                        NULL);
-}
+/****************************** PREROUTING规则 ******************************/
 
 /**
  * @brief 安装远端LinkG流量访问本节点虚拟Endpoint子网的Destination NETMAP规则。
  *
- * 将所有从linkg0进入且发往本节点虚拟Endpoint子网的流量映射为
- * 本地Ethernet真实主机地址。
+ * 从linkg0进入且目标属于本节点虚拟Endpoint子网的流量，
+ * 在路由判断前映射为本节点Ethernet真实主机地址。
  */
-static int _linkg_nat_destination_netmap_add(void)
+static int _linkg_nat_remote_destination_netmap_add(void)
 {
     char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
     char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
     int  ret;
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network,
-                                         ethernet_network,
-                                         sizeof(ethernet_network));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet,
-                                         local_virtual_subnet,
-                                         sizeof(local_virtual_subnet));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
     if (ret != 0)
     {
         return ret;
@@ -438,8 +394,8 @@ static int _linkg_nat_destination_netmap_add(void)
 /**
  * @brief 安装本地Ethernet访问本节点虚拟Endpoint子网的Destination NETMAP规则。
  *
- * 本地Ethernet设备访问本节点172.28.<node_id>.X地址时，在进入路由
- * 决策前直接映射为本地Ethernet真实地址，避免流量错误进入linkg0。
+ * 从eth0进入且目标属于本节点虚拟Endpoint子网的流量，
+ * 在路由判断前直接映射为本节点Ethernet真实主机地址。
  */
 static int _linkg_nat_local_ethernet_destination_netmap_add(void)
 {
@@ -447,17 +403,13 @@ static int _linkg_nat_local_ethernet_destination_netmap_add(void)
     char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
     int  ret;
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network,
-                                         ethernet_network,
-                                         sizeof(ethernet_network));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet,
-                                         local_virtual_subnet,
-                                         sizeof(local_virtual_subnet));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
     if (ret != 0)
     {
         return ret;
@@ -473,29 +425,27 @@ static int _linkg_nat_local_ethernet_destination_netmap_add(void)
                         NULL);
 }
 
+/****************************** OUTPUT规则 ******************************/
+
 /**
  * @brief 安装本机访问自身虚拟Endpoint子网的Destination NETMAP规则。
  *
- * 本机进程访问本节点虚拟Endpoint地址时直接映射到本机Ethernet
- * 真实地址，不将本节点流量发送到LinkG Transport。
+ * 本机产生且目标属于本节点虚拟Endpoint子网的流量直接映射为
+ * Ethernet真实主机地址，避免本节点流量错误进入linkg0。
  */
-static int _linkg_nat_local_destination_netmap_add(void)
+static int _linkg_nat_local_output_destination_netmap_add(void)
 {
     char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
     char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
     int  ret;
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network,
-                                         ethernet_network,
-                                         sizeof(ethernet_network));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet,
-                                         local_virtual_subnet,
-                                         sizeof(local_virtual_subnet));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
     if (ret != 0)
     {
         return ret;
@@ -510,38 +460,76 @@ static int _linkg_nat_local_destination_netmap_add(void)
                         NULL);
 }
 
+/****************************** POSTROUTING规则 ******************************/
+
 /**
- * @brief 安装LinkG虚拟网络访问本地Ethernet时的SNAT规则。
+ * @brief 安装Ethernet发送到LinkG虚拟网络的Source NETMAP规则。
  *
- * 将远端虚拟Endpoint源地址转换为本机Ethernet网关地址，
- * 使Ethernet终端可以直接通过默认网关完成回包。
+ * 本地Ethernet主机访问LinkG虚拟网络并从linkg0发送时，
+ * 将源地址映射为本节点虚拟Endpoint地址并保持Host部分不变。
  */
-static int _linkg_nat_ethernet_snat_add(void)
+static int _linkg_nat_source_netmap_add(void)
+{
+    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
+    char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
+    char virtual_network[LINKG_NAT_IPV4_CIDR_SIZE];
+    int  ret;
+
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.virtual_network, virtual_network, sizeof(virtual_network));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
+                        "-t", "nat",
+                        "-A", LINKG_NAT_CHAIN_POSTROUTING,
+                        "-s", ethernet_network,
+                        "-d", virtual_network,
+                        "-o", LINKG_RESOURCE_INTERFACE_TUN,
+                        "-j", "NETMAP",
+                        "--to", local_virtual_subnet,
+                        NULL);
+}
+
+/**
+ * @brief 安装虚拟Endpoint流量访问本地Ethernet时的SNAT规则。
+ *
+ * 从LinkG虚拟Endpoint地址空间进入本节点Ethernet的流量统一使用
+ * 本机Ethernet网关地址作为源地址，保证终端回包经过本节点。
+ */
+static int _linkg_nat_virtual_ethernet_snat_add(void)
 {
     char ethernet_address[LINKG_NAT_IPV4_ADDRESS_SIZE];
     char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
     char virtual_network[LINKG_NAT_IPV4_CIDR_SIZE];
     int  ret;
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network,
-                                         ethernet_network,
-                                         sizeof(ethernet_network));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.virtual_network,
-                                         virtual_network,
-                                         sizeof(virtual_network));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.virtual_network, virtual_network, sizeof(virtual_network));
     if (ret != 0)
     {
         return ret;
     }
 
-    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip,
-                                      ethernet_address,
-                                      sizeof(ethernet_address)))
+    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip, ethernet_address, sizeof(ethernet_address)))
     {
         return -EINVAL;
     }
@@ -558,11 +546,52 @@ static int _linkg_nat_ethernet_snat_add(void)
 }
 
 /**
+ * @brief 安装TUN节点地址访问本地Ethernet时的SNAT规则。
+ *
+ * 从LinkG TUN节点地址空间进入本节点Ethernet的流量统一使用
+ * 本机Ethernet网关地址作为源地址，避免内部TUN地址暴露给Ethernet终端。
+ */
+static int _linkg_nat_tun_ethernet_snat_add(void)
+{
+    char ethernet_address[LINKG_NAT_IPV4_ADDRESS_SIZE];
+    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
+    char tun_network[LINKG_NAT_IPV4_CIDR_SIZE];
+    int  ret;
+
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.tun_network, tun_network, sizeof(tun_network));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip, ethernet_address, sizeof(ethernet_address)))
+    {
+        return -EINVAL;
+    }
+
+    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
+                        "-t", "nat",
+                        "-A", LINKG_NAT_CHAIN_POSTROUTING,
+                        "-s", tun_network,
+                        "-d", ethernet_network,
+                        "-o", LINKG_RESOURCE_INTERFACE_ETHERNET,
+                        "-j", "SNAT",
+                        "--to-source", ethernet_address,
+                        NULL);
+}
+
+/**
  * @brief 安装本地Ethernet虚拟地址回环访问的Hairpin SNAT规则。
  *
  * 本地Ethernet设备通过本节点虚拟地址访问同一Ethernet子网内设备时，
- * 将源地址转换为本机Ethernet网关地址，强制目标设备回包重新经过
- * LinkG网关，使conntrack可以完成Destination NETMAP反向恢复。
+ * 将源地址转换为本机Ethernet网关地址，强制目标设备回包经过本节点，
+ * 使conntrack可以完成Destination NETMAP反向恢复。
  */
 static int _linkg_nat_hairpin_snat_add(void)
 {
@@ -570,17 +599,13 @@ static int _linkg_nat_hairpin_snat_add(void)
     char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
     int  ret;
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network,
-                                         ethernet_network,
-                                         sizeof(ethernet_network));
+    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
     if (ret != 0)
     {
         return ret;
     }
 
-    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip,
-                                      ethernet_address,
-                                      sizeof(ethernet_address)))
+    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip, ethernet_address, sizeof(ethernet_address)))
     {
         return -EINVAL;
     }
@@ -596,12 +621,14 @@ static int _linkg_nat_hairpin_snat_add(void)
                         NULL);
 }
 
+/****************************** 规则管理 ******************************/
+
 /**
  * @brief 安装LinkG NAT规则。
  *
- * 启动前首先删除可能存在的LinkG遗留规则，然后重新创建专用Chain。
- * 业务规则全部建立完成后才挂接到iptables内建Chain，避免安装过程中
- * 暴露不完整的NAT配置。任一步骤失败均清理当前安装结果。
+ * 启动前删除可能存在的LinkG遗留规则，然后重新创建专用Chain。
+ * 所有业务规则建立完成后才挂接到iptables内建Chain，
+ * 任一步骤失败均清理当前安装结果。
  */
 static int _linkg_nat_rules_install(void)
 {
@@ -630,7 +657,8 @@ static int _linkg_nat_rules_install(void)
         return ret;
     }
 
-    ret = _linkg_nat_destination_netmap_add();
+    // PREROUTING规则。
+    ret = _linkg_nat_remote_destination_netmap_add();
     if (ret != 0)
     {
         _linkg_nat_rules_cleanup_stale();
@@ -644,13 +672,15 @@ static int _linkg_nat_rules_install(void)
         return ret;
     }
 
-    ret = _linkg_nat_local_destination_netmap_add();
+    // OUTPUT规则。
+    ret = _linkg_nat_local_output_destination_netmap_add();
     if (ret != 0)
     {
         _linkg_nat_rules_cleanup_stale();
         return ret;
     }
 
+    // POSTROUTING规则。
     ret = _linkg_nat_source_netmap_add();
     if (ret != 0)
     {
@@ -658,7 +688,14 @@ static int _linkg_nat_rules_install(void)
         return ret;
     }
 
-    ret = _linkg_nat_ethernet_snat_add();
+    ret = _linkg_nat_virtual_ethernet_snat_add();
+    if (ret != 0)
+    {
+        _linkg_nat_rules_cleanup_stale();
+        return ret;
+    }
+
+    ret = _linkg_nat_tun_ethernet_snat_add();
     if (ret != 0)
     {
         _linkg_nat_rules_cleanup_stale();
@@ -672,6 +709,7 @@ static int _linkg_nat_rules_install(void)
         return ret;
     }
 
+    // 所有业务规则完成后再挂接内建Chain。
     ret = _linkg_nat_jump_add("PREROUTING", LINKG_NAT_CHAIN_PREROUTING);
     if (ret != 0)
     {
