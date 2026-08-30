@@ -3,8 +3,8 @@
  * @brief LinkG蜂窝链路发送模块接口
  */
 
-#ifndef RG255_TX_H
-#define RG255_TX_H
+#ifndef CELLULAR_TX_H
+#define CELLULAR_TX_H
 
 #include <stdint.h>
 

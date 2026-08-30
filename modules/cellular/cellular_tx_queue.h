@@ -3,8 +3,8 @@
  * @brief LinkG蜂窝发送等待队列接口
  */
 
-#ifndef RG255_TX_QUEUE_H
-#define RG255_TX_QUEUE_H
+#ifndef CELLULAR_TX_QUEUE_H
+#define CELLULAR_TX_QUEUE_H
 
 #include <stdint.h>
 

@@ -266,7 +266,6 @@ int linkg_discovery_stop(void)
     int                            first_error;
     int                            ret;
     bool                           leave_ready;
-    bool                           was_running;
 
     if (!g_discovery.initialized)
     {
@@ -278,50 +277,59 @@ int linkg_discovery_stop(void)
 
     sender_count = 0U;
     leave_ready  = false;
-    was_running  = false;
     first_error  = 0;
 
     pthread_mutex_lock(&g_discovery.lock);
 
-    if (g_discovery.running)
+    if (!g_discovery.running)
     {
-        was_running = true;
+        pthread_mutex_unlock(&g_discovery.lock);
 
-        ret = _linkg_discovery_build_local_leave_locked(&leave);
-        if (ret == 0)
+        now_us = linkg_time_monotonic_us();
+
+        pthread_mutex_lock(&g_discovery.lock);
+        cleanup_error = _linkg_discovery_cleanup_runtime_locked(now_us);
+
+        if (cleanup_error == 0)
         {
-            leave_ready = true;
+            memset(&g_discovery.local_report, 0, sizeof(g_discovery.local_report));
         }
-        else
+
+        pthread_mutex_unlock(&g_discovery.lock);
+
+        return cleanup_error;
+    }
+
+    ret = _linkg_discovery_build_local_leave_locked(&leave);
+    if (ret == 0)
+    {
+        leave_ready = true;
+    }
+    else
+    {
+        _linkg_discovery_record_first_error(&first_error, ret);
+    }
+
+    for (index = 0U; index < LINKG_NODE_PATH_MAX; index++)
+    {
+        if (!g_discovery.channels[index].registered ||
+            g_discovery.channels[index].send_leave == NULL)
         {
-            _linkg_discovery_record_first_error(&first_error, ret);
+            continue;
         }
 
-        for (index = 0U; index < LINKG_NODE_PATH_MAX; index++)
-		{
-			if (!g_discovery.channels[index].registered ||
-				g_discovery.channels[index].send_leave == NULL)
-			{
-				continue;
-			}
-
-			senders[sender_count].send_leave = g_discovery.channels[index].send_leave;
-			senders[sender_count].user_data  = g_discovery.channels[index].user_data;
-			sender_count++;
-		}
-
-        /**
-         * 从此刻开始拒绝新的Discovery状态处理。
-         * 发送函数已经完成快照，因此无需继续持有Discovery状态锁。
-         */
-        g_discovery.running = false;
-
-        memset(g_discovery.channels, 0, sizeof(g_discovery.channels));
+        senders[sender_count].send_leave = g_discovery.channels[index].send_leave;
+        senders[sender_count].user_data  = g_discovery.channels[index].user_data;
+        sender_count++;
     }
 
     pthread_mutex_unlock(&g_discovery.lock);
 
-    if (was_running && leave_ready)
+    /**
+     * 此时Discovery仍保持running，Channel也仍保持registered。
+     * Cellular send_leave因此仍可以查询当前Peer目标。
+     */
+    if (leave_ready)
     {
         for (index = 0U; index < sender_count; index++)
         {
@@ -337,7 +345,15 @@ int linkg_discovery_stop(void)
 
     pthread_mutex_lock(&g_discovery.lock);
 
+    /**
+     * 所有LEAVE同步发送完成后才关闭Core入口并释放Channel注册状态。
+     */
+    g_discovery.running = false;
+
+    memset(g_discovery.channels, 0, sizeof(g_discovery.channels));
+
     cleanup_error = _linkg_discovery_cleanup_runtime_locked(now_us);
+
     if (cleanup_error == 0)
     {
         memset(&g_discovery.local_report, 0, sizeof(g_discovery.local_report));
