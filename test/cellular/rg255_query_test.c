@@ -179,7 +179,7 @@ static bool snapshot(at_channel_t *channel, const char *label,
     ret = rg255_query_sim_state(channel, &sim);
     printf("       sim=%s ret=%d\n", sim_name(sim), ret);
     result("SIM", ret == 0 && sim == LINKG_CELLULAR_SIM_STATE_READY);
-    if (ret != 0) dump_raw(channel, "CPIN", rg255_cmd_query_sim_status);
+    if (ret != 0) dump_raw(channel, "CPIN", rg255_cmd_query_sim_pin_status);
     all_ok = all_ok && ret == 0 && sim == LINKG_CELLULAR_SIM_STATE_READY;
 
     ret = rg255_query_network_mode(channel, &mode);

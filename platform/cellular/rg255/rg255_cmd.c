@@ -366,7 +366,7 @@ int rg255_cmd_disable_sleep(at_channel_t *channel)
 /**
  * @brief 查询当前SIM状态。
  */
-int rg255_cmd_query_sim_status(at_channel_t *channel, char *response, int response_size)
+int rg255_cmd_query_sim_pin_status(at_channel_t *channel, char *response, int response_size)
 {
     return _rg255_cmd_exec_query(channel, "AT+CPIN?", RG255_CMD_TIMEOUT_PIN_MS, "+CPIN:", response, response_size);
 }

@@ -76,7 +76,7 @@ static void check_case(const char *name, bool passed)
         return -ENOSYS; \
     }
 
-STUB_QUERY(rg255_cmd_query_sim_status)
+STUB_QUERY(rg255_cmd_query_sim_pin_status)
 STUB_QUERY(rg255_cmd_query_network_mode)
 STUB_QUERY(rg255_cmd_query_eps_registration)
 STUB_QUERY(rg255_cmd_query_5g_registration)

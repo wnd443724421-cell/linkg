@@ -1554,7 +1554,7 @@ int rg255_query_sim_state(at_channel_t *channel, linkg_cellular_sim_state_t *sta
     *state = LINKG_CELLULAR_SIM_STATE_UNKNOWN;
     response[0] = '\0';
 
-    ret = rg255_cmd_query_sim_status(channel, response, sizeof(response));
+    ret = rg255_cmd_query_sim_pin_status(channel, response, sizeof(response));
 
     if (ret != 0)
     {

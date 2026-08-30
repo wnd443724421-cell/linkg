@@ -92,7 +92,7 @@ static int mock_reply(mock_id_t id, at_channel_t *channel, char *response, int r
         return mock_reply((mock_id), channel, response, response_size); \
     }
 
-MOCK_QUERY(rg255_cmd_query_sim_status, MOCK_SIM)
+MOCK_QUERY(rg255_cmd_query_sim_pin_status, MOCK_SIM)
 MOCK_QUERY(rg255_cmd_query_network_mode, MOCK_MODE)
 MOCK_QUERY(rg255_cmd_query_eps_registration, MOCK_CEREG)
 MOCK_QUERY(rg255_cmd_query_5g_registration, MOCK_C5GREG)

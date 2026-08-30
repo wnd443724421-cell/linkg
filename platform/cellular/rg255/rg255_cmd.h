@@ -52,6 +52,14 @@ typedef enum
     RG255_NETDEV_TYPE_AUTO       = 3   // 自动连接USB网卡
 } rg255_netdev_type_t;
 
+/****************************** SIM检测极性 ******************************/
+
+typedef enum
+{
+    RG255_SIM_INSERT_LEVEL_LOW  = 0, // SIM插入时检测引脚为低电平
+    RG255_SIM_INSERT_LEVEL_HIGH = 1  // SIM插入时检测引脚为高电平
+} rg255_sim_insert_level_t;
+
 /****************************** 基础命令 ******************************/
 
 int rg255_cmd_test(at_channel_t *channel);
@@ -61,9 +69,14 @@ int rg255_cmd_disable_sleep(at_channel_t *channel);
 
 /****************************** SIM接口 ******************************/
 
-int rg255_cmd_query_sim_status(at_channel_t *channel, char *response, int response_size);
+int rg255_cmd_query_sim_pin_status(at_channel_t *channel, char *response, int response_size);
 int rg255_cmd_enter_pin(at_channel_t *channel, const char *pin);
 int rg255_cmd_get_imsi(at_channel_t *channel, char *imsi, int imsi_size);
+
+int rg255_cmd_query_sim_detect(at_channel_t *channel, char *response, int response_size);
+int rg255_cmd_set_sim_detect(at_channel_t *channel, bool enable, rg255_sim_insert_level_t insert_level);
+int rg255_cmd_query_sim_status_urc(at_channel_t *channel, char *response, int response_size);
+int rg255_cmd_set_sim_status_urc(at_channel_t *channel, bool enable);
 
 /****************************** 网络模式 ******************************/
 
