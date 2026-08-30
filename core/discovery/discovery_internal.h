@@ -63,7 +63,7 @@ typedef struct
 typedef struct
 {
     bool                                      registered; // Discovery Channel是否已经注册
-    linkg_discovery_channel_send_leave_func_t send;       // Wire报文发送函数
+    linkg_discovery_channel_send_leave_func_t send_leave; // 主动离开状态发送函数
     void                                     *user_data;  // Channel私有数据
 } linkg_discovery_channel_state_t;
 
