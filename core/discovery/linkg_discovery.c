@@ -22,8 +22,8 @@
 
 typedef struct
 {
-    linkg_discovery_channel_send_leave_func_t send;      // 主动离开状态发送函数
-    void                                     *user_data; // Channel私有数据
+    linkg_discovery_channel_send_leave_func_t send_leave; // 主动离开状态发送函数
+    void                                     *user_data;  // Channel私有数据
 } linkg_discovery_leave_sender_t;
 
 /****************************** 全局上下文 ******************************/
@@ -298,17 +298,17 @@ int linkg_discovery_stop(void)
         }
 
         for (index = 0U; index < LINKG_NODE_PATH_MAX; index++)
-        {
-            if (!g_discovery.channels[index].registered ||
-                g_discovery.channels[index].send == NULL)
-            {
-                continue;
-            }
+		{
+			if (!g_discovery.channels[index].registered ||
+				g_discovery.channels[index].send_leave == NULL)
+			{
+				continue;
+			}
 
-            senders[sender_count].send      = g_discovery.channels[index].send;
-            senders[sender_count].user_data = g_discovery.channels[index].user_data;
-            sender_count++;
-        }
+			senders[sender_count].send_leave = g_discovery.channels[index].send_leave;
+			senders[sender_count].user_data  = g_discovery.channels[index].user_data;
+			sender_count++;
+		}
 
         /**
          * 从此刻开始拒绝新的Discovery状态处理。
@@ -325,7 +325,7 @@ int linkg_discovery_stop(void)
     {
         for (index = 0U; index < sender_count; index++)
         {
-            ret = senders[index].send(&leave, senders[index].user_data);
+            ret = senders[index].send_leave(&leave, senders[index].user_data);
             if (ret != 0)
             {
                 _linkg_discovery_record_first_error(&first_error, ret);
