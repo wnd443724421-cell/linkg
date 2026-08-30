@@ -129,12 +129,12 @@ static int _linkg_discovery_wifi_build_broadcast_address(struct sockaddr_in *add
 }
 
 /**
- * @brief 校验本机Report是否具备可运行的Wi-Fi Discovery条件。
+ * @brief 校验本机Discovery状态是否具有有效节点角色。
+ *
+ * Wi-Fi Endpoint允许在Channel启动后异步出现。
  */
 static int _linkg_discovery_wifi_validate_local_report(const linkg_discovery_report_t *report)
 {
-    const struct sockaddr_in *address;
-
     if (report == NULL)
     {
         return -EINVAL;
@@ -142,24 +142,6 @@ static int _linkg_discovery_wifi_validate_local_report(const linkg_discovery_rep
 
     if (report->node.role != LINKG_DEVICE_ROLE_AP &&
         report->node.role != LINKG_DEVICE_ROLE_STA)
-    {
-        return -EINVAL;
-    }
-
-    if ((report->path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
-    {
-        return -ENETDOWN;
-    }
-
-    if (report->wifi_endpoint.length != sizeof(struct sockaddr_in) ||
-        report->wifi_endpoint.address.ss_family != AF_INET)
-    {
-        return -EINVAL;
-    }
-
-    address = (const struct sockaddr_in *)&report->wifi_endpoint.address;
-
-    if (!linkg_network_ipv4_address_valid(&address->sin_addr))
     {
         return -EINVAL;
     }
@@ -192,8 +174,6 @@ static bool _linkg_discovery_wifi_source_valid(const struct sockaddr_in *source)
 
 /**
  * @brief 校验完整Report中的Wi-Fi地址与UDP实际来源是否一致。
- *
- * Report未声明有效Wi-Fi数据Path时不强制执行地址一致性校验。
  */
 static bool _linkg_discovery_wifi_report_source_valid(const linkg_discovery_report_t *report, const struct sockaddr_in *source)
 {
@@ -206,7 +186,7 @@ static bool _linkg_discovery_wifi_report_source_valid(const linkg_discovery_repo
 
     if ((report->path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
     {
-        return true;
+        return false;
     }
 
     if (report->wifi_endpoint.length != sizeof(struct sockaddr_in) ||
@@ -364,12 +344,17 @@ static int _linkg_discovery_wifi_send_ap_sync(void)
     memset(buffer, 0, sizeof(buffer));
 
     ret = linkg_discovery_channel_build_ap_sync(&sync);
-    if (ret != 0)
-    {
-        return ret;
-    }
+	if (ret != 0)
+	{
+		return ret;
+	}
 
-    ret = linkg_discovery_wire_encode_ap_sync(&sync, buffer, sizeof(buffer), &length);
+	if ((sync.ap.path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
+	{
+		return 0;
+	}
+
+	ret = linkg_discovery_wire_encode_ap_sync(&sync, buffer, sizeof(buffer), &length);
     if (ret != 0)
     {
         return ret;
@@ -414,6 +399,11 @@ static int _linkg_discovery_wifi_send_sta_report(void)
     {
         return ret;
     }
+
+	if ((report.path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
+	{
+		return 0;
+	}
 
     ret = linkg_discovery_wire_encode_sta_report(&report, buffer, sizeof(buffer), &length);
     if (ret != 0)
@@ -537,11 +527,7 @@ static void _linkg_discovery_wifi_handle_sta_report(const uint8_t *buffer, uint3
         return;
     }
 
-    ret = linkg_discovery_channel_handle_peer_report(LINKG_LINK_ACCESS_WIFI, &report, now_us);
-    if (ret == 0)
-    {
-        g_discovery_wifi.next_report_us = now_us;
-    }
+    (void)linkg_discovery_channel_handle_peer_report(LINKG_LINK_ACCESS_WIFI, &report, now_us);
 }
 
 /**
@@ -550,6 +536,7 @@ static void _linkg_discovery_wifi_handle_sta_report(const uint8_t *buffer, uint3
 static void _linkg_discovery_wifi_handle_ap_sync(const uint8_t *buffer, uint32_t length, const struct sockaddr_in *source, uint64_t now_us)
 {
     linkg_discovery_ap_sync_t sync;
+    bool                      address_changed;
     int                       ret;
 
     memset(&sync, 0, sizeof(sync));
@@ -573,12 +560,20 @@ static void _linkg_discovery_wifi_handle_ap_sync(const uint8_t *buffer, uint32_t
 
     pthread_mutex_lock(&g_discovery_wifi.lock);
 
+    address_changed = !g_discovery_wifi.ap_address_valid ||
+                      g_discovery_wifi.ap_address.sin_addr.s_addr != source->sin_addr.s_addr ||
+                      g_discovery_wifi.ap_address.sin_port != source->sin_port;
+
     g_discovery_wifi.ap_address       = *source;
     g_discovery_wifi.ap_address_valid = true;
 
-    pthread_mutex_unlock(&g_discovery_wifi.lock);
+    if (address_changed &&
+        g_discovery_wifi.next_report_us > now_us)
+    {
+        g_discovery_wifi.next_report_us = now_us;
+    }
 
-    g_discovery_wifi.next_report_us = now_us;
+    pthread_mutex_unlock(&g_discovery_wifi.lock);
 }
 
 /**
@@ -1096,6 +1091,27 @@ fail_socket:
 }
 
 /**
+ * @brief 停止Wi-Fi Discovery工作线程但保留Socket和Core注册状态。
+ *
+ * 用于Discovery Core停止前冻结所有周期收发，避免LEAVE发送阶段
+ * local_report和Peer状态继续被异步工作线程修改。
+ */
+int linkg_discovery_wifi_quiesce(void)
+{
+    pthread_mutex_lock(&g_discovery_wifi.lock);
+
+    if (!g_discovery_wifi.initialized)
+    {
+        pthread_mutex_unlock(&g_discovery_wifi.lock);
+        return 0;
+    }
+
+    pthread_mutex_unlock(&g_discovery_wifi.lock);
+
+    return linkg_thread_stop(&g_discovery_wifi.thread);
+}
+
+/**
  * @brief 停止Wi-Fi Discovery Channel。
  *
  * 先停止工作线程，确保不再向Core提交Wi-Fi状态，再注销Access并关闭Socket。
@@ -1117,17 +1133,19 @@ int linkg_discovery_wifi_stop(void)
         return 0;
     }
 
-    channel_registered = g_discovery_wifi.channel_registered;
-
     pthread_mutex_unlock(&g_discovery_wifi.lock);
 
-    first_error = 0;
-
-    ret = linkg_thread_stop(&g_discovery_wifi.thread);
+    ret = linkg_discovery_wifi_quiesce();
     if (ret != 0)
     {
         return ret;
     }
+
+    pthread_mutex_lock(&g_discovery_wifi.lock);
+    channel_registered = g_discovery_wifi.channel_registered;
+    pthread_mutex_unlock(&g_discovery_wifi.lock);
+
+    first_error = 0;
 
     now_us = linkg_time_monotonic_us();
 

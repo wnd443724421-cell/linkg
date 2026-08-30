@@ -37,9 +37,9 @@
 
 /****************************** 运行参数 ******************************/
 
-#define LINKG_DISCOVERY_CELLULAR_THREAD_NAME        "discovery-5g" // Cellular Discovery线程名称
-#define LINKG_DISCOVERY_CELLULAR_REPORT_INTERVAL_US 1000000ULL     // 完整状态周期发送间隔，1s
-#define LINKG_DISCOVERY_CELLULAR_IPV6_TCLASS        0xC0           // Discovery控制流量IPv6 Traffic Class
+#define LINKG_DISCOVERY_CELLULAR_THREAD_NAME        "discovery-cell" // Cellular Discovery线程名称
+#define LINKG_DISCOVERY_CELLULAR_REPORT_INTERVAL_US 1000000ULL       // 完整状态周期发送间隔，1s
+#define LINKG_DISCOVERY_CELLULAR_IPV6_TCLASS        0xC0             // Discovery控制流量IPv6 Traffic Class
 #define LINKG_DISCOVERY_CELLULAR_RX_CONTROL_SIZE    CMSG_SPACE(sizeof(struct in6_pktinfo)) // IPv6接收辅助控制区大小
 #define LINKG_DISCOVERY_CELLULAR_TX_CONTROL_SIZE    CMSG_SPACE(sizeof(struct in6_pktinfo)) // IPv6发送辅助控制区大小
 
@@ -91,7 +91,7 @@ static void _linkg_discovery_cellular_reset_runtime_locked(void)
 /****************************** 地址辅助 ******************************/
 
 /**
- * @brief 校验本机Discovery状态是否具备有效角色。
+ * @brief 校验本机Discovery状态是否具有有效节点角色。
  */
 static int _linkg_discovery_cellular_validate_local_report(const linkg_discovery_report_t *report)
 {
@@ -110,7 +110,7 @@ static int _linkg_discovery_cellular_validate_local_report(const linkg_discovery
 }
 
 /**
- * @brief 校验Cellular数据Endpoint是否合法。
+ * @brief 校验Cellular数据面Endpoint是否合法。
  */
 static bool _linkg_discovery_cellular_endpoint_valid(const linkg_path_endpoint_t *endpoint)
 {
@@ -142,7 +142,36 @@ static bool _linkg_discovery_cellular_endpoint_valid(const linkg_path_endpoint_t
 }
 
 /**
- * @brief 将Cellular数据Endpoint转换为Discovery UDP目标地址。
+ * @brief 获取完整Report中声明的Cellular源IPv6地址。
+ */
+static int _linkg_discovery_cellular_get_report_source(const linkg_discovery_report_t *report, struct in6_addr *source)
+{
+    const struct sockaddr_in6 *endpoint;
+
+    if (report == NULL || source == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if ((report->path_flags & LINKG_DISCOVERY_PATH_CELLULAR_VALID) == 0U)
+    {
+        return -ENETDOWN;
+    }
+
+    if (!_linkg_discovery_cellular_endpoint_valid(&report->cellular_endpoint))
+    {
+        return -EINVAL;
+    }
+
+    endpoint = (const struct sockaddr_in6 *)&report->cellular_endpoint.address;
+
+    *source = endpoint->sin6_addr;
+
+    return 0;
+}
+
+/**
+ * @brief 将Cellular数据面Endpoint转换为Discovery目标地址。
  */
 static int _linkg_discovery_cellular_build_destination(const linkg_path_endpoint_t *endpoint, struct sockaddr_in6 *destination)
 {
@@ -167,7 +196,7 @@ static int _linkg_discovery_cellular_build_destination(const linkg_path_endpoint
 }
 
 /**
- * @brief 校验Cellular Discovery UDP来源地址。
+ * @brief 校验Cellular Discovery UDP实际来源。
  */
 static bool _linkg_discovery_cellular_source_valid(const struct sockaddr_in6 *source)
 {
@@ -190,7 +219,7 @@ static bool _linkg_discovery_cellular_source_valid(const struct sockaddr_in6 *so
 }
 
 /**
- * @brief 校验完整Report中的Cellular地址与UDP实际来源是否一致。
+ * @brief 校验完整Report声明的Cellular地址与UDP实际来源是否一致。
  */
 static bool _linkg_discovery_cellular_report_source_valid(const linkg_discovery_report_t *report, const struct sockaddr_in6 *source)
 {
@@ -213,9 +242,7 @@ static bool _linkg_discovery_cellular_report_source_valid(const linkg_discovery_
 
     endpoint = (const struct sockaddr_in6 *)&report->cellular_endpoint.address;
 
-    return memcmp(&endpoint->sin6_addr,
-                  &source->sin6_addr,
-                  sizeof(endpoint->sin6_addr)) == 0;
+    return memcmp(&endpoint->sin6_addr, &source->sin6_addr, sizeof(endpoint->sin6_addr)) == 0;
 }
 
 /****************************** 接口辅助 ******************************/
@@ -223,27 +250,13 @@ static bool _linkg_discovery_cellular_report_source_valid(const linkg_discovery_
 /**
  * @brief 获取当前Cellular网络接口索引。
  */
-static int _linkg_discovery_cellular_interface_index(unsigned int *interface_index)
+static unsigned int _linkg_discovery_cellular_interface_index(void)
 {
-    if (interface_index == NULL)
-    {
-        return -EINVAL;
-    }
-
-    errno = 0;
-
-    *interface_index = if_nametoindex(LINKG_RESOURCE_INTERFACE_CELLULAR);
-
-    if (*interface_index == 0U)
-    {
-        return errno != 0 ? -errno : -ENODEV;
-    }
-
-    return 0;
+    return if_nametoindex(LINKG_RESOURCE_INTERFACE_CELLULAR);
 }
 
 /**
- * @brief 从IPv6辅助控制信息中获取接收接口索引。
+ * @brief 从IPv6辅助控制信息中提取实际接收接口索引。
  */
 static unsigned int _linkg_discovery_cellular_rx_ifindex(const struct msghdr *header)
 {
@@ -279,7 +292,8 @@ static unsigned int _linkg_discovery_cellular_rx_ifindex(const struct msghdr *he
 /**
  * @brief 创建Cellular Discovery IPv6 UDP套接字。
  *
- * Socket监听所有本机IPv6地址，通过IPV6_PKTINFO严格校验实际接收接口。
+ * Socket监听所有本机IPv6地址，发送时通过IPV6_PKTINFO固定usb0出口；
+ * 接收时同样使用IPV6_PKTINFO校验报文确实来自usb0。
  */
 static int _linkg_discovery_cellular_open_socket(void)
 {
@@ -349,38 +363,35 @@ fail:
 }
 
 /**
- * @brief 通过当前Cellular Discovery Socket发送一个完整IPv6 UDP报文。
+ * @brief 通过当前Cellular Discovery Socket发送一个IPv6 UDP报文。
  *
- * 使用IPV6_PKTINFO同时固定usb0出口接口和当前Global IPv6源地址。
+ * source必须与当前发送Report中声明的Cellular IPv6保持一致。
  */
-static int _linkg_discovery_cellular_send_to(const struct sockaddr_in6 *destination, const uint8_t *buffer, uint32_t length)
+static int _linkg_discovery_cellular_send_to(const struct sockaddr_in6 *destination, const struct in6_addr *source, const uint8_t *buffer, uint32_t length)
 {
     unsigned char      control[LINKG_DISCOVERY_CELLULAR_TX_CONTROL_SIZE];
     struct in6_pktinfo *pktinfo;
-    struct in6_addr     local_address;
     struct cmsghdr     *cmsg;
     struct msghdr       message;
     struct iovec        iovec;
     unsigned int        interface_index;
     ssize_t             sent;
     int                 socket_fd;
-    int                 ret;
 
-    if (destination == NULL || buffer == NULL || length == 0U)
+    if (destination == NULL || source == NULL || buffer == NULL || length == 0U)
     {
         return -EINVAL;
     }
 
-    ret = _linkg_discovery_cellular_interface_index(&interface_index);
-    if (ret != 0)
+    if (!linkg_network_ipv6_address_is_global(source))
     {
-        return ret;
+        return -EINVAL;
     }
 
-    ret = linkg_network_interface_get_global_ipv6(LINKG_RESOURCE_INTERFACE_CELLULAR, &local_address);
-    if (ret != 0)
+    interface_index = _linkg_discovery_cellular_interface_index();
+    if (interface_index == 0U)
     {
-        return ret;
+        return -ENODEV;
     }
 
     memset(control, 0, sizeof(control));
@@ -411,7 +422,7 @@ static int _linkg_discovery_cellular_send_to(const struct sockaddr_in6 *destinat
 
     memset(pktinfo, 0, sizeof(*pktinfo));
 
-    pktinfo->ipi6_addr    = local_address;
+    pktinfo->ipi6_addr    = *source;
     pktinfo->ipi6_ifindex = interface_index;
 
     pthread_mutex_lock(&g_discovery_cellular.lock);
@@ -446,18 +457,18 @@ static int _linkg_discovery_cellular_send_to(const struct sockaddr_in6 *destinat
 }
 
 /**
- * @brief 将完整Discovery报文发送给所有已知Cellular直接Peer。
+ * @brief 将一个完整Discovery报文发送给全部已知Cellular直接Peer。
  */
-static int _linkg_discovery_cellular_send_to_targets(const uint8_t *buffer, uint32_t length)
+static int _linkg_discovery_cellular_send_to_targets(const struct in6_addr *source, const uint8_t *buffer, uint32_t length)
 {
-    linkg_path_endpoint_t targets[LINKG_RESOURCE_NETWORK_STA_MAX];
+    linkg_path_endpoint_t targets[LINKG_NODE_PEER_MAX];
     struct sockaddr_in6   destination;
     uint32_t              target_count;
     uint32_t              index;
     int                   first_error;
     int                   ret;
 
-    if (buffer == NULL || length == 0U)
+    if (source == NULL || buffer == NULL || length == 0U)
     {
         return -EINVAL;
     }
@@ -466,9 +477,7 @@ static int _linkg_discovery_cellular_send_to_targets(const uint8_t *buffer, uint
 
     target_count = 0U;
 
-    ret = linkg_discovery_channel_get_cellular_targets(targets,
-                                                        LINKG_RESOURCE_NETWORK_STA_MAX,
-                                                        &target_count);
+    ret = linkg_discovery_channel_get_cellular_targets(targets, LINKG_NODE_PEER_MAX, &target_count);
     if (ret != 0)
     {
         return ret;
@@ -491,7 +500,7 @@ static int _linkg_discovery_cellular_send_to_targets(const uint8_t *buffer, uint
             continue;
         }
 
-        ret = _linkg_discovery_cellular_send_to(&destination, buffer, length);
+        ret = _linkg_discovery_cellular_send_to(&destination, source, buffer, length);
         if (ret != 0 && first_error == 0)
         {
             first_error = ret;
@@ -504,17 +513,19 @@ static int _linkg_discovery_cellular_send_to_targets(const uint8_t *buffer, uint
 /****************************** Wire发送 ******************************/
 
 /**
- * @brief 通过Cellular向当前全部直接STA发送AP完整状态及拓扑。
+ * @brief 通过Cellular向全部当前直接STA发送AP完整状态及拓扑。
  */
 static int _linkg_discovery_cellular_send_ap_sync(void)
 {
     uint8_t                   buffer[LINKG_DISCOVERY_WIRE_AP_SYNC_MAX_SIZE];
     linkg_discovery_ap_sync_t sync;
+    struct in6_addr           source;
     uint32_t                  length;
     int                       ret;
 
     memset(buffer, 0, sizeof(buffer));
     memset(&sync, 0, sizeof(sync));
+    memset(&source, 0, sizeof(source));
 
     ret = linkg_discovery_channel_build_ap_sync(&sync);
     if (ret != 0)
@@ -522,13 +533,15 @@ static int _linkg_discovery_cellular_send_ap_sync(void)
         return ret;
     }
 
-    /**
-     * Cellular本机Endpoint尚未就绪时不通过Cellular发送。
-     * 后续周期刷新到Global IPv6后会自动开始发送。
-     */
-    if ((sync.ap.path_flags & LINKG_DISCOVERY_PATH_CELLULAR_VALID) == 0U)
+    ret = _linkg_discovery_cellular_get_report_source(&sync.ap, &source);
+    if (ret == -ENETDOWN)
     {
         return 0;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
     }
 
     ret = linkg_discovery_wire_encode_ap_sync(&sync, buffer, sizeof(buffer), &length);
@@ -537,7 +550,7 @@ static int _linkg_discovery_cellular_send_ap_sync(void)
         return ret;
     }
 
-    return _linkg_discovery_cellular_send_to_targets(buffer, length);
+    return _linkg_discovery_cellular_send_to_targets(&source, buffer, length);
 }
 
 /**
@@ -547,11 +560,13 @@ static int _linkg_discovery_cellular_send_sta_report(void)
 {
     uint8_t                  buffer[LINKG_DISCOVERY_WIRE_STA_REPORT_SIZE];
     linkg_discovery_report_t report;
+    struct in6_addr          source;
     uint32_t                 length;
     int                      ret;
 
     memset(buffer, 0, sizeof(buffer));
     memset(&report, 0, sizeof(report));
+    memset(&source, 0, sizeof(source));
 
     ret = linkg_discovery_channel_get_local_report(&report);
     if (ret != 0)
@@ -559,9 +574,15 @@ static int _linkg_discovery_cellular_send_sta_report(void)
         return ret;
     }
 
-    if ((report.path_flags & LINKG_DISCOVERY_PATH_CELLULAR_VALID) == 0U)
+    ret = _linkg_discovery_cellular_get_report_source(&report, &source);
+    if (ret == -ENETDOWN)
     {
         return 0;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
     }
 
     ret = linkg_discovery_wire_encode_sta_report(&report, buffer, sizeof(buffer), &length);
@@ -570,16 +591,20 @@ static int _linkg_discovery_cellular_send_sta_report(void)
         return ret;
     }
 
-    return _linkg_discovery_cellular_send_to_targets(buffer, length);
+    return _linkg_discovery_cellular_send_to_targets(&source, buffer, length);
 }
 
 /**
  * @brief 通过Cellular发送当前Discovery Session主动离开状态。
+ *
+ * 本接口由Discovery Core同步调用，工作线程必须已经停止，
+ * 但Socket和Core Channel注册状态仍然保持有效。
  */
 static int _linkg_discovery_cellular_send_leave(const linkg_discovery_leave_t *leave, void *user_data)
 {
     linkg_discovery_cellular_context_t *context;
     uint8_t                             buffer[LINKG_DISCOVERY_WIRE_PEER_LEAVE_SIZE];
+    struct in6_addr                     source;
     uint32_t                            length;
     int                                 ret;
 
@@ -600,6 +625,12 @@ static int _linkg_discovery_cellular_send_leave(const linkg_discovery_leave_t *l
 
     pthread_mutex_unlock(&context->lock);
 
+    ret = linkg_network_interface_get_global_ipv6(LINKG_RESOURCE_INTERFACE_CELLULAR, &source);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     memset(buffer, 0, sizeof(buffer));
 
     ret = linkg_discovery_wire_encode_peer_leave(leave, buffer, sizeof(buffer), &length);
@@ -608,7 +639,7 @@ static int _linkg_discovery_cellular_send_leave(const linkg_discovery_leave_t *l
         return ret;
     }
 
-    return _linkg_discovery_cellular_send_to_targets(buffer, length);
+    return _linkg_discovery_cellular_send_to_targets(&source, buffer, length);
 }
 
 /****************************** Wire接收 ******************************/
@@ -634,15 +665,7 @@ static void _linkg_discovery_cellular_handle_sta_report(const uint8_t *buffer, u
         return;
     }
 
-    ret = linkg_discovery_channel_handle_peer_report(LINKG_LINK_ACCESS_CELLULAR, &report, now_us);
-    if (ret == 0)
-    {
-        /**
-         * 收到对端状态后立即允许本机回发一次状态，
-         * 加速首次Cellular UDP双向状态建立。
-         */
-        g_discovery_cellular.next_report_us = now_us;
-    }
+    (void)linkg_discovery_channel_handle_peer_report(LINKG_LINK_ACCESS_CELLULAR, &report, now_us);
 }
 
 /**
@@ -666,11 +689,7 @@ static void _linkg_discovery_cellular_handle_ap_sync(const uint8_t *buffer, uint
         return;
     }
 
-    ret = linkg_discovery_channel_handle_ap_sync(LINKG_LINK_ACCESS_CELLULAR, &sync, now_us);
-    if (ret == 0)
-    {
-        g_discovery_cellular.next_report_us = now_us;
-    }
+    (void)linkg_discovery_channel_handle_ap_sync(LINKG_LINK_ACCESS_CELLULAR, &sync, now_us);
 }
 
 /**
@@ -693,7 +712,7 @@ static void _linkg_discovery_cellular_handle_peer_leave(const uint8_t *buffer, u
 }
 
 /**
- * @brief 按本机角色分发一个完整Cellular Discovery报文。
+ * @brief 按本机节点角色分发一个Cellular Discovery报文。
  */
 static void _linkg_discovery_cellular_handle_packet(const uint8_t *buffer, uint32_t length, const struct sockaddr_in6 *source, uint64_t now_us)
 {
@@ -764,7 +783,6 @@ static int _linkg_discovery_cellular_receive(void)
     ssize_t             received;
     uint64_t            now_us;
     int                 socket_fd;
-    int                 ret;
 
     pthread_mutex_lock(&g_discovery_cellular.lock);
     socket_fd = g_discovery_cellular.socket_fd;
@@ -775,11 +793,7 @@ static int _linkg_discovery_cellular_receive(void)
         return -ENODEV;
     }
 
-    ret = _linkg_discovery_cellular_interface_index(&expected_ifindex);
-    if (ret != 0)
-    {
-        return ret;
-    }
+    expected_ifindex = _linkg_discovery_cellular_interface_index();
 
     for (;;)
     {
@@ -832,7 +846,9 @@ static int _linkg_discovery_cellular_receive(void)
         }
 
         received_ifindex = _linkg_discovery_cellular_rx_ifindex(&message);
-        if (received_ifindex == 0U ||
+
+        if (expected_ifindex == 0U ||
+            received_ifindex == 0U ||
             received_ifindex != expected_ifindex)
         {
             continue;
@@ -840,10 +856,7 @@ static int _linkg_discovery_cellular_receive(void)
 
         now_us = linkg_time_monotonic_us();
 
-        _linkg_discovery_cellular_handle_packet(buffer,
-                                                (uint32_t)received,
-                                                &source,
-                                                now_us);
+        _linkg_discovery_cellular_handle_packet(buffer, (uint32_t)received, &source, now_us);
     }
 }
 
@@ -874,7 +887,7 @@ static int _linkg_discovery_cellular_get_poll_timeout(uint64_t now_us)
 }
 
 /**
- * @brief 执行一次Cellular Discovery周期状态发送和Peer老化。
+ * @brief 执行一次Cellular Discovery周期完整状态发送及Peer老化。
  */
 static void _linkg_discovery_cellular_process_periodic(uint64_t now_us)
 {
@@ -989,15 +1002,7 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
             ret = _linkg_discovery_cellular_receive();
             if (ret != 0)
             {
-                /**
-                 * usb0暂时不存在属于Cellular运行状态变化，
-                 * 不应导致整个Discovery线程永久退出。
-                 */
-                if (ret != -ENODEV &&
-                    ret != -EADDRNOTAVAIL)
-                {
-                    return ret;
-                }
+                return ret;
             }
         }
 
@@ -1059,7 +1064,7 @@ static void _linkg_discovery_cellular_thread(linkg_thread_t *thread, void *user_
 /**
  * @brief 初始化Cellular Discovery Channel。
  *
- * 本接口只初始化进程内线程资源，不要求Cellular Global IPv6已经就绪。
+ * 本接口只初始化进程内线程资源，不要求usb0已经获得Global IPv6。
  */
 int linkg_discovery_cellular_init(void)
 {
@@ -1097,14 +1102,13 @@ int linkg_discovery_cellular_init(void)
 /**
  * @brief 启动Cellular Discovery Channel。
  *
- * Discovery Core和Cellular Link必须已经启动或注册；
- * Cellular Global IPv6允许稍后异步出现。
+ * Discovery Core必须已经运行并存在Cellular Link；
+ * Global IPv6允许在Channel启动后异步出现。
  */
 int linkg_discovery_cellular_start(void)
 {
     linkg_discovery_report_t report;
     uint64_t                 now_us;
-    uint32_t                 link_id;
     int                      socket_fd;
     int                      cleanup_ret;
     int                      ret;
@@ -1125,6 +1129,11 @@ int linkg_discovery_cellular_start(void)
 
     pthread_mutex_unlock(&g_discovery_cellular.lock);
 
+    if (linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR) == LINKG_LINK_ID_INVALID)
+    {
+        return -ENODEV;
+    }
+
     memset(&report, 0, sizeof(report));
 
     ret = linkg_discovery_channel_get_local_report(&report);
@@ -1137,12 +1146,6 @@ int linkg_discovery_cellular_start(void)
     if (ret != 0)
     {
         return ret;
-    }
-
-    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
-    if (link_id == LINKG_LINK_ID_INVALID)
-    {
-        return -ENODEV;
     }
 
     socket_fd = _linkg_discovery_cellular_open_socket();
@@ -1163,9 +1166,7 @@ int linkg_discovery_cellular_start(void)
 
     pthread_mutex_unlock(&g_discovery_cellular.lock);
 
-    ret = linkg_discovery_channel_register(LINKG_LINK_ACCESS_CELLULAR,
-                                            _linkg_discovery_cellular_send_leave,
-                                            &g_discovery_cellular);
+    ret = linkg_discovery_channel_register(LINKG_LINK_ACCESS_CELLULAR, _linkg_discovery_cellular_send_leave, &g_discovery_cellular);
     if (ret != 0)
     {
         goto fail_socket;
@@ -1215,10 +1216,31 @@ fail_socket:
 }
 
 /**
+ * @brief 停止Cellular Discovery工作线程但保留Socket和Core注册状态。
+ *
+ * 用于Discovery Core停止前冻结所有周期收发，避免LEAVE发送阶段
+ * local_report和Peer状态继续被异步工作线程修改。
+ */
+int linkg_discovery_cellular_quiesce(void)
+{
+    pthread_mutex_lock(&g_discovery_cellular.lock);
+
+    if (!g_discovery_cellular.initialized)
+    {
+        pthread_mutex_unlock(&g_discovery_cellular.lock);
+        return 0;
+    }
+
+    pthread_mutex_unlock(&g_discovery_cellular.lock);
+
+    return linkg_thread_stop(&g_discovery_cellular.thread);
+}
+
+/**
  * @brief 停止Cellular Discovery Channel。
  *
- * 先停止工作线程，确保不再向Core提交Cellular状态，再注销Access并关闭Socket。
- * 整个Discovery Session主动LEAVE由linkg_discovery_stop统一负责发送。
+ * 工作线程先进入静止状态，再注销Core Access并关闭Discovery Socket。
+ * 整个Discovery Session的PEER_LEAVE必须已经由Core完成发送。
  */
 int linkg_discovery_cellular_stop(void)
 {
@@ -1236,19 +1258,20 @@ int linkg_discovery_cellular_stop(void)
         return 0;
     }
 
-    channel_registered = g_discovery_cellular.channel_registered;
-
     pthread_mutex_unlock(&g_discovery_cellular.lock);
 
-    first_error = 0;
-
-    ret = linkg_thread_stop(&g_discovery_cellular.thread);
+    ret = linkg_discovery_cellular_quiesce();
     if (ret != 0)
     {
         return ret;
     }
 
-    now_us = linkg_time_monotonic_us();
+    pthread_mutex_lock(&g_discovery_cellular.lock);
+    channel_registered = g_discovery_cellular.channel_registered;
+    pthread_mutex_unlock(&g_discovery_cellular.lock);
+
+    first_error = 0;
+    now_us      = linkg_time_monotonic_us();
 
     if (channel_registered)
     {

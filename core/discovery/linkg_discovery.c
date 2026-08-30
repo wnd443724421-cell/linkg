@@ -534,10 +534,18 @@ int linkg_discovery_start(void)
     return 0;
 
 fail:
-    /**
-     * Core必须在已启动Channel仍然可用时先停止，
-     * 这样已经对外发布过Session时仍可以正常发送PEER_LEAVE。
-     */
+    cleanup_ret = linkg_discovery_cellular_quiesce();
+    if (cleanup_ret != 0)
+    {
+        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+    }
+
+    cleanup_ret = linkg_discovery_wifi_quiesce();
+    if (cleanup_ret != 0)
+    {
+        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+    }
+
     cleanup_ret = _linkg_discovery_stop_core();
     if (cleanup_ret != 0)
     {
@@ -562,8 +570,8 @@ fail:
 /**
  * @brief 停止Discovery模块及内部Channel。
  *
- * 必须先停止Core Session，使Core能够通过仍处于运行状态的Channel发送
- * PEER_LEAVE；Core完成状态关闭和Peer清理后再停止具体Channel。
+ * 先冻结全部Channel工作线程，保证Core主动LEAVE期间本机状态不再发生
+ * 异步变化；随后停止Core Session，最后释放具体Channel运行资源。
  */
 int linkg_discovery_stop(void)
 {
@@ -575,6 +583,22 @@ int linkg_discovery_stop(void)
         return 0;
     }
 
+    /**
+     * quiesce失败时Core保持运行，调用方可以再次执行stop。
+     * 不能在工作线程仍可能运行时继续构造和发送PEER_LEAVE。
+     */
+    ret = linkg_discovery_cellular_quiesce();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_discovery_wifi_quiesce();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     first_error = 0;
 
     ret = _linkg_discovery_stop_core();
@@ -583,11 +607,6 @@ int linkg_discovery_stop(void)
         _linkg_discovery_record_first_error(&first_error, ret);
     }
 
-    /**
-     * Channel按启动逆序停止。
-     * Core已经清除channels[]注册状态，因此具体Channel再次执行
-     * unregister属于幂等清理，不会重复改变Peer状态。
-     */
     ret = linkg_discovery_cellular_stop();
     if (ret != 0)
     {

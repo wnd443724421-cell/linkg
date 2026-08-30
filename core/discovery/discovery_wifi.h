@@ -14,6 +14,7 @@ extern "C" {
 
 int linkg_discovery_wifi_init(void);
 int linkg_discovery_wifi_start(void);
+int linkg_discovery_wifi_quiesce(void);
 int linkg_discovery_wifi_stop(void);
 int linkg_discovery_wifi_deinit(void);
 

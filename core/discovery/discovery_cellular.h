@@ -14,6 +14,7 @@ extern "C" {
 
 int linkg_discovery_cellular_init(void);
 int linkg_discovery_cellular_start(void);
+int linkg_discovery_cellular_quiesce(void);
 int linkg_discovery_cellular_stop(void);
 int linkg_discovery_cellular_deinit(void);
 
