@@ -51,6 +51,7 @@ typedef struct
 {
     bool                       used;                          // Peer状态槽位是否已使用
     bool                       online;                        // Peer当前是否在线
+    bool                       session_closed;                // 当前Discovery Session是否已经主动结束
     bool                       route_cleanup_pending;         // Peer虚拟路由是否等待继续清理
     linkg_discovery_report_t   report;                        // 最近接受的完整Peer状态
     linkg_discovery_liveness_t liveness[LINKG_NODE_PATH_MAX]; // 各物理Access存活状态
@@ -104,7 +105,6 @@ int  _linkg_discovery_build_local_leave_locked(linkg_discovery_leave_t *leave);
 /****************************** 状态校验 ******************************/
 
 int _linkg_discovery_validate_report(const linkg_discovery_report_t *report);
-int _linkg_discovery_validate_peer_update(const linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report);
 int _linkg_discovery_validate_ap_sync_locked(const linkg_discovery_ap_sync_t *sync);
 
 /****************************** Peer状态 ******************************/
