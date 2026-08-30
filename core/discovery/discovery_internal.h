@@ -71,10 +71,10 @@ typedef struct
 
 typedef struct
 {
-    uint64_t ap_session_id;                                // 当前AP Discovery会话
-    uint64_t revision;                                     // 最近应用的AP拓扑版本
-    uint32_t node_count;                                   // 当前远端拓扑节点数量
-    uint8_t  node_ids[LINKG_RESOURCE_NETWORK_STA_MAX];     // 当前远端在线STA节点编号
+    uint64_t ap_session_id;                            // 当前AP Discovery会话
+    uint64_t revision;                                 // 最近应用的AP拓扑版本
+    uint32_t node_count;                               // 当前远端拓扑节点数量
+    uint8_t  node_ids[LINKG_RESOURCE_NETWORK_STA_MAX]; // 当前远端在线STA节点编号
 } linkg_discovery_topology_t;
 
 /****************************** 模块上下文 ******************************/
@@ -84,12 +84,14 @@ typedef struct
     pthread_mutex_t                 lock;                          // Discovery共享状态保护锁
     linkg_discovery_report_t        local_report;                  // 本机当前完整Discovery状态
     linkg_discovery_peer_t          peers[LINKG_NODE_PEER_MAX];    // 当前直接Peer状态
-    linkg_discovery_channel_state_t channels[LINKG_NODE_PATH_MAX]; // Wi-Fi和Cellular Channel状态
+    linkg_discovery_channel_state_t channels[LINKG_NODE_PATH_MAX]; // Wi-Fi和Cellular Channel注册状态
     linkg_discovery_topology_t      topology;                      // STA当前应用的AP拓扑
     uint64_t                        topology_revision;             // AP本机在线拓扑版本
     uint32_t                        peer_count;                    // 当前在线直接Peer数量
+    bool                            wifi_channel_enabled;          // links.wifi.enabled配置状态
+    bool                            cellular_channel_enabled;      // links.cellular.enabled配置状态
     bool                            initialized;                   // 模块是否已经初始化
-    bool                            running;                       // 模块是否正在运行
+    bool                            running;                       // Discovery Session是否正在运行
 } linkg_discovery_context_t;
 
 /****************************** 内部共享上下文 ******************************/
@@ -98,9 +100,9 @@ extern linkg_discovery_context_t g_discovery;
 
 /****************************** 本机状态 ******************************/
 
-int  _linkg_discovery_build_local_report(linkg_discovery_report_t *report);
-int  _linkg_discovery_refresh_local_endpoints(void);
-int  _linkg_discovery_build_local_leave_locked(linkg_discovery_leave_t *leave);
+int _linkg_discovery_build_local_report(linkg_discovery_report_t *report);
+int _linkg_discovery_refresh_local_endpoints(void);
+int _linkg_discovery_build_local_leave_locked(linkg_discovery_leave_t *leave);
 
 /****************************** 状态校验 ******************************/
 

@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "linkg_config.h"
 #include "linkg_link.h"
 #include "linkg_link_manager.h"
 #include "linkg_time.h"
@@ -58,6 +59,28 @@ static void _linkg_discovery_record_first_error(int *first_error, int error)
 static bool _linkg_discovery_access_available(linkg_link_access_t access)
 {
     return linkg_link_manager_get_id(access) != LINKG_LINK_ID_INVALID;
+}
+
+/**
+ * @brief 获取Discovery Channel配置使能状态。
+ *
+ * 调用前Discovery Core必须已经初始化。
+ */
+static void _linkg_discovery_get_channel_enabled(bool *wifi_enabled, bool *cellular_enabled)
+{
+    pthread_mutex_lock(&g_discovery.lock);
+
+    if (wifi_enabled != NULL)
+    {
+        *wifi_enabled = g_discovery.wifi_channel_enabled;
+    }
+
+    if (cellular_enabled != NULL)
+    {
+        *cellular_enabled = g_discovery.cellular_channel_enabled;
+    }
+
+    pthread_mutex_unlock(&g_discovery.lock);
 }
 
 /**
@@ -335,10 +358,8 @@ static int _linkg_discovery_stop_core(void)
     pthread_mutex_unlock(&g_discovery.lock);
 
     /**
-     * Core此时必须继续保持running。
-     *
-     * Cellular send_leave需要通过Core查询当前直接Peer的Cellular Endpoint；
-     * 因此不能在Callback执行前关闭Core或清空Channel注册状态。
+     * Core仍保持running，已经冻结的Channel仍保留Socket和注册状态。
+     * Cellular send_leave因此仍可通过Core查询当前Peer目标。
      */
     if (leave_ready)
     {
@@ -356,9 +377,6 @@ static int _linkg_discovery_stop_core(void)
 
     pthread_mutex_lock(&g_discovery.lock);
 
-    /**
-     * 全部Channel已经完成LEAVE同步发送，从此拒绝新的Discovery状态处理。
-     */
     g_discovery.running = false;
 
     memset(g_discovery.channels, 0, sizeof(g_discovery.channels));
@@ -434,15 +452,24 @@ static int _linkg_discovery_deinit_core(void)
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 初始化Discovery模块及内部Channel。
+ * @brief 初始化Discovery模块及当前配置启用的内部Channel。
  *
- * 初始化阶段只建立进程内软件资源，不创建Discovery Session，
- * 也不要求Wi-Fi或Cellular Endpoint已经就绪。
+ * Channel是否建立初始化资源由links配置决定；
+ * 初始化阶段不创建Discovery Session，也不访问实际网络接口。
  */
 int linkg_discovery_init(void)
 {
-    int cleanup_ret;
-    int ret;
+    linkg_links_config_t links;
+    int                  cleanup_ret;
+    int                  ret;
+
+    memset(&links, 0, sizeof(links));
+
+    ret = linkg_config_get_links(&links);
+    if (ret != 0)
+    {
+        return ret;
+    }
 
     ret = _linkg_discovery_init_core();
     if (ret != 0)
@@ -450,25 +477,41 @@ int linkg_discovery_init(void)
         return ret;
     }
 
-    ret = linkg_discovery_wifi_init();
-    if (ret != 0)
+    pthread_mutex_lock(&g_discovery.lock);
+
+    g_discovery.wifi_channel_enabled     = links.wifi.enabled;
+    g_discovery.cellular_channel_enabled = links.cellular.enabled;
+
+    pthread_mutex_unlock(&g_discovery.lock);
+
+    if (links.wifi.enabled)
     {
-        goto fail_core;
+        ret = linkg_discovery_wifi_init();
+        if (ret != 0)
+        {
+            goto fail_core;
+        }
     }
 
-    ret = linkg_discovery_cellular_init();
-    if (ret != 0)
+    if (links.cellular.enabled)
     {
-        goto fail_wifi;
+        ret = linkg_discovery_cellular_init();
+        if (ret != 0)
+        {
+            goto fail_wifi;
+        }
     }
 
     return 0;
 
 fail_wifi:
-    cleanup_ret = linkg_discovery_wifi_deinit();
-    if (cleanup_ret != 0)
+    if (links.wifi.enabled)
     {
-        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        cleanup_ret = linkg_discovery_wifi_deinit();
+        if (cleanup_ret != 0)
+        {
+            _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        }
     }
 
 fail_core:
@@ -482,15 +525,19 @@ fail_core:
 }
 
 /**
- * @brief 启动Discovery模块及当前存在的Discovery Channel。
+ * @brief 启动Discovery模块及当前可用的Discovery Channel。
  *
- * Core先创建新的Discovery Session并进入running；
- * 随后根据Link Manager当前存在的Access启动对应Channel。
+ * links配置决定Channel是否允许参与Discovery；
+ * Link Manager决定对应业务Path是否实际存在。
  */
 int linkg_discovery_start(void)
 {
     bool cellular_available;
+    bool cellular_enabled;
+    bool cellular_started;
     bool wifi_available;
+    bool wifi_enabled;
+    bool wifi_started;
     int  cleanup_ret;
     int  ret;
 
@@ -499,8 +546,13 @@ int linkg_discovery_start(void)
         return -ENODEV;
     }
 
-    wifi_available     = _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
-    cellular_available = _linkg_discovery_access_available(LINKG_LINK_ACCESS_CELLULAR);
+    _linkg_discovery_get_channel_enabled(&wifi_enabled, &cellular_enabled);
+
+    wifi_available = wifi_enabled &&
+                     _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
+
+    cellular_available = cellular_enabled &&
+                         _linkg_discovery_access_available(LINKG_LINK_ACCESS_CELLULAR);
 
     if (!wifi_available && !cellular_available)
     {
@@ -513,6 +565,9 @@ int linkg_discovery_start(void)
         return ret;
     }
 
+    wifi_started     = false;
+    cellular_started = false;
+
     if (wifi_available)
     {
         ret = linkg_discovery_wifi_start();
@@ -520,6 +575,8 @@ int linkg_discovery_start(void)
         {
             goto fail;
         }
+
+        wifi_started = true;
     }
 
     if (cellular_available)
@@ -529,21 +586,33 @@ int linkg_discovery_start(void)
         {
             goto fail;
         }
+
+        cellular_started = true;
     }
 
     return 0;
 
 fail:
-    cleanup_ret = linkg_discovery_cellular_quiesce();
-    if (cleanup_ret != 0)
+    /**
+     * 只冻结本轮实际启动成功的Channel。
+     * 未完成start的Channel负责在自身start失败路径中回滚。
+     */
+    if (cellular_started)
     {
-        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        cleanup_ret = linkg_discovery_cellular_quiesce();
+        if (cleanup_ret != 0)
+        {
+            _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        }
     }
 
-    cleanup_ret = linkg_discovery_wifi_quiesce();
-    if (cleanup_ret != 0)
+    if (wifi_started)
     {
-        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        cleanup_ret = linkg_discovery_wifi_quiesce();
+        if (cleanup_ret != 0)
+        {
+            _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        }
     }
 
     cleanup_ret = _linkg_discovery_stop_core();
@@ -552,16 +621,22 @@ fail:
         _linkg_discovery_record_first_error(&ret, cleanup_ret);
     }
 
-    cleanup_ret = linkg_discovery_cellular_stop();
-    if (cleanup_ret != 0)
+    if (cellular_started)
     {
-        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        cleanup_ret = linkg_discovery_cellular_stop();
+        if (cleanup_ret != 0)
+        {
+            _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        }
     }
 
-    cleanup_ret = linkg_discovery_wifi_stop();
-    if (cleanup_ret != 0)
+    if (wifi_started)
     {
-        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        cleanup_ret = linkg_discovery_wifi_stop();
+        if (cleanup_ret != 0)
+        {
+            _linkg_discovery_record_first_error(&ret, cleanup_ret);
+        }
     }
 
     return ret;
@@ -570,33 +645,43 @@ fail:
 /**
  * @brief 停止Discovery模块及内部Channel。
  *
- * 先冻结全部Channel工作线程，保证Core主动LEAVE期间本机状态不再发生
- * 异步变化；随后停止Core Session，最后释放具体Channel运行资源。
+ * 先冻结当前配置启用的Channel工作线程，保证Core主动LEAVE期间本机状态
+ * 不再发生异步变化；随后停止Core Session，最后释放具体Channel运行资源。
  */
 int linkg_discovery_stop(void)
 {
-    int first_error;
-    int ret;
+    bool cellular_enabled;
+    bool wifi_enabled;
+    int  first_error;
+    int  ret;
 
     if (!g_discovery.initialized)
     {
         return 0;
     }
 
+    _linkg_discovery_get_channel_enabled(&wifi_enabled, &cellular_enabled);
+
     /**
-     * quiesce失败时Core保持运行，调用方可以再次执行stop。
-     * 不能在工作线程仍可能运行时继续构造和发送PEER_LEAVE。
+     * quiesce失败时Core保持运行。
+     * 不能在线程仍可能修改revision时继续构造PEER_LEAVE。
      */
-    ret = linkg_discovery_cellular_quiesce();
-    if (ret != 0)
+    if (cellular_enabled)
     {
-        return ret;
+        ret = linkg_discovery_cellular_quiesce();
+        if (ret != 0)
+        {
+            return ret;
+        }
     }
 
-    ret = linkg_discovery_wifi_quiesce();
-    if (ret != 0)
+    if (wifi_enabled)
     {
-        return ret;
+        ret = linkg_discovery_wifi_quiesce();
+        if (ret != 0)
+        {
+            return ret;
+        }
     }
 
     first_error = 0;
@@ -607,16 +692,22 @@ int linkg_discovery_stop(void)
         _linkg_discovery_record_first_error(&first_error, ret);
     }
 
-    ret = linkg_discovery_cellular_stop();
-    if (ret != 0)
+    if (cellular_enabled)
     {
-        _linkg_discovery_record_first_error(&first_error, ret);
+        ret = linkg_discovery_cellular_stop();
+        if (ret != 0)
+        {
+            _linkg_discovery_record_first_error(&first_error, ret);
+        }
     }
 
-    ret = linkg_discovery_wifi_stop();
-    if (ret != 0)
+    if (wifi_enabled)
     {
-        _linkg_discovery_record_first_error(&first_error, ret);
+        ret = linkg_discovery_wifi_stop();
+        if (ret != 0)
+        {
+            _linkg_discovery_record_first_error(&first_error, ret);
+        }
     }
 
     return first_error;
@@ -625,11 +716,13 @@ int linkg_discovery_stop(void)
 /**
  * @brief 反初始化Discovery模块及内部Channel。
  *
- * 调用前Discovery必须已经停止。先确认Core运行资源已经完成清理，
- * 再按逆序销毁Cellular和Wi-Fi Channel，最后销毁Core状态。
+ * 调用前Discovery必须已经停止；
+ * 只释放links配置实际启用过的Channel，最后销毁Core状态。
  */
 int linkg_discovery_deinit(void)
 {
+    bool     cellular_enabled;
+    bool     wifi_enabled;
     uint64_t now_us;
     int      first_error;
     int      ret;
@@ -638,6 +731,8 @@ int linkg_discovery_deinit(void)
     {
         return 0;
     }
+
+    _linkg_discovery_get_channel_enabled(&wifi_enabled, &cellular_enabled);
 
     pthread_mutex_lock(&g_discovery.lock);
 
@@ -660,16 +755,22 @@ int linkg_discovery_deinit(void)
 
     first_error = 0;
 
-    ret = linkg_discovery_cellular_deinit();
-    if (ret != 0)
+    if (cellular_enabled)
     {
-        _linkg_discovery_record_first_error(&first_error, ret);
+        ret = linkg_discovery_cellular_deinit();
+        if (ret != 0)
+        {
+            _linkg_discovery_record_first_error(&first_error, ret);
+        }
     }
 
-    ret = linkg_discovery_wifi_deinit();
-    if (ret != 0)
+    if (wifi_enabled)
     {
-        _linkg_discovery_record_first_error(&first_error, ret);
+        ret = linkg_discovery_wifi_deinit();
+        if (ret != 0)
+        {
+            _linkg_discovery_record_first_error(&first_error, ret);
+        }
     }
 
     if (first_error != 0)
