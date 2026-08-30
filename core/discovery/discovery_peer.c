@@ -269,7 +269,7 @@ static linkg_discovery_peer_event_t _linkg_discovery_classify_peer_report(const 
  *
  * 调用方必须持有Discovery状态锁。
  */
-static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report, uint64_t now_us)
+static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
 {
     int ret;
 
@@ -288,13 +288,9 @@ static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, co
         return -EINVAL;
     }
 
-    ret = _linkg_discovery_unregister_peer_locked(peer, now_us);
-    if (ret != 0)
-    {
-        return ret;
-    }
+    peer->session_closed = true;
 
-    ret = _linkg_discovery_register_peer_locked(peer, report);
+    ret = _linkg_discovery_update_peer_locked(peer, report);
     if (ret != 0)
     {
         return ret;
@@ -479,7 +475,7 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
 			return 0;
 
 		case LINKG_DISCOVERY_PEER_EVENT_RESTART:
-			ret = _linkg_discovery_restart_peer_locked(peer, report, now_us);
+			ret = _linkg_discovery_restart_peer_locked(peer, report);
 			if (ret != 0)
 			{
 				return ret;
