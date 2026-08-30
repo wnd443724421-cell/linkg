@@ -56,8 +56,9 @@ typedef enum
 
 typedef enum
 {
-    RG255_SIM_INSERT_LEVEL_LOW  = 0, // SIM插入时检测引脚为低电平
-    RG255_SIM_INSERT_LEVEL_HIGH = 1  // SIM插入时检测引脚为高电平
+    RG255_SIM_INSERT_LEVEL_UNKNOWN = -1, // SIM插入有效电平未知
+    RG255_SIM_INSERT_LEVEL_LOW     = 0,  // SIM插入时检测引脚为低电平
+    RG255_SIM_INSERT_LEVEL_HIGH    = 1   // SIM插入时检测引脚为高电平
 } rg255_sim_insert_level_t;
 
 /****************************** 基础命令 ******************************/

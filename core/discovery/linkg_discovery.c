@@ -14,9 +14,13 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "linkg_link.h"
+#include "linkg_link_manager.h"
 #include "linkg_time.h"
 
+#include "discovery_cellular.h"
 #include "discovery_internal.h"
+#include "discovery_wifi.h"
 
 /****************************** 内部类型 ******************************/
 
@@ -46,6 +50,14 @@ static void _linkg_discovery_record_first_error(int *first_error, int error)
     {
         *first_error = error;
     }
+}
+
+/**
+ * @brief 判断指定Discovery Access是否存在对应本地业务Link。
+ */
+static bool _linkg_discovery_access_available(linkg_link_access_t access)
+{
+    return linkg_link_manager_get_id(access) != LINKG_LINK_ID_INVALID;
 }
 
 /**
@@ -153,21 +165,18 @@ static int _linkg_discovery_cleanup_runtime_locked(uint64_t now_us)
     memset(g_discovery.peers, 0, sizeof(g_discovery.peers));
     memset(&g_discovery.topology, 0, sizeof(g_discovery.topology));
 
-    g_discovery.peer_count         = 0U;
-    g_discovery.topology_revision  = 0U;
+    g_discovery.peer_count        = 0U;
+    g_discovery.topology_revision = 0U;
 
     return 0;
 }
 
-/****************************** 生命周期 ******************************/
+/****************************** Core生命周期 ******************************/
 
 /**
- * @brief 初始化Discovery模块。
- *
- * 初始化阶段仅建立Discovery本地软件状态，不创建Discovery Session。
- * 本机完整状态在每次start时构造一次。
+ * @brief 初始化Discovery Core状态。
  */
-int linkg_discovery_init(void)
+static int _linkg_discovery_init_core(void)
 {
     int ret;
 
@@ -191,12 +200,12 @@ int linkg_discovery_init(void)
 }
 
 /**
- * @brief 启动新的Discovery运行会话。
+ * @brief 启动新的Discovery Core运行会话。
  *
  * 每次启动仅构造一次本机完整初始状态并创建新的Session ID；
- * 运行期间由Endpoint刷新接口原地维护该权威状态。
+ * Channel必须在Core进入running以后才能注册。
  */
-int linkg_discovery_start(void)
+static int _linkg_discovery_start_core(void)
 {
     linkg_discovery_report_t local_report;
     int                      ret;
@@ -250,12 +259,12 @@ int linkg_discovery_start(void)
 }
 
 /**
- * @brief 停止当前Discovery运行会话。
+ * @brief 停止当前Discovery Core运行会话。
  *
- * 停止前通过所有已注册Discovery Channel发送当前Session的主动离开状态，
- * 随后阻止新的状态处理并撤销全部Peer及Topology运行资源。
+ * 停止前通过所有已注册Channel发送当前Session主动离开状态。
+ * Channel在全部send_leave同步返回以前必须保持运行和注册状态。
  */
-int linkg_discovery_stop(void)
+static int _linkg_discovery_stop_core(void)
 {
     linkg_discovery_leave_sender_t senders[LINKG_NODE_PATH_MAX];
     linkg_discovery_leave_t        leave;
@@ -288,8 +297,8 @@ int linkg_discovery_stop(void)
         now_us = linkg_time_monotonic_us();
 
         pthread_mutex_lock(&g_discovery.lock);
-        cleanup_error = _linkg_discovery_cleanup_runtime_locked(now_us);
 
+        cleanup_error = _linkg_discovery_cleanup_runtime_locked(now_us);
         if (cleanup_error == 0)
         {
             memset(&g_discovery.local_report, 0, sizeof(g_discovery.local_report));
@@ -326,8 +335,10 @@ int linkg_discovery_stop(void)
     pthread_mutex_unlock(&g_discovery.lock);
 
     /**
-     * 此时Discovery仍保持running，Channel也仍保持registered。
-     * Cellular send_leave因此仍可以查询当前Peer目标。
+     * Core此时必须继续保持running。
+     *
+     * Cellular send_leave需要通过Core查询当前直接Peer的Cellular Endpoint；
+     * 因此不能在Callback执行前关闭Core或清空Channel注册状态。
      */
     if (leave_ready)
     {
@@ -346,7 +357,7 @@ int linkg_discovery_stop(void)
     pthread_mutex_lock(&g_discovery.lock);
 
     /**
-     * 所有LEAVE同步发送完成后才关闭Core入口并释放Channel注册状态。
+     * 全部Channel已经完成LEAVE同步发送，从此拒绝新的Discovery状态处理。
      */
     g_discovery.running = false;
 
@@ -367,12 +378,11 @@ int linkg_discovery_stop(void)
 }
 
 /**
- * @brief 反初始化Discovery模块。
+ * @brief 反初始化Discovery Core状态。
  *
- * 调用前Discovery必须已经停止；存在未完成的Peer或Route清理时
- * 将再次尝试清理，全部资源释放后才销毁Discovery状态锁。
+ * 调用前Core必须已经停止且所有运行资源已经完成清理。
  */
-int linkg_discovery_deinit(void)
+static int _linkg_discovery_deinit_core(void)
 {
     uint64_t now_us;
     int      ret;
@@ -399,6 +409,12 @@ int linkg_discovery_deinit(void)
         return ret;
     }
 
+    if (!_linkg_discovery_runtime_empty_locked())
+    {
+        pthread_mutex_unlock(&g_discovery.lock);
+        return -EBUSY;
+    }
+
     g_discovery.initialized = false;
 
     pthread_mutex_unlock(&g_discovery.lock);
@@ -413,4 +429,234 @@ int linkg_discovery_deinit(void)
     memset(&g_discovery, 0, sizeof(g_discovery));
 
     return 0;
+}
+
+/****************************** 生命周期 ******************************/
+
+/**
+ * @brief 初始化Discovery模块及内部Channel。
+ *
+ * 初始化阶段只建立进程内软件资源，不创建Discovery Session，
+ * 也不要求Wi-Fi或Cellular Endpoint已经就绪。
+ */
+int linkg_discovery_init(void)
+{
+    int cleanup_ret;
+    int ret;
+
+    ret = _linkg_discovery_init_core();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_discovery_wifi_init();
+    if (ret != 0)
+    {
+        goto fail_core;
+    }
+
+    ret = linkg_discovery_cellular_init();
+    if (ret != 0)
+    {
+        goto fail_wifi;
+    }
+
+    return 0;
+
+fail_wifi:
+    cleanup_ret = linkg_discovery_wifi_deinit();
+    if (cleanup_ret != 0)
+    {
+        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+    }
+
+fail_core:
+    cleanup_ret = _linkg_discovery_deinit_core();
+    if (cleanup_ret != 0)
+    {
+        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+    }
+
+    return ret;
+}
+
+/**
+ * @brief 启动Discovery模块及当前存在的Discovery Channel。
+ *
+ * Core先创建新的Discovery Session并进入running；
+ * 随后根据Link Manager当前存在的Access启动对应Channel。
+ */
+int linkg_discovery_start(void)
+{
+    bool cellular_available;
+    bool wifi_available;
+    int  cleanup_ret;
+    int  ret;
+
+    if (!g_discovery.initialized)
+    {
+        return -ENODEV;
+    }
+
+    wifi_available     = _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
+    cellular_available = _linkg_discovery_access_available(LINKG_LINK_ACCESS_CELLULAR);
+
+    if (!wifi_available && !cellular_available)
+    {
+        return -ENODEV;
+    }
+
+    ret = _linkg_discovery_start_core();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (wifi_available)
+    {
+        ret = linkg_discovery_wifi_start();
+        if (ret != 0)
+        {
+            goto fail;
+        }
+    }
+
+    if (cellular_available)
+    {
+        ret = linkg_discovery_cellular_start();
+        if (ret != 0)
+        {
+            goto fail;
+        }
+    }
+
+    return 0;
+
+fail:
+    /**
+     * Core必须在已启动Channel仍然可用时先停止，
+     * 这样已经对外发布过Session时仍可以正常发送PEER_LEAVE。
+     */
+    cleanup_ret = _linkg_discovery_stop_core();
+    if (cleanup_ret != 0)
+    {
+        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+    }
+
+    cleanup_ret = linkg_discovery_cellular_stop();
+    if (cleanup_ret != 0)
+    {
+        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+    }
+
+    cleanup_ret = linkg_discovery_wifi_stop();
+    if (cleanup_ret != 0)
+    {
+        _linkg_discovery_record_first_error(&ret, cleanup_ret);
+    }
+
+    return ret;
+}
+
+/**
+ * @brief 停止Discovery模块及内部Channel。
+ *
+ * 必须先停止Core Session，使Core能够通过仍处于运行状态的Channel发送
+ * PEER_LEAVE；Core完成状态关闭和Peer清理后再停止具体Channel。
+ */
+int linkg_discovery_stop(void)
+{
+    int first_error;
+    int ret;
+
+    if (!g_discovery.initialized)
+    {
+        return 0;
+    }
+
+    first_error = 0;
+
+    ret = _linkg_discovery_stop_core();
+    if (ret != 0)
+    {
+        _linkg_discovery_record_first_error(&first_error, ret);
+    }
+
+    /**
+     * Channel按启动逆序停止。
+     * Core已经清除channels[]注册状态，因此具体Channel再次执行
+     * unregister属于幂等清理，不会重复改变Peer状态。
+     */
+    ret = linkg_discovery_cellular_stop();
+    if (ret != 0)
+    {
+        _linkg_discovery_record_first_error(&first_error, ret);
+    }
+
+    ret = linkg_discovery_wifi_stop();
+    if (ret != 0)
+    {
+        _linkg_discovery_record_first_error(&first_error, ret);
+    }
+
+    return first_error;
+}
+
+/**
+ * @brief 反初始化Discovery模块及内部Channel。
+ *
+ * 调用前Discovery必须已经停止。先确认Core运行资源已经完成清理，
+ * 再按逆序销毁Cellular和Wi-Fi Channel，最后销毁Core状态。
+ */
+int linkg_discovery_deinit(void)
+{
+    uint64_t now_us;
+    int      first_error;
+    int      ret;
+
+    if (!g_discovery.initialized)
+    {
+        return 0;
+    }
+
+    pthread_mutex_lock(&g_discovery.lock);
+
+    if (g_discovery.running)
+    {
+        pthread_mutex_unlock(&g_discovery.lock);
+        return -EBUSY;
+    }
+
+    now_us = linkg_time_monotonic_us();
+
+    ret = _linkg_discovery_cleanup_runtime_locked(now_us);
+
+    pthread_mutex_unlock(&g_discovery.lock);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    first_error = 0;
+
+    ret = linkg_discovery_cellular_deinit();
+    if (ret != 0)
+    {
+        _linkg_discovery_record_first_error(&first_error, ret);
+    }
+
+    ret = linkg_discovery_wifi_deinit();
+    if (ret != 0)
+    {
+        _linkg_discovery_record_first_error(&first_error, ret);
+    }
+
+    if (first_error != 0)
+    {
+        return first_error;
+    }
+
+    return _linkg_discovery_deinit_core();
 }

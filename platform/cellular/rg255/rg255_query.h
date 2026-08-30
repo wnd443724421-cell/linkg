@@ -28,6 +28,15 @@ typedef enum
     RG255_PDP_TYPE_IPV4V6       // IPv4/IPv6双栈
 } rg255_pdp_type_t;
 
+/****************************** SIM插入状态 ******************************/
+
+typedef enum
+{
+    RG255_SIM_INSERT_STATE_UNKNOWN  = -1, // SIM插入状态未知
+    RG255_SIM_INSERT_STATE_REMOVED  = 0,  // SIM未插入
+    RG255_SIM_INSERT_STATE_INSERTED = 1   // SIM已插入
+} rg255_sim_insert_state_t;
+
 /****************************** 服务小区信息 ******************************/
 
 typedef struct
@@ -89,9 +98,27 @@ typedef struct
     bool                connected;   // 当前USB网卡是否连接成功
 } rg255_netdev_status_t;
 
+/****************************** SIM检测配置 ******************************/
+
+typedef struct
+{
+    bool                     enabled;      // SIM插拔检测是否开启
+    rg255_sim_insert_level_t insert_level; // SIM插入有效电平
+} rg255_sim_detect_config_t;
+
+/****************************** SIM状态URC ******************************/
+
+typedef struct
+{
+    bool                     enabled; // SIM状态URC是否开启
+    rg255_sim_insert_state_t state;   // 当前SIM插入检测状态
+} rg255_sim_status_urc_t;
+
 /****************************** SIM查询 ******************************/
 
 int rg255_query_sim_state(at_channel_t *channel, linkg_cellular_sim_state_t *state);
+int rg255_query_sim_detect(at_channel_t *channel, rg255_sim_detect_config_t *config);
+int rg255_query_sim_status_urc(at_channel_t *channel, rg255_sim_status_urc_t *status);
 
 /****************************** 网络查询 ******************************/
 

@@ -33,6 +33,8 @@
 #define RG255_QUERY_CME_SIM_PIN2_REQUIRED  17              // SIM需要PIN2的CME错误码
 #define RG255_QUERY_CME_SIM_PUK2_REQUIRED  18              // SIM需要PUK2的CME错误码
 #define RG255_QUERY_PREFIX_CPIN            "+CPIN:"        // SIM状态响应前缀
+#define RG255_QUERY_PREFIX_QSIMDET         "+QSIMDET:"     // SIM插拔检测配置响应前缀
+#define RG255_QUERY_PREFIX_QSIMSTAT        "+QSIMSTAT:"    // SIM状态URC配置响应前缀
 #define RG255_QUERY_PREFIX_CME_ERROR       "+CME ERROR:"   // CME错误响应前缀
 #define RG255_QUERY_PREFIX_NETWORK_MODE    "+QNWPREFCFG:"  // 网络模式响应前缀
 #define RG255_QUERY_PREFIX_CEREG           "+CEREG:"       // EPS注册状态响应前缀
@@ -65,6 +67,51 @@
 #define RG255_QUERY_TEXT_PDP_IPV4V6        "IPV4V6"        // 双栈PDP类型文本
 
 /****************************** 内部辅助 ******************************/
+
+/**
+ * @brief 将0/1字段解析为bool。
+ */
+static int _rg255_query_parse_bool(char *field, bool *value)
+{
+    char *text;
+    int parsed;
+    int ret;
+
+    if (field == NULL || value == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *value = false;
+
+    ret = _rg255_query_get_field_text(field, &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &parsed);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (parsed == 0)
+    {
+        *value = false;
+        return 0;
+    }
+
+    if (parsed == 1)
+    {
+        *value = true;
+        return 0;
+    }
+
+    return -EBADMSG;
+}
 
 /**
  * @brief 去除字符串首尾空白字符。
@@ -1588,6 +1635,178 @@ int rg255_query_sim_state(at_channel_t *channel, linkg_cellular_sim_state_t *sta
     }
 
     return _rg255_query_map_cpin_state(text, state);
+}
+
+/**
+ * @brief 查询并解析RG255 SIM插拔检测配置。
+ */
+int rg255_query_sim_detect(at_channel_t *channel, rg255_sim_detect_config_t *config)
+{
+    char response[RG255_QUERY_RESPONSE_SIZE];
+    char *fields[RG255_QUERY_FIELD_MAX];
+    char *body;
+    char *text;
+    size_t field_count;
+    int insert_level;
+    int ret;
+
+    if (channel == NULL || config == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(config, 0, sizeof(*config));
+    config->insert_level = RG255_SIM_INSERT_LEVEL_UNKNOWN;
+    response[0] = '\0';
+
+    ret = rg255_cmd_query_sim_detect(channel, response, sizeof(response));
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_find_line_body(response, RG255_QUERY_PREFIX_QSIMDET, &body);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_split_csv(body, fields, RG255_QUERY_FIELD_MAX, &field_count);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (field_count < 2U)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_parse_bool(fields[0], &config->enabled);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_get_field_text(fields[1], &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &insert_level);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (insert_level == 0)
+    {
+        config->insert_level = RG255_SIM_INSERT_LEVEL_LOW;
+        return 0;
+    }
+
+    if (insert_level == 1)
+    {
+        config->insert_level = RG255_SIM_INSERT_LEVEL_HIGH;
+        return 0;
+    }
+
+    return -EBADMSG;
+}
+
+/**
+ * @brief 查询并解析RG255 SIM状态URC配置及当前插入状态。
+ */
+int rg255_query_sim_status_urc(at_channel_t *channel, rg255_sim_status_urc_t *status)
+{
+    char response[RG255_QUERY_RESPONSE_SIZE];
+    char *fields[RG255_QUERY_FIELD_MAX];
+    char *body;
+    char *text;
+    size_t field_count;
+    int inserted_status;
+    int ret;
+
+    if (channel == NULL || status == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(status, 0, sizeof(*status));
+    status->state = RG255_SIM_INSERT_STATE_UNKNOWN;
+    response[0] = '\0';
+
+    ret = rg255_cmd_query_sim_status_urc(channel, response, sizeof(response));
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_find_line_body(response, RG255_QUERY_PREFIX_QSIMSTAT, &body);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_split_csv(body, fields, RG255_QUERY_FIELD_MAX, &field_count);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (field_count < 2U)
+    {
+        return -EBADMSG;
+    }
+
+    ret = _rg255_query_parse_bool(fields[0], &status->enabled);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_get_field_text(fields[1], &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &inserted_status);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    switch (inserted_status)
+    {
+        case 0:
+            status->state = RG255_SIM_INSERT_STATE_REMOVED;
+            return 0;
+
+        case 1:
+            status->state = RG255_SIM_INSERT_STATE_INSERTED;
+            return 0;
+
+        case 2:
+            status->state = RG255_SIM_INSERT_STATE_UNKNOWN;
+            return 0;
+
+        default:
+            return -EBADMSG;
+    }
 }
 
 /****************************** 网络查询 ******************************/
