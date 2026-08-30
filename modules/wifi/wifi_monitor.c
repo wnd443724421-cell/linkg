@@ -113,6 +113,8 @@ static void _wifi_monitor_set_recovery_event(wifi_runtime_event_t *event, wifi_r
 
 /****************************** 状态辅助 ******************************/
 
+#if LINKG_WIFI_DEBUG_ENABLE
+
 /**
  * @brief 获取STA监控状态名称。
  */
@@ -139,6 +141,8 @@ static const char *_wifi_monitor_state_name(wifi_monitor_sta_state_t state)
             return "UNKNOWN";
     }
 }
+
+#endif
 
 /**
  * @brief 更新STA连接监控状态及对应期限。

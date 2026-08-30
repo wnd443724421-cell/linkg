@@ -69,51 +69,6 @@
 /****************************** 内部辅助 ******************************/
 
 /**
- * @brief 将0/1字段解析为bool。
- */
-static int _rg255_query_parse_bool(char *field, bool *value)
-{
-    char *text;
-    int parsed;
-    int ret;
-
-    if (field == NULL || value == NULL)
-    {
-        return -EINVAL;
-    }
-
-    *value = false;
-
-    ret = _rg255_query_get_field_text(field, &text);
-
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _rg255_query_parse_int(text, &parsed);
-
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (parsed == 0)
-    {
-        *value = false;
-        return 0;
-    }
-
-    if (parsed == 1)
-    {
-        *value = true;
-        return 0;
-    }
-
-    return -EBADMSG;
-}
-
-/**
  * @brief 去除字符串首尾空白字符。
  */
 static char *_rg255_query_trim(char *text)
@@ -315,6 +270,51 @@ static int _rg255_query_parse_int(const char *text, int *value)
     *value = (int)parsed;
 
     return 0;
+}
+
+/**
+ * @brief 将0/1字段解析为bool。
+ */
+static int _rg255_query_parse_bool(char *field, bool *value)
+{
+    char *text;
+    int parsed;
+    int ret;
+
+    if (field == NULL || value == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *value = false;
+
+    ret = _rg255_query_get_field_text(field, &text);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_int(text, &parsed);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (parsed == 0)
+    {
+        *value = false;
+        return 0;
+    }
+
+    if (parsed == 1)
+    {
+        *value = true;
+        return 0;
+    }
+
+    return -EBADMSG;
 }
 
 /**

@@ -77,8 +77,6 @@ static int _wifi_runtime_apply_link_event(wifi_runtime_t *runtime, wifi_runtime_
  */
 static int _wifi_runtime_apply_recovery_required(wifi_runtime_t *runtime, const wifi_runtime_event_t *event, uint64_t now_ms)
 {
-    bool changed;
-
     if (event->recovery_reason == WIFI_RUNTIME_RECOVERY_REASON_NONE)
     {
         return -EINVAL;

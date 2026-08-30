@@ -24,6 +24,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <linux/sockios.h>
 
 #include "linkg_file.h"
 #include "linkg_time.h"
@@ -914,6 +915,40 @@ int linkg_network_interface_set_mtu(const char *ifname, uint32_t mtu)
     ifr.ifr_mtu = (int)mtu;
 
     ret = _network_interface_ioctl(fd, SIOCSIFMTU, &ifr);
+
+    return _network_control_socket_close(fd, ret);
+}
+
+/**
+ * @brief 设置网络接口发送队列长度。
+ */
+int linkg_network_interface_set_tx_queue_length(const char *ifname, uint32_t queue_length)
+{
+    struct ifreq ifr;
+    int          fd;
+    int          ret;
+
+    if (queue_length == 0U ||
+        queue_length > (uint32_t)INT_MAX)
+    {
+        return -EINVAL;
+    }
+
+    ret = _network_ifreq_init(ifname, &ifr);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    fd = _network_control_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+
+    ifr.ifr_qlen = (int)queue_length;
+
+    ret = _network_interface_ioctl(fd, SIOCSIFTXQLEN, &ifr);
 
     return _network_control_socket_close(fd, ret);
 }

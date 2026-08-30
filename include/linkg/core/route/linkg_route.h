@@ -17,6 +17,8 @@ extern "C" {
 /****************************** 生命周期 ******************************/
 
 int linkg_route_init(const linkg_network_config_t *network_config);
+int linkg_route_start(void);
+int linkg_route_stop(void);
 int linkg_route_deinit(void);
 
 /****************************** 路由管理 ******************************/

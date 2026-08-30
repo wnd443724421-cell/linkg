@@ -637,7 +637,7 @@ int linkg_network_init(void)
 
     if (g_network.cellular_config.enabled)
     {
-        ret = rg255_init(&g_network.cellular_config);
+        ret = linkg_cellular_init(&g_network.cellular_config);
         if (ret != 0)
         {
             LINKG_LOG_ERROR("initialize cellular module failed, error=%d", ret);
@@ -648,9 +648,9 @@ int linkg_network_init(void)
 
         ret = _linkg_network_worker_init(&g_network.cellular_worker,
                                          LINKG_NETWORK_CELLULAR_THREAD_NAME,
-                                         rg255_start,
-                                         NULL,
-                                         rg255_stop);
+                                         linkg_cellular_start,
+                                         linkg_cellular_run,
+                                         linkg_cellular_stop);
         if (ret != 0)
         {
             LINKG_LOG_ERROR("initialize cellular worker failed, error=%d", ret);
@@ -675,7 +675,7 @@ fail:
 
     if (g_network.cellular_initialized)
     {
-        cleanup_ret = rg255_deinit();
+        cleanup_ret = linkg_cellular_deinit();
         if (cleanup_ret != 0)
         {
             LINKG_LOG_ERROR("deinitialize cellular module after init failure failed, error=%d",
@@ -1030,7 +1030,7 @@ int linkg_network_deinit(void)
 
     if (g_network.cellular_initialized)
     {
-        ret = rg255_deinit();
+        ret = linkg_cellular_deinit();
         if (ret != 0)
         {
             LINKG_LOG_ERROR("deinitialize cellular module failed, error=%d", ret);

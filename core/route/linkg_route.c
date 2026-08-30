@@ -2,8 +2,8 @@
  * @file linkg_route.c
  * @brief LinkG虚拟节点路由管理实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-08-29
+ * @version 1.1.0
+ * @date 2026-08-30
  */
 
 #include "linkg_route.h"
@@ -32,26 +32,31 @@
 
 typedef struct
 {
-    struct nlmsghdr header;                                                 // Netlink消息头
-    struct rtmsg    route;                                                  // IPv4路由消息
-    uint8_t         attributes[LINKG_ROUTE_NETLINK_ATTRIBUTE_BUFFER_SIZE];  // Netlink路由属性
+    struct nlmsghdr header;                                                // Netlink消息头
+    struct rtmsg    route;                                                 // IPv4路由消息
+    uint8_t         attributes[LINKG_ROUTE_NETLINK_ATTRIBUTE_BUFFER_SIZE]; // Netlink路由属性
 } linkg_route_netlink_request_t;
 
 typedef struct
 {
     pthread_mutex_t        lock;            // 路由操作锁，串行保护Netlink请求和ACK
     linkg_network_config_t network_config;  // 当前网络配置快照
-    uint32_t               interface_index; // linkg0接口索引
+    uint32_t               interface_index; // linkg0接口索引，仅启动期间有效
     uint32_t               sequence;        // Netlink请求序列号
     int                    netlink_fd;      // 持久化NETLINK_ROUTE套接字
     bool                   initialized;     // 模块是否已经初始化
+    bool                   started;         // 路由运行资源是否已经启动
 } linkg_route_context_t;
 
 /****************************** 全局上下文 ******************************/
 
 static linkg_route_context_t g_route =
 {
-    .netlink_fd = -1 // Netlink套接字尚未创建
+    .interface_index = 0U,    // linkg0接口索引尚未获取
+    .sequence        = 0U,    // 尚未发送Netlink请求
+    .netlink_fd      = -1,    // Netlink套接字尚未创建
+    .initialized     = false, // 模块尚未初始化
+    .started         = false  // 路由运行资源尚未启动
 };
 
 /****************************** Node辅助 ******************************/
@@ -97,6 +102,29 @@ static int _linkg_route_get_node_subnet(uint8_t node_id, linkg_network_ipv4_conf
 }
 
 /**
+ * @brief 获取本节点对应的虚拟Endpoint子网。
+ */
+static int _linkg_route_get_local_subnet(linkg_network_ipv4_config_t *subnet)
+{
+    int ret;
+
+    if (subnet == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = linkg_network_config_get_node_virtual_subnet(&g_route.network_config,
+                                                       g_route.network_config.node_id,
+                                                       subnet);
+    if (ret != 0)
+    {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+/**
  * @brief 获取IPv4网络掩码对应的前缀长度。
  */
 static int _linkg_route_prefix_length(const struct in_addr *netmask, uint8_t *prefix_length)
@@ -104,7 +132,12 @@ static int _linkg_route_prefix_length(const struct in_addr *netmask, uint8_t *pr
     uint32_t mask;
     uint8_t  prefix;
 
-    if (netmask == NULL || prefix_length == NULL)
+    if (netmask == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (prefix_length == NULL)
     {
         return -EINVAL;
     }
@@ -164,6 +197,32 @@ static int _linkg_route_netlink_open(void)
 }
 
 /**
+ * @brief 关闭当前持久化NETLINK_ROUTE套接字并清理运行状态。
+ *
+ * 调用方必须已经持有Route路由操作锁。
+ */
+static int _linkg_route_netlink_close_locked(void)
+{
+    int ret;
+
+    ret = 0;
+
+    if (g_route.netlink_fd >= 0)
+    {
+        if (close(g_route.netlink_fd) != 0)
+        {
+            ret = -errno;
+        }
+    }
+
+    g_route.interface_index = 0U;
+    g_route.sequence        = 0U;
+    g_route.netlink_fd      = -1;
+
+    return ret;
+}
+
+/**
  * @brief 向Netlink消息追加路由属性。
  */
 static int _linkg_route_netlink_add_attribute(struct nlmsghdr *header, size_t capacity, uint16_t type, const void *data, size_t data_length)
@@ -173,7 +232,17 @@ static int _linkg_route_netlink_add_attribute(struct nlmsghdr *header, size_t ca
     size_t         attribute_length;
     size_t         required_length;
 
-    if (header == NULL || data == NULL || data_length == 0U)
+    if (header == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (data == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (data_length == 0U)
     {
         return -EINVAL;
     }
@@ -305,9 +374,16 @@ static int _linkg_route_netlink_execute_locked(linkg_route_netlink_request_t *re
     uint32_t           sequence;
     ssize_t            sent;
 
-    if (request == NULL || g_route.netlink_fd < 0)
+    if (request == NULL)
     {
         return -EINVAL;
+    }
+
+    if (!g_route.started ||
+        g_route.netlink_fd < 0 ||
+        g_route.interface_index == 0U)
+    {
+        return -ESHUTDOWN;
     }
 
     sequence = _linkg_route_netlink_next_sequence_locked();
@@ -361,7 +437,8 @@ static int _linkg_route_linux_modify_locked(uint16_t message_type, const linkg_n
         return -EINVAL;
     }
 
-    if (message_type != RTM_NEWROUTE && message_type != RTM_DELROUTE)
+    if (message_type != RTM_NEWROUTE &&
+        message_type != RTM_DELROUTE)
     {
         return -EINVAL;
     }
@@ -390,13 +467,21 @@ static int _linkg_route_linux_modify_locked(uint16_t message_type, const linkg_n
     request.route.rtm_scope    = RT_SCOPE_LINK;
     request.route.rtm_type     = RTN_UNICAST;
 
-    ret = _linkg_route_netlink_add_attribute(&request.header, sizeof(request), RTA_DST, &subnet->ip.s_addr, sizeof(subnet->ip.s_addr));
+    ret = _linkg_route_netlink_add_attribute(&request.header,
+                                             sizeof(request),
+                                             RTA_DST,
+                                             &subnet->ip.s_addr,
+                                             sizeof(subnet->ip.s_addr));
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_route_netlink_add_attribute(&request.header, sizeof(request), RTA_OIF, &g_route.interface_index, sizeof(g_route.interface_index));
+    ret = _linkg_route_netlink_add_attribute(&request.header,
+                                             sizeof(request),
+                                             RTA_OIF,
+                                             &g_route.interface_index,
+                                             sizeof(g_route.interface_index));
     if (ret != 0)
     {
         return ret;
@@ -444,17 +529,14 @@ static int _linkg_route_linux_remove_locked(const linkg_network_ipv4_config_t *s
 /**
  * @brief 初始化虚拟节点路由管理模块。
  *
- * 调用前linkg0必须已经创建。
- * network_config由Route复制保存，调用方无需保持原对象生命周期。
+ * 初始化阶段仅校验并保存网络配置以及创建Route状态锁，
+ * 不访问linkg0接口，也不创建NETLINK_ROUTE套接字。
  *
- * Route不维护软件路由表，只持有一个NETLINK_ROUTE套接字并负责
- * 将远端Node ID映射到对应虚拟子网后操作Linux主路由表。
+ * network_config由Route复制保存，调用方无需保持原对象生命周期。
  */
 int linkg_route_init(const linkg_network_config_t *network_config)
 {
     linkg_network_ipv4_config_t virtual_network;
-    uint32_t                    interface_index;
-    int                         netlink_fd;
     int                         ret;
 
     if (network_config == NULL)
@@ -481,18 +563,6 @@ int linkg_route_init(const linkg_network_config_t *network_config)
         return -EINVAL;
     }
 
-    interface_index = if_nametoindex(LINKG_RESOURCE_INTERFACE_TUN);
-    if (interface_index == 0U)
-    {
-        return -ENODEV;
-    }
-
-    netlink_fd = _linkg_route_netlink_open();
-    if (netlink_fd < 0)
-    {
-        return netlink_fd;
-    }
-
     memset(&g_route, 0, sizeof(g_route));
 
     g_route.netlink_fd = -1;
@@ -500,32 +570,170 @@ int linkg_route_init(const linkg_network_config_t *network_config)
     ret = pthread_mutex_init(&g_route.lock, NULL);
     if (ret != 0)
     {
-        close(netlink_fd);
-
         memset(&g_route, 0, sizeof(g_route));
         g_route.netlink_fd = -1;
 
         return -ret;
     }
 
-    g_route.network_config = *network_config;
-    g_route.interface_index = interface_index;
+    g_route.network_config  = *network_config;
+    g_route.interface_index = 0U;
     g_route.sequence        = 0U;
-    g_route.netlink_fd      = netlink_fd;
+    g_route.netlink_fd      = -1;
     g_route.initialized     = true;
+    g_route.started         = false;
 
     return 0;
 }
 
 /**
+ * @brief 启动虚拟节点路由管理模块。
+ *
+ * 调用前linkg0必须已经创建。
+ * 启动阶段获取当前linkg0接口索引、建立持久化NETLINK_ROUTE套接字，
+ * 并安装本节点虚拟Endpoint子网路由。
+ */
+int linkg_route_start(void)
+{
+    linkg_network_ipv4_config_t local_subnet;
+    uint32_t                    interface_index;
+    int                         netlink_fd;
+    int                         ret;
+
+    if (!g_route.initialized)
+    {
+        return -ENODEV;
+    }
+
+    ret = pthread_mutex_lock(&g_route.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    if (g_route.started)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return -EALREADY;
+    }
+
+    if (g_route.netlink_fd >= 0 ||
+        g_route.interface_index != 0U)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return -EBUSY;
+    }
+
+    interface_index = if_nametoindex(LINKG_RESOURCE_INTERFACE_TUN);
+    if (interface_index == 0U)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return -ENODEV;
+    }
+
+    netlink_fd = _linkg_route_netlink_open();
+    if (netlink_fd < 0)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return netlink_fd;
+    }
+
+    g_route.interface_index = interface_index;
+    g_route.sequence        = 0U;
+    g_route.netlink_fd      = netlink_fd;
+    g_route.started         = true;
+
+    memset(&local_subnet, 0, sizeof(local_subnet));
+
+    ret = _linkg_route_get_local_subnet(&local_subnet);
+    if (ret != 0)
+    {
+        (void)_linkg_route_netlink_close_locked();
+        g_route.started = false;
+
+        pthread_mutex_unlock(&g_route.lock);
+
+        return ret;
+    }
+
+    ret = _linkg_route_linux_add_locked(&local_subnet);
+    if (ret != 0)
+    {
+        (void)_linkg_route_netlink_close_locked();
+        g_route.started = false;
+
+        pthread_mutex_unlock(&g_route.lock);
+
+        return ret;
+    }
+
+    pthread_mutex_unlock(&g_route.lock);
+
+    return 0;
+}
+
+/**
+ * @brief 停止虚拟节点路由管理模块。
+ *
+ * 调用前Discovery必须已经停止并撤销其管理的全部远端节点路由。
+ * 停止阶段删除Route自身管理的本节点虚拟子网路由，
+ * 然后释放NETLINK_ROUTE套接字和当前linkg0接口索引。
+ */
+int linkg_route_stop(void)
+{
+    linkg_network_ipv4_config_t local_subnet;
+    int                         lock_ret;
+    int                         ret;
+
+    if (!g_route.initialized)
+    {
+        return 0;
+    }
+
+    lock_ret = pthread_mutex_lock(&g_route.lock);
+    if (lock_ret != 0)
+    {
+        return -lock_ret;
+    }
+
+    if (!g_route.started)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return 0;
+    }
+
+    memset(&local_subnet, 0, sizeof(local_subnet));
+
+    ret = _linkg_route_get_local_subnet(&local_subnet);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return ret;
+    }
+
+    ret = _linkg_route_linux_remove_locked(&local_subnet);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return ret;
+    }
+
+    ret = _linkg_route_netlink_close_locked();
+
+    g_route.started = false;
+
+    pthread_mutex_unlock(&g_route.lock);
+
+    return ret;
+}
+
+/**
  * @brief 反初始化虚拟节点路由管理模块。
  *
- * 调用前Discovery必须已经停止并且不得再执行Route操作。
- * Discovery负责在停止过程中撤销其管理的远端节点路由。
+ * 调用前Route必须已经停止，并且不得再有其他线程访问Route模块。
  */
 int linkg_route_deinit(void)
 {
-    int first_error;
     int ret;
 
     if (!g_route.initialized)
@@ -533,29 +741,33 @@ int linkg_route_deinit(void)
         return 0;
     }
 
-    first_error = 0;
-
-    if (g_route.netlink_fd >= 0)
+    ret = pthread_mutex_lock(&g_route.lock);
+    if (ret != 0)
     {
-        if (close(g_route.netlink_fd) != 0)
-        {
-            first_error = -errno;
-        }
-
-        g_route.netlink_fd = -1;
+        return -ret;
     }
 
-    ret = pthread_mutex_destroy(&g_route.lock);
-    if (ret != 0 && first_error == 0)
+    if (g_route.started ||
+        g_route.netlink_fd >= 0 ||
+        g_route.interface_index != 0U)
     {
-        first_error = -ret;
+        pthread_mutex_unlock(&g_route.lock);
+        return -EBUSY;
+    }
+
+    pthread_mutex_unlock(&g_route.lock);
+
+    ret = pthread_mutex_destroy(&g_route.lock);
+    if (ret != 0)
+    {
+        return -ret;
     }
 
     memset(&g_route, 0, sizeof(g_route));
 
     g_route.netlink_fd = -1;
 
-    return first_error;
+    return 0;
 }
 
 /****************************** 路由管理 ******************************/
@@ -583,6 +795,12 @@ int linkg_route_add_node(uint8_t node_id)
         return -lock_ret;
     }
 
+    if (!g_route.started)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return -ESHUTDOWN;
+    }
+
     if (!_linkg_route_node_id_valid(node_id))
     {
         pthread_mutex_unlock(&g_route.lock);
@@ -605,7 +823,7 @@ int linkg_route_add_node(uint8_t node_id)
 /**
  * @brief 删除指定远端节点的虚拟子网路由。
  *
- * 路由已经不存在或者linkg0已经被删除时同样返回成功。
+ * 路由已经不存在时同样返回成功。
  */
 int linkg_route_remove_node(uint8_t node_id)
 {
@@ -622,6 +840,12 @@ int linkg_route_remove_node(uint8_t node_id)
     if (lock_ret != 0)
     {
         return -lock_ret;
+    }
+
+    if (!g_route.started)
+    {
+        pthread_mutex_unlock(&g_route.lock);
+        return -ESHUTDOWN;
     }
 
     if (!_linkg_route_node_id_valid(node_id))

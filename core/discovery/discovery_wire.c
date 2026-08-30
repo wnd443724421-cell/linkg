@@ -505,7 +505,7 @@ int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t lengt
  * @brief 编码完整AP同步报文。
  *
  * Payload布局：
- * AP Report            56B
+ * AP Report            57B
  * topology_revision     8B
  * node_count            4B
  * node_ids[]            NB

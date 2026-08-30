@@ -7,6 +7,7 @@
 
 #include <errno.h>
 
+
 /****************************** 生命周期 ******************************/
 
 int linkg_cellular_init(const linkg_cellular_config_t *config)

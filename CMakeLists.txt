@@ -13,6 +13,8 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/output/bin/${ARCHITECTURE}")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/output/lib/${ARCHITECTURE}")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/output/lib/${ARCHITECTURE}")
@@ -47,12 +49,29 @@ list(REMOVE_DUPLICATES LINKG_INCLUDE_DIRS)
 
 # /****************************** 源文件 ******************************/
 
-file(GLOB_RECURSE LINKG_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/core/*.c")
-file(GLOB_RECURSE LINKG_INFRA_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/infra/*.c")
-file(GLOB_RECURSE LINKG_MODULE_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/modules/*.c")
-file(GLOB_RECURSE LINKG_PLATFORM_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/platform/*.c")
-file(GLOB_RECURSE LINKG_SERVICE_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/service/*.c")
-file(GLOB_RECURSE LINKG_THIRD_PARTY_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/third_party/cjson/*.c")
+file(GLOB_RECURSE LINKG_CORE_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/core/*.c"
+)
+
+file(GLOB_RECURSE LINKG_INFRA_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/infra/*.c"
+)
+
+file(GLOB_RECURSE LINKG_MODULE_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/modules/*.c"
+)
+
+file(GLOB_RECURSE LINKG_PLATFORM_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/platform/*.c"
+)
+
+file(GLOB_RECURSE LINKG_SERVICE_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/service/*.c"
+)
+
+file(GLOB_RECURSE LINKG_THIRD_PARTY_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/third_party/cjson/*.c"
+)
 
 set(LINKG_MAIN_SOURCE "${CMAKE_SOURCE_DIR}/app/linkg_main.c")
 
@@ -72,9 +91,13 @@ set(LINKG_SOURCES
 
 # /****************************** 可执行程序 ******************************/
 
-add_executable(${PROJECT_NAME} ${LINKG_SOURCES})
+add_executable(${PROJECT_NAME}
+    ${LINKG_SOURCES}
+)
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${LINKG_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${LINKG_INCLUDE_DIRS}
+)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Threads::Threads
@@ -93,20 +116,24 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     )
 endif()
 
-set_source_files_properties("${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c" PROPERTIES
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/third_party/cjson/cJSON.c"
+    PROPERTIES
     COMPILE_OPTIONS "-Wno-misleading-indentation;-Wno-parentheses;-Wno-implicit-fallthrough;-Wno-unused-function"
 )
 
 # /****************************** 平台配置 ******************************/
 
-# platform/wifi/wpa_ctrl_unix.c 是 x86 与 ARM 共用的控制接口实现。
-# ARM 不再链接 SDK 的 libwpa_client.a，避免同一 API 存在两套实现。
+# platform/wifi/wpa_ctrl_unix.c 是x86与ARM共用的控制接口实现。
+# ARM不再链接SDK的libwpa_client.a，避免同一API存在两套实现。
 if(ARCHITECTURE STREQUAL "arm")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE PRODUCT_RELEASE)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        PRODUCT_RELEASE
+    )
 elseif(ARCHITECTURE STREQUAL "x86")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE DEBUG_MODE)
-else()
-    message(FATAL_ERROR "Invalid ARCHITECTURE=${ARCHITECTURE}; expected x86 or arm")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        DEBUG_MODE
+    )
 endif()
 
 # /****************************** 配置信息 ******************************/
