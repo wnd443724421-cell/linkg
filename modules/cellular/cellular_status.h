@@ -23,9 +23,10 @@ extern "C" {
 
 typedef struct
 {
-    bool     valid;      // 是否存在最近一次可用状态值
-    uint64_t updated_ms; // 最近一次成功确认状态的时间
-    int      last_error; // 最近一次查询结果，0表示成功
+    bool     confirmed;    // 是否至少成功确认过当前事实
+    uint64_t attempted_ms; // 最近一次尝试采集时间
+    uint64_t updated_ms;   // 最近一次成功确认事实的时间
+    int      last_error;   // 最近一次采集结果，0表示成功
 } cellular_status_meta_t;
 
 /****************************** 本机状态 ******************************/
@@ -88,7 +89,6 @@ typedef struct
 typedef struct
 {
     bool                                valid;           // 是否至少完成过一次状态采集
-    bool                                running;         // 状态采集线程是否正在运行
     bool                                partial;         // 最近一次采集是否存在暂不可用的状态信息
     uint64_t                            generation;      // 状态快照更新代数
     uint64_t                            last_attempt_ms; // 最近一次状态采集时间

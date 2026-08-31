@@ -635,6 +635,94 @@ out:
     return _linkg_node_unlock(ret);
 }
 
+/****************************** 路径查询 ******************************/
+
+/**
+ * @brief 获取指定链路当前全部直接Peer的活动Path Endpoint快照。
+ *
+ * @note Endpoint在Node锁内复制，函数返回后不持有Path引用。
+ *       Path随后发生更新或退役时，调用方最多使用一次已经取得的旧Endpoint快照。
+ */
+int linkg_node_get_path_endpoints(uint32_t link_id, linkg_path_endpoint_t *endpoints, uint32_t capacity, uint32_t *count)
+{
+    linkg_node_peer_slot_t *slot;
+    linkg_path_t           *path;
+    uint32_t                endpoint_count;
+    uint32_t                peer_index;
+    uint32_t                path_index;
+    int                     ret;
+
+    if (!g_node.initialized)
+    {
+        return -ENODEV;
+    }
+
+    if (link_id == LINKG_LINK_ID_INVALID)
+    {
+        return -EINVAL;
+    }
+
+    if (endpoints == NULL || count == NULL || capacity == 0U)
+    {
+        return -EINVAL;
+    }
+
+    *count         = 0U;
+    endpoint_count = 0U;
+
+    ret = _linkg_node_lock();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    for (peer_index = 0U; peer_index < LINKG_NODE_PEER_MAX; peer_index++)
+    {
+        slot = &g_node.peers[peer_index];
+
+        if (!slot->valid || slot->retiring)
+        {
+            continue;
+        }
+
+        for (path_index = 0U; path_index < LINKG_NODE_PATH_MAX; path_index++)
+        {
+            path = &slot->paths[path_index];
+
+            if (!linkg_path_is_active(path))
+            {
+                continue;
+            }
+
+            if (path->link_id != link_id)
+            {
+                continue;
+            }
+
+            if (endpoint_count >= capacity)
+            {
+                ret = -ENOSPC;
+                goto out;
+            }
+
+            endpoints[endpoint_count] = path->next_hop;
+            endpoint_count++;
+
+            /**
+             * 同一Peer对于同一个Link最多存在一条Path，
+             * 找到以后无需继续扫描当前Peer的其他Path槽位。
+             */
+            break;
+        }
+    }
+
+    *count = endpoint_count;
+    ret    = 0;
+
+out:
+    return _linkg_node_unlock(ret);
+}
+
 /****************************** 对端管理 ******************************/
 
 /**

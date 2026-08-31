@@ -20,15 +20,15 @@ extern "C" {
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_TRANSPORT_PEER_MAX                   LINKG_RESOURCE_NETWORK_STA_MAX                 // 最大直接Peer数量
-#define LINKG_TRANSPORT_RX_WINDOW_BITS             512U                                           // 接收序列号去重窗口大小
-#define LINKG_TRANSPORT_FORWARD_BATCH_MAX          32U                                            // 单次同步转发最大包数
-#define LINKG_TRANSPORT_PACKET_ID_INVALID          0U                                             // 无效原始数据包编号
-#define LINKG_TRANSPORT_FRAGMENT_COUNT_MAX         2U                                             // 当前协议最大分片数量
-#define LINKG_TRANSPORT_REASSEMBLY_SET_COUNT       64U                                            // 重组缓存组数
-#define LINKG_TRANSPORT_REASSEMBLY_WAYS            2U                                             // 重组缓存组相联路数
-#define LINKG_TRANSPORT_REASSEMBLY_TTL_US          20000ULL                                       // 不完整数据包最大保留时间
-#define LINKG_TRANSPORT_REASSEMBLY_GC_INTERVAL_US  5000ULL                                        // 重组缓存清理周期
+#define LINKG_TRANSPORT_PEER_MAX                    LINKG_RESOURCE_NETWORK_STA_MAX                // 最大直接Peer数量
+#define LINKG_TRANSPORT_RX_WINDOW_BITS              512U                                          // 接收序列号去重窗口大小
+#define LINKG_TRANSPORT_FORWARD_BATCH_MAX           32U                                           // 单次同步转发最大包数
+#define LINKG_TRANSPORT_PACKET_ID_INVALID           0U                                            // 无效原始数据包编号
+#define LINKG_TRANSPORT_FRAGMENT_COUNT_MAX          2U                                            // 当前协议最大分片数量
+#define LINKG_TRANSPORT_REASSEMBLY_SET_COUNT        64U                                           // 重组缓存组数
+#define LINKG_TRANSPORT_REASSEMBLY_WAYS             2U                                            // 重组缓存组相联路数
+#define LINKG_TRANSPORT_REASSEMBLY_TTL_US           20000ULL                                      // 不完整数据包最大保留时间
+#define LINKG_TRANSPORT_REASSEMBLY_GC_INTERVAL_US   5000ULL                                       // 重组缓存清理周期
 #define LINKG_TRANSPORT_RX_WINDOW_WORDS            (LINKG_TRANSPORT_RX_WINDOW_BITS / 64U)         // 接收窗口位图字数量
 #define LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT      32U                                           // AP分片配对缓存组数
 #define LINKG_TRANSPORT_FORWARD_PAIR_WAYS           2U                                            // AP分片配对组相联路数

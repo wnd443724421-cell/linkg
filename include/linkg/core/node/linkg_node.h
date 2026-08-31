@@ -61,6 +61,10 @@ const linkg_node_info_t *linkg_node_get_local(void);
 
 int linkg_node_get_peer_snapshot(uint8_t node_id, linkg_node_peer_snapshot_t *snapshot);
 
+/****************************** 路径查询 ******************************/
+
+int linkg_node_get_path_endpoints(uint32_t link_id, linkg_path_endpoint_t *endpoints, uint32_t capacity, uint32_t *count);
+
 /****************************** 对端管理 ******************************/
 
 int linkg_node_register_peer(const linkg_node_info_t *info);

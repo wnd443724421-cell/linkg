@@ -36,7 +36,7 @@ typedef enum
     LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED, // 当前未注册网络
     LINKG_CELLULAR_REGISTRATION_STATE_REGISTERING,    // 当前正在搜索并注册网络
     LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED,     // 当前已成功注册网络
-    LINKG_CELLULAR_REGISTRATION_STATE_FAILED          // 网络注册明确失败
+    LINKG_CELLULAR_REGISTRATION_STATE_DENIED          // 网络明确拒绝注册
 } linkg_cellular_registration_state_t;
 
 /****************************** 网络类型 ******************************/
@@ -93,7 +93,7 @@ typedef struct
 
 typedef struct
 {
-    bool            pdp_valid;          // PDP状态是否有效
+    bool            pdp_valid;          // 当前PDP激活状态是否已有效确认
     bool            pdp_active;         // PDP上下文当前是否激活
     uint64_t        pdp_updated_ms;     // PDP状态更新时间
 
@@ -110,7 +110,7 @@ typedef struct
 
 typedef struct
 {
-    bool                            partial; // 当前快照是否存在暂不可用的状态信息
+    bool                            partial; // 最近一次状态采集是否存在部分采集错误，仅表示快照完整度
     linkg_cellular_local_status_t   local;   // 本机蜂窝状态
     linkg_cellular_network_status_t network; // 当前移动网络状态
     linkg_cellular_data_status_t    data;    // 当前数据承载状态

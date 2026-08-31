@@ -2,8 +2,8 @@
  * @file linkg_cellular_link.c
  * @brief LinkG蜂窝IPv6数据链路实现
  * @author Dawn
- * @version 1.2.0
- * @date 2026-08-28
+ * @version 1.3.0
+ * @date 2026-08-31
  */
 
 #define _GNU_SOURCE
@@ -29,32 +29,37 @@
 #include "linkg_packet_pool.h"
 #include "linkg_system_resources.h"
 
+#include "cellular_link_heartbeat.h"
 #include "cellular_tx.h"
 
 /****************************** 数据限制 ******************************/
 
-#define LINKG_CELLULAR_LINK_IPV6_HEADER_SIZE   40U                                                      // IPv6固定头部长度
-#define LINKG_CELLULAR_LINK_UDP_HEADER_SIZE    8U                                                       // UDP头部长度
-#define LINKG_CELLULAR_LINK_MTU                1500U                                                    // 蜂窝接口MTU
-#define LINKG_CELLULAR_LINK_UDP_PAYLOAD_MAX    (LINKG_CELLULAR_LINK_MTU - LINKG_CELLULAR_LINK_IPV6_HEADER_SIZE - LINKG_CELLULAR_LINK_UDP_HEADER_SIZE) // 单个UDP报文最大负载
-#define LINKG_CELLULAR_LINK_RX_CONTROL_SIZE    CMSG_SPACE(sizeof(struct in6_pktinfo))                   // 单包IPv6辅助控制区大小
-#define LINKG_CELLULAR_LINK_TCLASS_DATA        0x00                                                     // 普通数据IPv6 Traffic Class
-#define LINKG_CELLULAR_LINK_TCLASS_VIDEO       0x80                                                     // 视频业务IPv6 Traffic Class
-#define LINKG_CELLULAR_LINK_TCLASS_REALTIME    0xC0                                                     // 实时业务IPv6 Traffic Class
+#define LINKG_CELLULAR_LINK_IPV6_HEADER_SIZE    40U                                                      // IPv6固定头部长度
+#define LINKG_CELLULAR_LINK_UDP_HEADER_SIZE     8U                                                       // UDP头部长度
+#define LINKG_CELLULAR_LINK_MTU                 1500U                                                    // 蜂窝接口MTU
+#define LINKG_CELLULAR_LINK_UDP_PAYLOAD_MAX     (LINKG_CELLULAR_LINK_MTU - LINKG_CELLULAR_LINK_IPV6_HEADER_SIZE - LINKG_CELLULAR_LINK_UDP_HEADER_SIZE) // 单个UDP报文最大负载
+#define LINKG_CELLULAR_LINK_RX_CONTROL_SIZE     CMSG_SPACE(sizeof(struct in6_pktinfo))                   // 单包IPv6辅助控制区大小
+#define LINKG_CELLULAR_LINK_TCLASS_DATA         0x00                                                     // 普通数据IPv6 Traffic Class
+#define LINKG_CELLULAR_LINK_TCLASS_VIDEO        0x80                                                     // 视频业务IPv6 Traffic Class
+#define LINKG_CELLULAR_LINK_TCLASS_REALTIME     0xC0                                                     // 实时业务IPv6 Traffic Class
+#define LINKG_CELLULAR_LINK_PRIORITY_DATA       2                                                        // 普通数据Linux Socket优先级
+#define LINKG_CELLULAR_LINK_PRIORITY_VIDEO      4                                                        // 视频业务Linux Socket优先级
+#define LINKG_CELLULAR_LINK_PRIORITY_REALTIME   6                                                        // 实时业务Linux Socket优先级
 
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
-    linkg_link_t          base;                                         // 链路基类，必须为首成员
-    uint16_t              service_ports[LINKG_LINK_TX_CLASS_COUNT];     // 各业务IPv6 UDP服务端口
-    int                   socket_fds[LINKG_LINK_TX_CLASS_COUNT];        // 各业务IPv6 UDP收发套接字
-    int                   rx_epoll_fd;                                  // 三业务接收聚合描述符
-    linkg_cellular_tx_t  *tx;                                           // 蜂窝发送模块
-    struct mmsghdr       *rx_messages;                                  // 批量接收消息数组
-    struct iovec         *rx_iovecs;                                    // 批量接收缓冲区数组
-    unsigned char        *rx_controls;                                  // 批量接收IPv6辅助控制区
-    uint32_t              rx_capacity;                                  // 接收描述符容量
+    linkg_link_t                     base;                                     // 链路基类，必须为首成员
+    uint16_t                         service_ports[LINKG_LINK_TX_CLASS_COUNT]; // 各业务IPv6 UDP服务端口
+    int                              socket_fds[LINKG_LINK_TX_CLASS_COUNT];    // 各业务IPv6 UDP收发套接字
+    int                              rx_epoll_fd;                              // 三业务接收聚合描述符
+    linkg_cellular_tx_t             *tx;                                       // 蜂窝发送模块
+    linkg_cellular_link_heartbeat_t *heartbeat;                                // 蜂窝业务链路心跳模块
+    struct mmsghdr                  *rx_messages;                              // 批量接收消息数组
+    struct iovec                    *rx_iovecs;                                // 批量接收缓冲区数组
+    unsigned char                   *rx_controls;                              // 批量接收IPv6辅助控制区
+    uint32_t                         rx_capacity;                              // 接收描述符容量
 } linkg_cellular_link_t;
 
 _Static_assert(offsetof(linkg_cellular_link_t, base) == 0U, "linkg_link_t must be the first member");
@@ -76,6 +81,27 @@ static int _cellular_link_tclass(linkg_link_tx_class_t tx_class)
 
         case LINKG_LINK_TX_CLASS_DATA:
             return LINKG_CELLULAR_LINK_TCLASS_DATA;
+
+        default:
+            return -EINVAL;
+    }
+}
+
+/**
+ * @brief 获取业务类别对应的Linux Socket优先级。
+ */
+static int _cellular_link_priority(linkg_link_tx_class_t tx_class)
+{
+    switch (tx_class)
+    {
+        case LINKG_LINK_TX_CLASS_REALTIME:
+            return LINKG_CELLULAR_LINK_PRIORITY_REALTIME;
+
+        case LINKG_LINK_TX_CLASS_VIDEO:
+            return LINKG_CELLULAR_LINK_PRIORITY_VIDEO;
+
+        case LINKG_LINK_TX_CLASS_DATA:
+            return LINKG_CELLULAR_LINK_PRIORITY_DATA;
 
         default:
             return -EINVAL;
@@ -115,14 +141,19 @@ static int _cellular_link_close_fd(int *descriptor)
 /**
  * @brief 创建并绑定单个业务IPv6 UDP套接字。
  */
-static int _cellular_link_open_socket(uint16_t local_port, int tclass, int *out)
+static int _cellular_link_open_socket(uint16_t local_port, int tclass, int priority, int *out)
 {
     struct sockaddr_in6 local;
     int                 socket_fd;
     int                 enable;
     int                 ret;
 
-    if (local_port == 0U || out == NULL || tclass < 0 || tclass > UCHAR_MAX)
+    if (local_port == 0U || out == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (tclass < 0 || tclass > UCHAR_MAX || priority < 0)
     {
         return -EINVAL;
     }
@@ -152,6 +183,13 @@ static int _cellular_link_open_socket(uint16_t local_port, int tclass, int *out)
     }
 
     ret = setsockopt(socket_fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enable, sizeof(enable));
+    if (ret != 0)
+    {
+        ret = -errno;
+        goto fail_socket;
+    }
+
+    ret = setsockopt(socket_fd, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority));
     if (ret != 0)
     {
         ret = -errno;
@@ -222,9 +260,11 @@ static int _cellular_link_register_rx_socket(int epoll_fd, int socket_fd, linkg_
  */
 static int _cellular_link_init(linkg_link_t *link, const void *config)
 {
-    const linkg_cellular_link_config_t *cellular_config;
-    linkg_cellular_link_t              *cellular_link;
-    uint32_t                            class_index;
+    linkg_cellular_link_heartbeat_config_t heartbeat_config;
+    const linkg_cellular_link_config_t    *cellular_config;
+    linkg_cellular_link_t                 *cellular_link;
+    uint32_t                               class_index;
+    int                                    ret;
 
     if (link == NULL || config == NULL)
     {
@@ -251,13 +291,25 @@ static int _cellular_link_init(linkg_link_t *link, const void *config)
     cellular_link->rx_epoll_fd = -1;
     cellular_link->rx_capacity = link->runtime->rx_batch_size;
 
+    memset(&heartbeat_config, 0, sizeof(heartbeat_config));
+
+    heartbeat_config.socket_fds     = cellular_link->socket_fds;
+    heartbeat_config.service_ports  = cellular_link->service_ports;
+    heartbeat_config.interface_name = LINKG_RESOURCE_INTERFACE_CELLULAR;
+
+    ret = linkg_cellular_link_heartbeat_create(&heartbeat_config, &cellular_link->heartbeat);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     cellular_link->tx = linkg_cellular_tx_create(link->runtime->tx_batch_size,
                                                   cellular_link->socket_fds,
                                                   cellular_link->service_ports,
                                                   LINKG_RESOURCE_INTERFACE_CELLULAR);
     if (cellular_link->tx == NULL)
     {
-        return -ENOMEM;
+        goto fail_heartbeat;
     }
 
     cellular_link->rx_messages = calloc(cellular_link->rx_capacity, sizeof(*cellular_link->rx_messages));
@@ -292,6 +344,10 @@ fail_tx:
     linkg_cellular_tx_destroy(cellular_link->tx);
     cellular_link->tx = NULL;
 
+fail_heartbeat:
+    linkg_cellular_link_heartbeat_destroy(cellular_link->heartbeat);
+    cellular_link->heartbeat = NULL;
+
     return -ENOMEM;
 }
 
@@ -309,6 +365,9 @@ static void _cellular_link_deinit(linkg_link_t *link)
     }
 
     cellular_link = (linkg_cellular_link_t *)link;
+
+    linkg_cellular_link_heartbeat_destroy(cellular_link->heartbeat);
+    cellular_link->heartbeat = NULL;
 
     linkg_cellular_tx_destroy(cellular_link->tx);
     cellular_link->tx = NULL;
@@ -340,6 +399,7 @@ static int _cellular_link_open(linkg_link_t *link)
     linkg_link_tx_class_t  tx_class;
     uint32_t               class_index;
     int                    epoll_fd;
+    int                    priority;
     int                    tclass;
     int                    ret;
 
@@ -378,8 +438,16 @@ static int _cellular_link_open(linkg_link_t *link)
             goto fail;
         }
 
+        priority = _cellular_link_priority(tx_class);
+        if (priority < 0)
+        {
+            ret = priority;
+            goto fail;
+        }
+
         ret = _cellular_link_open_socket(cellular_link->service_ports[class_index],
                                          tclass,
+                                         priority,
                                          &socket_fds[class_index]);
         if (ret != 0)
         {
@@ -405,6 +473,13 @@ static int _cellular_link_open(linkg_link_t *link)
     ret = linkg_cellular_tx_start(cellular_link->tx);
     if (ret != 0)
     {
+        goto fail_opened;
+    }
+
+    ret = linkg_cellular_link_heartbeat_start(cellular_link->heartbeat, link->id);
+    if (ret != 0)
+    {
+        linkg_cellular_tx_stop(cellular_link->tx);
         goto fail_opened;
     }
 
@@ -446,6 +521,16 @@ static int _cellular_link_close(linkg_link_t *link)
 
     cellular_link = (linkg_cellular_link_t *)link;
     first_error   = 0;
+
+    /**
+     * 心跳线程直接复用三个业务Socket，必须先完成join，
+     * 确认不再访问Socket以后才能继续停止TX并关闭描述符。
+     */
+    ret = linkg_cellular_link_heartbeat_stop(cellular_link->heartbeat);
+    if (ret != 0)
+    {
+        return ret;
+    }
 
     linkg_cellular_tx_stop(cellular_link->tx);
 
@@ -745,6 +830,13 @@ static int _cellular_link_receive_from(linkg_cellular_link_t *cellular_link, lin
         }
 
         if (source->sin6_port != htons(cellular_link->service_ports[tx_class]))
+        {
+            continue;
+        }
+
+        if (linkg_cellular_link_heartbeat_is_packet(linkg_packet_const_data(packet),
+                                                    cellular_link->rx_messages[index].msg_len,
+                                                    tx_class))
         {
             continue;
         }
