@@ -1233,15 +1233,12 @@ static int _linkg_wifi_tx_submit_normal(linkg_wifi_tx_t *tx, linkg_path_t *path,
 
     memset(&flowctrl_sample, 0, sizeof(flowctrl_sample));
 
-    /*
-     * 临时性能测试：绕过Wi-Fi主动流控。
-     *
-     * 不读取FLOWCTRL_OFF，不执行100ms静默、不执行AIMD批次限制；
-     * VIDEO/DATA仍保留原有等待队列、EAGAIN/ENOBUFS处理和发送顺序，
-     * 用于单独判断wifi_flowctrl是否为吞吐下降的主要原因。
-     */
     allowed_count = requested_count;
-    ret = 0;
+    ret = linkg_wifi_flowctrl_admit(tx->flowctrl, requested_count, &allowed_count, &flowctrl_sample);
+    if (ret != 0)
+    {
+        allowed_count = requested_count;
+    }
 
     remaining = allowed_count;
     blocked = false;

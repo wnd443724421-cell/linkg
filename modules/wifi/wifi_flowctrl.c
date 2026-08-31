@@ -35,11 +35,11 @@
 #endif
 
 #ifndef LINKG_WIFI_FLOWCTRL_RECOVERY_INTERVAL_US
-#define LINKG_WIFI_FLOWCTRL_RECOVERY_INTERVAL_US  1000000ULL              // 批次上限恢复间隔，单位微秒
+#define LINKG_WIFI_FLOWCTRL_RECOVERY_INTERVAL_US  100000ULL              // 批次上限恢复间隔，单位微秒
 #endif
 
 #ifndef LINKG_WIFI_FLOWCTRL_OFF_HOLD_US
-#define LINKG_WIFI_FLOWCTRL_OFF_HOLD_US           100000ULL               // 新增FLOWCTRL_OFF后的普通流量静默时间
+#define LINKG_WIFI_FLOWCTRL_OFF_HOLD_US           1000ULL               // 新增FLOWCTRL_OFF后的普通流量静默时间
 #endif
 
 #ifndef LINKG_WIFI_FLOWCTRL_RECOVERY_QUEUE_MAX

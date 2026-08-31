@@ -73,9 +73,9 @@ typedef struct
 
 typedef struct
 {
-    uint8_t          cid;                               // PDP上下文ID
-    rg255_pdp_type_t pdp_type;                          // PDP协议类型
-    char             apn[LINKG_CELLULAR_APN_MAX + 1U];  // 当前APN
+    uint8_t          cid;                              // PDP上下文ID
+    rg255_pdp_type_t pdp_type;                         // PDP协议类型
+    char             apn[LINKG_CELLULAR_APN_MAX + 1U]; // 当前APN
 } rg255_pdp_config_t;
 
 /****************************** PDP地址 ******************************/
@@ -123,7 +123,7 @@ int rg255_query_sim_status_urc(at_channel_t *channel, rg255_sim_status_urc_t *st
 /****************************** 网络查询 ******************************/
 
 int rg255_query_network_mode(at_channel_t *channel, linkg_cellular_network_mode_t *mode);
-int rg255_query_registration(at_channel_t *channel, linkg_cellular_network_mode_t mode, linkg_cellular_network_type_t network_type, linkg_cellular_registration_state_t *state);
+int rg255_query_registration(at_channel_t *channel, linkg_cellular_network_mode_t mode, linkg_cellular_registration_state_t *state);
 int rg255_query_serving_cell(at_channel_t *channel, rg255_serving_cell_info_t *info);
 
 /****************************** USB配置查询 ******************************/
