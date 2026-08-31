@@ -549,11 +549,9 @@ int linkg_discovery_start(void)
 
     _linkg_discovery_get_channel_enabled(&wifi_enabled, &cellular_enabled);
 
-    wifi_available = wifi_enabled &&
-                     _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
+    wifi_available = wifi_enabled && _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
 
-    cellular_available = cellular_enabled &&
-                         _linkg_discovery_access_available(LINKG_LINK_ACCESS_CELLULAR);
+    cellular_available = cellular_enabled && _linkg_discovery_access_available(LINKG_LINK_ACCESS_CELLULAR);
 
     if (!wifi_available && !cellular_available)
     {

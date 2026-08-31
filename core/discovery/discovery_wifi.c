@@ -118,8 +118,7 @@ static int _linkg_discovery_wifi_build_broadcast_address(struct sockaddr_in *add
         return -EINVAL;
     }
 
-    broadcast = (ntohl(network.s_addr) & ntohl(netmask.s_addr)) |
-                ~ntohl(netmask.s_addr);
+    broadcast = (ntohl(network.s_addr) & ntohl(netmask.s_addr)) | ~ntohl(netmask.s_addr);
 
     address->sin_family      = AF_INET;
     address->sin_addr.s_addr = htonl(broadcast);
