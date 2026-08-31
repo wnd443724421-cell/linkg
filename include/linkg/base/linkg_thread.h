@@ -39,17 +39,17 @@ struct linkg_thread
     char                name[LINKG_THREAD_NAME_MAX]; // 线程名称
     pthread_t           tid;                         // POSIX线程句柄
     linkg_thread_func_t function;                    // 用户线程函数
-    void               *user_data;                   // 用户私有数据
-    int                 wakeup_fd;                   // 线程唤醒描述符
-    size_t              stack_size;                  // 线程栈大小
-    int                 cpu_core;                    // CPU核心编号
-    int                 sched_policy;                // POSIX调度策略
-    int                 sched_priority;              // 实时调度优先级
-    _Atomic bool        started;                     // 是否已经启动
-    _Atomic bool        running;                     // 是否继续运行
-    bool                affinity_enabled;            // 是否启用CPU亲和性
-    bool                scheduling_enabled;          // 是否启用显式调度配置
-    bool                initialized;                 // 是否已经初始化
+    void               *user_data;                  // 用户私有数据
+    int                 wakeup_fd;                  // 线程唤醒描述符
+    size_t              stack_size;                 // 线程栈大小
+    int                 cpu_core;                   // CPU核心编号
+    int                 sched_policy;               // POSIX调度策略
+    int                 sched_priority;             // 实时调度优先级
+    _Atomic bool        started;                    // 是否已经启动
+    _Atomic bool        running;                    // 是否继续运行
+    bool                affinity_enabled;           // 是否启用CPU亲和性
+    bool                scheduling_enabled;         // 是否启用显式调度配置
+    bool                initialized;                // 是否已经初始化
 };
 
 /****************************** 生命周期 ******************************/
@@ -57,6 +57,16 @@ struct linkg_thread
 int  linkg_thread_init(linkg_thread_t *thread, const char *name, linkg_thread_func_t function, void *user_data);
 int  linkg_thread_init_with_config(linkg_thread_t *thread, const char *name, linkg_thread_func_t function, void *user_data, const linkg_thread_config_t *config);
 int  linkg_thread_start(linkg_thread_t *thread);
+
+/**
+ * @brief 请求线程停止并等待线程资源回收。
+ *
+ * @return 0表示返回时不存在尚未join的活动线程；
+ *         负值表示无法确认线程已经完成停止。
+ *
+ * @note pthread_join成功后的wakeup_fd收尾异常只记录日志，
+ *       不改变线程已经完成停止的返回语义。
+ */
 int  linkg_thread_stop(linkg_thread_t *thread);
 void linkg_thread_deinit(linkg_thread_t *thread);
 

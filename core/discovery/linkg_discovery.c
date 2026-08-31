@@ -539,6 +539,7 @@ int linkg_discovery_start(void)
     bool wifi_enabled;
     bool wifi_started;
     int  cleanup_ret;
+    int  quiesce_error;
     int  ret;
 
     if (!g_discovery.initialized)
@@ -596,13 +597,18 @@ fail:
     /**
      * 只冻结本轮实际启动成功的Channel。
      * 未完成start的Channel负责在自身start失败路径中回滚。
+     *
+     * 任一Channel不能确认已经完成quiesce时，Core必须继续保持running。
+     * 否则工作线程仍可能推进revision，使随后构造的PEER_LEAVE变成迟到旧状态。
      */
+    quiesce_error = 0;
+
     if (cellular_started)
     {
         cleanup_ret = linkg_discovery_cellular_quiesce();
         if (cleanup_ret != 0)
         {
-            _linkg_discovery_record_first_error(&ret, cleanup_ret);
+            _linkg_discovery_record_first_error(&quiesce_error, cleanup_ret);
         }
     }
 
@@ -611,8 +617,13 @@ fail:
         cleanup_ret = linkg_discovery_wifi_quiesce();
         if (cleanup_ret != 0)
         {
-            _linkg_discovery_record_first_error(&ret, cleanup_ret);
+            _linkg_discovery_record_first_error(&quiesce_error, cleanup_ret);
         }
+    }
+
+    if (quiesce_error != 0)
+    {
+        return quiesce_error;
     }
 
     cleanup_ret = _linkg_discovery_stop_core();

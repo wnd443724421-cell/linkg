@@ -483,6 +483,11 @@ int  linkg_thread_start(linkg_thread_t *thread)
 /**
  * @brief 请求线程停止并等待线程资源回收。
  *
+ * @return 0表示返回时不存在尚未join的活动线程；
+ *         负值表示无法确认线程已经完成停止。
+ *
+ * @note pthread_join成功后的wakeup_fd收尾异常仅记录日志，
+ *       不改变线程已经完成停止的返回语义。
  * @note 不允许在线程自身调用，否则返回-EDEADLK；业务线程需要主动结束时应直接退出线程函数。
  */
 int  linkg_thread_stop(linkg_thread_t *thread)
@@ -506,8 +511,6 @@ int  linkg_thread_stop(linkg_thread_t *thread)
                                _thread_name(thread),
                                thread->wakeup_fd,
                                result);
-
-            return result;
         }
 
         return 0;
@@ -558,6 +561,7 @@ int  linkg_thread_stop(linkg_thread_t *thread)
     /**
      * 业务线程正常情况下会自行消费停止唤醒，
      * 这里再次清除可保证下一次start()没有历史信号。
+     * 清理失败只影响下一次start()前的唤醒状态，不影响线程已join的事实。
      */
     result = _eventfd_clear(thread->wakeup_fd);
     if (result != 0)
@@ -566,8 +570,6 @@ int  linkg_thread_stop(linkg_thread_t *thread)
                            _thread_name(thread),
                            thread->wakeup_fd,
                            result);
-
-        return result;
     }
 
     return 0;
