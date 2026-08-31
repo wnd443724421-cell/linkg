@@ -39,17 +39,17 @@ struct linkg_thread
     char                name[LINKG_THREAD_NAME_MAX]; // 线程名称
     pthread_t           tid;                         // POSIX线程句柄
     linkg_thread_func_t function;                    // 用户线程函数
-    void               *user_data;                  // 用户私有数据
-    int                 wakeup_fd;                  // 线程唤醒描述符
-    size_t              stack_size;                 // 线程栈大小
-    int                 cpu_core;                   // CPU核心编号
-    int                 sched_policy;               // POSIX调度策略
-    int                 sched_priority;             // 实时调度优先级
-    _Atomic bool        started;                    // 是否已经启动
-    _Atomic bool        running;                    // 是否继续运行
-    bool                affinity_enabled;           // 是否启用CPU亲和性
-    bool                scheduling_enabled;         // 是否启用显式调度配置
-    bool                initialized;                // 是否已经初始化
+    void               *user_data;                   // 用户私有数据
+    int                 wakeup_fd;                   // 线程唤醒描述符
+    size_t              stack_size;                  // 线程栈大小
+    int                 cpu_core;                    // CPU核心编号
+    int                 sched_policy;                // POSIX调度策略
+    int                 sched_priority;              // 实时调度优先级
+    _Atomic bool        started;                     // 是否已经启动
+    _Atomic bool        running;                     // 是否继续运行
+    bool                affinity_enabled;            // 是否启用CPU亲和性
+    bool                scheduling_enabled;          // 是否启用显式调度配置
+    bool                initialized;                 // 是否已经初始化
 };
 
 /****************************** 生命周期 ******************************/
