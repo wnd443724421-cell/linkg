@@ -53,12 +53,12 @@ typedef struct
 
 typedef struct
 {
-    pthread_mutex_t            lock;        // 状态锁，保护生命周期、期限和已发布快照
-    at_channel_t              *channel;     // 借用AT通道，仅在start到stop期间有效
-    cellular_status_info_t     info;        // 当前唯一内部事实快照
-    cellular_status_deadlines_t deadlines;  // 各事实Watchdog绝对到期时间
-    bool                       initialized; // 状态模块是否已经初始化
-    bool                       started;     // 状态模块是否已经启动
+    pthread_mutex_t             lock;        // 状态锁，保护生命周期、期限和已发布快照
+    at_channel_t               *channel;     // 借用AT通道，仅在start到stop期间有效
+    cellular_status_info_t      info;        // 当前唯一内部事实快照
+    cellular_status_deadlines_t deadlines;   // 各事实Watchdog绝对到期时间
+    bool                        initialized; // 状态模块是否已经初始化
+    bool                        started;     // 状态模块是否已经启动
 } cellular_status_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -146,7 +146,7 @@ static void _cellular_status_info_init(cellular_status_info_t *info)
     _cellular_status_meta_init(&info->netdev.expected_ipv4.meta);
     _cellular_status_meta_init(&info->netdev.expected_ipv6.meta);
     _cellular_status_meta_init(&info->host.interface_meta);
-    _cellular_status_meta_init(&info->host.link_meta);
+    _cellular_status_meta_init(&info->host.interface_up_meta);
     _cellular_status_meta_init(&info->host.ipv4_meta);
     _cellular_status_meta_init(&info->host.ipv4_netmask_meta);
     _cellular_status_meta_init(&info->host.ipv6_meta);
@@ -642,7 +642,7 @@ static cellular_status_netdev_mode_t _cellular_status_convert_netdev_mode(rg255_
     switch (type)
     {
         case RG255_NETDEV_TYPE_DISCONNECT:
-            return CELLULAR_STATUS_NETDEV_MODE_DISCONNECTED;
+            return CELLULAR_STATUS_NETDEV_MODE_DISCONNECT;
 
         case RG255_NETDEV_TYPE_ONCE:
             return CELLULAR_STATUS_NETDEV_MODE_ONCE;
@@ -795,7 +795,7 @@ static void _cellular_status_clear_host(cellular_status_info_t *info, uint64_t n
 
     host->interface_present   = false;
     host->interface_index     = 0U;
-    host->link_up             = false;
+    host->interface_up        = false;
     host->ipv4_valid          = false;
     host->ipv4_netmask_valid  = false;
     host->global_ipv6_valid   = false;
@@ -809,7 +809,7 @@ static void _cellular_status_clear_host(cellular_status_info_t *info, uint64_t n
     memset(&host->ipv6_gateway, 0, sizeof(host->ipv6_gateway));
 
     _cellular_status_meta_success(&host->interface_meta, now_ms);
-    _cellular_status_meta_success(&host->link_meta, now_ms);
+    _cellular_status_meta_success(&host->interface_up_meta, now_ms);
     _cellular_status_meta_success(&host->ipv4_meta, now_ms);
     _cellular_status_meta_success(&host->ipv4_netmask_meta, now_ms);
     _cellular_status_meta_success(&host->ipv6_meta, now_ms);
@@ -869,12 +869,12 @@ static bool _cellular_status_refresh_host_link(cellular_status_info_t *info, uin
 
     if (ret != 0)
     {
-        _cellular_status_meta_failure(&info->host.link_meta, now_ms, ret);
+        _cellular_status_meta_failure(&info->host.interface_up_meta, now_ms, ret);
         return true;
     }
 
-    info->host.link_up = up;
-    _cellular_status_meta_success(&info->host.link_meta, now_ms);
+    info->host.interface_up = up;
+    _cellular_status_meta_success(&info->host.interface_up_meta, now_ms);
 
     return true;
 }
@@ -1365,8 +1365,7 @@ uint64_t cellular_status_get_deadline(void)
         return 0U;
     }
 
-    deadline = _cellular_status_min_deadline(g_cellular_status.deadlines.network_mode_ms,
-                                             g_cellular_status.deadlines.sim_ms);
+    deadline = _cellular_status_min_deadline(g_cellular_status.deadlines.network_mode_ms, g_cellular_status.deadlines.sim_ms);
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.registration_ms);
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.radio_ms);
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.pdp_ms);

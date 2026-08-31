@@ -90,7 +90,7 @@ typedef struct
 typedef enum
 {
     CELLULAR_STATUS_NETDEV_MODE_UNKNOWN      = 0,  // USB网络设备工作模式未知
-    CELLULAR_STATUS_NETDEV_MODE_DISCONNECTED,      // USB网络设备未连接
+    CELLULAR_STATUS_NETDEV_MODE_DISCONNECT,        // USB网络设备未连接
     CELLULAR_STATUS_NETDEV_MODE_ONCE,              // USB网络设备单次连接
     CELLULAR_STATUS_NETDEV_MODE_AUTO               // USB网络设备自动连接
 } cellular_status_netdev_mode_t;
@@ -133,26 +133,32 @@ typedef struct
 
 typedef struct
 {
-    cellular_status_meta_t interface_meta;          // 蜂窝接口存在状态采集元数据
-    bool                   interface_present;       // 蜂窝网络接口是否存在
-    unsigned int           interface_index;         // 蜂窝网络接口索引
-    cellular_status_meta_t link_meta;               // 蜂窝接口UP状态采集元数据
-    bool                   link_up;                 // 蜂窝网络接口是否处于UP状态
-    cellular_status_meta_t ipv4_meta;               // Host IPv4地址采集元数据
-    bool                   ipv4_valid;              // Host IPv4地址是否有效
-    struct in_addr         ipv4;                    // Host当前IPv4地址
-    cellular_status_meta_t ipv4_netmask_meta;       // Host IPv4子网掩码采集元数据
-    bool                   ipv4_netmask_valid;      // Host IPv4子网掩码是否有效
-    struct in_addr         ipv4_netmask;            // Host当前IPv4子网掩码
-    cellular_status_meta_t ipv6_meta;               // Host全局IPv6地址采集元数据
-    bool                   global_ipv6_valid;       // Host全局IPv6地址是否有效
-    struct in6_addr        global_ipv6;             // Host当前全局IPv6地址
-    cellular_status_meta_t ipv4_route_meta;         // Host IPv4默认路由采集元数据
-    bool                   ipv4_gateway_valid;      // Host IPv4默认网关是否有效
-    struct in_addr         ipv4_gateway;            // Host当前IPv4默认网关
-    cellular_status_meta_t ipv6_route_meta;         // Host IPv6默认路由采集元数据
-    bool                   ipv6_gateway_valid;      // Host IPv6默认网关是否有效
-    struct in6_addr        ipv6_gateway;            // Host当前IPv6默认网关
+    cellular_status_meta_t interface_meta;           // 蜂窝接口存在状态采集元数据
+    bool                   interface_present;        // 蜂窝网络接口是否存在
+    unsigned int           interface_index;          // 蜂窝网络接口索引
+
+    cellular_status_meta_t interface_up_meta;        // 蜂窝接口UP状态采集元数据
+    bool                   interface_up;             // 蜂窝网络接口是否处于UP状态
+
+    cellular_status_meta_t ipv4_meta;                // Host IPv4地址采集元数据
+    bool                   ipv4_valid;               // Host IPv4地址是否有效
+    struct in_addr         ipv4;                     // Host当前IPv4地址
+
+    cellular_status_meta_t ipv4_netmask_meta;        // Host IPv4子网掩码采集元数据
+    bool                   ipv4_netmask_valid;       // Host IPv4子网掩码是否有效
+    struct in_addr         ipv4_netmask;             // Host当前IPv4子网掩码
+
+    cellular_status_meta_t ipv6_meta;                // Host全局IPv6地址采集元数据
+    bool                   global_ipv6_valid;        // Host全局IPv6地址是否有效
+    struct in6_addr        global_ipv6;              // Host当前全局IPv6地址
+
+    cellular_status_meta_t ipv4_route_meta;          // Host IPv4默认路由采集元数据
+    bool                   ipv4_gateway_valid;       // Host IPv4默认网关是否有效
+    struct in_addr         ipv4_gateway;             // Host当前IPv4默认网关
+
+    cellular_status_meta_t ipv6_route_meta;          // Host IPv6默认路由采集元数据
+    bool                   ipv6_gateway_valid;       // Host IPv6默认网关是否有效
+    struct in6_addr        ipv6_gateway;             // Host当前IPv6默认网关
 } cellular_status_host_info_t;
 
 /****************************** 内部状态快照 ******************************/
