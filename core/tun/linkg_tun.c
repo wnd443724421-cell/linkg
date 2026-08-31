@@ -1117,6 +1117,7 @@ int linkg_tun_start(void)
     linkg_network_ipv4_config_t tun_ipv4;
     linkg_network_ipv4_config_t virtual_network;
     int                         fd;
+    int                         stop_ret;
     int                         ret;
 
     if (!g_tun.initialized)
@@ -1203,7 +1204,15 @@ int linkg_tun_start(void)
     ret = pthread_mutex_lock(&g_tun.lock);
     if (ret != 0)
     {
-        (void)linkg_thread_stop(&g_tun.read_thread);
+        ret = -ret;
+
+        stop_ret = linkg_thread_stop(&g_tun.read_thread);
+        if (stop_ret != 0)
+        {
+            LINKG_TUN_ERROR("rollback read thread stop failed, error=%d", stop_ret);
+            return stop_ret;
+        }
+
         goto fail_interface;
     }
 
@@ -1241,9 +1250,10 @@ fail_close:
  */
 int linkg_tun_stop(void)
 {
-    int fd;
-    int first_error;
-    int ret;
+    bool thread_started;
+    int  fd;
+    int  first_error;
+    int  ret;
 
     if (!g_tun.initialized)
     {
@@ -1256,7 +1266,9 @@ int linkg_tun_stop(void)
         return -ret;
     }
 
-    if (!g_tun.started)
+    thread_started = linkg_thread_is_started(&g_tun.read_thread);
+
+    if (!g_tun.started && !thread_started)
     {
         pthread_mutex_unlock(&g_tun.lock);
         return 0;
@@ -1268,11 +1280,14 @@ int linkg_tun_stop(void)
 
     first_error = 0;
 
-    ret = linkg_thread_stop(&g_tun.read_thread);
-    if (ret != 0)
+    if (thread_started)
     {
-        LINKG_TUN_ERROR("stop read thread failed, error=%d", ret);
-        return ret;
+        ret = linkg_thread_stop(&g_tun.read_thread);
+        if (ret != 0)
+        {
+            LINKG_TUN_ERROR("stop read thread failed, error=%d", ret);
+            return ret;
+        }
     }
 
     ret = pthread_mutex_lock(&g_tun.lock);
