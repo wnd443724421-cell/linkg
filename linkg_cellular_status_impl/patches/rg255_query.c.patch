@@ -1,0 +1,61 @@
+--- a/platform/cellular/rg255/rg255_query.c
++++ b/platform/cellular/rg255/rg255_query.c
+@@ -530,7 +530,7 @@ static int _rg255_query_map_registration_state(int stat, linkg_cellular_registra
+             return 0;
+ 
+         case 3:
+-            *state = LINKG_CELLULAR_REGISTRATION_STATE_FAILED;
++            *state = LINKG_CELLULAR_REGISTRATION_STATE_DENIED;
+             return 0;
+ 
+         case 4:
+@@ -558,10 +558,10 @@ static linkg_cellular_registration_state_t _rg255_query_merge_registration_state
+         return LINKG_CELLULAR_REGISTRATION_STATE_REGISTERING;
+     }
+ 
+-    if (eps_state == LINKG_CELLULAR_REGISTRATION_STATE_FAILED ||
+-        nr_state == LINKG_CELLULAR_REGISTRATION_STATE_FAILED)
++    if (eps_state == LINKG_CELLULAR_REGISTRATION_STATE_DENIED &&
++        nr_state == LINKG_CELLULAR_REGISTRATION_STATE_DENIED)
+     {
+-        return LINKG_CELLULAR_REGISTRATION_STATE_FAILED;
++        return LINKG_CELLULAR_REGISTRATION_STATE_DENIED;
+     }
+ 
+     if (eps_state == LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED ||
+@@ -1058,7 +1058,7 @@ int rg255_query_network_mode(at_channel_t *channel, linkg_cellular_network_mode_t
+ /**
+  * @brief 查询并归一化RG255当前网络注册状态。
+  */
+-int rg255_query_registration(at_channel_t *channel, linkg_cellular_network_mode_t mode, linkg_cellular_network_type_t network_type, linkg_cellular_registration_state_t *state)
++int rg255_query_registration(at_channel_t *channel, linkg_cellular_network_mode_t mode, linkg_cellular_registration_state_t *state)
+ {
+     linkg_cellular_registration_state_t eps_state;
+     linkg_cellular_registration_state_t nr_state;
+@@ -1082,16 +1082,6 @@ int rg255_query_registration(at_channel_t *channel, linkg_cellular_network_mode_t
+         return _rg255_query_5g_registration(channel, state);
+     }
+ 
+-    if (network_type == LINKG_CELLULAR_NETWORK_TYPE_LTE)
+-    {
+-        return _rg255_query_eps_registration(channel, state);
+-    }
+-
+-    if (network_type == LINKG_CELLULAR_NETWORK_TYPE_NR5G_SA)
+-    {
+-        return _rg255_query_5g_registration(channel, state);
+-    }
+-
+     eps_state = LINKG_CELLULAR_REGISTRATION_STATE_UNKNOWN;
+     nr_state = LINKG_CELLULAR_REGISTRATION_STATE_UNKNOWN;
+ 
+@@ -1104,8 +1094,8 @@ int rg255_query_registration(at_channel_t *channel, linkg_cellular_network_mode_t
+     }
+ 
+     /**
+-     * AUTO且实际网络类型未知时需要同时查询EPS和5GS。
+-     * 如果其中一个查询失败，只有另一个明确REGISTERED时才能确认整体已经驻网；
++     * AUTO或尚未确认网络模式时同时查询EPS和5GS。
++     * 如果其中一个查询失败，只有另一个明确REGISTERED时才能确认整体已经驻网；
+      * 其余情况无法排除失败的注册域已经注册，因此保留查询错误而不输出错误事实。
+      */

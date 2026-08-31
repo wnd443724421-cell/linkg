@@ -1,0 +1,75 @@
+--- a/test/cellular/rg255_query_fixture_test.c
++++ b/test/cellular/rg255_query_fixture_test.c
+@@ -176,7 +176,7 @@ static void test_registration_domain(mock_id_t id, bool nr)
+         LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED,
+         LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED,
+         LINKG_CELLULAR_REGISTRATION_STATE_REGISTERING,
+-        LINKG_CELLULAR_REGISTRATION_STATE_FAILED,
++        LINKG_CELLULAR_REGISTRATION_STATE_DENIED,
+         LINKG_CELLULAR_REGISTRATION_STATE_UNKNOWN,
+         LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED
+     };
+@@ -193,10 +193,7 @@ static void test_registration_domain(mock_id_t id, bool nr)
+         snprintf(response, sizeof(response), "%s 0,%d", nr ? "+C5GREG:" : "+CEREG:", stat);
+         mock_set(id, response, 0);
+-        ret = rg255_query_registration(
+-            fixture_channel(),
+-            nr ? LINKG_CELLULAR_NETWORK_MODE_5G : LINKG_CELLULAR_NETWORK_MODE_4G,
+-            LINKG_CELLULAR_NETWORK_TYPE_UNKNOWN,
+-            &state);
++        ret = rg255_query_registration(fixture_channel(), nr ? LINKG_CELLULAR_NETWORK_MODE_5G : LINKG_CELLULAR_NETWORK_MODE_4G, &state);
+@@ -217,25 +214,22 @@ static void test_registration(void)
+     mock_set(MOCK_CEREG, "+CEREG: 0,0", 0);
+     mock_set(MOCK_C5GREG, "+C5GREG: 0,1", 0);
+-    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO,
+-                                   LINKG_CELLULAR_NETWORK_TYPE_UNKNOWN, &state);
++    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO, &state);
+     check_case("AUTO merges EPS and 5GS registration",
+                ret == 0 && state == LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED);
+ 
+     mock_reset();
+     mock_set(MOCK_CEREG, "+CEREG: 0,1", 0);
+     mock_set(MOCK_C5GREG, "+C5GREG: 0,0", 0);
+-    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO,
+-                                   LINKG_CELLULAR_NETWORK_TYPE_LTE, &state);
+-    check_case("AUTO known LTE queries CEREG only",
++    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO, &state);
++    check_case("AUTO queries and merges both registration domains",
+                ret == 0 && state == LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED &&
+-               g_calls[MOCK_CEREG] == 1U && g_calls[MOCK_C5GREG] == 0U);
++               g_calls[MOCK_CEREG] == 1U && g_calls[MOCK_C5GREG] == 1U);
+ 
+     mock_reset();
+-    mock_set(MOCK_C5GREG, "+C5GREG: 0,1", 0);
+-    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO,
+-                                   LINKG_CELLULAR_NETWORK_TYPE_NR5G_SA, &state);
+-    check_case("AUTO known NR queries C5GREG only",
+-               ret == 0 && state == LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED &&
+-               g_calls[MOCK_CEREG] == 0U && g_calls[MOCK_C5GREG] == 1U);
++    mock_set(MOCK_CEREG, "+CEREG: 0,3", 0);
++    mock_set(MOCK_C5GREG, "+C5GREG: 0,0", 0);
++    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO, &state);
++    check_case("AUTO single-domain denial does not deny whole registration",
++               ret == 0 && state == LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED);
+ 
+     mock_reset();
+     mock_set(MOCK_CEREG, "", -ETIMEDOUT);
+     mock_set(MOCK_C5GREG, "+C5GREG: 0,1", 0);
+-    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO,
+-                                   LINKG_CELLULAR_NETWORK_TYPE_UNKNOWN, &state);
++    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_AUTO, &state);
+@@ -245,13 +239,11 @@ static void test_registration(void)
+ 
+     mock_reset();
+     mock_set(MOCK_CEREG, "+CEREG: 0,8", 0);
+-    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_4G,
+-                                   LINKG_CELLULAR_NETWORK_TYPE_LTE, &state);
++    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_4G, &state);
+     check_case("REG stat outside manual 0-5 rejected", ret == -EBADMSG);
+ 
+     mock_set(MOCK_CEREG, "+CEREG: 9,1", 0);
+-    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_4G,
+-                                   LINKG_CELLULAR_NETWORK_TYPE_LTE, &state);
++    ret = rg255_query_registration(fixture_channel(), LINKG_CELLULAR_NETWORK_MODE_4G, &state);
+     check_case("REG n outside manual 0-2 rejected", ret == -EBADMSG);
+ }

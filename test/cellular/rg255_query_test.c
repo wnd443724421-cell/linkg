@@ -56,7 +56,7 @@ static const char *registration_name(linkg_cellular_registration_state_t state)
         case LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED: return "NOT_REGISTERED";
         case LINKG_CELLULAR_REGISTRATION_STATE_REGISTERING: return "REGISTERING";
         case LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED: return "REGISTERED";
-        case LINKG_CELLULAR_REGISTRATION_STATE_FAILED: return "FAILED";
+        case LINKG_CELLULAR_REGISTRATION_STATE_DENIED: return "FAILED";
         default: return "UNKNOWN";
     }
 }

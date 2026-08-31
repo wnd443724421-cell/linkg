@@ -708,7 +708,7 @@ static int _rg255_query_map_registration_state(int stat, linkg_cellular_registra
             return 0;
 
         case 3:
-            *state = LINKG_CELLULAR_REGISTRATION_STATE_FAILED;
+            *state = LINKG_CELLULAR_REGISTRATION_STATE_DENIED;
             return 0;
 
         case 4:
@@ -737,10 +737,10 @@ static linkg_cellular_registration_state_t _rg255_query_merge_registration_state
         return LINKG_CELLULAR_REGISTRATION_STATE_REGISTERING;
     }
 
-    if (eps_state == LINKG_CELLULAR_REGISTRATION_STATE_FAILED ||
-        nr_state == LINKG_CELLULAR_REGISTRATION_STATE_FAILED)
+    if (eps_state == LINKG_CELLULAR_REGISTRATION_STATE_DENIED ||
+        nr_state == LINKG_CELLULAR_REGISTRATION_STATE_DENIED)
     {
-        return LINKG_CELLULAR_REGISTRATION_STATE_FAILED;
+        return LINKG_CELLULAR_REGISTRATION_STATE_DENIED;
     }
 
     if (eps_state == LINKG_CELLULAR_REGISTRATION_STATE_NOT_REGISTERED ||
