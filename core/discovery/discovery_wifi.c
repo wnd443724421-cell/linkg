@@ -172,7 +172,10 @@ static bool _linkg_discovery_wifi_source_valid(const struct sockaddr_in *source)
 }
 
 /**
- * @brief 校验完整Report中的Wi-Fi地址与UDP实际来源是否一致。
+ * @brief 校验Wi-Fi Discovery控制报文来源与可选Wi-Fi数据Endpoint的一致性。
+ *
+ * Discovery控制面不依赖Wi-Fi数据Path。未声明Wi-Fi数据Endpoint时，
+ * 只要求Endpoint为空；声明了Wi-Fi数据Path时继续校验其IPv4与实际UDP来源一致。
  */
 static bool _linkg_discovery_wifi_report_source_valid(const linkg_discovery_report_t *report, const struct sockaddr_in *source)
 {
@@ -185,7 +188,7 @@ static bool _linkg_discovery_wifi_report_source_valid(const linkg_discovery_repo
 
     if ((report->path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
     {
-        return false;
+        return report->wifi_endpoint.length == 0U;
     }
 
     if (report->wifi_endpoint.length != sizeof(struct sockaddr_in) ||
@@ -348,11 +351,6 @@ static int _linkg_discovery_wifi_send_ap_sync(void)
 		return ret;
 	}
 
-	if ((sync.ap.path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
-	{
-		return 0;
-	}
-
 	ret = linkg_discovery_wire_encode_ap_sync(&sync, buffer, sizeof(buffer), &length);
     if (ret != 0)
     {
@@ -398,11 +396,6 @@ static int _linkg_discovery_wifi_send_sta_report(void)
     {
         return ret;
     }
-
-	if ((report.path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
-	{
-		return 0;
-	}
 
     ret = linkg_discovery_wire_encode_sta_report(&report, buffer, sizeof(buffer), &length);
     if (ret != 0)
@@ -968,7 +961,8 @@ int linkg_discovery_wifi_init(void)
 /**
  * @brief 启动Wi-Fi Discovery Channel。
  *
- * Discovery Core必须已经启动，并且本机当前Wi-Fi数据Endpoint有效。
+ * Discovery Core必须已经启动，并且Wi-Fi控制接口已经存在；
+ * 不要求Wi-Fi数据Path或Wi-Fi数据Endpoint有效。
  */
 int linkg_discovery_wifi_start(void)
 {

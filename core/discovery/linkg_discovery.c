@@ -17,11 +17,17 @@
 #include "linkg_config.h"
 #include "linkg_link.h"
 #include "linkg_link_manager.h"
+#include "linkg_network_ops.h"
+#include "linkg_system_resources.h"
 #include "linkg_time.h"
 
 #include "discovery_cellular.h"
 #include "discovery_internal.h"
 #include "discovery_wifi.h"
+
+/****************************** 运行策略 ******************************/
+
+#define LINKG_DISCOVERY_SIGNALING_BOOTSTRAP_ENABLED false // 公网信令Bootstrap尚未实现，当前Cellular依赖Wi-Fi发现建立初始Peer
 
 /****************************** 内部类型 ******************************/
 
@@ -54,10 +60,18 @@ static void _linkg_discovery_record_first_error(int *first_error, int error)
 }
 
 /**
- * @brief 判断指定Discovery Access是否存在对应本地业务Link。
+ * @brief 判断指定Discovery Access当前是否具备启动条件。
+ *
+ * Wi-Fi Discovery是独立控制面，只依赖Wi-Fi接口存在，不依赖Wi-Fi数据Link；
+ * Cellular Discovery仍依赖对应业务Link存在。
  */
 static bool _linkg_discovery_access_available(linkg_link_access_t access)
 {
+    if (access == LINKG_LINK_ACCESS_WIFI)
+    {
+        return linkg_network_interface_exists(LINKG_RESOURCE_INTERFACE_WIFI);
+    }
+
     return linkg_link_manager_get_id(access) != LINKG_LINK_ID_INVALID;
 }
 
@@ -471,6 +485,17 @@ int linkg_discovery_init(void)
         return ret;
     }
 
+    /**
+     * 当前没有公网信令Bootstrap，Cellular只能在Wi-Fi先发现Peer以后工作。
+     * 未来接入信令服务器后，只需将SIGNALING_BOOTSTRAP标志切换为true即可解除该依赖。
+     */
+    if (links.cellular.enabled &&
+        !LINKG_DISCOVERY_SIGNALING_BOOTSTRAP_ENABLED &&
+        !links.wifi.enabled)
+    {
+        return -EINVAL;
+    }
+
     ret = _linkg_discovery_init_core();
     if (ret != 0)
     {
@@ -527,8 +552,9 @@ fail_core:
 /**
  * @brief 启动Discovery模块及当前可用的Discovery Channel。
  *
- * links配置决定Channel是否允许参与Discovery；
- * Link Manager决定对应业务Path是否实际存在。
+ * Wi-Fi Discovery作为独立控制面，只要求Wi-Fi接入已启用且接口存在；
+ * Cellular Discovery仍要求Cellular业务Link存在。当前无公网信令时，
+ * Cellular启动还要求Wi-Fi Discovery已经具备Bootstrap条件。
  */
 int linkg_discovery_start(void)
 {
@@ -549,9 +575,15 @@ int linkg_discovery_start(void)
 
     _linkg_discovery_get_channel_enabled(&wifi_enabled, &cellular_enabled);
 
-    wifi_available = wifi_enabled && _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
-
+    wifi_available     = wifi_enabled && _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
     cellular_available = cellular_enabled && _linkg_discovery_access_available(LINKG_LINK_ACCESS_CELLULAR);
+
+    if (cellular_enabled &&
+        !LINKG_DISCOVERY_SIGNALING_BOOTSTRAP_ENABLED &&
+        !wifi_available)
+    {
+        return -ENODEV;
+    }
 
     if (!wifi_available && !cellular_available)
     {

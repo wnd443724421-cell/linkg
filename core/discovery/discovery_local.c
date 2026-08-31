@@ -264,7 +264,9 @@ static int _linkg_discovery_prepare_cellular_endpoint(linkg_path_endpoint_t *end
 /**
  * @brief 准备本机Discovery初始数据端点。
  *
- * 初始状态至少需要存在一个有效数据Path。
+ * Discovery控制面允许在没有任何数据Path时建立会话。
+ * 初始Endpoint查询失败只表示该Path当前不可发布，不阻止Discovery启动；
+ * 后续周期刷新会在Endpoint出现或变化时推进revision并动态发布。
  */
 static int _linkg_discovery_prepare_initial_endpoints(linkg_discovery_report_t *report)
 {
@@ -272,7 +274,6 @@ static int _linkg_discovery_prepare_initial_endpoints(linkg_discovery_report_t *
     linkg_path_endpoint_t cellular_endpoint;
     int                   wifi_state;
     int                   cellular_state;
-    int                   first_error;
 
     if (report == NULL)
     {
@@ -287,17 +288,11 @@ static int _linkg_discovery_prepare_initial_endpoints(linkg_discovery_report_t *
 
     report->path_flags &= (uint8_t)~LINKG_DISCOVERY_PATH_VALID_MASK;
 
-    first_error = 0;
-
     wifi_state = _linkg_discovery_prepare_wifi_endpoint(&wifi_endpoint);
     if (wifi_state > 0)
     {
         report->wifi_endpoint = wifi_endpoint;
         report->path_flags |= LINKG_DISCOVERY_PATH_WIFI_VALID;
-    }
-    else if (wifi_state < 0)
-    {
-        first_error = wifi_state;
     }
 
     cellular_state = _linkg_discovery_prepare_cellular_endpoint(&cellular_endpoint);
@@ -306,22 +301,8 @@ static int _linkg_discovery_prepare_initial_endpoints(linkg_discovery_report_t *
         report->cellular_endpoint = cellular_endpoint;
         report->path_flags |= LINKG_DISCOVERY_PATH_CELLULAR_VALID;
     }
-    else if (cellular_state < 0 && first_error == 0)
-    {
-        first_error = cellular_state;
-    }
 
-    if ((report->path_flags & LINKG_DISCOVERY_PATH_VALID_MASK) != 0U)
-    {
-        return 0;
-    }
-
-    if (first_error != 0)
-    {
-        return first_error;
-    }
-
-    return -ENETDOWN;
+    return 0;
 }
 
 /****************************** 本机状态 ******************************/
@@ -329,8 +310,8 @@ static int _linkg_discovery_prepare_initial_endpoints(linkg_discovery_report_t *
 /**
  * @brief 构建本机Discovery完整初始状态。
  *
- * 每次构建均创建新的Discovery运行会话，初始状态至少需要存在一个
- * 有效数据Path。
+ * 每次构建均创建新的Discovery运行会话；数据Path可以暂时全部不可用，
+ * 后续由Endpoint刷新流程动态加入并推进revision。
  */
 int _linkg_discovery_build_local_report(linkg_discovery_report_t *report)
 {
