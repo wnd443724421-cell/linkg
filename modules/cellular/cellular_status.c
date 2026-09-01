@@ -42,13 +42,15 @@
 
 typedef struct
 {
-    uint64_t network_mode_ms; // 网络选择模式下一次确认时间
-    uint64_t sim_ms;          // SIM逻辑状态下一次确认时间
-    uint64_t registration_ms; // 网络注册状态下一次确认时间
-    uint64_t radio_ms;        // 服务小区无线状态下一次确认时间
-    uint64_t pdp_ms;          // PDP激活状态下一次确认时间
-    uint64_t netdev_ms;       // USB网络设备状态下一次确认时间
-    uint64_t host_ms;         // Linux Host状态下一次确认时间
+    uint64_t network_mode_ms;     // 网络选择模式下一次确认时间
+    uint64_t sim_ms;              // SIM逻辑状态下一次确认时间
+    uint64_t registration_ms;     // 网络注册状态下一次确认时间
+    uint64_t radio_ms;            // 服务小区无线状态下一次确认时间
+    uint64_t pdp_ms;              // PDP激活状态下一次确认时间
+    uint64_t pdp_address_ms;      // 模组PDP地址失败后的下一次重试时间
+    uint64_t netdev_ms;           // USB网络设备状态下一次确认时间
+    uint64_t expected_network_ms; // 模组期望Host网络参数失败后的下一次重试时间
+    uint64_t host_ms;             // Linux Host状态下一次确认时间
 } cellular_status_deadlines_t;
 
 typedef struct
@@ -56,7 +58,7 @@ typedef struct
     pthread_mutex_t             lock;        // 状态锁，保护生命周期、期限和已发布快照
     at_channel_t               *channel;     // 借用AT通道，仅在start到stop期间有效
     cellular_status_info_t      info;        // 当前唯一内部事实快照
-    cellular_status_deadlines_t deadlines;   // 各事实Watchdog绝对到期时间
+    cellular_status_deadlines_t deadlines;   // 各事实确认和失败重试绝对到期时间
     bool                        initialized; // 状态模块是否已经初始化
     bool                        started;     // 状态模块是否已经启动
 } cellular_status_context_t;
@@ -228,9 +230,19 @@ static cellular_status_refresh_mask_t _cellular_status_due_mask(const cellular_s
         mask |= CELLULAR_STATUS_REFRESH_PDP;
     }
 
+    if (deadlines->pdp_address_ms != 0U && now_ms >= deadlines->pdp_address_ms)
+    {
+        mask |= CELLULAR_STATUS_REFRESH_PDP_ADDRESS;
+    }
+
     if (deadlines->netdev_ms != 0U && now_ms >= deadlines->netdev_ms)
     {
         mask |= CELLULAR_STATUS_REFRESH_NETDEV;
+    }
+
+    if (deadlines->expected_network_ms != 0U && now_ms >= deadlines->expected_network_ms)
+    {
+        mask |= CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK;
     }
 
     if (deadlines->host_ms != 0U && now_ms >= deadlines->host_ms)
@@ -318,6 +330,21 @@ static uint64_t _cellular_status_next_pdp_deadline(const cellular_status_info_t 
 }
 
 /**
+ * @brief 计算模组PDP地址失败后的下一次重试时间。
+ *
+ * @note PDP地址成功确认后停止内部定时查询，等待Owner或PDP状态变化再次触发刷新。
+ */
+static uint64_t _cellular_status_next_pdp_address_deadline(const cellular_status_info_t *info, uint64_t now_ms)
+{
+    if (info->pdp.address_meta.last_error != 0)
+    {
+        return now_ms + CELLULAR_STATUS_RETRY_INTERVAL_MS;
+    }
+
+    return 0U;
+}
+
+/**
  * @brief 计算USB网络设备事实下一次Watchdog确认时间。
  */
 static uint64_t _cellular_status_next_netdev_deadline(const cellular_status_info_t *info, uint64_t now_ms)
@@ -341,7 +368,23 @@ static uint64_t _cellular_status_next_netdev_deadline(const cellular_status_info
 }
 
 /**
- * @brief 更新本次已经处理事实的下一次Watchdog期限。
+ * @brief 计算模组期望Host网络参数失败后的下一次重试时间。
+ *
+ * @note IPv4和IPv6参数均成功确认后停止内部定时查询，等待Owner或Netdev状态变化再次触发刷新。
+ */
+static uint64_t _cellular_status_next_expected_network_deadline(const cellular_status_info_t *info, uint64_t now_ms)
+{
+    if (info->netdev.expected_ipv4.meta.last_error != 0 ||
+        info->netdev.expected_ipv6.meta.last_error != 0)
+    {
+        return now_ms + CELLULAR_STATUS_RETRY_INTERVAL_MS;
+    }
+
+    return 0U;
+}
+
+/**
+ * @brief 更新本次已经处理事实的下一次确认和失败重试期限。
  */
 static void _cellular_status_update_deadlines(cellular_status_deadlines_t *deadlines, const cellular_status_info_t *info, cellular_status_refresh_mask_t processed, uint64_t now_ms)
 {
@@ -370,11 +413,35 @@ static void _cellular_status_update_deadlines(cellular_status_deadlines_t *deadl
     if ((processed & CELLULAR_STATUS_REFRESH_PDP) != 0U)
     {
         deadlines->pdp_ms = _cellular_status_next_pdp_deadline(info, now_ms);
+
+        if (info->pdp.active_meta.confirmed &&
+            info->pdp.active_meta.last_error == 0 &&
+            !info->pdp.active)
+        {
+            deadlines->pdp_address_ms = 0U;
+        }
+    }
+
+    if ((processed & CELLULAR_STATUS_REFRESH_PDP_ADDRESS) != 0U)
+    {
+        deadlines->pdp_address_ms = _cellular_status_next_pdp_address_deadline(info, now_ms);
     }
 
     if ((processed & CELLULAR_STATUS_REFRESH_NETDEV) != 0U)
     {
         deadlines->netdev_ms = _cellular_status_next_netdev_deadline(info, now_ms);
+
+        if (info->netdev.state.meta.confirmed &&
+            info->netdev.state.meta.last_error == 0 &&
+            !info->netdev.state.connected)
+        {
+            deadlines->expected_network_ms = 0U;
+        }
+    }
+
+    if ((processed & CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK) != 0U)
+    {
+        deadlines->expected_network_ms = _cellular_status_next_expected_network_deadline(info, now_ms);
     }
 
     if ((processed & CELLULAR_STATUS_REFRESH_HOST) != 0U)
@@ -793,14 +860,14 @@ static void _cellular_status_clear_host(cellular_status_info_t *info, uint64_t n
 
     host = &info->host;
 
-    host->interface_present   = false;
-    host->interface_index     = 0U;
-    host->interface_up        = false;
-    host->ipv4_valid          = false;
-    host->ipv4_netmask_valid  = false;
-    host->global_ipv6_valid   = false;
-    host->ipv4_gateway_valid  = false;
-    host->ipv6_gateway_valid  = false;
+    host->interface_present  = false;
+    host->interface_index    = 0U;
+    host->interface_up       = false;
+    host->ipv4_valid         = false;
+    host->ipv4_netmask_valid = false;
+    host->global_ipv6_valid  = false;
+    host->ipv4_gateway_valid = false;
+    host->ipv6_gateway_valid = false;
 
     memset(&host->ipv4, 0, sizeof(host->ipv4));
     memset(&host->ipv4_netmask, 0, sizeof(host->ipv4_netmask));
@@ -1160,7 +1227,7 @@ static void _cellular_status_finalize_info(cellular_status_info_t *info, uint64_
 }
 
 /**
- * @brief 原子发布内部事实快照和下一次Watchdog期限。
+ * @brief 原子发布内部事实快照和下一次状态确认期限。
  */
 static int _cellular_status_publish(const cellular_status_info_t *info, const cellular_status_deadlines_t *deadlines)
 {
@@ -1250,6 +1317,7 @@ unlock:
 /**
  * @brief 启动蜂窝状态事实模块并将全部基础Watchdog置为立即到期。
  *
+ * @note PDP地址和模组期望Host网络参数不主动启动周期查询，仅由父事实或Owner触发，失败后进入内部重试。
  * @note channel为借用引用，只能由network-cell Owner串行调用process和生命周期接口。
  */
 int cellular_status_start(at_channel_t *channel)
@@ -1351,7 +1419,7 @@ int cellular_status_deinit(void)
 /****************************** 定时处理 ******************************/
 
 /**
- * @brief 获取蜂窝状态模块最近的Watchdog绝对到期期限。
+ * @brief 获取蜂窝状态模块最近的状态确认绝对到期期限。
  */
 uint64_t cellular_status_get_deadline(void)
 {
@@ -1369,7 +1437,9 @@ uint64_t cellular_status_get_deadline(void)
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.registration_ms);
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.radio_ms);
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.pdp_ms);
+    deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.pdp_address_ms);
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.netdev_ms);
+    deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.expected_network_ms);
     deadline = _cellular_status_min_deadline(deadline, g_cellular_status.deadlines.host_ms);
 
     pthread_mutex_unlock(&g_cellular_status.lock);
@@ -1378,7 +1448,7 @@ uint64_t cellular_status_get_deadline(void)
 }
 
 /**
- * @brief 处理定向刷新请求和所有已经到期的状态Watchdog。
+ * @brief 处理定向刷新请求和所有已经到期的状态确认任务。
  *
  * @note 本接口只采集并发布事实，不执行拨号、接口修复、Modem配置或任何恢复动作。
  */

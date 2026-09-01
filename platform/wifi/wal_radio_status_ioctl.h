@@ -13,7 +13,7 @@
 /****************************** 接口配置 ******************************/
 
 #define WAL_RADIO_STATUS_IOCTL              (0x89F0 + 5) // 无线状态私有ioctl命令
-#define WAL_RADIO_STATUS_ABI_VERSION        2U           // 接口ABI版本
+#define WAL_RADIO_STATUS_ABI_VERSION        1U           // 接口ABI版本
 #define WAL_RADIO_STATUS_MAC_LENGTH         6U           // 无线MAC地址长度
 #define WAL_RADIO_STATUS_MAX_PEERS          16U          // 单次返回的最大对端数量
 #define WAL_RADIO_STATUS_REFRESH_MS         250U         // 状态缓存刷新周期，单位毫秒

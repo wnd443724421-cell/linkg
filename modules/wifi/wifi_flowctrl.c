@@ -31,7 +31,7 @@
 #endif
 
 #ifndef LINKG_WIFI_FLOWCTRL_BATCH_LIMIT_MAX
-#define LINKG_WIFI_FLOWCTRL_BATCH_LIMIT_MAX       14U                     // 普通流量最大单次准入数量
+#define LINKG_WIFI_FLOWCTRL_BATCH_LIMIT_MAX       32U                     // 普通流量最大单次准入数量
 #endif
 
 #ifndef LINKG_WIFI_FLOWCTRL_RECOVERY_INTERVAL_US
