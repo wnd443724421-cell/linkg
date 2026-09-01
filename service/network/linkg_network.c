@@ -23,22 +23,21 @@
 #include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
 #include "linkg_wifi.h"
-
 #include "linkg_cellular.h"
 
 #include "network_internal.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_NETWORK_WIFI_THREAD_NAME                   "network-wifi" // Wi-Fi Owner线程名称
-#define LINKG_NETWORK_CELLULAR_THREAD_NAME               "network-cell" // 蜂窝管理线程名称
-#define LINKG_NETWORK_ETHERNET_WAIT_TIMEOUT_MS           3000U          // Ethernet接口等待超时
-#define LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID             0U             // Ethernet接收IRQ固定CPU编号
-#define LINKG_NETWORK_ETHERNET_IRQ_LINE_MAX              512U           // /proc/interrupts单行缓冲区长度
-#define LINKG_NETWORK_ETHERNET_DEVICE_NAME_MAX           128U           // Ethernet平台设备名称缓冲区长度
-#define LINKG_NETWORK_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U            // IRQ affinity写入值缓冲区长度
+#define LINKG_NETWORK_WIFI_THREAD_NAME                   "network-wifi"    // Wi-Fi Owner线程名称
+#define LINKG_NETWORK_CELLULAR_THREAD_NAME               "network-cell"    // 蜂窝管理线程名称
+#define LINKG_NETWORK_ETHERNET_WAIT_TIMEOUT_MS           3000U             // Ethernet接口等待超时
+#define LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID             0U                // Ethernet接收IRQ固定CPU编号
+#define LINKG_NETWORK_ETHERNET_IRQ_LINE_MAX              512U              // /proc/interrupts单行缓冲区长度
+#define LINKG_NETWORK_ETHERNET_DEVICE_NAME_MAX           128U              // Ethernet平台设备名称缓冲区长度
+#define LINKG_NETWORK_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U               // IRQ affinity写入值缓冲区长度
 
-/****************************** 模块上下文 ******************************/
+/****************************** 全局上下文 ******************************/
 
 static linkg_network_context_t g_network =
 {
@@ -51,7 +50,7 @@ static linkg_network_context_t g_network =
 /**
  * @brief 将网络服务上下文恢复为未初始化状态。
  *
- * @note 调用前必须确保互斥锁、条件变量和全部子模块资源已经释放。
+ * 调用前必须确保互斥锁、条件变量和全部子模块资源已经释放。
  */
 static void _linkg_network_reset_context(void)
 {
@@ -82,7 +81,7 @@ static void _linkg_network_record_first_error(int *first_error, int error)
 /**
  * @brief 等待普通工作线程停止请求。
  *
- * @note 仅供没有独立run函数的工作线程使用。
+ * 仅供没有独立run函数的工作线程使用。
  */
 static int _linkg_network_worker_wait_stop(linkg_thread_t *thread)
 {
@@ -191,15 +190,11 @@ static void _linkg_network_worker_publish_run(linkg_network_worker_t *worker, li
 
     if (unexpected_exit)
     {
-        LINKG_LOG_ERROR("network worker runtime exited unexpectedly, thread=%s, error=%d",
-                        thread->name,
-                        result);
+        LINKG_LOG_ERROR("network worker runtime exited unexpectedly, thread=%s, error=%d", thread->name, result);
     }
     else if (result != 0)
     {
-        LINKG_LOG_WARN("network worker runtime returned error during stop, thread=%s, error=%d",
-                       thread->name,
-                       result);
+        LINKG_LOG_WARN("network worker runtime returned error during stop, thread=%s, error=%d", thread->name, result);
     }
 }
 
@@ -216,8 +211,8 @@ static void _linkg_network_worker_publish_stop(linkg_network_worker_t *worker, i
 /**
  * @brief 运行网络子模块管理线程。
  *
- * @note start成功后，run存在时由run直接接管Owner循环；run为空时保留
- *       传统的等待停止模型。无论运行阶段如何结束，最终均由本线程调用stop。
+ * start成功后，run存在时由run直接接管Owner循环；run为空时保留
+ * 传统的等待停止模型。无论运行阶段如何结束，最终均由本线程调用stop。
  */
 static void _linkg_network_worker_thread(linkg_thread_t *thread, void *user_data)
 {
@@ -266,20 +261,14 @@ static void _linkg_network_worker_thread(linkg_thread_t *thread, void *user_data
 
     if (stop_result != 0)
     {
-        LINKG_LOG_ERROR("network worker stop failed, thread=%s, error=%d",
-                        thread->name,
-                        stop_result);
+        LINKG_LOG_ERROR("network worker stop failed, thread=%s, error=%d", thread->name, stop_result);
     }
 }
 
 /**
  * @brief 初始化网络子模块管理线程。
  */
-static int _linkg_network_worker_init(linkg_network_worker_t *worker,
-                                      const char *name,
-                                      linkg_network_worker_start_func_t start,
-                                      linkg_network_worker_run_func_t run,
-                                      linkg_network_worker_stop_func_t stop)
+static int _linkg_network_worker_init(linkg_network_worker_t *worker, const char *name, linkg_network_worker_start_func_t start, linkg_network_worker_run_func_t run, linkg_network_worker_stop_func_t stop)
 {
     int ret;
 
@@ -294,10 +283,7 @@ static int _linkg_network_worker_init(linkg_network_worker_t *worker,
     worker->run   = run;
     worker->stop  = stop;
 
-    ret = linkg_thread_init(&worker->thread,
-                            name,
-                            _linkg_network_worker_thread,
-                            worker);
+    ret = linkg_thread_init(&worker->thread, name, _linkg_network_worker_thread, worker);
     if (ret != 0)
     {
         memset(worker, 0, sizeof(*worker));
@@ -419,7 +405,7 @@ static int _linkg_network_worker_stop(linkg_network_worker_t *worker)
 /**
  * @brief 获取已经记录的首个工作线程运行期失败。
  *
- * @note 调用方必须持有g_network.lock。
+ * 调用方必须持有g_network.lock。
  */
 static int _linkg_network_get_worker_failure_locked(void)
 {
@@ -460,10 +446,7 @@ static int _linkg_network_ethernet_get_device_name(const char *ifname, char *dev
         return -EINVAL;
     }
 
-    written = snprintf(device_path,
-                       sizeof(device_path),
-                       "/sys/class/net/%s/device",
-                       ifname);
+    written = snprintf(device_path, sizeof(device_path), "/sys/class/net/%s/device", ifname);
     if (written < 0 || (size_t)written >= sizeof(device_path))
     {
         return -ENAMETOOLONG;
@@ -526,9 +509,7 @@ static int _linkg_network_ethernet_get_irq(const char *ifname, unsigned int *irq
         return -EINVAL;
     }
 
-    ret = _linkg_network_ethernet_get_device_name(ifname,
-                                                   device_name,
-                                                   sizeof(device_name));
+    ret = _linkg_network_ethernet_get_device_name(ifname, device_name, sizeof(device_name));
     if (ret != 0)
     {
         return ret;
@@ -597,27 +578,19 @@ static int _linkg_network_ethernet_set_irq_cpu(unsigned int irq, unsigned int cp
     int  written;
     int  ret;
 
-    written = snprintf(affinity_path,
-                       sizeof(affinity_path),
-                       "/proc/irq/%u/smp_affinity_list",
-                       irq);
+    written = snprintf(affinity_path, sizeof(affinity_path), "/proc/irq/%u/smp_affinity_list", irq);
     if (written < 0 || (size_t)written >= sizeof(affinity_path))
     {
         return -ENAMETOOLONG;
     }
 
-    value_length = snprintf(affinity_value,
-                            sizeof(affinity_value),
-                            "%u\n",
-                            cpu_id);
+    value_length = snprintf(affinity_value, sizeof(affinity_value), "%u\n", cpu_id);
     if (value_length < 0 || (size_t)value_length >= sizeof(affinity_value))
     {
         return -EOVERFLOW;
     }
 
-    ret = linkg_file_write_all(affinity_path,
-                               affinity_value,
-                               (size_t)value_length);
+    ret = linkg_file_write_all(affinity_path, affinity_value, (size_t)value_length);
     if (ret == 0)
     {
         return 0;
@@ -633,27 +606,19 @@ static int _linkg_network_ethernet_set_irq_cpu(unsigned int irq, unsigned int cp
         return -ERANGE;
     }
 
-    written = snprintf(affinity_path,
-                       sizeof(affinity_path),
-                       "/proc/irq/%u/smp_affinity",
-                       irq);
+    written = snprintf(affinity_path, sizeof(affinity_path), "/proc/irq/%u/smp_affinity", irq);
     if (written < 0 || (size_t)written >= sizeof(affinity_path))
     {
         return -ENAMETOOLONG;
     }
 
-    value_length = snprintf(affinity_value,
-                            sizeof(affinity_value),
-                            "%x\n",
-                            1U << cpu_id);
+    value_length = snprintf(affinity_value, sizeof(affinity_value), "%x\n", 1U << cpu_id);
     if (value_length < 0 || (size_t)value_length >= sizeof(affinity_value))
     {
         return -EOVERFLOW;
     }
 
-    return linkg_file_write_all(affinity_path,
-                                affinity_value,
-                                (size_t)value_length);
+    return linkg_file_write_all(affinity_path, affinity_value, (size_t)value_length);
 }
 
 /**
@@ -667,26 +632,19 @@ static int _linkg_network_ethernet_bind_rx_irq(void)
     unsigned int irq;
     int          ret;
 
-    ret = _linkg_network_ethernet_get_irq(
-        LINKG_RESOURCE_INTERFACE_ETHERNET,
-        &irq);
+    ret = _linkg_network_ethernet_get_irq(LINKG_RESOURCE_INTERFACE_ETHERNET, &irq);
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_network_ethernet_set_irq_cpu(
-        irq,
-        LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID);
+    ret = _linkg_network_ethernet_set_irq_cpu(irq, LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID);
     if (ret != 0)
     {
         return ret;
     }
 
-    LINKG_LOG_INFO("Ethernet RX IRQ bound, interface=%s, irq=%u, cpu=%u",
-                   LINKG_RESOURCE_INTERFACE_ETHERNET,
-                   irq,
-                   LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID);
+    LINKG_LOG_INFO("Ethernet RX IRQ bound, interface=%s, irq=%u, cpu=%u", LINKG_RESOURCE_INTERFACE_ETHERNET, irq, LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID);
 
     return 0;
 }
@@ -731,10 +689,7 @@ static int _linkg_network_ethernet_start(void)
     ret = _linkg_network_ethernet_bind_rx_irq();
     if (ret != 0)
     {
-        LINKG_LOG_ERROR("bind Ethernet RX IRQ failed, interface=%s, cpu=%u, error=%d",
-                        LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID,
-                        ret);
+        LINKG_LOG_ERROR("bind Ethernet RX IRQ failed, interface=%s, cpu=%u, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID, ret);
 
         return ret;
     }
@@ -747,7 +702,7 @@ static int _linkg_network_ethernet_start(void)
 /**
  * @brief 停止网络服务对Ethernet接口的管理状态。
  *
- * @note 保持现有行为：停止网络服务时不主动关闭系统Ethernet接口。
+ * 保持现有行为：停止网络服务时不主动关闭系统Ethernet接口。
  */
 static int _linkg_network_ethernet_stop(void)
 {
@@ -880,25 +835,16 @@ int linkg_network_init(void)
 
     if (g_network.wifi_config.enabled)
     {
-        ret = linkg_wifi_init(g_network.role,
-                              g_network.network_config.node_id,
-                              &g_network.wifi_config);
+        ret = linkg_wifi_init(g_network.role, g_network.network_config.node_id, &g_network.wifi_config);
         if (ret != 0)
         {
-            LINKG_LOG_ERROR("initialize Wi-Fi module failed, role=%d, node_id=%u, error=%d",
-                            (int)g_network.role,
-                            (unsigned int)g_network.network_config.node_id,
-                            ret);
+            LINKG_LOG_ERROR("initialize Wi-Fi module failed, role=%d, node_id=%u, error=%d", (int)g_network.role, (unsigned int)g_network.network_config.node_id, ret);
             goto fail;
         }
 
         g_network.wifi_initialized = true;
 
-        ret = _linkg_network_worker_init(&g_network.wifi_worker,
-                                         LINKG_NETWORK_WIFI_THREAD_NAME,
-                                         linkg_wifi_start,
-                                         linkg_wifi_run,
-                                         linkg_wifi_stop);
+        ret = _linkg_network_worker_init(&g_network.wifi_worker, LINKG_NETWORK_WIFI_THREAD_NAME, linkg_wifi_start, linkg_wifi_run, linkg_wifi_stop);
         if (ret != 0)
         {
             LINKG_LOG_ERROR("initialize Wi-Fi Owner worker failed, error=%d", ret);
@@ -917,11 +863,7 @@ int linkg_network_init(void)
 
         g_network.cellular_initialized = true;
 
-        ret = _linkg_network_worker_init(&g_network.cellular_worker,
-                                         LINKG_NETWORK_CELLULAR_THREAD_NAME,
-                                         linkg_cellular_start,
-                                         linkg_cellular_run,
-                                         linkg_cellular_stop);
+        ret = _linkg_network_worker_init(&g_network.cellular_worker, LINKG_NETWORK_CELLULAR_THREAD_NAME, linkg_cellular_start, linkg_cellular_run, linkg_cellular_stop);
         if (ret != 0)
         {
             LINKG_LOG_ERROR("initialize cellular worker failed, error=%d", ret);
@@ -933,11 +875,7 @@ int linkg_network_init(void)
     g_network.state = LINKG_NETWORK_STATE_STOPPED;
     pthread_mutex_unlock(&g_network.lock);
 
-    LINKG_LOG_INFO("network service initialized, role=%d, node_id=%u, wifi_enabled=%d, cellular_enabled=%d",
-                   (int)g_network.role,
-                   (unsigned int)g_network.network_config.node_id,
-                   g_network.wifi_config.enabled,
-                   g_network.cellular_config.enabled);
+    LINKG_LOG_INFO("network service initialized, role=%d, node_id=%u, wifi_enabled=%d, cellular_enabled=%d", (int)g_network.role, (unsigned int)g_network.network_config.node_id, g_network.wifi_config.enabled, g_network.cellular_config.enabled);
 
     return 0;
 
@@ -949,8 +887,7 @@ fail:
         cleanup_ret = linkg_cellular_deinit();
         if (cleanup_ret != 0)
         {
-            LINKG_LOG_ERROR("deinitialize cellular module after init failure failed, error=%d",
-                            cleanup_ret);
+            LINKG_LOG_ERROR("deinitialize cellular module after init failure failed, error=%d", cleanup_ret);
         }
 
         g_network.cellular_initialized = false;
@@ -963,8 +900,7 @@ fail:
         cleanup_ret = linkg_wifi_deinit();
         if (cleanup_ret != 0)
         {
-            LINKG_LOG_ERROR("deinitialize Wi-Fi module after init failure failed, error=%d",
-                            cleanup_ret);
+            LINKG_LOG_ERROR("deinitialize Wi-Fi module after init failure failed, error=%d", cleanup_ret);
         }
 
         g_network.wifi_initialized = false;
@@ -973,15 +909,13 @@ fail:
     cleanup_ret = pthread_cond_destroy(&g_network.worker_condition);
     if (cleanup_ret != 0)
     {
-        LINKG_LOG_ERROR("destroy network worker condition after init failure failed, error=%d",
-                        cleanup_ret);
+        LINKG_LOG_ERROR("destroy network worker condition after init failure failed, error=%d", cleanup_ret);
     }
 
     cleanup_ret = pthread_mutex_destroy(&g_network.lock);
     if (cleanup_ret != 0)
     {
-        LINKG_LOG_ERROR("destroy network service lock after init failure failed, error=%d",
-                        cleanup_ret);
+        LINKG_LOG_ERROR("destroy network service lock after init failure failed, error=%d", cleanup_ret);
     }
 
     _linkg_network_reset_context();
@@ -1132,9 +1066,7 @@ fail:
     cleanup_ret = _linkg_network_ethernet_stop();
     if (cleanup_ret != 0)
     {
-        LINKG_LOG_ERROR("rollback Ethernet failed, interface=%s, error=%d",
-                        LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        cleanup_ret);
+        LINKG_LOG_ERROR("rollback Ethernet failed, interface=%s, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, cleanup_ret);
 
         _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
     }
@@ -1152,9 +1084,7 @@ fail:
 
     pthread_mutex_lock(&g_network.lock);
 
-    g_network.state = cleanup_error == 0
-        ? LINKG_NETWORK_STATE_STOPPED
-        : LINKG_NETWORK_STATE_FAILED;
+    g_network.state = cleanup_error == 0 ? LINKG_NETWORK_STATE_STOPPED : LINKG_NETWORK_STATE_FAILED;
 
     pthread_mutex_unlock(&g_network.lock);
 
@@ -1228,9 +1158,7 @@ int linkg_network_stop(void)
     ret = _linkg_network_ethernet_stop();
     if (ret != 0)
     {
-        LINKG_LOG_ERROR("stop Ethernet failed, interface=%s, error=%d",
-                        LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        ret);
+        LINKG_LOG_ERROR("stop Ethernet failed, interface=%s, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, ret);
 
         _linkg_network_record_first_error(&first_error, ret);
     }
@@ -1248,9 +1176,7 @@ int linkg_network_stop(void)
 
     pthread_mutex_lock(&g_network.lock);
 
-    g_network.state = first_error == 0
-        ? LINKG_NETWORK_STATE_STOPPED
-        : LINKG_NETWORK_STATE_FAILED;
+    g_network.state = first_error == 0 ? LINKG_NETWORK_STATE_STOPPED : LINKG_NETWORK_STATE_FAILED;
 
     pthread_mutex_unlock(&g_network.lock);
 
