@@ -1,33 +1,38 @@
 /**
  * @file linkg_nat.c
- * @brief LinkG虚拟网络NAT管理实现
+ * @brief LinkG Fast NAT用户态控制实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-08-30
+ * @version 1.1.0
+ * @date 2026-09-01
  */
 
 #include "linkg_nat.h"
 
-#include <arpa/inet.h>
 #include <errno.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <net/if.h>
 #include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
+#include "linkg_fast_nat_uapi.h"
 #include "linkg_network_ops.h"
 #include "linkg_os.h"
 #include "linkg_system_resources.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_NAT_IPTABLES_PROGRAM     "iptables"          // iptables执行程序
-#define LINKG_NAT_CHAIN_PREROUTING     "LINKG_PREROUTING"  // LinkG NAT入口Chain
-#define LINKG_NAT_CHAIN_OUTPUT         "LINKG_OUTPUT"      // LinkG NAT本机出口Chain
-#define LINKG_NAT_CHAIN_POSTROUTING    "LINKG_POSTROUTING" // LinkG NAT出口Chain
-#define LINKG_NAT_IPV4_ADDRESS_SIZE    16U                 // IPv4地址字符串缓冲区大小
-#define LINKG_NAT_IPV4_CIDR_SIZE       20U                 // IPv4 CIDR字符串缓冲区大小
+#define LINKG_NAT_SNAT_PORT_START         40000U              // Fast SNAT转换端口池起始端口
+#define LINKG_NAT_SNAT_PORT_END           44095U              // Fast SNAT转换端口池结束端口，共4096个端口
+#define LINKG_NAT_DRIVER_MODULE_NAME      "linkg_fast_nat"    // Fast NAT内核模块名称
+#define LINKG_NAT_DRIVER_MODULE_FILE      "linkg_fast_nat.ko" // Fast NAT内核模块文件名
+#define LINKG_NAT_DRIVER_MODULE_LINE_MAX  256U                // /proc/modules单行缓冲区长度
+#define LINKG_NAT_DRIVER_OPEN_RETRY_COUNT 100U                // 字符设备节点等待重试次数
+#define LINKG_NAT_DRIVER_OPEN_RETRY_US    10000U              // 字符设备节点等待间隔
 
 /****************************** 内部类型 ******************************/
 
@@ -38,35 +43,33 @@ typedef struct
     linkg_network_ipv4_config_t tun_network;          // LinkG TUN节点网络
     linkg_network_ipv4_config_t ethernet_network;     // 本节点Ethernet网络
     linkg_network_ipv4_config_t ethernet;             // 本节点Ethernet接口IPv4配置
-    uint8_t                     node_id;              // 本节点编号
+    int                         driver_fd;            // Fast NAT字符设备句柄
+    bool                        driver_loaded;        // Fast NAT内核模块是否由当前NAT生命周期持有
     bool                        initialized;          // 模块是否已经初始化
-    bool                        started;              // NAT规则是否已经启用
+    bool                        started;              // Fast NAT是否已经启动
 } linkg_nat_context_t;
 
 /****************************** 全局上下文 ******************************/
 
 static linkg_nat_context_t g_nat =
 {
-    .node_id     = LINKG_RESOURCE_NODE_ID_INVALID, // 当前无有效节点
-    .initialized = false,                          // 模块尚未初始化
-    .started     = false                           // NAT规则尚未启用
+    .driver_fd     = -1,    // Fast NAT字符设备尚未打开
+    .driver_loaded = false, // Fast NAT内核模块尚未加载
+    .initialized   = false, // NAT控制模块尚未初始化
+    .started       = false  // Fast NAT尚未启动
 };
 
-/****************************** 内部辅助 ******************************/
+/****************************** 配置辅助 ******************************/
 
 /**
- * @brief 根据网络配置构造NAT地址映射上下文。
+ * @brief 根据LinkG网络配置构造NAT用户态上下文。
  */
-static int _linkg_nat_build_context(const linkg_network_config_t *network_config, linkg_nat_context_t *context)
+static int _linkg_nat_build_context(const linkg_network_config_t *network_config,
+                                     linkg_nat_context_t *context)
 {
     int ret;
 
-    if (network_config == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (context == NULL)
+    if (network_config == NULL || context == NULL)
     {
         return -EINVAL;
     }
@@ -79,729 +82,472 @@ static int _linkg_nat_build_context(const linkg_network_config_t *network_config
 
     memset(context, 0, sizeof(*context));
 
-    ret = linkg_network_config_get_virtual_network(network_config, &context->virtual_network);
+    context->driver_fd = -1;
+
+    ret = linkg_network_config_get_virtual_network(
+        network_config,
+        &context->virtual_network);
     if (ret != 0)
     {
         return -EINVAL;
     }
 
-    ret = linkg_network_config_get_node_virtual_subnet(network_config, network_config->node_id, &context->local_virtual_subnet);
+    ret = linkg_network_config_get_node_virtual_subnet(
+        network_config,
+        network_config->node_id,
+        &context->local_virtual_subnet);
     if (ret != 0)
     {
         return -EINVAL;
     }
 
-    ret = linkg_network_config_get_tun(network_config, &context->tun_network);
+    ret = linkg_network_config_get_tun(
+        network_config,
+        &context->tun_network);
     if (ret != 0)
     {
         return -EINVAL;
     }
 
     // 将本节点TUN地址规范化为TUN网络地址。
-    context->tun_network.ip.s_addr &= context->tun_network.netmask.s_addr;
+    context->tun_network.ip.s_addr &=
+        context->tun_network.netmask.s_addr;
 
-    ret = linkg_network_config_get_ethernet_network(network_config, &context->ethernet_network);
+    ret = linkg_network_config_get_ethernet_network(
+        network_config,
+        &context->ethernet_network);
     if (ret != 0)
     {
         return -EINVAL;
     }
 
-    ret = linkg_network_config_get_ethernet(network_config, &context->ethernet);
+    ret = linkg_network_config_get_ethernet(
+        network_config,
+        &context->ethernet);
     if (ret != 0)
     {
         return -EINVAL;
     }
 
-    context->node_id = network_config->node_id;
+    return 0;
+}
+
+/**
+ * @brief 将LinkG IPv4配置转换为Fast NAT子网配置。
+ */
+static void _linkg_nat_build_subnet(
+    const linkg_network_ipv4_config_t *source,
+    linkg_fast_nat_ipv4_subnet_t *destination)
+{
+    destination->network = source->ip.s_addr & source->netmask.s_addr;
+    destination->netmask = source->netmask.s_addr;
+}
+
+/**
+ * @brief 获取指定网络接口的ifindex。
+ */
+static int _linkg_nat_get_ifindex(const char *ifname, int32_t *ifindex)
+{
+    unsigned int index;
+
+    if (ifname == NULL || ifindex == NULL)
+    {
+        return -EINVAL;
+    }
+
+    errno = 0;
+    index = if_nametoindex(ifname);
+    if (index == 0U)
+    {
+        return errno != 0 ? -errno : -ENODEV;
+    }
+
+    if (index > INT32_MAX)
+    {
+        return -ERANGE;
+    }
+
+    *ifindex = (int32_t)index;
 
     return 0;
 }
 
 /**
- * @brief 获取IPv4子网掩码对应的前缀长度。
+ * @brief 构造下发给Fast NAT驱动的完整配置。
+ *
+ * 当前LinkG固定启用现有7条NAT规则，不提供运行期通用规则配置。
  */
-static int _linkg_nat_ipv4_prefix_length(const struct in_addr *netmask, uint8_t *prefix_length)
+static int _linkg_nat_build_driver_config(linkg_fast_nat_config_t *config)
 {
-    uint32_t mask;
-    uint8_t  prefix;
-
-    if (netmask == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (prefix_length == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (!linkg_network_ipv4_netmask_valid(netmask))
-    {
-        return -EINVAL;
-    }
-
-    mask   = ntohl(netmask->s_addr);
-    prefix = 0U;
-
-    while ((mask & 0x80000000U) != 0U)
-    {
-        prefix++;
-        mask <<= 1U;
-    }
-
-    *prefix_length = prefix;
-
-    return 0;
-}
-
-/**
- * @brief 将IPv4网络配置转换为CIDR字符串。
- */
-static int _linkg_nat_ipv4_config_to_cidr(const linkg_network_ipv4_config_t *config, char *buffer, size_t buffer_size)
-{
-    char    address[LINKG_NAT_IPV4_ADDRESS_SIZE];
-    uint8_t prefix_length;
-    int     length;
-    int     ret;
+    int ret;
 
     if (config == NULL)
     {
         return -EINVAL;
     }
 
-    if (buffer == NULL)
-    {
-        return -EINVAL;
-    }
+    memset(config, 0, sizeof(*config));
 
-    if (buffer_size == 0U)
-    {
-        return -EINVAL;
-    }
+    config->version       = LINKG_FAST_NAT_UAPI_VERSION;
+    config->struct_size   = sizeof(*config);
+    config->enabled_rules = LINKG_FAST_NAT_RULE_ALL;
 
-    ret = _linkg_nat_ipv4_prefix_length(&config->netmask, &prefix_length);
+    _linkg_nat_build_subnet(
+        &g_nat.ethernet_network,
+        &config->ethernet_network);
+
+    _linkg_nat_build_subnet(
+        &g_nat.tun_network,
+        &config->tun_network);
+
+    _linkg_nat_build_subnet(
+        &g_nat.virtual_network,
+        &config->virtual_network);
+
+    _linkg_nat_build_subnet(
+        &g_nat.local_virtual_subnet,
+        &config->local_virtual_subnet);
+
+    config->ethernet_ip = g_nat.ethernet.ip.s_addr;
+
+    ret = _linkg_nat_get_ifindex(
+        LINKG_RESOURCE_INTERFACE_ETHERNET,
+        &config->ethernet_ifindex);
     if (ret != 0)
     {
         return ret;
     }
 
-    if (!linkg_network_ipv4_to_string(&config->ip, address, sizeof(address)))
+    ret = _linkg_nat_get_ifindex(
+        LINKG_RESOURCE_INTERFACE_TUN,
+        &config->tun_ifindex);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    config->snat_port_start = LINKG_NAT_SNAT_PORT_START;
+    config->snat_port_end   = LINKG_NAT_SNAT_PORT_END;
+
+    return 0;
+}
+
+/****************************** 驱动模块 ******************************/
+
+/**
+ * @brief 检查Fast NAT内核模块是否已经加载。
+ */
+static bool _linkg_nat_driver_module_loaded(void)
+{
+    FILE  *stream;
+    char   line[LINKG_NAT_DRIVER_MODULE_LINE_MAX];
+    size_t name_length;
+    bool   loaded;
+
+    stream      = NULL;
+    name_length = strlen(LINKG_NAT_DRIVER_MODULE_NAME);
+    loaded      = false;
+
+    stream = fopen("/proc/modules", "r");
+    if (stream == NULL)
+    {
+        return false;
+    }
+
+    while (fgets(line, sizeof(line), stream) != NULL)
+    {
+        if (strncmp(line, LINKG_NAT_DRIVER_MODULE_NAME, name_length) != 0)
+        {
+            continue;
+        }
+
+        if (line[name_length] != ' ')
+        {
+            continue;
+        }
+
+        loaded = true;
+        break;
+    }
+
+    (void)fclose(stream);
+
+    return loaded;
+}
+
+/**
+ * @brief 获取Fast NAT内核模块文件路径。
+ *
+ * linkg_fast_nat.ko与linkg可执行程序部署在同一目录，
+ * 避免依赖固定rootfs路径和modules.dep。
+ */
+static int _linkg_nat_driver_module_path(char *path, size_t path_size)
+{
+    char   *separator;
+    ssize_t length;
+    size_t  directory_length;
+    size_t  module_length;
+
+    if (path == NULL || path_size == 0U)
     {
         return -EINVAL;
     }
 
-    length = snprintf(buffer, buffer_size, "%s/%u", address, (unsigned int)prefix_length);
+    length = readlink("/proc/self/exe", path, path_size - 1U);
     if (length < 0)
     {
-        return -EIO;
+        return -errno;
     }
 
-    if ((size_t)length >= buffer_size)
+    if ((size_t)length >= path_size - 1U)
     {
         return -ENOBUFS;
     }
 
+    path[length] = '\0';
+
+    separator = strrchr(path, '/');
+    if (separator == NULL)
+    {
+        return -EINVAL;
+    }
+
+    directory_length = (size_t)(separator - path) + 1U;
+    module_length    = strlen(LINKG_NAT_DRIVER_MODULE_FILE);
+
+    if (directory_length + module_length + 1U > path_size)
+    {
+        return -ENOBUFS;
+    }
+
+    memcpy(path + directory_length,
+           LINKG_NAT_DRIVER_MODULE_FILE,
+           module_length + 1U);
+
     return 0;
 }
 
-/****************************** iptables辅助 ******************************/
-
 /**
- * @brief 创建LinkG专用iptables NAT Chain。
- */
-static int _linkg_nat_chain_create(const char *chain)
-{
-    if (chain == NULL)
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-N", chain,
-                        NULL);
-}
-
-/**
- * @brief 清空LinkG专用iptables NAT Chain。
- */
-static int _linkg_nat_chain_flush(const char *chain)
-{
-    if (chain == NULL)
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-F", chain,
-                        NULL);
-}
-
-/**
- * @brief 删除LinkG专用iptables NAT Chain。
- */
-static int _linkg_nat_chain_delete(const char *chain)
-{
-    if (chain == NULL)
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-X", chain,
-                        NULL);
-}
-
-/**
- * @brief 将LinkG专用Chain挂接到iptables内建Chain首部。
- */
-static int _linkg_nat_jump_add(const char *parent_chain, const char *target_chain)
-{
-    if (parent_chain == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (target_chain == NULL)
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-I", parent_chain, "1",
-                        "-j", target_chain,
-                        NULL);
-}
-
-/**
- * @brief 从iptables内建Chain删除LinkG专用Chain跳转。
- */
-static int _linkg_nat_jump_remove(const char *parent_chain, const char *target_chain)
-{
-    if (parent_chain == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (target_chain == NULL)
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-D", parent_chain,
-                        "-j", target_chain,
-                        NULL);
-}
-
-/**
- * @brief 清理可能由上次异常退出遗留的LinkG NAT规则。
+ * @brief 加载Fast NAT内核模块。
  *
- * 清理仅操作LinkG专用Chain及对应跳转，不修改系统其他NAT规则。
- * 该接口用于启动前恢复确定状态，因此忽略规则不存在等错误。
+ * 模块已经加载时直接接管该模块生命周期；
+ * insmod失败后再次确认实际状态，兼容重复加载场景。
  */
-static void _linkg_nat_rules_cleanup_stale(void)
+static int _linkg_nat_driver_module_load(void)
 {
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-D", "PREROUTING",
-                        "-j", LINKG_NAT_CHAIN_PREROUTING,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-D", "OUTPUT",
-                        "-j", LINKG_NAT_CHAIN_OUTPUT,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-D", "POSTROUTING",
-                        "-j", LINKG_NAT_CHAIN_POSTROUTING,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-F", LINKG_NAT_CHAIN_PREROUTING,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-F", LINKG_NAT_CHAIN_OUTPUT,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-F", LINKG_NAT_CHAIN_POSTROUTING,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-X", LINKG_NAT_CHAIN_PREROUTING,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-X", LINKG_NAT_CHAIN_OUTPUT,
-                        NULL);
-
-    linkg_os_run_ignore(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-X", LINKG_NAT_CHAIN_POSTROUTING,
-                        NULL);
-}
-
-/****************************** PREROUTING规则 ******************************/
-
-/**
- * @brief 安装远端LinkG流量访问本节点虚拟Endpoint子网的Destination NETMAP规则。
- *
- * 从linkg0进入且目标属于本节点虚拟Endpoint子网的流量，
- * 在路由判断前映射为本节点Ethernet真实主机地址。
- */
-static int _linkg_nat_remote_destination_netmap_add(void)
-{
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
+    char module_path[PATH_MAX];
+    int  saved_errno;
     int  ret;
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
+    if (_linkg_nat_driver_module_loaded())
+    {
+        g_nat.driver_loaded = true;
+        return 0;
+    }
+
+    memset(module_path, 0, sizeof(module_path));
+
+    ret = _linkg_nat_driver_module_path(module_path, sizeof(module_path));
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
-    if (ret != 0)
+    if (access(module_path, R_OK) != 0)
+    {
+        saved_errno = errno;
+        return -saved_errno;
+    }
+
+    ret = linkg_os_run("insmod", module_path, NULL);
+    if (ret != 0 && !_linkg_nat_driver_module_loaded())
     {
         return ret;
     }
 
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_PREROUTING,
-                        "-i", LINKG_RESOURCE_INTERFACE_TUN,
-                        "-d", local_virtual_subnet,
-                        "-j", "NETMAP",
-                        "--to", ethernet_network,
-                        NULL);
+    if (!_linkg_nat_driver_module_loaded())
+    {
+        return -ENODEV;
+    }
+
+    g_nat.driver_loaded = true;
+
+    return 0;
 }
 
 /**
- * @brief 安装本地Ethernet访问本节点虚拟Endpoint子网的Destination NETMAP规则。
+ * @brief 卸载Fast NAT内核模块。
  *
- * 从eth0进入且目标属于本节点虚拟Endpoint子网的流量，
- * 在路由判断前直接映射为本节点Ethernet真实主机地址。
+ * 调用前必须关闭字符设备句柄，释放file_operations.owner产生的模块引用。
  */
-static int _linkg_nat_local_ethernet_destination_netmap_add(void)
-{
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
-    int  ret;
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_PREROUTING,
-                        "-i", LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        "-d", local_virtual_subnet,
-                        "-j", "NETMAP",
-                        "--to", ethernet_network,
-                        NULL);
-}
-
-/****************************** OUTPUT规则 ******************************/
-
-/**
- * @brief 安装本机访问自身虚拟Endpoint子网的Destination NETMAP规则。
- *
- * 本机产生且目标属于本节点虚拟Endpoint子网的流量直接映射为
- * Ethernet真实主机地址，避免本节点流量错误进入linkg0。
- */
-static int _linkg_nat_local_output_destination_netmap_add(void)
-{
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
-    int  ret;
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_OUTPUT,
-                        "-d", local_virtual_subnet,
-                        "-j", "NETMAP",
-                        "--to", ethernet_network,
-                        NULL);
-}
-
-/****************************** POSTROUTING规则 ******************************/
-
-/**
- * @brief 安装Ethernet发送到LinkG虚拟网络的Source NETMAP规则。
- *
- * 本地Ethernet主机访问LinkG虚拟网络并从linkg0发送时，
- * 将源地址映射为本节点虚拟Endpoint地址并保持Host部分不变。
- */
-static int _linkg_nat_source_netmap_add(void)
-{
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    char local_virtual_subnet[LINKG_NAT_IPV4_CIDR_SIZE];
-    char virtual_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    int  ret;
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.local_virtual_subnet, local_virtual_subnet, sizeof(local_virtual_subnet));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.virtual_network, virtual_network, sizeof(virtual_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_POSTROUTING,
-                        "-s", ethernet_network,
-                        "-d", virtual_network,
-                        "-o", LINKG_RESOURCE_INTERFACE_TUN,
-                        "-j", "NETMAP",
-                        "--to", local_virtual_subnet,
-                        NULL);
-}
-
-/**
- * @brief 安装虚拟Endpoint流量访问本地Ethernet时的SNAT规则。
- *
- * 从LinkG虚拟Endpoint地址空间进入本节点Ethernet的流量统一使用
- * 本机Ethernet网关地址作为源地址，保证终端回包经过本节点。
- */
-static int _linkg_nat_virtual_ethernet_snat_add(void)
-{
-    char ethernet_address[LINKG_NAT_IPV4_ADDRESS_SIZE];
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    char virtual_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    int  ret;
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.virtual_network, virtual_network, sizeof(virtual_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip, ethernet_address, sizeof(ethernet_address)))
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_POSTROUTING,
-                        "-s", virtual_network,
-                        "-d", ethernet_network,
-                        "-o", LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        "-j", "SNAT",
-                        "--to-source", ethernet_address,
-                        NULL);
-}
-
-/**
- * @brief 安装TUN节点地址访问本地Ethernet时的SNAT规则。
- *
- * 从LinkG TUN节点地址空间进入本节点Ethernet的流量统一使用
- * 本机Ethernet网关地址作为源地址，避免内部TUN地址暴露给Ethernet终端。
- */
-static int _linkg_nat_tun_ethernet_snat_add(void)
-{
-    char ethernet_address[LINKG_NAT_IPV4_ADDRESS_SIZE];
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    char tun_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    int  ret;
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.tun_network, tun_network, sizeof(tun_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip, ethernet_address, sizeof(ethernet_address)))
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_POSTROUTING,
-                        "-s", tun_network,
-                        "-d", ethernet_network,
-                        "-o", LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        "-j", "SNAT",
-                        "--to-source", ethernet_address,
-                        NULL);
-}
-
-/**
- * @brief 安装本地Ethernet虚拟地址回环访问的Hairpin SNAT规则。
- *
- * 本地Ethernet设备通过本节点虚拟地址访问同一Ethernet子网内设备时，
- * 将源地址转换为本机Ethernet网关地址，强制目标设备回包经过本节点，
- * 使conntrack可以完成Destination NETMAP反向恢复。
- */
-static int _linkg_nat_hairpin_snat_add(void)
-{
-    char ethernet_address[LINKG_NAT_IPV4_ADDRESS_SIZE];
-    char ethernet_network[LINKG_NAT_IPV4_CIDR_SIZE];
-    int  ret;
-
-    ret = _linkg_nat_ipv4_config_to_cidr(&g_nat.ethernet_network, ethernet_network, sizeof(ethernet_network));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (!linkg_network_ipv4_to_string(&g_nat.ethernet.ip, ethernet_address, sizeof(ethernet_address)))
-    {
-        return -EINVAL;
-    }
-
-    return linkg_os_run(LINKG_NAT_IPTABLES_PROGRAM,
-                        "-t", "nat",
-                        "-A", LINKG_NAT_CHAIN_POSTROUTING,
-                        "-s", ethernet_network,
-                        "-d", ethernet_network,
-                        "-o", LINKG_RESOURCE_INTERFACE_ETHERNET,
-                        "-j", "SNAT",
-                        "--to-source", ethernet_address,
-                        NULL);
-}
-
-/****************************** 规则管理 ******************************/
-
-/**
- * @brief 安装LinkG NAT规则。
- *
- * 启动前删除可能存在的LinkG遗留规则，然后重新创建专用Chain。
- * 所有业务规则建立完成后才挂接到iptables内建Chain，
- * 任一步骤失败均清理当前安装结果。
- */
-static int _linkg_nat_rules_install(void)
+static int _linkg_nat_driver_module_unload(void)
 {
     int ret;
 
-    _linkg_nat_rules_cleanup_stale();
-
-    ret = _linkg_nat_chain_create(LINKG_NAT_CHAIN_PREROUTING);
-    if (ret != 0)
+    if (!_linkg_nat_driver_module_loaded())
     {
-        _linkg_nat_rules_cleanup_stale();
+        g_nat.driver_loaded = false;
+        return 0;
+    }
+
+    ret = linkg_os_run("rmmod", LINKG_NAT_DRIVER_MODULE_NAME, NULL);
+    if (ret != 0 && _linkg_nat_driver_module_loaded())
+    {
         return ret;
     }
 
-    ret = _linkg_nat_chain_create(LINKG_NAT_CHAIN_OUTPUT);
-    if (ret != 0)
+    if (_linkg_nat_driver_module_loaded())
     {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
+        return -EBUSY;
     }
 
-    ret = _linkg_nat_chain_create(LINKG_NAT_CHAIN_POSTROUTING);
-    if (ret != 0)
+    g_nat.driver_loaded = false;
+
+    return 0;
+}
+
+/****************************** 驱动控制 ******************************/
+
+/**
+ * @brief 打开Fast NAT字符设备。
+ */
+static int _linkg_nat_driver_open(void)
+{
+    uint32_t attempt;
+    int      saved_errno;
+    int      fd;
+
+    if (g_nat.driver_fd >= 0)
     {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
+        return 0;
     }
 
-    // PREROUTING规则。
-    ret = _linkg_nat_remote_destination_netmap_add();
-    if (ret != 0)
+    saved_errno = ENODEV;
+
+    for (attempt = 0U;
+         attempt < LINKG_NAT_DRIVER_OPEN_RETRY_COUNT;
+         attempt++)
     {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
+        fd = open(LINKG_FAST_NAT_DEVICE_PATH, O_RDWR | O_CLOEXEC);
+        if (fd >= 0)
+        {
+            g_nat.driver_fd = fd;
+            return 0;
+        }
+
+        saved_errno = errno;
+        if (saved_errno != ENOENT && saved_errno != ENODEV)
+        {
+            return -saved_errno;
+        }
+
+        usleep(LINKG_NAT_DRIVER_OPEN_RETRY_US);
     }
 
-    ret = _linkg_nat_local_ethernet_destination_netmap_add();
-    if (ret != 0)
+    return -saved_errno;
+}
+
+/**
+ * @brief 关闭Fast NAT字符设备。
+ */
+static int _linkg_nat_driver_close(void)
+{
+    int ret;
+
+    if (g_nat.driver_fd < 0)
     {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
+        return 0;
     }
 
-    // OUTPUT规则。
-    ret = _linkg_nat_local_output_destination_netmap_add();
-    if (ret != 0)
-    {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
-    }
+    ret = close(g_nat.driver_fd);
 
-    // POSTROUTING规则。
-    ret = _linkg_nat_source_netmap_add();
-    if (ret != 0)
-    {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
-    }
+    g_nat.driver_fd = -1;
 
-    ret = _linkg_nat_virtual_ethernet_snat_add();
     if (ret != 0)
     {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
-    }
-
-    ret = _linkg_nat_tun_ethernet_snat_add();
-    if (ret != 0)
-    {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
-    }
-
-    ret = _linkg_nat_hairpin_snat_add();
-    if (ret != 0)
-    {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
-    }
-
-    // 所有业务规则完成后再挂接内建Chain。
-    ret = _linkg_nat_jump_add("PREROUTING", LINKG_NAT_CHAIN_PREROUTING);
-    if (ret != 0)
-    {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
-    }
-
-    ret = _linkg_nat_jump_add("OUTPUT", LINKG_NAT_CHAIN_OUTPUT);
-    if (ret != 0)
-    {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
-    }
-
-    ret = _linkg_nat_jump_add("POSTROUTING", LINKG_NAT_CHAIN_POSTROUTING);
-    if (ret != 0)
-    {
-        _linkg_nat_rules_cleanup_stale();
-        return ret;
+        return -errno;
     }
 
     return 0;
 }
 
 /**
- * @brief 删除LinkG NAT规则。
- *
- * 先解除内建Chain跳转，再清空并删除LinkG专用Chain。
- * 删除过程中继续执行剩余清理步骤并返回首次发生的错误。
+ * @brief 向Fast NAT驱动下发ioctl命令。
  */
-static int _linkg_nat_rules_remove(void)
+static int _linkg_nat_driver_ioctl(unsigned long command, void *argument)
 {
-    int first_error;
     int ret;
 
-    first_error = 0;
-
-    ret = _linkg_nat_jump_remove("PREROUTING", LINKG_NAT_CHAIN_PREROUTING);
-    if (ret != 0 && first_error == 0)
+    if (g_nat.driver_fd < 0)
     {
-        first_error = ret;
+        return -ENODEV;
     }
 
-    ret = _linkg_nat_jump_remove("OUTPUT", LINKG_NAT_CHAIN_OUTPUT);
-    if (ret != 0 && first_error == 0)
+    ret = ioctl(g_nat.driver_fd, command, argument);
+    if (ret < 0)
     {
-        first_error = ret;
+        return -errno;
     }
 
-    ret = _linkg_nat_jump_remove("POSTROUTING", LINKG_NAT_CHAIN_POSTROUTING);
-    if (ret != 0 && first_error == 0)
+    return 0;
+}
+
+/**
+ * @brief 向Fast NAT驱动设置本节点运行配置。
+ */
+static int _linkg_nat_driver_configure(void)
+{
+    linkg_fast_nat_config_t config;
+    int                     ret;
+
+    memset(&config, 0, sizeof(config));
+
+    ret = _linkg_nat_build_driver_config(&config);
+    if (ret != 0)
     {
-        first_error = ret;
+        return ret;
     }
 
-    ret = _linkg_nat_chain_flush(LINKG_NAT_CHAIN_PREROUTING);
-    if (ret != 0 && first_error == 0)
+    return _linkg_nat_driver_ioctl(
+        LINKG_FAST_NAT_IOC_SET_CONFIG,
+        &config);
+}
+
+/**
+ * @brief 校验Fast NAT驱动启动后的运行状态。
+ */
+static int _linkg_nat_driver_validate_running(void)
+{
+    linkg_fast_nat_status_t status;
+    int                     ret;
+
+    memset(&status, 0, sizeof(status));
+
+    ret = _linkg_nat_driver_ioctl(
+        LINKG_FAST_NAT_IOC_GET_STATUS,
+        &status);
+    if (ret != 0)
     {
-        first_error = ret;
+        return ret;
     }
 
-    ret = _linkg_nat_chain_flush(LINKG_NAT_CHAIN_OUTPUT);
-    if (ret != 0 && first_error == 0)
+    if (status.version != LINKG_FAST_NAT_UAPI_VERSION ||
+        status.struct_size != sizeof(status))
     {
-        first_error = ret;
+        return -EPROTO;
     }
 
-    ret = _linkg_nat_chain_flush(LINKG_NAT_CHAIN_POSTROUTING);
-    if (ret != 0 && first_error == 0)
+    if (status.state != LINKG_FAST_NAT_STATE_RUNNING)
     {
-        first_error = ret;
+        return -EIO;
     }
 
-    ret = _linkg_nat_chain_delete(LINKG_NAT_CHAIN_PREROUTING);
-    if (ret != 0 && first_error == 0)
+    if (status.enabled_rules != LINKG_FAST_NAT_RULE_ALL)
     {
-        first_error = ret;
+        return -EIO;
     }
 
-    ret = _linkg_nat_chain_delete(LINKG_NAT_CHAIN_OUTPUT);
-    if (ret != 0 && first_error == 0)
-    {
-        first_error = ret;
-    }
-
-    ret = _linkg_nat_chain_delete(LINKG_NAT_CHAIN_POSTROUTING);
-    if (ret != 0 && first_error == 0)
-    {
-        first_error = ret;
-    }
-
-    return first_error;
+    return 0;
 }
 
 /****************************** 生命周期 ******************************/
@@ -809,8 +555,8 @@ static int _linkg_nat_rules_remove(void)
 /**
  * @brief 初始化NAT管理模块。
  *
- * 根据网络配置提前计算并缓存NAT规则所需的地址信息。
- * 本阶段仅初始化模块软件状态，不修改系统iptables规则。
+ * 初始化阶段仅缓存当前节点网络参数。
+ * Fast NAT驱动需要依赖运行中的linkg0，因此字符设备配置在start阶段完成。
  */
 int linkg_nat_init(const linkg_network_config_t *network_config)
 {
@@ -843,10 +589,10 @@ int linkg_nat_init(const linkg_network_config_t *network_config)
 }
 
 /**
- * @brief 启动NAT管理模块。
+ * @brief 启动Fast NAT。
  *
- * 安装本节点虚拟网络与Ethernet网络之间的NAT规则。
- * 只有全部规则安装成功后模块才进入启动状态。
+ * linkg0已经由TUN模块创建后，解析Ethernet和TUN接口ifindex，
+ * 将现有7条固定规则所需参数一次性下发给内核驱动并启动数据面。
  */
 int linkg_nat_start(void)
 {
@@ -862,9 +608,51 @@ int linkg_nat_start(void)
         return 0;
     }
 
-    ret = _linkg_nat_rules_install();
+    /*
+     * NAT控制模块拥有Fast NAT内核模块完整生命周期。
+     * start首先加载ko，然后打开字符设备、下发配置并启动数据面。
+     */
+    ret = _linkg_nat_driver_module_load();
     if (ret != 0)
     {
+        return ret;
+    }
+
+    ret = _linkg_nat_driver_open();
+    if (ret != 0)
+    {
+        (void)_linkg_nat_driver_module_unload();
+        return ret;
+    }
+
+    ret = _linkg_nat_driver_configure();
+    if (ret != 0)
+    {
+        (void)_linkg_nat_driver_close();
+        (void)_linkg_nat_driver_module_unload();
+        return ret;
+    }
+
+    ret = _linkg_nat_driver_ioctl(
+        LINKG_FAST_NAT_IOC_START,
+        NULL);
+    if (ret != 0)
+    {
+        (void)_linkg_nat_driver_close();
+        (void)_linkg_nat_driver_module_unload();
+        return ret;
+    }
+
+    ret = _linkg_nat_driver_validate_running();
+    if (ret != 0)
+    {
+        (void)_linkg_nat_driver_ioctl(
+            LINKG_FAST_NAT_IOC_STOP,
+            NULL);
+
+        (void)_linkg_nat_driver_close();
+        (void)_linkg_nat_driver_module_unload();
+
         return ret;
     }
 
@@ -874,12 +662,11 @@ int linkg_nat_start(void)
 }
 
 /**
- * @brief 停止NAT管理模块。
- *
- * 删除LinkG安装的NAT规则。
+ * @brief 停止Fast NAT。
  */
 int linkg_nat_stop(void)
 {
+    int first_error;
     int ret;
 
     if (!g_nat.initialized)
@@ -887,29 +674,54 @@ int linkg_nat_stop(void)
         return -ENODEV;
     }
 
-    if (!g_nat.started)
-    {
-        return 0;
-    }
+    first_error = 0;
 
-    ret = _linkg_nat_rules_remove();
-    if (ret != 0)
+    /*
+     * 即使异常流程中started未置位，只要字符设备仍然打开，
+     * 仍尝试STOP；驱动侧STOP本身为幂等操作。
+     */
+    if (g_nat.driver_fd >= 0)
     {
-        return ret;
+        ret = _linkg_nat_driver_ioctl(
+            LINKG_FAST_NAT_IOC_STOP,
+            NULL);
+        if (ret != 0 && first_error == 0)
+        {
+            first_error = ret;
+        }
     }
 
     g_nat.started = false;
 
-    return 0;
+    /*
+     * 必须先close字符设备，释放THIS_MODULE引用，
+     * 再卸载linkg_fast_nat.ko。
+     */
+    ret = _linkg_nat_driver_close();
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    ret = _linkg_nat_driver_module_unload();
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    return first_error;
 }
 
 /**
  * @brief 反初始化NAT管理模块。
  *
- * 调用前NAT模块必须已经停止。
+ * 调用前Fast NAT必须已经停止。
  */
 int linkg_nat_deinit(void)
 {
+    int first_error;
+    int ret;
+
     if (!g_nat.initialized)
     {
         return 0;
@@ -920,9 +732,32 @@ int linkg_nat_deinit(void)
         return -EBUSY;
     }
 
+    first_error = 0;
+
+    /*
+     * 正常路径下stop已经完成close+rmmod。
+     * 这里保留兜底清理，处理start中途失败等异常状态。
+     */
+    ret = _linkg_nat_driver_close();
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    ret = _linkg_nat_driver_module_unload();
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    if (first_error != 0)
+    {
+        return first_error;
+    }
+
     memset(&g_nat, 0, sizeof(g_nat));
 
-    g_nat.node_id = LINKG_RESOURCE_NODE_ID_INVALID;
+    g_nat.driver_fd = -1;
 
     return 0;
 }

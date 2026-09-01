@@ -1,0 +1,44 @@
+LinkG Cellular V1 State Machine - Host Validation
+Date: 2026-09-01
+
+Production sources:
+- cellular_runtime.h/.c
+- cellular_monitor.h/.c
+- linkg_cellular.c
+- rg255_runtime_urc.h/.c
+
+Compiler checks completed:
+- GCC C17: -Wall -Wextra -Wpedantic -Werror
+- Clang C17: -Wall -Wextra -Wpedantic -Werror
+- GCC -fanalyzer object analysis
+- AddressSanitizer + UndefinedBehaviorSanitizer
+
+Executed tests:
+- cellular_runtime_test: PASS
+- cellular_monitor_test: PASS
+- rg255_runtime_urc_test: PASS
+- bootstrap_single_restart_test: PASS
+- owner_happy_path_test: PASS
+- owner_pin_missing_test: PASS
+- owner_pin_once_test: PASS
+- owner_sim_removal_test: PASS
+- owner_verify_failure_test: PASS
+
+Covered behavior:
+- Runtime lifecycle, SIM session, state deadline and retry
+- Monitor URC coalescing and eventfd notification
+- CEREG/C5GREG/QCSQ runtime URC commands
+- Bootstrap Query-before-write and exactly one CFUN restart
+- Normal SIM READY -> Registration -> PDP -> Netdev -> Host -> IPv4/IPv6 verify -> ONLINE
+- Missing PIN does not send AT+CPIN
+- Configured PIN is attempted once per SIM insertion session
+- SIM removal tears down QNETDEV/PDP and returns to WAIT_SIM
+- Connectivity verification failure tears down the session and enters retry handling
+
+Not executed in this environment:
+- T113 ARM cross-build
+- Real /dev/ttyUSB1 AT channel
+- Real RG255 URC timing
+- Real SIM insertion/removal
+- Real carrier registration, PDP, QNETDEV and usb0 convergence
+- Real IPv4/IPv6 connectivity probe on target board

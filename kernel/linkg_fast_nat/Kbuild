@@ -1,0 +1,3 @@
+obj-m += linkg_fast_nat.o
+
+ccflags-y += -I$(src)
