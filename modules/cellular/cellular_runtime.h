@@ -30,6 +30,7 @@ typedef enum
     CELLULAR_RUNTIME_STATE_WAIT_PDP,              // 等待并确认默认PDP上下文已经激活
     CELLULAR_RUNTIME_STATE_START_NETDEV,          // 请求启动RG255 USB网络设备连接
     CELLULAR_RUNTIME_STATE_WAIT_NETDEV,           // 等待并确认USB网络设备已经连接
+    CELLULAR_RUNTIME_STATE_PREPARE_HOST,          // 准备Linux Host蜂窝接口运行环境
     CELLULAR_RUNTIME_STATE_WAIT_HOST,             // 等待Linux Host网络配置收敛
     CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY,   // 验证IPv4和IPv6实际互联网连通性
     CELLULAR_RUNTIME_STATE_ONLINE,                // 蜂窝数据链已经验证可用并进入维护阶段

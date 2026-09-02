@@ -558,7 +558,8 @@ const char *cellular_runtime_state_name(cellular_runtime_state_t state)
 
         case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
             return "WAIT_NETDEV";
-
+        case CELLULAR_RUNTIME_STATE_PREPARE_HOST:
+            return "PREPARE_HOST";
         case CELLULAR_RUNTIME_STATE_WAIT_HOST:
             return "WAIT_HOST";
 
