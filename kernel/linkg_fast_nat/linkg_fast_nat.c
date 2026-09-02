@@ -1519,7 +1519,7 @@ static unsigned int _linkg_fast_nat_postrouting(void *priv, struct sk_buff *skb,
         _linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network) &&
         _linkg_fast_nat_source_netmap_destination_match(iph->daddr))
     {
-        if (_linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network))
+        if ((skb->mark & LINKG_FAST_NAT_MARK_REVERSE) == 0U && _linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network))
         {
             ret = _linkg_fast_nat_flow_track_source_netmap(skb);
             if (ret != 0)
