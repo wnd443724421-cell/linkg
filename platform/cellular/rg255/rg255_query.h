@@ -7,6 +7,7 @@
 #define RG255_QUERY_H
 
 #include <netinet/in.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -135,9 +136,9 @@ int rg255_query_network_card_ipv6(at_channel_t *channel, rg255_network_card_ipv6
 
 /****************************** PDP查询 ******************************/
 
-int rg255_query_pdp_config(at_channel_t *channel, rg255_pdp_config_t *config);
-int rg255_query_pdp_active(at_channel_t *channel, bool *active);
-int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address);
+int rg255_query_pdp_configs(at_channel_t *channel, rg255_pdp_config_t *configs, size_t capacity, size_t *count);
+int rg255_query_pdp_active(at_channel_t *channel, uint8_t cid, bool *active);
+int rg255_query_pdp_address(at_channel_t *channel, uint8_t cid, rg255_pdp_address_t *address);
 
 /****************************** 网络设备查询 ******************************/
 

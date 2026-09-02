@@ -23,6 +23,7 @@
 /****************************** 解析常量 ******************************/
 
 #define RG255_QUERY_RESPONSE_SIZE          2048U           // 单次查询响应缓存大小
+#define RG255_QUERY_PDP_RESPONSE_SIZE      8192U           // PDP配置全表查询响应缓存大小
 #define RG255_QUERY_FIELD_MAX              40U             // 单行最多解析字段数量
 #define RG255_QUERY_CME_SIM_NOT_INSERTED   10              // SIM未插入CME错误码
 #define RG255_QUERY_CME_SIM_PIN_REQUIRED   11              // SIM需要PIN的CME错误码
@@ -2143,32 +2144,35 @@ int rg255_query_network_card_ipv6(at_channel_t *channel, rg255_network_card_ipv6
 /****************************** PDP查询 ******************************/
 
 /**
- * @brief 查询并解析默认PDP上下文配置。
+ * @brief 查询并解析全部PDP上下文配置事实。
  */
-int rg255_query_pdp_config(at_channel_t *channel, rg255_pdp_config_t *config)
+int rg255_query_pdp_configs(at_channel_t *channel, rg255_pdp_config_t *configs, size_t capacity, size_t *count)
 {
-    char response[RG255_QUERY_RESPONSE_SIZE];
+    char response[RG255_QUERY_PDP_RESPONSE_SIZE];
     char *fields[RG255_QUERY_FIELD_MAX];
     char *line;
     char *saveptr;
     char *body;
     char *text;
+    rg255_pdp_config_t *config;
     size_t field_count;
+    size_t parsed_count;
     size_t prefix_length;
     int cid;
     int ret;
 
-    if (channel == NULL || config == NULL)
+    if (channel == NULL || configs == NULL || capacity == 0U ||
+        capacity > RG255_PDP_CONTEXT_MAX || count == NULL)
     {
         return -EINVAL;
     }
 
-    memset(config, 0, sizeof(*config));
-    config->pdp_type = RG255_PDP_TYPE_UNKNOWN;
-    response[0] = '\0';
+    memset(configs, 0, capacity * sizeof(*configs));
+    *count       = 0U;
+    parsed_count = 0U;
+    response[0]  = '\0';
 
     ret = rg255_cmd_query_pdp_config(channel, response, sizeof(response));
-
     if (ret != 0)
     {
         return ret;
@@ -2215,12 +2219,17 @@ int rg255_query_pdp_config(at_channel_t *channel, rg255_pdp_config_t *config)
             return ret;
         }
 
-        if (cid != (int)RG255_PDP_CONTEXT_ID)
+        if (cid < (int)RG255_PDP_CONTEXT_ID_MIN || cid > (int)RG255_PDP_CONTEXT_ID_MAX)
         {
-            line = strtok_r(NULL, "\r\n", &saveptr);
-            continue;
+            return -EBADMSG;
         }
 
+        if (parsed_count >= capacity)
+        {
+            return -ENOSPC;
+        }
+
+        config = &configs[parsed_count];
         config->cid = (uint8_t)cid;
 
         ret = _rg255_query_get_field_text(fields[1], &text);
@@ -2232,11 +2241,6 @@ int rg255_query_pdp_config(at_channel_t *channel, rg255_pdp_config_t *config)
 
         config->pdp_type = _rg255_query_map_pdp_type(text);
 
-        if (config->pdp_type == RG255_PDP_TYPE_UNKNOWN)
-        {
-            return -EOPNOTSUPP;
-        }
-
         ret = _rg255_query_get_field_text(fields[2], &text);
 
         if (ret != 0)
@@ -2244,16 +2248,25 @@ int rg255_query_pdp_config(at_channel_t *channel, rg255_pdp_config_t *config)
             return ret;
         }
 
-        return _rg255_query_copy_text(config->apn, sizeof(config->apn), text);
+        ret = _rg255_query_copy_text(config->apn, sizeof(config->apn), text);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        parsed_count++;
+        line = strtok_r(NULL, "\r\n", &saveptr);
     }
 
-    return -ENOENT;
+    *count = parsed_count;
+
+    return 0;
 }
 
 /**
- * @brief 查询并解析默认PDP上下文激活状态。
+ * @brief 查询并解析指定PDP上下文激活状态。
  */
-int rg255_query_pdp_active(at_channel_t *channel, bool *active)
+int rg255_query_pdp_active(at_channel_t *channel, uint8_t cid, bool *active)
 {
     char response[RG255_QUERY_RESPONSE_SIZE];
     char *fields[RG255_QUERY_FIELD_MAX];
@@ -2263,11 +2276,16 @@ int rg255_query_pdp_active(at_channel_t *channel, bool *active)
     char *text;
     size_t field_count;
     size_t prefix_length;
-    int cid;
+    int response_cid;
     int state;
     int ret;
 
     if (channel == NULL || active == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX)
     {
         return -EINVAL;
     }
@@ -2316,14 +2334,14 @@ int rg255_query_pdp_active(at_channel_t *channel, bool *active)
             return ret;
         }
 
-        ret = _rg255_query_parse_int(text, &cid);
+        ret = _rg255_query_parse_int(text, &response_cid);
 
         if (ret != 0)
         {
             return ret;
         }
 
-        if (cid != (int)RG255_PDP_CONTEXT_ID)
+        if (response_cid != (int)cid)
         {
             line = strtok_r(NULL, "\r\n", &saveptr);
             continue;
@@ -2362,9 +2380,9 @@ int rg255_query_pdp_active(at_channel_t *channel, bool *active)
 }
 
 /**
- * @brief 查询并解析默认PDP上下文模组地址。
+ * @brief 查询并解析指定PDP上下文模组地址。
  */
-int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
+int rg255_query_pdp_address(at_channel_t *channel, uint8_t cid, rg255_pdp_address_t *address)
 {
     char response[RG255_QUERY_RESPONSE_SIZE];
     char *fields[RG255_QUERY_FIELD_MAX];
@@ -2372,7 +2390,7 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
     char *text;
     size_t field_count;
     size_t index;
-    int cid;
+    int response_cid;
     int ret;
 
     if (channel == NULL || address == NULL)
@@ -2380,10 +2398,15 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
         return -EINVAL;
     }
 
+    if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX)
+    {
+        return -EINVAL;
+    }
+
     memset(address, 0, sizeof(*address));
     response[0] = '\0';
 
-    ret = rg255_cmd_query_pdp_address(channel, response, sizeof(response));
+    ret = rg255_cmd_query_pdp_address(channel, cid, response, sizeof(response));
 
     if (ret != 0)
     {
@@ -2416,14 +2439,14 @@ int rg255_query_pdp_address(at_channel_t *channel, rg255_pdp_address_t *address)
         return ret;
     }
 
-    ret = _rg255_query_parse_int(text, &cid);
+    ret = _rg255_query_parse_int(text, &response_cid);
 
     if (ret != 0)
     {
         return ret;
     }
 
-    if (cid != (int)RG255_PDP_CONTEXT_ID)
+    if (response_cid != (int)cid)
     {
         return -EBADMSG;
     }

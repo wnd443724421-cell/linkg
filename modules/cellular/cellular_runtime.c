@@ -199,6 +199,8 @@ int cellular_runtime_begin_session(cellular_runtime_t *runtime, uint64_t now_ms)
     runtime->state_attempt_count = 0U;
     runtime->retry_count         = 0U;
     runtime->pin_attempted       = false;
+    runtime->selected_pdp_cid    = 0U;
+    runtime->pdp_cid_valid       = false;
     runtime->session_active      = true;
     runtime->retry_target_state  = CELLULAR_RUNTIME_STATE_NONE;
     runtime->next_action_ms      = 0U;
@@ -224,6 +226,8 @@ void cellular_runtime_end_session(cellular_runtime_t *runtime, uint64_t now_ms)
 
     runtime->session_active      = false;
     runtime->pin_attempted       = false;
+    runtime->selected_pdp_cid    = 0U;
+    runtime->pdp_cid_valid       = false;
     runtime->state_attempt_count = 0U;
     runtime->retry_count         = 0U;
     runtime->retry_target_state  = CELLULAR_RUNTIME_STATE_NONE;
@@ -510,6 +514,65 @@ int cellular_runtime_mark_pin_attempted(cellular_runtime_t *runtime, uint64_t no
     _cellular_runtime_commit(runtime, now_ms);
 
     return 0;
+}
+
+/****************************** PDP上下文 ******************************/
+
+/**
+ * @brief 保存当前SIM会话由Owner选择的数据PDP上下文ID。
+ */
+int cellular_runtime_set_pdp_cid(cellular_runtime_t *runtime, uint8_t cid, uint64_t now_ms)
+{
+    if (runtime == NULL || cid == 0U)
+    {
+        return -EINVAL;
+    }
+
+    if (!runtime->session_active)
+    {
+        return -ENODEV;
+    }
+
+    if (runtime->pdp_cid_valid && runtime->selected_pdp_cid == cid)
+    {
+        return 0;
+    }
+
+    runtime->selected_pdp_cid = cid;
+    runtime->pdp_cid_valid    = true;
+    _cellular_runtime_commit(runtime, now_ms);
+
+    return 0;
+}
+
+/**
+ * @brief 清除当前SIM会话保存的数据PDP上下文ID。
+ */
+void cellular_runtime_clear_pdp_cid(cellular_runtime_t *runtime, uint64_t now_ms)
+{
+    if (runtime == NULL || !runtime->pdp_cid_valid)
+    {
+        return;
+    }
+
+    runtime->selected_pdp_cid = 0U;
+    runtime->pdp_cid_valid    = false;
+    _cellular_runtime_commit(runtime, now_ms);
+}
+
+/**
+ * @brief 获取当前SIM会话由Owner选择的数据PDP上下文ID。
+ */
+bool cellular_runtime_get_pdp_cid(const cellular_runtime_t *runtime, uint8_t *cid)
+{
+    if (runtime == NULL || cid == NULL || !runtime->session_active || !runtime->pdp_cid_valid)
+    {
+        return false;
+    }
+
+    *cid = runtime->selected_pdp_cid;
+
+    return true;
 }
 
 /****************************** 状态查询 ******************************/

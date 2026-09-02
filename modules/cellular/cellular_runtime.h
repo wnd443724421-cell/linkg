@@ -71,9 +71,11 @@ typedef struct
     uint32_t                 state_attempt_count; // 当前状态已经执行的主动尝试次数
     uint32_t                 retry_count;         // 当前SIM会话累计完整连接重试次数
     int                      last_error;          // 最近一次状态失败错误码
+    uint8_t                  selected_pdp_cid;    // 当前SIM会话Owner选择的数据PDP上下文ID
     bool                     session_active;      // 当前是否处于一个已确认SIM插卡会话
     bool                     failure_valid;       // 是否存在最近一次有效失败记录
     bool                     pin_attempted;       // 当前SIM会话是否已经自动尝试过PIN
+    bool                     pdp_cid_valid;       // 当前SIM会话是否已经选择数据PDP上下文
 } cellular_runtime_t;
 
 /****************************** 生命周期 ******************************/
@@ -99,6 +101,12 @@ void cellular_runtime_clear_failure(cellular_runtime_t *runtime, uint64_t now_ms
 /****************************** PIN控制 ******************************/
 
 int cellular_runtime_mark_pin_attempted(cellular_runtime_t *runtime, uint64_t now_ms);
+
+/****************************** PDP上下文 ******************************/
+
+int  cellular_runtime_set_pdp_cid(cellular_runtime_t *runtime, uint8_t cid, uint64_t now_ms);
+void cellular_runtime_clear_pdp_cid(cellular_runtime_t *runtime, uint64_t now_ms);
+bool cellular_runtime_get_pdp_cid(const cellular_runtime_t *runtime, uint8_t *cid);
 
 /****************************** 状态查询 ******************************/
 

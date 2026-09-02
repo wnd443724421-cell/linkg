@@ -193,6 +193,19 @@ static int _rg255_cmd_check_format_result(int length, size_t buffer_size)
 }
 
 /**
+ * @brief 校验PDP上下文ID是否在RG255支持范围内。
+ */
+static int _rg255_cmd_validate_pdp_cid(uint8_t cid)
+{
+    if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX)
+    {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+/**
  * @brief 判断字符是否允许出现在APN中。
  */
 static bool _rg255_cmd_is_apn_char(unsigned char value)
@@ -679,11 +692,17 @@ int rg255_cmd_query_pdp_config(at_channel_t *channel, char *response, int respon
 /**
  * @brief 配置默认PDP上下文。
  */
-int rg255_cmd_set_pdp_context(at_channel_t *channel, const char *apn)
+int rg255_cmd_set_pdp_context(at_channel_t *channel, uint8_t cid, const char *apn)
 {
     char command[RG255_CMD_BUFFER_SIZE];
     int length;
     int ret;
+
+    ret = _rg255_cmd_validate_pdp_cid(cid);
+    if (ret != 0)
+    {
+        return ret;
+    }
 
     ret = _rg255_cmd_validate_apn(apn);
 
@@ -692,7 +711,7 @@ int rg255_cmd_set_pdp_context(at_channel_t *channel, const char *apn)
         return ret;
     }
 
-    length = snprintf(command, sizeof(command), "AT+CGDCONT=%d,\"IPV4V6\",\"%s\"", RG255_PDP_CONTEXT_ID, apn);
+    length = snprintf(command, sizeof(command), "AT+CGDCONT=%u,\"IPV4V6\",\"%s\"", (unsigned int)cid, apn);
     ret = _rg255_cmd_check_format_result(length, sizeof(command));
 
     if (ret != 0)
@@ -714,15 +733,21 @@ int rg255_cmd_query_pdp_state(at_channel_t *channel, char *response, int respons
 /**
  * @brief 设置默认PDP上下文激活状态。
  */
-int rg255_cmd_set_pdp_active(at_channel_t *channel, bool active)
+int rg255_cmd_set_pdp_active(at_channel_t *channel, uint8_t cid, bool active)
 {
     char command[RG255_CMD_BUFFER_SIZE];
     int state;
     int length;
     int ret;
 
+    ret = _rg255_cmd_validate_pdp_cid(cid);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     state = active ? 1 : 0;
-    length = snprintf(command, sizeof(command), "AT+CGACT=%d,%d", state, RG255_PDP_CONTEXT_ID);
+    length = snprintf(command, sizeof(command), "AT+CGACT=%d,%u", state, (unsigned int)cid);
     ret = _rg255_cmd_check_format_result(length, sizeof(command));
 
     if (ret != 0)
@@ -736,13 +761,19 @@ int rg255_cmd_set_pdp_active(at_channel_t *channel, bool active)
 /**
  * @brief 查询默认PDP上下文地址信息。
  */
-int rg255_cmd_query_pdp_address(at_channel_t *channel, char *response, int response_size)
+int rg255_cmd_query_pdp_address(at_channel_t *channel, uint8_t cid, char *response, int response_size)
 {
     char command[RG255_CMD_BUFFER_SIZE];
     int length;
     int ret;
 
-    length = snprintf(command, sizeof(command), "AT+CGPADDR=%d", RG255_PDP_CONTEXT_ID);
+    ret = _rg255_cmd_validate_pdp_cid(cid);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    length = snprintf(command, sizeof(command), "AT+CGPADDR=%u", (unsigned int)cid);
     ret = _rg255_cmd_check_format_result(length, sizeof(command));
 
     if (ret != 0)
@@ -756,13 +787,19 @@ int rg255_cmd_query_pdp_address(at_channel_t *channel, char *response, int respo
 /**
  * @brief 查询默认PDP上下文运行参数。
  */
-int rg255_cmd_query_pdp_runtime(at_channel_t *channel, char *response, int response_size)
+int rg255_cmd_query_pdp_runtime(at_channel_t *channel, uint8_t cid, char *response, int response_size)
 {
     char command[RG255_CMD_BUFFER_SIZE];
     int length;
     int ret;
 
-    length = snprintf(command, sizeof(command), "AT+CGCONTRDP=%d", RG255_PDP_CONTEXT_ID);
+    ret = _rg255_cmd_validate_pdp_cid(cid);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    length = snprintf(command, sizeof(command), "AT+CGCONTRDP=%u", (unsigned int)cid);
     ret = _rg255_cmd_check_format_result(length, sizeof(command));
 
     if (ret != 0)
@@ -778,17 +815,51 @@ int rg255_cmd_query_pdp_runtime(at_channel_t *channel, char *response, int respo
 /**
  * @brief 启动RG255 USB网络设备拨号。
  */
-int rg255_cmd_start_netdev(at_channel_t *channel)
+int rg255_cmd_start_netdev(at_channel_t *channel, uint8_t cid)
 {
-    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=1,1,1", RG255_CMD_TIMEOUT_NETDEV_MS);
+    char command[RG255_CMD_BUFFER_SIZE];
+    int  length;
+    int  ret;
+
+    ret = _rg255_cmd_validate_pdp_cid(cid);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    length = snprintf(command, sizeof(command), "AT+QNETDEVCTL=1,%u,1", (unsigned int)cid);
+    ret = _rg255_cmd_check_format_result(length, sizeof(command));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_cmd_exec(channel, command, RG255_CMD_TIMEOUT_NETDEV_MS);
 }
 
 /**
  * @brief 停止RG255 USB网络设备拨号。
  */
-int rg255_cmd_stop_netdev(at_channel_t *channel)
+int rg255_cmd_stop_netdev(at_channel_t *channel, uint8_t cid)
 {
-    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=0,1,0", RG255_CMD_TIMEOUT_NETDEV_MS);
+    char command[RG255_CMD_BUFFER_SIZE];
+    int  length;
+    int  ret;
+
+    ret = _rg255_cmd_validate_pdp_cid(cid);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    length = snprintf(command, sizeof(command), "AT+QNETDEVCTL=0,%u,0", (unsigned int)cid);
+    ret = _rg255_cmd_check_format_result(length, sizeof(command));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_cmd_exec(channel, command, RG255_CMD_TIMEOUT_NETDEV_MS);
 }
 
 /**
@@ -802,9 +873,26 @@ int rg255_cmd_query_netdev(at_channel_t *channel, char *response, int response_s
 /**
  * @brief 启用RG255 USB网络设备自动保持模式。
  */
-int rg255_cmd_enable_netdev_auto_keep(at_channel_t *channel)
+int rg255_cmd_enable_netdev_auto_keep(at_channel_t *channel, uint8_t cid)
 {
-    return _rg255_cmd_exec(channel, "AT+QNETDEVCTL=3,1,1", RG255_CMD_TIMEOUT_NETDEV_MS);
+    char command[RG255_CMD_BUFFER_SIZE];
+    int  length;
+    int  ret;
+
+    ret = _rg255_cmd_validate_pdp_cid(cid);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    length = snprintf(command, sizeof(command), "AT+QNETDEVCTL=3,%u,1", (unsigned int)cid);
+    ret = _rg255_cmd_check_format_result(length, sizeof(command));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _rg255_cmd_exec(channel, command, RG255_CMD_TIMEOUT_NETDEV_MS);
 }
 
 /****************************** 模块控制 ******************************/

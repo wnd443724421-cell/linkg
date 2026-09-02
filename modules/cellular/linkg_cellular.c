@@ -16,6 +16,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <strings.h>
 
 #include "linkg_log.h"
 #include "linkg_os.h"
@@ -191,6 +192,126 @@ static bool _linkg_cellular_action_error_fatal(int error)
         default:
             return false;
     }
+}
+
+/**
+ * @brief 判断两个APN是否大小写无关地完全一致。
+ */
+static bool _linkg_cellular_apn_equal(const char *left, const char *right)
+{
+    return left != NULL && right != NULL && strcasecmp(left, right) == 0;
+}
+
+/**
+ * @brief 判断PDP配置是否属于必须保护的IMS上下文。
+ */
+static bool _linkg_cellular_pdp_is_ims(const rg255_pdp_config_t *config)
+{
+    return config != NULL && _linkg_cellular_apn_equal(config->apn, "ims");
+}
+
+/**
+ * @brief 从PDP事实表中选择现有数据上下文或安全的空闲CID。
+ *
+ * 明确配置APN时优先复用同APN双栈上下文，否则返回第一个未占用CID用于创建。
+ * 未配置APN时只允许复用唯一的非IMS双栈上下文。
+ */
+static int _linkg_cellular_select_pdp_context(const rg255_pdp_config_t *configs,
+                                              size_t count,
+                                              const char *required_apn,
+                                              uint8_t *selected_cid,
+                                              const char **selected_apn,
+                                              bool *create)
+{
+    bool occupied[RG255_PDP_CONTEXT_ID_MAX + 1U];
+    const rg255_pdp_config_t *candidate;
+    size_t candidate_count;
+    size_t index;
+    uint8_t cid;
+
+    if (configs == NULL || required_apn == NULL || selected_cid == NULL ||
+        selected_apn == NULL || create == NULL || count > RG255_PDP_CONTEXT_MAX)
+    {
+        return -EINVAL;
+    }
+
+    memset(occupied, 0, sizeof(occupied));
+    candidate       = NULL;
+    candidate_count = 0U;
+
+    for (index = 0U; index < count; index++)
+    {
+        cid = configs[index].cid;
+        if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX)
+        {
+            return -EBADMSG;
+        }
+
+        occupied[cid] = true;
+
+        if (_linkg_cellular_pdp_is_ims(&configs[index]) ||
+            configs[index].pdp_type != RG255_PDP_TYPE_IPV4V6)
+        {
+            continue;
+        }
+
+        if (required_apn[0] != '\0')
+        {
+            if (_linkg_cellular_apn_equal(configs[index].apn, required_apn))
+            {
+                *selected_cid = cid;
+                *selected_apn = configs[index].apn;
+                *create       = false;
+                return 0;
+            }
+
+            continue;
+        }
+
+        if (configs[index].apn[0] == '\0')
+        {
+            continue;
+        }
+
+        candidate = &configs[index];
+        candidate_count++;
+    }
+
+    if (required_apn[0] == '\0')
+    {
+        if (candidate_count == 0U)
+        {
+            return -ENOENT;
+        }
+
+        if (candidate_count != 1U)
+        {
+            return -ENOTUNIQ;
+        }
+
+        *selected_cid = candidate->cid;
+        *selected_apn = candidate->apn;
+        *create       = false;
+        return 0;
+    }
+
+    if (_linkg_cellular_apn_equal(required_apn, "ims"))
+    {
+        return -EPERM;
+    }
+
+    for (cid = RG255_PDP_CONTEXT_ID_MIN; cid <= RG255_PDP_CONTEXT_ID_MAX; cid++)
+    {
+        if (!occupied[cid])
+        {
+            *selected_cid = cid;
+            *selected_apn = required_apn;
+            *create       = true;
+            return 0;
+        }
+    }
+
+    return -ENOSPC;
 }
 
 /**
@@ -974,6 +1095,8 @@ static void _linkg_cellular_cleanup_host_network(void)
 static int _linkg_cellular_cleanup_data_session(void)
 {
     at_channel_t *channel;
+    uint8_t       pdp_cid;
+    bool          pdp_cid_valid;
     int           first_error;
     int           ret;
 
@@ -984,12 +1107,19 @@ static int _linkg_cellular_cleanup_data_session(void)
     }
 
     first_error = 0;
+    pdp_cid_valid = cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid);
 
     _linkg_cellular_cleanup_host_network();
 
-    if (g_cellular.netdev_action_started)
+    if ((g_cellular.netdev_action_started || g_cellular.pdp_action_started) && !pdp_cid_valid)
     {
-        ret = rg255_cmd_stop_netdev(channel);
+        LINKG_LOG_WARN("CELLULAR: data cleanup skipped without selected PDP CID");
+        _linkg_cellular_record_first_error(&first_error, -EPROTO);
+    }
+
+    if (g_cellular.netdev_action_started && pdp_cid_valid)
+    {
+        ret = rg255_cmd_stop_netdev(channel, pdp_cid);
         if (ret != 0)
         {
             LINKG_LOG_WARN("CELLULAR: stop QNETDEV failed, error=%d", ret);
@@ -997,9 +1127,9 @@ static int _linkg_cellular_cleanup_data_session(void)
         }
     }
 
-    if (g_cellular.pdp_action_started)
+    if (g_cellular.pdp_action_started && pdp_cid_valid)
     {
-        ret = rg255_cmd_set_pdp_active(channel, false);
+        ret = rg255_cmd_set_pdp_active(channel, pdp_cid, false);
         if (ret != 0)
         {
             LINKG_LOG_WARN("CELLULAR: deactivate PDP failed, error=%d", ret);
@@ -1034,6 +1164,7 @@ static int _linkg_cellular_handle_sim_removed(uint64_t now_ms)
         cellular_runtime_end_session(&g_cellular.runtime, now_ms);
     }
 
+    cellular_status_clear_pdp_cid();
     g_cellular.pdp_action_started    = false;
     g_cellular.netdev_action_started = false;
 
@@ -1157,6 +1288,8 @@ static bool _linkg_cellular_host_ready(const cellular_status_info_t *info)
  */
 static bool _linkg_cellular_online_invalid(const cellular_status_info_t *info)
 {
+    uint8_t pdp_cid;
+
     if (info == NULL)
     {
         return true;
@@ -1181,6 +1314,14 @@ static bool _linkg_cellular_online_invalid(const cellular_status_info_t *info)
 
     if (_linkg_cellular_meta_current(&info->netdev.state.meta) &&
         !info->netdev.state.connected)
+    {
+        return true;
+    }
+
+    if (_linkg_cellular_meta_current(&info->netdev.state.meta) &&
+        info->netdev.state.connected &&
+        (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid) ||
+         info->netdev.state.cid != pdp_cid))
     {
         return true;
     }
@@ -1246,6 +1387,7 @@ static int _linkg_cellular_sync_sim_session(const cellular_monitor_events_t *eve
             return ret;
         }
 
+        cellular_status_clear_pdp_cid();
         g_cellular.pdp_action_started    = false;
         g_cellular.netdev_action_started = false;
 
@@ -1490,14 +1632,16 @@ static linkg_cellular_step_t _linkg_cellular_state_wait_registration(const cellu
 }
 
 /**
- * @brief 查询并按需准备默认IPv4/IPv6双栈PDP上下文。
+ * @brief 查询全部PDP配置并由Owner选择或创建数据上下文。
  */
 static linkg_cellular_step_t _linkg_cellular_state_prepare_pdp(uint64_t now_ms)
 {
-    rg255_pdp_config_t current;
+    rg255_pdp_config_t configs[RG255_PDP_CONTEXT_MAX];
     at_channel_t      *channel;
-    const char        *required_apn;
-    bool               matches;
+    const char        *selected_apn;
+    size_t             count;
+    uint8_t            selected_cid;
+    bool               create;
     int                ret;
 
     channel = _linkg_cellular_get_channel();
@@ -1512,8 +1656,9 @@ static linkg_cellular_step_t _linkg_cellular_state_prepare_pdp(uint64_t now_ms)
         return _linkg_cellular_step_fatal(ret);
     }
 
-    memset(&current, 0, sizeof(current));
-    ret = rg255_query_pdp_config(channel, &current);
+    memset(configs, 0, sizeof(configs));
+    count = 0U;
+    ret = rg255_query_pdp_configs(channel, configs, RG255_PDP_CONTEXT_MAX, &count);
     if (ret != 0)
     {
         return _linkg_cellular_action_error_fatal(ret)
@@ -1521,35 +1666,54 @@ static linkg_cellular_step_t _linkg_cellular_state_prepare_pdp(uint64_t now_ms)
             : _linkg_cellular_step_failed(ret);
     }
 
-    matches = current.cid == RG255_PDP_CONTEXT_ID &&
-              current.pdp_type == RG255_PDP_TYPE_IPV4V6;
+    selected_apn = NULL;
+    selected_cid = 0U;
+    create       = false;
 
-    if (g_cellular.config.apn[0] != '\0')
-    {
-        matches = matches && strcmp(current.apn, g_cellular.config.apn) == 0;
-    }
-
-    if (matches)
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_ACTIVATE_PDP);
-    }
-
-    required_apn = g_cellular.config.apn[0] != '\0'
-        ? g_cellular.config.apn
-        : current.apn;
-
-    if (required_apn[0] == '\0')
-    {
-        return _linkg_cellular_step_failed(-ENOENT);
-    }
-
-    ret = rg255_cmd_set_pdp_context(channel, required_apn);
+    ret = _linkg_cellular_select_pdp_context(configs,
+                                             count,
+                                             g_cellular.config.apn,
+                                             &selected_cid,
+                                             &selected_apn,
+                                             &create);
     if (ret != 0)
     {
-        return _linkg_cellular_action_error_fatal(ret)
-            ? _linkg_cellular_step_fatal(ret)
-            : _linkg_cellular_step_failed(ret);
+        if (ret == -ENOSPC)
+        {
+            LINKG_LOG_WARN("CELLULAR: no free PDP context for configured APN");
+        }
+
+        return _linkg_cellular_step_failed(ret);
     }
+
+    if (create)
+    {
+        ret = rg255_cmd_set_pdp_context(channel, selected_cid, selected_apn);
+        if (ret != 0)
+        {
+            return _linkg_cellular_action_error_fatal(ret)
+                ? _linkg_cellular_step_fatal(ret)
+                : _linkg_cellular_step_failed(ret);
+        }
+    }
+
+    ret = cellular_runtime_set_pdp_cid(&g_cellular.runtime, selected_cid, now_ms);
+    if (ret != 0)
+    {
+        return _linkg_cellular_step_fatal(ret);
+    }
+
+    ret = cellular_status_set_pdp_cid(selected_cid);
+    if (ret != 0)
+    {
+        cellular_runtime_clear_pdp_cid(&g_cellular.runtime, now_ms);
+        return _linkg_cellular_step_fatal(ret);
+    }
+
+    LINKG_LOG_INFO("CELLULAR: PDP context selected, cid=%u, apn=%s, source=%s",
+                   (unsigned int)selected_cid,
+                   selected_apn,
+                   create ? "created" : "existing");
 
     return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_ACTIVATE_PDP);
 }
@@ -1560,6 +1724,7 @@ static linkg_cellular_step_t _linkg_cellular_state_prepare_pdp(uint64_t now_ms)
 static linkg_cellular_step_t _linkg_cellular_state_activate_pdp(uint64_t now_ms)
 {
     at_channel_t *channel;
+    uint8_t       pdp_cid;
     int           ret;
 
     channel = _linkg_cellular_get_channel();
@@ -1574,9 +1739,14 @@ static linkg_cellular_step_t _linkg_cellular_state_activate_pdp(uint64_t now_ms)
         return _linkg_cellular_step_fatal(ret);
     }
 
+    if (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid))
+    {
+        return _linkg_cellular_step_fatal(-EPROTO);
+    }
+
     g_cellular.pdp_action_started = true;
 
-    ret = rg255_cmd_set_pdp_active(channel, true);
+    ret = rg255_cmd_set_pdp_active(channel, pdp_cid, true);
     if (ret != 0)
     {
         if (_linkg_cellular_action_error_fatal(ret))
@@ -1620,6 +1790,7 @@ static linkg_cellular_step_t _linkg_cellular_state_wait_pdp(const cellular_statu
 static linkg_cellular_step_t _linkg_cellular_state_start_netdev(uint64_t now_ms)
 {
     at_channel_t *channel;
+    uint8_t       pdp_cid;
     int           ret;
 
     channel = _linkg_cellular_get_channel();
@@ -1634,9 +1805,14 @@ static linkg_cellular_step_t _linkg_cellular_state_start_netdev(uint64_t now_ms)
         return _linkg_cellular_step_fatal(ret);
     }
 
+    if (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid))
+    {
+        return _linkg_cellular_step_fatal(-EPROTO);
+    }
+
     g_cellular.netdev_action_started = true;
 
-    ret = rg255_cmd_start_netdev(channel);
+    ret = rg255_cmd_start_netdev(channel, pdp_cid);
     if (ret != 0)
     {
         if (_linkg_cellular_action_error_fatal(ret))
@@ -1655,10 +1831,16 @@ static linkg_cellular_step_t _linkg_cellular_state_start_netdev(uint64_t now_ms)
  */
 static linkg_cellular_step_t _linkg_cellular_state_wait_netdev(const cellular_status_info_t *info, uint64_t now_ms)
 {
+    uint8_t pdp_cid;
     int error;
 
+    if (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid))
+    {
+        return _linkg_cellular_step_fatal(-EPROTO);
+    }
+
     if (info != NULL && _linkg_cellular_meta_current(&info->netdev.state.meta) &&
-    info->netdev.state.connected)
+        info->netdev.state.connected && info->netdev.state.cid == pdp_cid)
     {
         return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_PREPARE_HOST);
     }
@@ -2263,6 +2445,7 @@ static int _linkg_cellular_stop_runtime(void)
         cellular_runtime_end_session(&g_cellular.runtime, linkg_time_elapsed_ms());
     }
 
+    cellular_status_clear_pdp_cid();
     g_cellular.pdp_action_started    = false;
     g_cellular.netdev_action_started = false;
 

@@ -186,6 +186,11 @@ int cellular_status_start(at_channel_t *channel);
 int cellular_status_stop(void);
 int cellular_status_deinit(void);
 
+/****************************** PDP查询目标 ******************************/
+
+int  cellular_status_set_pdp_cid(uint8_t cid);
+void cellular_status_clear_pdp_cid(void);
+
 /****************************** 定时处理 ******************************/
 
 uint64_t cellular_status_get_deadline(void);

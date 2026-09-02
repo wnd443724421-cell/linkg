@@ -55,12 +55,14 @@ typedef struct
 
 typedef struct
 {
-    pthread_mutex_t             lock;        // 状态锁，保护生命周期、期限和已发布快照
-    at_channel_t               *channel;     // 借用AT通道，仅在start到stop期间有效
-    cellular_status_info_t      info;        // 当前唯一内部事实快照
-    cellular_status_deadlines_t deadlines;   // 各事实确认和失败重试绝对到期时间
-    bool                        initialized; // 状态模块是否已经初始化
-    bool                        started;     // 状态模块是否已经启动
+    pthread_mutex_t             lock;          // 状态锁，保护生命周期、期限和已发布快照
+    at_channel_t               *channel;       // 借用AT通道，仅在start到stop期间有效
+    cellular_status_info_t      info;          // 当前唯一内部事实快照
+    cellular_status_deadlines_t deadlines;     // 各事实确认和失败重试绝对到期时间
+    uint8_t                     pdp_cid;        // Owner指定的PDP事实查询目标CID
+    bool                        initialized;    // 状态模块是否已经初始化
+    bool                        started;        // 状态模块是否已经启动
+    bool                        pdp_cid_valid; // PDP事实查询目标CID是否有效
 } cellular_status_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -166,9 +168,26 @@ static void _cellular_status_reset_context_locked(void)
     memset(&g_cellular_status.deadlines, 0, sizeof(g_cellular_status.deadlines));
     _cellular_status_info_init(&g_cellular_status.info);
 
-    g_cellular_status.channel     = NULL;
-    g_cellular_status.initialized = false;
-    g_cellular_status.started     = false;
+    g_cellular_status.channel       = NULL;
+    g_cellular_status.pdp_cid       = 0U;
+    g_cellular_status.initialized   = false;
+    g_cellular_status.started       = false;
+    g_cellular_status.pdp_cid_valid = false;
+}
+
+/**
+ * @brief 使旧PDP查询目标对应的事实和期限失效。
+ *
+ * @note 调用方必须持有状态锁。
+ */
+static void _cellular_status_invalidate_pdp_locked(void)
+{
+    memset(&g_cellular_status.info.pdp, 0, sizeof(g_cellular_status.info.pdp));
+    _cellular_status_meta_init(&g_cellular_status.info.pdp.active_meta);
+    _cellular_status_meta_init(&g_cellular_status.info.pdp.address_meta);
+
+    g_cellular_status.deadlines.pdp_ms         = 0U;
+    g_cellular_status.deadlines.pdp_address_ms = 0U;
 }
 
 /****************************** 期限辅助 ******************************/
@@ -455,11 +474,11 @@ static void _cellular_status_update_deadlines(cellular_status_deadlines_t *deadl
 /**
  * @brief 获取Owner处理所需AT通道、快照和期限副本。
  */
-static int _cellular_status_get_runtime(at_channel_t **channel, cellular_status_info_t *info, cellular_status_deadlines_t *deadlines)
+static int _cellular_status_get_runtime(at_channel_t **channel, cellular_status_info_t *info, cellular_status_deadlines_t *deadlines, uint8_t *pdp_cid, bool *pdp_cid_valid)
 {
     int ret;
 
-    if (channel == NULL || info == NULL || deadlines == NULL)
+    if (channel == NULL || info == NULL || deadlines == NULL || pdp_cid == NULL || pdp_cid_valid == NULL)
     {
         return -EINVAL;
     }
@@ -478,10 +497,12 @@ static int _cellular_status_get_runtime(at_channel_t **channel, cellular_status_
         goto unlock;
     }
 
-    *channel   = g_cellular_status.channel;
-    *info      = g_cellular_status.info;
-    *deadlines = g_cellular_status.deadlines;
-    ret        = 0;
+    *channel       = g_cellular_status.channel;
+    *info          = g_cellular_status.info;
+    *deadlines     = g_cellular_status.deadlines;
+    *pdp_cid       = g_cellular_status.pdp_cid;
+    *pdp_cid_valid = g_cellular_status.pdp_cid_valid;
+    ret            = 0;
 
 unlock:
     pthread_mutex_unlock(&g_cellular_status.lock);
@@ -632,7 +653,7 @@ static void _cellular_status_clear_pdp_address(cellular_status_info_t *info, uin
 /**
  * @brief 刷新默认PDP上下文模组地址事实。
  */
-static void _cellular_status_refresh_pdp_address(at_channel_t *channel, cellular_status_info_t *info, uint64_t now_ms)
+static void _cellular_status_refresh_pdp_address(at_channel_t *channel, cellular_status_info_t *info, uint8_t cid, uint64_t now_ms)
 {
     rg255_pdp_address_t address;
     int                 ret;
@@ -653,7 +674,7 @@ static void _cellular_status_refresh_pdp_address(at_channel_t *channel, cellular
 
     memset(&address, 0, sizeof(address));
 
-    ret = rg255_query_pdp_address(channel, &address);
+    ret = rg255_query_pdp_address(channel, cid, &address);
     if (ret != 0)
     {
         _cellular_status_meta_failure(&info->pdp.address_meta, now_ms, ret);
@@ -671,7 +692,7 @@ static void _cellular_status_refresh_pdp_address(at_channel_t *channel, cellular
 /**
  * @brief 刷新默认PDP上下文激活状态事实。
  */
-static bool _cellular_status_refresh_pdp(at_channel_t *channel, cellular_status_info_t *info, uint64_t now_ms)
+static bool _cellular_status_refresh_pdp(at_channel_t *channel, cellular_status_info_t *info, uint8_t cid, uint64_t now_ms)
 {
     bool previous_active;
     bool active;
@@ -680,7 +701,7 @@ static bool _cellular_status_refresh_pdp(at_channel_t *channel, cellular_status_
     previous_active = info->pdp.active_meta.confirmed && info->pdp.active;
     active          = false;
 
-    ret = rg255_query_pdp_active(channel, &active);
+    ret = rg255_query_pdp_active(channel, cid, &active);
     if (ret != 0)
     {
         _cellular_status_meta_failure(&info->pdp.active_meta, now_ms, ret);
@@ -1375,11 +1396,13 @@ int cellular_status_start(at_channel_t *channel)
     memset(&g_cellular_status.deadlines, 0, sizeof(g_cellular_status.deadlines));
 
     g_cellular_status.channel                   = channel;
+    g_cellular_status.pdp_cid                   = 0U;
+    g_cellular_status.pdp_cid_valid             = false;
     g_cellular_status.deadlines.network_mode_ms = now_ms;
     g_cellular_status.deadlines.sim_ms          = now_ms;
     g_cellular_status.deadlines.registration_ms = now_ms;
     g_cellular_status.deadlines.radio_ms        = now_ms;
-    g_cellular_status.deadlines.pdp_ms          = now_ms;
+    g_cellular_status.deadlines.pdp_ms          = 0U;
     g_cellular_status.deadlines.netdev_ms       = now_ms;
     g_cellular_status.deadlines.host_ms         = now_ms;
     g_cellular_status.started                   = true;
@@ -1404,8 +1427,10 @@ int cellular_status_stop(void)
         return 0;
     }
 
-    g_cellular_status.started = false;
-    g_cellular_status.channel = NULL;
+    g_cellular_status.started       = false;
+    g_cellular_status.channel       = NULL;
+    g_cellular_status.pdp_cid       = 0U;
+    g_cellular_status.pdp_cid_valid = false;
     memset(&g_cellular_status.deadlines, 0, sizeof(g_cellular_status.deadlines));
 
     pthread_mutex_unlock(&g_cellular_status.lock);
@@ -1426,8 +1451,10 @@ int cellular_status_deinit(void)
         return 0;
     }
 
-    g_cellular_status.started = false;
-    g_cellular_status.channel = NULL;
+    g_cellular_status.started       = false;
+    g_cellular_status.channel       = NULL;
+    g_cellular_status.pdp_cid       = 0U;
+    g_cellular_status.pdp_cid_valid = false;
     memset(&g_cellular_status.deadlines, 0, sizeof(g_cellular_status.deadlines));
     _cellular_status_info_init(&g_cellular_status.info);
     g_cellular_status.initialized = false;
@@ -1435,6 +1462,76 @@ int cellular_status_deinit(void)
     pthread_mutex_unlock(&g_cellular_status.lock);
 
     return 0;
+}
+
+/****************************** PDP查询目标 ******************************/
+
+/**
+ * @brief 设置Owner选定的PDP事实查询目标CID。
+ */
+int cellular_status_set_pdp_cid(uint8_t cid)
+{
+    uint64_t now_ms;
+    int      ret;
+
+    if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX)
+    {
+        return -EINVAL;
+    }
+
+    now_ms = linkg_time_elapsed_ms();
+    if (now_ms == 0U)
+    {
+        now_ms = 1U;
+    }
+
+    pthread_mutex_lock(&g_cellular_status.lock);
+
+    if (!g_cellular_status.initialized)
+    {
+        ret = -ENODEV;
+        goto unlock;
+    }
+
+    if (!g_cellular_status.started)
+    {
+        ret = -ENETDOWN;
+        goto unlock;
+    }
+
+    if (g_cellular_status.pdp_cid_valid && g_cellular_status.pdp_cid == cid)
+    {
+        ret = 0;
+        goto unlock;
+    }
+
+    _cellular_status_invalidate_pdp_locked();
+    g_cellular_status.pdp_cid          = cid;
+    g_cellular_status.pdp_cid_valid    = true;
+    g_cellular_status.deadlines.pdp_ms = now_ms;
+    ret                                = 0;
+
+unlock:
+    pthread_mutex_unlock(&g_cellular_status.lock);
+
+    return ret;
+}
+
+/**
+ * @brief 清除PDP事实查询目标并使旧CID缓存失效。
+ */
+void cellular_status_clear_pdp_cid(void)
+{
+    pthread_mutex_lock(&g_cellular_status.lock);
+
+    if (g_cellular_status.initialized)
+    {
+        _cellular_status_invalidate_pdp_locked();
+        g_cellular_status.pdp_cid       = 0U;
+        g_cellular_status.pdp_cid_valid = false;
+    }
+
+    pthread_mutex_unlock(&g_cellular_status.lock);
 }
 
 /****************************** 定时处理 ******************************/
@@ -1482,6 +1579,8 @@ int cellular_status_process(uint64_t now_ms, cellular_status_refresh_mask_t requ
     at_channel_t                  *channel;
     bool                           refresh_expected;
     bool                           refresh_pdp_address;
+    bool                           pdp_cid_valid;
+    uint8_t                        pdp_cid;
     int                            ret;
 
     if ((requested & ~CELLULAR_STATUS_REFRESH_ALL) != 0U)
@@ -1489,13 +1588,19 @@ int cellular_status_process(uint64_t now_ms, cellular_status_refresh_mask_t requ
         return -EINVAL;
     }
 
-    ret = _cellular_status_get_runtime(&channel, &info, &deadlines);
+    ret = _cellular_status_get_runtime(&channel, &info, &deadlines, &pdp_cid, &pdp_cid_valid);
     if (ret != 0)
     {
         return ret;
     }
 
     mask = requested | _cellular_status_due_mask(&deadlines, now_ms);
+
+    if (!pdp_cid_valid)
+    {
+        mask &= ~(CELLULAR_STATUS_REFRESH_PDP | CELLULAR_STATUS_REFRESH_PDP_ADDRESS);
+    }
+
     if (mask == CELLULAR_STATUS_REFRESH_NONE)
     {
         return 0;
@@ -1531,13 +1636,13 @@ int cellular_status_process(uint64_t now_ms, cellular_status_refresh_mask_t requ
 
     if ((mask & CELLULAR_STATUS_REFRESH_PDP) != 0U)
     {
-        refresh_pdp_address = _cellular_status_refresh_pdp(channel, &info, now_ms);
+        refresh_pdp_address = _cellular_status_refresh_pdp(channel, &info, pdp_cid, now_ms);
         processed |= CELLULAR_STATUS_REFRESH_PDP;
     }
 
     if ((mask & CELLULAR_STATUS_REFRESH_PDP_ADDRESS) != 0U || refresh_pdp_address)
     {
-        _cellular_status_refresh_pdp_address(channel, &info, now_ms);
+        _cellular_status_refresh_pdp_address(channel, &info, pdp_cid, now_ms);
         processed |= CELLULAR_STATUS_REFRESH_PDP_ADDRESS;
     }
 
