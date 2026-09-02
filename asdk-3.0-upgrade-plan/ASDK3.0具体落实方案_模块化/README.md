@@ -1,0 +1,15 @@
+# ASDK 3.0 具体落实方案
+
+- [架构总览与模块关系](00-架构总览与模块关系.md)
+- [M01：公共契约与 Core](01-M01-公共契约与Core.md)
+- [M02：配置、Manifest 与 DeploymentPlan](02-M02-配置Manifest与DeploymentPlan.md)
+- [M03：Linux 平台适配与控制线协议](03-M03-Linux平台适配与控制协议.md)
+- [M04：asdkd 控制循环、编排与 Supervisor](04-M04-asdkd控制循环编排与Supervisor.md)
+- [M05：宿主进程框架](05-M05-宿主进程框架.md)
+- [M06：PluginRuntime 与受控资源代理](06-M06-PluginRuntime与资源代理.md)
+- [M07：Fast DDS 数据适配](07-M07-FastDDS数据适配.md)
+- [M08：本机共享内存大数据通道](08-M08-本机共享内存大数据通道.md)
+- [M09：管理 API、asdkctl 与 Portal 适配](09-M09-管理APIasdkctl与Portal.md)
+- [M10：可观测性、测试支撑与发布保障](10-M10-可观测性测试与发布保障.md)
+- [并行开发、集成与验收](11-并行开发集成与验收.md)
+- [插件开发指南](12-插件开发指南.md)
