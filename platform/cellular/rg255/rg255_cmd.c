@@ -568,6 +568,22 @@ int rg255_cmd_query_5g_registration(at_channel_t *channel, char *response, int r
     return _rg255_cmd_exec_query(channel, "AT+C5GREG?", RG255_CMD_TIMEOUT_DEFAULT_MS, "+C5GREG:", response, response_size);
 }
 
+/**
+ * @brief 设置EPS网络注册状态URC上报。
+ */
+int rg255_cmd_set_eps_registration_urc(at_channel_t *channel, bool enable)
+{
+    return _rg255_cmd_exec(channel, enable ? "AT+CEREG=1" : "AT+CEREG=0", RG255_CMD_TIMEOUT_CONFIG_MS);
+}
+
+/**
+ * @brief 设置5GS网络注册状态URC上报。
+ */
+int rg255_cmd_set_5g_registration_urc(at_channel_t *channel, bool enable)
+{
+    return _rg255_cmd_exec(channel, enable ? "AT+C5GREG=1" : "AT+C5GREG=0", RG255_CMD_TIMEOUT_CONFIG_MS);
+}
+
 /****************************** 无线状态 ******************************/
 
 /**
@@ -576,6 +592,14 @@ int rg255_cmd_query_5g_registration(at_channel_t *channel, char *response, int r
 int rg255_cmd_query_serving_cell(at_channel_t *channel, char *response, int response_size)
 {
     return _rg255_cmd_exec_query(channel, "AT+QENG=\"servingcell\"", RG255_CMD_TIMEOUT_QUERY_MS, "+QENG:", response, response_size);
+}
+
+/**
+ * @brief 设置无线信号变化URC上报。
+ */
+int rg255_cmd_set_signal_urc(at_channel_t *channel, bool enable)
+{
+    return _rg255_cmd_exec(channel, enable ? "AT+QCSQ=1" : "AT+QCSQ=0", RG255_CMD_TIMEOUT_CONFIG_MS);
 }
 
 /****************************** USB配置 ******************************/

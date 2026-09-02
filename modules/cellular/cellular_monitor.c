@@ -30,15 +30,14 @@
 #define CELLULAR_MONITOR_URC_RADIO            "+QCSQ"           // 服务网络和无线质量URC名称
 #define CELLULAR_MONITOR_URC_PDP              "+CGEV"           // 分组域事件URC名称
 #define CELLULAR_MONITOR_URC_NETDEV           "+QNETDEVSTATUS"  // USB网络设备状态URC名称
-#define CELLULAR_MONITOR_URC_MODEM_FUNCTION   "+CFUN"           // Modem功能状态URC名称
 #define CELLULAR_MONITOR_URC_POWERED_DOWN     "POWERED DOWN"    // Modem掉电URC文本
 
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
-    cellular_monitor_event_mask_t   mask;               // 当前URC对应的语义事件集合
-    cellular_monitor_sim_presence_t sim_presence;       // 当前URC携带的SIM物理状态
+    cellular_monitor_event_mask_t   mask;                // 当前URC对应的语义事件集合
+    cellular_monitor_sim_presence_t sim_presence;        // 当前URC携带的SIM物理状态
     bool                            sim_presence_update; // 当前URC是否更新SIM物理状态
     bool                            recognized;          // 当前行是否属于已支持URC
     int                             parse_error;         // 当前已支持URC解析错误码
@@ -46,17 +45,21 @@ typedef struct
 
 typedef struct
 {
-    pthread_mutex_t                  lock;                    // 监控锁，保护生命周期、待处理事件和SIM物理状态
+    pthread_mutex_t                  lock;                    // 保护Monitor生命周期、事件缓存和SIM物理状态
+
+    bool                             initialized;             // Monitor是否已经初始化
+    bool                             started;                 // URC回调是否已经注册并开始接受事件
+
     at_channel_t                    *channel;                 // 借用AT通道，仅在start到stop期间有效
-    cellular_monitor_event_mask_t    pending_mask;            // 等待network-cell Owner消费的事件集合
-    cellular_monitor_sim_presence_t  sim_presence;            // 最近一次QSIMSTAT提供的SIM物理状态
+    int                              event_fd;                // 通知network-cell Owner的eventfd
+
+    cellular_monitor_event_mask_t    pending_mask;            // 等待Owner消费的事件集合
     uint64_t                         generation;              // 已识别异步事件累计代数
     uint64_t                         updated_ms;              // 最近一次已识别异步事件时间
+
+    cellular_monitor_sim_presence_t  sim_presence;            // 最近一次QSIMSTAT提供的SIM物理状态
     uint64_t                         sim_presence_updated_ms; // 最近一次QSIMSTAT事件时间
-    int                              event_fd;                // 通知network-cell Owner的eventfd
     bool                             sim_presence_valid;      // 最近一次QSIMSTAT是否提供确定插拔状态
-    bool                             initialized;             // 监控模块是否已经初始化
-    bool                             started;                 // URC回调是否已经注册并接受事件
 } cellular_monitor_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -337,13 +340,6 @@ static void _cellular_monitor_decode_urc(const char *line, cellular_monitor_deco
         return;
     }
 
-    if (_cellular_monitor_match_urc(line, CELLULAR_MONITOR_URC_MODEM_FUNCTION, &payload))
-    {
-        decoded->recognized = true;
-        decoded->mask       = CELLULAR_MONITOR_EVENT_MODEM_FUNCTION_CHANGED;
-        return;
-    }
-
     if (_cellular_monitor_line_equal(line, CELLULAR_MONITOR_URC_POWERED_DOWN))
     {
         decoded->recognized = true;
@@ -426,8 +422,7 @@ static void _cellular_monitor_publish_urc(at_channel_t *source, const cellular_m
     if (decoded->sim_presence_update)
     {
         g_cellular_monitor.sim_presence            = decoded->sim_presence;
-        g_cellular_monitor.sim_presence_valid      = decoded->parse_error == 0 &&
-                                                     decoded->sim_presence != CELLULAR_MONITOR_SIM_PRESENCE_UNKNOWN;
+        g_cellular_monitor.sim_presence_valid      = decoded->parse_error == 0 && decoded->sim_presence != CELLULAR_MONITOR_SIM_PRESENCE_UNKNOWN;
         g_cellular_monitor.sim_presence_updated_ms = now_ms;
     }
 
@@ -464,6 +459,24 @@ static void _cellular_monitor_publish_urc(at_channel_t *source, const cellular_m
 }
 
 /**
+ * @brief 输出需要保留的低频RG255 URC调试信息。
+ */
+static void _cellular_monitor_log_urc(const char *line, const cellular_monitor_decoded_urc_t *decoded)
+{
+    if (line == NULL || decoded == NULL || !decoded->recognized)
+    {
+        return;
+    }
+
+    if ((decoded->mask & CELLULAR_MONITOR_EVENT_RADIO_CHANGED) != 0U)
+    {
+        return;
+    }
+
+    LINKG_LOG_DEBUG("CELL-MONITOR: URC received, line=%.128s", line);
+}
+
+/**
  * @brief 接收AT RX线程递交的一条URC并快速转换为Monitor事件。
  *
  * @note 本函数运行于AT RX线程，禁止调用同步AT接口或执行阻塞操作。
@@ -483,6 +496,8 @@ static void _cellular_monitor_urc_callback(const char *line, void *context)
     {
         return;
     }
+
+    _cellular_monitor_log_urc(line, &decoded);
 
     now_ms = linkg_time_elapsed_ms();
     _cellular_monitor_publish_urc((at_channel_t *)context, &decoded, now_ms);

@@ -19,16 +19,15 @@ extern "C" {
 
 typedef uint32_t cellular_monitor_event_mask_t; // 蜂窝异步事件标志集合
 
-#define CELLULAR_MONITOR_EVENT_NONE                   0U               // 当前没有待处理异步事件
+#define CELLULAR_MONITOR_EVENT_NONE                    0U              // 当前没有待处理异步事件
 #define CELLULAR_MONITOR_EVENT_SIM_PRESENCE_CHANGED   (1U << 0)        // SIM物理插拔状态发生变化
 #define CELLULAR_MONITOR_EVENT_SIM_STATE_CHANGED      (1U << 1)        // SIM逻辑状态发生变化
 #define CELLULAR_MONITOR_EVENT_REGISTRATION_CHANGED   (1U << 2)        // 移动网络注册状态发生变化
 #define CELLULAR_MONITOR_EVENT_RADIO_CHANGED          (1U << 3)        // 服务网络或无线质量发生变化
 #define CELLULAR_MONITOR_EVENT_PDP_CHANGED            (1U << 4)        // PDP数据会话状态发生变化
 #define CELLULAR_MONITOR_EVENT_NETDEV_CHANGED         (1U << 5)        // USB网络设备连接状态发生变化
-#define CELLULAR_MONITOR_EVENT_MODEM_FUNCTION_CHANGED (1U << 6)        // Modem功能状态发生变化
-#define CELLULAR_MONITOR_EVENT_MODEM_POWERED_DOWN     (1U << 7)        // Modem已经进入掉电状态
-#define CELLULAR_MONITOR_EVENT_ALL                    ((1U << 8) - 1U) // 全部受支持蜂窝异步事件
+#define CELLULAR_MONITOR_EVENT_MODEM_POWERED_DOWN     (1U << 6)        // Modem已经进入掉电状态
+#define CELLULAR_MONITOR_EVENT_ALL                   ((1U << 7) - 1U)  // 全部受支持蜂窝异步事件
 
 /****************************** SIM物理状态 ******************************/
 

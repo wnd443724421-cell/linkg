@@ -61,22 +61,28 @@ typedef struct
     cellular_runtime_state_t previous_state;      // 最近一次不同的连接状态
     cellular_runtime_state_t failed_state;        // 最近一次失败发生的连接状态
     cellular_runtime_state_t retry_target_state;  // RETRY_WAIT结束后的目标状态
+
     uint64_t                 generation;          // 运行状态变化代数
     uint64_t                 session_generation;  // 已确认新SIM会话代数
+
     uint64_t                 updated_ms;          // 最近一次逻辑运行状态变化时间
     uint64_t                 state_entered_ms;    // 当前状态最近一次进入时间
     uint64_t                 state_deadline_ms;   // 当前状态整体绝对超时时间，0表示无超时
     uint64_t                 next_action_ms;      // 当前状态下一次主动处理时间，0表示未安排
     uint64_t                 failure_ms;          // 最近一次状态失败时间
+
     uint32_t                 state_attempt_count; // 当前状态已经执行的主动尝试次数
     uint32_t                 retry_count;         // 当前SIM会话累计完整连接重试次数
+
     int                      last_error;          // 最近一次状态失败错误码
     uint8_t                  selected_pdp_cid;    // 当前SIM会话Owner选择的数据PDP上下文ID
+
     bool                     session_active;      // 当前是否处于一个已确认SIM插卡会话
     bool                     failure_valid;       // 是否存在最近一次有效失败记录
     bool                     pin_attempted;       // 当前SIM会话是否已经自动尝试过PIN
     bool                     pdp_cid_valid;       // 当前SIM会话是否已经选择数据PDP上下文
 } cellular_runtime_t;
+
 
 /****************************** 生命周期 ******************************/
 

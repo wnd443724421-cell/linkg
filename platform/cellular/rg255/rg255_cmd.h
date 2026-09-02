@@ -91,10 +91,13 @@ int rg255_cmd_set_network_mode(at_channel_t *channel, linkg_cellular_network_mod
 
 int rg255_cmd_query_eps_registration(at_channel_t *channel, char *response, int response_size);
 int rg255_cmd_query_5g_registration(at_channel_t *channel, char *response, int response_size);
+int rg255_cmd_set_eps_registration_urc(at_channel_t *channel, bool enable);
+int rg255_cmd_set_5g_registration_urc(at_channel_t *channel, bool enable);
 
 /****************************** 无线状态 ******************************/
 
 int rg255_cmd_query_serving_cell(at_channel_t *channel, char *response, int response_size);
+int rg255_cmd_set_signal_urc(at_channel_t *channel, bool enable);
 
 /****************************** USB配置 ******************************/
 

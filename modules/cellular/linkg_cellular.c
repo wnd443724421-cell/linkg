@@ -3,7 +3,7 @@
  * @brief LinkG蜂窝网络运行控制实现
  * @author Dawn
  * @version 1.0.0
- * @date 2026-09-01
+ * @date 2026-09-02
  */
 
 #include "linkg_cellular.h"
@@ -13,48 +13,29 @@
 #include <poll.h>
 #include <pthread.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <strings.h>
 
-#include "linkg_log.h"
-#include "linkg_os.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
 #include "linkg_uart.h"
-#include "linkg_network_ops.h"
 
 #include "at_channel.h"
 #include "rg255_cmd.h"
 #include "rg255_query.h"
-#include "rg255_runtime_urc.h"
 
+#include "cellular_fsm.h"
 #include "cellular_monitor.h"
-#include "cellular_runtime.h"
 #include "cellular_status.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_AT_DEVICE                         "/dev/ttyUSB1"   // RG255 AT控制串口设备
-#define LINKG_CELLULAR_VERIFY_TARGET                     "www.baidu.com"  // V1公网连通性验证目标
-#define LINKG_CELLULAR_AT_BAUDRATE                       115200           // RG255 AT串口波特率
-#define LINKG_CELLULAR_AT_READY_TIMEOUT_MS               30000U           // AT通道整体就绪等待时间
-#define LINKG_CELLULAR_AT_READY_RETRY_MS                 500U             // AT通道就绪失败重试间隔
-#define LINKG_CELLULAR_MODEM_RESTART_SETTLE_MS           2000U            // CFUN重启后首次重新探测等待时间
-#define LINKG_CELLULAR_CHECK_SIM_TIMEOUT_MS              15000U           // SIM初始化状态收敛超时
-#define LINKG_CELLULAR_REGISTRATION_TIMEOUT_MS           120000U          // 移动网络注册等待超时
-#define LINKG_CELLULAR_PDP_TIMEOUT_MS                    30000U           // PDP激活确认等待超时
-#define LINKG_CELLULAR_NETDEV_TIMEOUT_MS                 30000U           // USB网络设备连接等待超时
-#define LINKG_CELLULAR_HOST_TIMEOUT_MS                   30000U           // Linux Host网络配置收敛超时
-#define LINKG_CELLULAR_VERIFY_TIMEOUT_MS                 30000U           // 公网连通性验证整体超时
-#define LINKG_CELLULAR_VERIFY_RETRY_MS                   2000U            // 单次公网探测失败后的重试间隔
-#define LINKG_CELLULAR_VERIFY_NEXT_FAMILY_DELAY_MS       1U               // IPv4成功后进入IPv6验证的调度间隔
-#define LINKG_CELLULAR_VERIFY_FAILURE_LIMIT              3U               // 单个地址族连续公网探测失败阈值
-#define LINKG_CELLULAR_ONLINE_VERIFY_INTERVAL_MS         30000U           // 在线状态公网复核周期
-#define LINKG_CELLULAR_RETRY_BASE_MS                     5000U            // 连接失败首次退避时间
-#define LINKG_CELLULAR_RETRY_MAX_MS                      60000U           // 连接失败最大退避时间
-#define LINKG_CELLULAR_POLL_DESCRIPTOR_MAX               2U               // Owner循环最大poll描述符数量
+#define LINKG_CELLULAR_AT_DEVICE                   "/dev/ttyUSB1" // RG255 AT控制串口设备
+#define LINKG_CELLULAR_AT_BAUDRATE                 115200         // RG255 AT串口波特率
+#define LINKG_CELLULAR_AT_READY_TIMEOUT_MS         30000U         // AT通道整体就绪等待时间
+#define LINKG_CELLULAR_AT_READY_RETRY_MS           500U           // AT通道就绪失败重试间隔
+#define LINKG_CELLULAR_MODEM_RESTART_SETTLE_MS     2000U          // CFUN重启后首次重新探测等待时间
+#define LINKG_CELLULAR_POLL_DESCRIPTOR_MAX         2U             // Owner循环最大poll描述符数量
 
 /****************************** 内部类型 ******************************/
 
@@ -71,36 +52,26 @@ typedef enum
 
 typedef struct
 {
-    cellular_runtime_step_result_t result;     // 当前状态处理结果
-    cellular_runtime_state_t       next_state; // DONE时需要进入的后续状态
-    int                            error;      // FAILED或FATAL时的错误码
-} linkg_cellular_step_t;
+    pthread_mutex_t            lock;                   // 模块状态锁，保护生命周期和AT通道引用
 
-typedef struct
-{
-    pthread_mutex_t                lock;                   // 模块状态锁，保护生命周期和AT通道引用
-    linkg_cellular_config_t        config;                 // 蜂窝模块配置副本
-    cellular_runtime_t             runtime;                // network-cell Owner唯一运行状态
-    at_channel_t                  *channel;                // RG255 AT通道，模块持有对象所有权
-    cellular_status_refresh_mask_t requested_refresh;      // Owner下一轮需要强制确认的状态事实
-    linkg_cellular_lifecycle_t     lifecycle;              // 蜂窝模块生命周期
-    int                            last_error;             // 最近一次不可恢复生命周期错误
-    bool                           monitor_initialized;    // Monitor软件资源是否已经初始化
-    bool                           status_initialized;     // Status软件资源是否已经初始化
-    bool                           monitor_started;        // Monitor是否已经注册URC回调
-    bool                           status_started;         // Status是否已经借用当前AT通道
-    bool                           pdp_action_started;     // 当前SIM会话是否执行过PDP激活动作
-    bool                           netdev_action_started;  // 当前SIM会话是否执行过QNETDEV启动动作
-    bool                           verify_ipv4_done;       // 当前验证轮次IPv4是否已经通过
-    bool                           verify_ipv6_done;       // 当前验证轮次IPv6是否已经通过
-    uint32_t                       verify_failure_count;   // 当前地址族连续公网探测失败次数
+    linkg_cellular_config_t    config;                 // 蜂窝模块配置副本
+    cellular_fsm_t             fsm;                    // network-cell Owner连接状态机
+
+    at_channel_t              *channel;                // RG255 AT通道，模块持有对象所有权
+
+    linkg_cellular_lifecycle_t lifecycle;              // 蜂窝模块生命周期
+    int                        last_error;             // 最近一次不可恢复生命周期错误
+    bool                       monitor_initialized;    // Monitor软件资源是否已经初始化
+    bool                       status_initialized;     // Status软件资源是否已经初始化
+    bool                       monitor_started;        // Monitor是否已经注册URC回调
+    bool                       status_started;         // Status是否已经借用当前AT通道
 } linkg_cellular_context_t;
 
 /****************************** 全局上下文 ******************************/
 
 static linkg_cellular_context_t g_cellular =
 {
-    .lock      = PTHREAD_MUTEX_INITIALIZER,            // 模块状态锁静态初始化
+    .lock      = PTHREAD_MUTEX_INITIALIZER,             // 模块状态锁静态初始化
     .lifecycle = LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED // 初始生命周期
 };
 
@@ -167,164 +138,6 @@ static int _linkg_cellular_deadline_to_timeout(uint64_t now_ms, uint64_t deadlin
 }
 
 /**
- * @brief 判断事实元数据是否表示最近一次确认成功。
- */
-static bool _linkg_cellular_meta_current(const cellular_status_meta_t *meta)
-{
-    return meta != NULL && meta->confirmed && meta->last_error == 0;
-}
-
-/**
- * @brief 判断AT动作错误是否表示控制基础设施已经无法继续运行。
- */
-static bool _linkg_cellular_action_error_fatal(int error)
-{
-    switch (error)
-    {
-        case -EINVAL:
-        case -EMSGSIZE:
-        case -EDEADLK:
-        case -EBADF:
-        case -ENODEV:
-        case -ECANCELED:
-            return true;
-
-        default:
-            return false;
-    }
-}
-
-/**
- * @brief 判断两个APN是否大小写无关地完全一致。
- */
-static bool _linkg_cellular_apn_equal(const char *left, const char *right)
-{
-    return left != NULL && right != NULL && strcasecmp(left, right) == 0;
-}
-
-/**
- * @brief 判断PDP配置是否属于必须保护的IMS上下文。
- */
-static bool _linkg_cellular_pdp_is_ims(const rg255_pdp_config_t *config)
-{
-    return config != NULL && _linkg_cellular_apn_equal(config->apn, "ims");
-}
-
-/**
- * @brief 从PDP事实表中选择现有数据上下文或安全的空闲CID。
- *
- * 明确配置APN时优先复用同APN双栈上下文，否则返回第一个未占用CID用于创建。
- * 未配置APN时只允许复用唯一的非IMS双栈上下文。
- */
-static int _linkg_cellular_select_pdp_context(const rg255_pdp_config_t *configs,
-                                              size_t count,
-                                              const char *required_apn,
-                                              uint8_t *selected_cid,
-                                              const char **selected_apn,
-                                              bool *create)
-{
-    bool occupied[RG255_PDP_CONTEXT_ID_MAX + 1U];
-    const rg255_pdp_config_t *candidate;
-    size_t candidate_count;
-    size_t index;
-    uint8_t cid;
-
-    if (configs == NULL || required_apn == NULL || selected_cid == NULL ||
-        selected_apn == NULL || create == NULL || count > RG255_PDP_CONTEXT_MAX)
-    {
-        return -EINVAL;
-    }
-
-    memset(occupied, 0, sizeof(occupied));
-    candidate       = NULL;
-    candidate_count = 0U;
-
-    for (index = 0U; index < count; index++)
-    {
-        cid = configs[index].cid;
-        if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX)
-        {
-            return -EBADMSG;
-        }
-
-        occupied[cid] = true;
-
-        if (_linkg_cellular_pdp_is_ims(&configs[index]) ||
-            configs[index].pdp_type != RG255_PDP_TYPE_IPV4V6)
-        {
-            continue;
-        }
-
-        if (required_apn[0] != '\0')
-        {
-            if (_linkg_cellular_apn_equal(configs[index].apn, required_apn))
-            {
-                *selected_cid = cid;
-                *selected_apn = configs[index].apn;
-                *create       = false;
-                return 0;
-            }
-
-            continue;
-        }
-
-        if (configs[index].apn[0] == '\0')
-        {
-            continue;
-        }
-
-        candidate = &configs[index];
-        candidate_count++;
-    }
-
-    if (required_apn[0] == '\0')
-    {
-        if (candidate_count == 0U)
-        {
-            return -ENOENT;
-        }
-
-        if (candidate_count != 1U)
-        {
-            return -ENOTUNIQ;
-        }
-
-        *selected_cid = candidate->cid;
-        *selected_apn = candidate->apn;
-        *create       = false;
-        return 0;
-    }
-
-    if (_linkg_cellular_apn_equal(required_apn, "ims"))
-    {
-        return -EPERM;
-    }
-
-    for (cid = RG255_PDP_CONTEXT_ID_MIN; cid <= RG255_PDP_CONTEXT_ID_MAX; cid++)
-    {
-        if (!occupied[cid])
-        {
-            *selected_cid = cid;
-            *selected_apn = required_apn;
-            *create       = true;
-            return 0;
-        }
-    }
-
-    return -ENOSPC;
-}
-
-/**
- * @brief 清空当前公网验证轮次状态。
- */
-static void _linkg_cellular_reset_verify(void)
-{
-    g_cellular.verify_ipv4_done     = false;
-    g_cellular.verify_ipv6_done     = false;
-    g_cellular.verify_failure_count = 0U;
-}
-
-/**
  * @brief 清空模块上下文动态字段并恢复未初始化生命周期。
  *
  * @note 调用方必须持有g_cellular.lock，且全部子模块资源已经释放。
@@ -332,21 +145,15 @@ static void _linkg_cellular_reset_verify(void)
 static void _linkg_cellular_reset_context_locked(void)
 {
     memset(&g_cellular.config, 0, sizeof(g_cellular.config));
-    memset(&g_cellular.runtime, 0, sizeof(g_cellular.runtime));
+    memset(&g_cellular.fsm, 0, sizeof(g_cellular.fsm));
 
     g_cellular.channel                = NULL;
-    g_cellular.requested_refresh      = CELLULAR_STATUS_REFRESH_NONE;
     g_cellular.lifecycle              = LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED;
     g_cellular.last_error             = 0;
     g_cellular.monitor_initialized    = false;
     g_cellular.status_initialized     = false;
     g_cellular.monitor_started        = false;
     g_cellular.status_started         = false;
-    g_cellular.pdp_action_started     = false;
-    g_cellular.netdev_action_started  = false;
-    g_cellular.verify_ipv4_done       = false;
-    g_cellular.verify_ipv6_done       = false;
-    g_cellular.verify_failure_count   = 0U;
 }
 
 /**
@@ -400,63 +207,6 @@ static void _linkg_cellular_destroy_channel(void)
     {
         at_channel_destroy(channel);
     }
-}
-
-/****************************** 状态结果辅助 ******************************/
-
-/**
- * @brief 构造保持当前运行状态的处理结果。
- */
-static linkg_cellular_step_t _linkg_cellular_step_wait(void)
-{
-    linkg_cellular_step_t step;
-
-    memset(&step, 0, sizeof(step));
-    step.result = CELLULAR_RUNTIME_STEP_WAIT;
-
-    return step;
-}
-
-/**
- * @brief 构造推进到指定运行状态的处理结果。
- */
-static linkg_cellular_step_t _linkg_cellular_step_done(cellular_runtime_state_t next_state)
-{
-    linkg_cellular_step_t step;
-
-    memset(&step, 0, sizeof(step));
-    step.result     = CELLULAR_RUNTIME_STEP_DONE;
-    step.next_state = next_state;
-
-    return step;
-}
-
-/**
- * @brief 构造交由Owner失败策略处理的状态结果。
- */
-static linkg_cellular_step_t _linkg_cellular_step_failed(int error)
-{
-    linkg_cellular_step_t step;
-
-    memset(&step, 0, sizeof(step));
-    step.result = CELLULAR_RUNTIME_STEP_FAILED;
-    step.error  = error < 0 ? error : -EIO;
-
-    return step;
-}
-
-/**
- * @brief 构造要求Owner结束运行的致命状态结果。
- */
-static linkg_cellular_step_t _linkg_cellular_step_fatal(int error)
-{
-    linkg_cellular_step_t step;
-
-    memset(&step, 0, sizeof(step));
-    step.result = CELLULAR_RUNTIME_STEP_FATAL;
-    step.error  = error < 0 ? error : -EIO;
-
-    return step;
 }
 
 /****************************** AT通道启动 ******************************/
@@ -555,7 +305,12 @@ static int _linkg_cellular_create_ready_channel(at_channel_t **out)
         now_ms = linkg_time_elapsed_ms();
         if (now_ms - started_ms >= LINKG_CELLULAR_AT_READY_TIMEOUT_MS)
         {
-            return error != 0 ? error : -ETIMEDOUT;
+            if (error != 0)
+            {
+                return error;
+            }
+
+            return -ETIMEDOUT;
         }
 
         ret = linkg_time_sleep_ms(LINKG_CELLULAR_AT_READY_RETRY_MS);
@@ -806,27 +561,6 @@ static int _linkg_cellular_enable_runtime_urcs(at_channel_t *channel)
 /****************************** 状态调度 ******************************/
 
 /**
- * @brief 取得并清空Owner下一轮内部强制刷新请求。
- */
-static cellular_status_refresh_mask_t _linkg_cellular_take_requested_refresh(void)
-{
-    cellular_status_refresh_mask_t requested;
-
-    requested                    = g_cellular.requested_refresh;
-    g_cellular.requested_refresh = CELLULAR_STATUS_REFRESH_NONE;
-
-    return requested;
-}
-
-/**
- * @brief 安排Owner下一轮定向确认指定状态事实。
- */
-static void _linkg_cellular_request_refresh(cellular_status_refresh_mask_t requested)
-{
-    g_cellular.requested_refresh |= requested;
-}
-
-/**
  * @brief 将Monitor语义事件转换为Status事实刷新集合。
  */
 static cellular_status_refresh_mask_t _linkg_cellular_refresh_from_events(const cellular_monitor_events_t *events)
@@ -870,11 +604,6 @@ static cellular_status_refresh_mask_t _linkg_cellular_refresh_from_events(const 
                    CELLULAR_STATUS_REFRESH_HOST;
     }
 
-    if ((events->mask & CELLULAR_MONITOR_EVENT_MODEM_FUNCTION_CHANGED) != 0U)
-    {
-        refresh |= CELLULAR_STATUS_REFRESH_ALL;
-    }
-
     return refresh;
 }
 
@@ -891,7 +620,7 @@ static int _linkg_cellular_process_status(uint64_t now_ms, cellular_status_refre
         return -EINVAL;
     }
 
-    requested = event_refresh | _linkg_cellular_take_requested_refresh();
+    requested = event_refresh | cellular_fsm_take_requested_refresh(&g_cellular.fsm);
 
     ret = cellular_status_process(now_ms, requested);
     if (ret != 0)
@@ -902,1356 +631,10 @@ static int _linkg_cellular_process_status(uint64_t now_ms, cellular_status_refre
     return cellular_status_get_info(info);
 }
 
-/****************************** 运行状态控制 ******************************/
-
-/**
- * @brief 获取指定运行状态的整体等待超时。
- */
-static uint64_t _linkg_cellular_state_timeout(cellular_runtime_state_t state)
-{
-    switch (state)
-    {
-        case CELLULAR_RUNTIME_STATE_CHECK_SIM:
-            return LINKG_CELLULAR_CHECK_SIM_TIMEOUT_MS;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION:
-            return LINKG_CELLULAR_REGISTRATION_TIMEOUT_MS;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_PDP:
-            return LINKG_CELLULAR_PDP_TIMEOUT_MS;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
-            return LINKG_CELLULAR_NETDEV_TIMEOUT_MS;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_HOST:
-            return LINKG_CELLULAR_HOST_TIMEOUT_MS;
-
-        case CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY:
-            return LINKG_CELLULAR_VERIFY_TIMEOUT_MS;
-
-        default:
-            return 0U;
-    }
-}
-
-/**
- * @brief 为新进入的状态安排立即需要确认的事实。
- */
-static void _linkg_cellular_request_state_refresh(cellular_runtime_state_t state)
-{
-    switch (state)
-    {
-        case CELLULAR_RUNTIME_STATE_WAIT_SIM:
-        case CELLULAR_RUNTIME_STATE_CHECK_SIM:
-        case CELLULAR_RUNTIME_STATE_WAIT_PIN:
-        case CELLULAR_RUNTIME_STATE_WAIT_PUK:
-            _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_SIM);
-            break;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION:
-            _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_REGISTRATION |
-                                            CELLULAR_STATUS_REFRESH_RADIO);
-            break;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_PDP:
-            _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_PDP |
-                                            CELLULAR_STATUS_REFRESH_PDP_ADDRESS);
-            break;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
-            _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_NETDEV |
-                                            CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK |
-                                            CELLULAR_STATUS_REFRESH_HOST);
-            break;
-
-        case CELLULAR_RUNTIME_STATE_WAIT_HOST:
-            _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_PDP_ADDRESS |
-                                            CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK |
-                                            CELLULAR_STATUS_REFRESH_HOST);
-            break;
-
-        case CELLULAR_RUNTIME_STATE_ONLINE:
-            _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_SIM |
-                                            CELLULAR_STATUS_REFRESH_REGISTRATION |
-                                            CELLULAR_STATUS_REFRESH_PDP |
-                                            CELLULAR_STATUS_REFRESH_NETDEV |
-                                            CELLULAR_STATUS_REFRESH_HOST);
-            break;
-
-        default:
-            break;
-    }
-}
-
-/**
- * @brief 显式进入指定运行状态并建立该状态的时间边界。
- */
-static int _linkg_cellular_enter_state(cellular_runtime_state_t state, uint64_t now_ms)
-{
-    cellular_runtime_state_t previous;
-    uint64_t                 timeout_ms;
-    int                      ret;
-
-    previous   = g_cellular.runtime.state;
-    timeout_ms = _linkg_cellular_state_timeout(state);
-
-    ret = cellular_runtime_enter(&g_cellular.runtime, state, now_ms, timeout_ms);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (state == CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY)
-    {
-        _linkg_cellular_reset_verify();
-    }
-
-    if (state == CELLULAR_RUNTIME_STATE_ONLINE)
-    {
-        cellular_runtime_clear_failure(&g_cellular.runtime, now_ms);
-        ret = cellular_runtime_schedule_action(&g_cellular.runtime,
-                                               now_ms,
-                                               LINKG_CELLULAR_ONLINE_VERIFY_INTERVAL_MS);
-        if (ret != 0)
-        {
-            return ret;
-        }
-    }
-
-    _linkg_cellular_request_state_refresh(state);
-
-    if (previous != state)
-    {
-        LINKG_LOG_INFO("CELLULAR: runtime state changed, old=%s, new=%s",
-                       cellular_runtime_state_name(previous),
-                       cellular_runtime_state_name(state));
-    }
-
-    return 0;
-}
-
-/****************************** 数据会话清理 ******************************/
-
-/**
- * @brief 清理Linux蜂窝接口上一轮数据会话残留的网络状态。
- */
-static void _linkg_cellular_cleanup_host_network(void)
-{
-    if (!linkg_network_interface_exists(LINKG_RESOURCE_INTERFACE_CELLULAR))
-    {
-        return;
-    }
-
-    // 先关闭接口，阻止旧地址和路由继续被使用。
-    (void)linkg_network_interface_set_up(
-        LINKG_RESOURCE_INTERFACE_CELLULAR,
-        false);
-
-    // 清除上一轮DHCP IPv4地址。
-    linkg_os_run_ignore("ip",
-                        "-4",
-                        "addr",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        "scope",
-                        "global",
-                        NULL);
-
-    // 清除上一轮RA/SLAAC产生的Global IPv6，保留fe80::链路本地地址。
-    linkg_os_run_ignore("ip",
-                        "-6",
-                        "addr",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        "scope",
-                        "global",
-                        NULL);
-
-    // 清除上一轮动态路由。
-    linkg_os_run_ignore("ip",
-                        "-4",
-                        "route",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        NULL);
-
-    linkg_os_run_ignore("ip",
-                        "-6",
-                        "route",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        NULL);
-}
-
-/**
- * @brief 按QNETDEV到PDP的逆序尽力停止当前数据会话。
- *
- * @note 本函数不结束SIM插卡会话；连接失败重试时保留SIM会话和PIN保护。
- */
-static int _linkg_cellular_cleanup_data_session(void)
-{
-    at_channel_t *channel;
-    uint8_t       pdp_cid;
-    bool          pdp_cid_valid;
-    int           first_error;
-    int           ret;
-
-    channel = _linkg_cellular_get_channel();
-    if (channel == NULL)
-    {
-        return -ENODEV;
-    }
-
-    first_error = 0;
-    pdp_cid_valid = cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid);
-
-    _linkg_cellular_cleanup_host_network();
-
-    if ((g_cellular.netdev_action_started || g_cellular.pdp_action_started) && !pdp_cid_valid)
-    {
-        LINKG_LOG_WARN("CELLULAR: data cleanup skipped without selected PDP CID");
-        _linkg_cellular_record_first_error(&first_error, -EPROTO);
-    }
-
-    if (g_cellular.netdev_action_started && pdp_cid_valid)
-    {
-        ret = rg255_cmd_stop_netdev(channel, pdp_cid);
-        if (ret != 0)
-        {
-            LINKG_LOG_WARN("CELLULAR: stop QNETDEV failed, error=%d", ret);
-            _linkg_cellular_record_first_error(&first_error, ret);
-        }
-    }
-
-    if (g_cellular.pdp_action_started && pdp_cid_valid)
-    {
-        ret = rg255_cmd_set_pdp_active(channel, pdp_cid, false);
-        if (ret != 0)
-        {
-            LINKG_LOG_WARN("CELLULAR: deactivate PDP failed, error=%d", ret);
-            _linkg_cellular_record_first_error(&first_error, ret);
-        }
-    }
-
-    _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_PDP |
-                                    CELLULAR_STATUS_REFRESH_PDP_ADDRESS |
-                                    CELLULAR_STATUS_REFRESH_NETDEV |
-                                    CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK |
-                                    CELLULAR_STATUS_REFRESH_HOST);
-
-    _linkg_cellular_reset_verify();
-
-    return first_error;
-}
-
-/**
- * @brief 处理SIM拔出并回到等待新插卡状态。
- */
-static int _linkg_cellular_handle_sim_removed(uint64_t now_ms)
-{
-    int cleanup_ret;
-    int ret;
-
-    cleanup_ret = 0;
-
-    if (cellular_runtime_session_active(&g_cellular.runtime))
-    {
-        cleanup_ret = _linkg_cellular_cleanup_data_session();
-        cellular_runtime_end_session(&g_cellular.runtime, now_ms);
-    }
-
-    cellular_status_clear_pdp_cid();
-    g_cellular.pdp_action_started    = false;
-    g_cellular.netdev_action_started = false;
-
-    if (g_cellular.runtime.state != CELLULAR_RUNTIME_STATE_WAIT_SIM)
-    {
-        ret = _linkg_cellular_enter_state(CELLULAR_RUNTIME_STATE_WAIT_SIM, now_ms);
-        if (ret != 0)
-        {
-            return ret;
-        }
-    }
-
-    return cleanup_ret;
-}
-
-/****************************** Host事实校验 ******************************/
-
-/**
- * @brief 判断IPv6地址是否属于指定网络前缀。
- */
-static bool _linkg_cellular_ipv6_in_prefix(const struct in6_addr *address, const struct in6_addr *prefix, uint8_t prefix_length)
-{
-    uint8_t mask;
-    size_t  full_bytes;
-    uint8_t remaining_bits;
-
-    if (address == NULL || prefix == NULL || prefix_length == 0U || prefix_length > 128U)
-    {
-        return false;
-    }
-
-    full_bytes     = prefix_length / 8U;
-    remaining_bits = prefix_length % 8U;
-
-    if (full_bytes > 0U && memcmp(address->s6_addr, prefix->s6_addr, full_bytes) != 0)
-    {
-        return false;
-    }
-
-    if (remaining_bits == 0U)
-    {
-        return true;
-    }
-
-    mask = (uint8_t)(0xffU << (8U - remaining_bits));
-
-    return (address->s6_addr[full_bytes] & mask) ==
-           (prefix->s6_addr[full_bytes] & mask);
-}
-
-/**
- * @brief 判断Linux Host网络事实是否完整匹配RG255期望配置。
- */
-static bool _linkg_cellular_host_ready(const cellular_status_info_t *info)
-{
-    const cellular_status_host_info_t          *host;
-    const cellular_status_expected_ipv4_info_t *expected_ipv4;
-    const cellular_status_expected_ipv6_info_t *expected_ipv6;
-
-    if (info == NULL)
-    {
-        return false;
-    }
-
-    host          = &info->host;
-    expected_ipv4 = &info->netdev.expected_ipv4;
-    expected_ipv6 = &info->netdev.expected_ipv6;
-
-    if (!_linkg_cellular_meta_current(&info->pdp.address_meta) ||
-        !info->pdp.global_ipv6_valid)
-    {
-        return false;
-    }
-
-    if (!_linkg_cellular_meta_current(&expected_ipv4->meta) || !expected_ipv4->valid ||
-        !_linkg_cellular_meta_current(&expected_ipv6->meta) || !expected_ipv6->valid)
-    {
-        return false;
-    }
-
-    if (!_linkg_cellular_meta_current(&host->interface_meta) || !host->interface_present ||
-        !_linkg_cellular_meta_current(&host->interface_up_meta) || !host->interface_up)
-    {
-        return false;
-    }
-
-    if (!_linkg_cellular_meta_current(&host->ipv4_meta) || !host->ipv4_valid ||
-        !_linkg_cellular_meta_current(&host->ipv4_netmask_meta) || !host->ipv4_netmask_valid ||
-        !_linkg_cellular_meta_current(&host->ipv4_route_meta) || !host->ipv4_gateway_valid)
-    {
-        return false;
-    }
-
-    if (memcmp(&host->ipv4, &expected_ipv4->address, sizeof(host->ipv4)) != 0 ||
-        memcmp(&host->ipv4_netmask, &expected_ipv4->netmask, sizeof(host->ipv4_netmask)) != 0 ||
-        memcmp(&host->ipv4_gateway, &expected_ipv4->gateway, sizeof(host->ipv4_gateway)) != 0)
-    {
-        return false;
-    }
-
-    if (!_linkg_cellular_meta_current(&host->ipv6_meta) || !host->global_ipv6_valid ||
-        !_linkg_cellular_meta_current(&host->ipv6_route_meta) || !host->ipv6_gateway_valid)
-    {
-        return false;
-    }
-
-    if (!_linkg_cellular_ipv6_in_prefix(&host->global_ipv6,
-                                        &expected_ipv6->prefix,
-                                        expected_ipv6->prefix_length))
-    {
-        return false;
-    }
-
-    return memcmp(&host->ipv6_gateway,
-                  &expected_ipv6->gateway,
-                  sizeof(host->ipv6_gateway)) == 0;
-}
-
-/**
- * @brief 判断在线状态是否已经被最新成功事实明确否定。
- */
-static bool _linkg_cellular_online_invalid(const cellular_status_info_t *info)
-{
-    uint8_t pdp_cid;
-
-    if (info == NULL)
-    {
-        return true;
-    }
-
-    if (_linkg_cellular_meta_current(&info->local.sim_meta) &&
-        info->local.sim_state != LINKG_CELLULAR_SIM_STATE_READY)
-    {
-        return true;
-    }
-
-    if (_linkg_cellular_meta_current(&info->network.registration_meta) &&
-        info->network.registration != LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED)
-    {
-        return true;
-    }
-
-    if (_linkg_cellular_meta_current(&info->pdp.active_meta) && !info->pdp.active)
-    {
-        return true;
-    }
-
-    if (_linkg_cellular_meta_current(&info->netdev.state.meta) &&
-        !info->netdev.state.connected)
-    {
-        return true;
-    }
-
-    if (_linkg_cellular_meta_current(&info->netdev.state.meta) &&
-        info->netdev.state.connected &&
-        (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid) ||
-         info->netdev.state.cid != pdp_cid))
-    {
-        return true;
-    }
-
-    if (_linkg_cellular_meta_current(&info->host.interface_meta) &&
-        _linkg_cellular_meta_current(&info->host.interface_up_meta) &&
-        _linkg_cellular_meta_current(&info->host.ipv4_meta) &&
-        _linkg_cellular_meta_current(&info->host.ipv4_netmask_meta) &&
-        _linkg_cellular_meta_current(&info->host.ipv6_meta) &&
-        _linkg_cellular_meta_current(&info->host.ipv4_route_meta) &&
-        _linkg_cellular_meta_current(&info->host.ipv6_route_meta) &&
-        _linkg_cellular_meta_current(&info->netdev.expected_ipv4.meta) &&
-        _linkg_cellular_meta_current(&info->netdev.expected_ipv6.meta) &&
-        !_linkg_cellular_host_ready(info))
-    {
-        return true;
-    }
-
-    return false;
-}
-
-/****************************** SIM会话协调 ******************************/
-
-/**
- * @brief 根据最新SIM事实开始或结束物理插卡会话。
- *
- * @return 1表示本轮发生了强制状态转移，0表示未转移，负值表示错误。
- */
-static int _linkg_cellular_sync_sim_session(const cellular_monitor_events_t *events, const cellular_status_info_t *info, uint64_t now_ms)
-{
-    linkg_cellular_sim_state_t sim_state;
-    bool                       physical_removed;
-    int                        ret;
-
-    physical_removed = events != NULL &&
-                       (events->mask & CELLULAR_MONITOR_EVENT_SIM_PRESENCE_CHANGED) != 0U &&
-                       events->sim_presence_valid &&
-                       events->sim_presence == CELLULAR_MONITOR_SIM_PRESENCE_REMOVED;
-
-    sim_state = LINKG_CELLULAR_SIM_STATE_UNKNOWN;
-    if (info != NULL && _linkg_cellular_meta_current(&info->local.sim_meta))
-    {
-        sim_state = info->local.sim_state;
-    }
-
-    if (physical_removed || sim_state == LINKG_CELLULAR_SIM_STATE_ABSENT)
-    {
-        ret = _linkg_cellular_handle_sim_removed(now_ms);
-        if (ret != 0)
-        {
-            LINKG_LOG_WARN("CELLULAR: cleanup after SIM removal returned error=%d", ret);
-        }
-
-        return 1;
-    }
-
-    if (!cellular_runtime_session_active(&g_cellular.runtime) &&
-        sim_state != LINKG_CELLULAR_SIM_STATE_UNKNOWN)
-    {
-        ret = cellular_runtime_begin_session(&g_cellular.runtime, now_ms);
-        if (ret != 0)
-        {
-            return ret;
-        }
-
-        cellular_status_clear_pdp_cid();
-        g_cellular.pdp_action_started    = false;
-        g_cellular.netdev_action_started = false;
-
-        ret = _linkg_cellular_enter_state(CELLULAR_RUNTIME_STATE_CHECK_SIM, now_ms);
-        if (ret != 0)
-        {
-            return ret;
-        }
-
-        return 1;
-    }
-
-    if (cellular_runtime_session_active(&g_cellular.runtime) &&
-        sim_state != LINKG_CELLULAR_SIM_STATE_UNKNOWN &&
-        sim_state != LINKG_CELLULAR_SIM_STATE_READY)
-    {
-        switch (g_cellular.runtime.state)
-        {
-            case CELLULAR_RUNTIME_STATE_CHECK_SIM:
-            case CELLULAR_RUNTIME_STATE_ENTER_PIN:
-            case CELLULAR_RUNTIME_STATE_WAIT_PIN:
-            case CELLULAR_RUNTIME_STATE_WAIT_PUK:
-                break;
-
-            default:
-                ret = _linkg_cellular_enter_state(CELLULAR_RUNTIME_STATE_CHECK_SIM, now_ms);
-                if (ret != 0)
-                {
-                    return ret;
-                }
-
-                return 1;
-        }
-    }
-
-    return 0;
-}
-
-/****************************** 状态步骤 ******************************/
-
-/**
- * @brief 处理IDLE状态并进入SIM等待流程。
- */
-static linkg_cellular_step_t _linkg_cellular_state_idle(void)
-{
-    return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_SIM);
-}
-
-/**
- * @brief 处理等待SIM插入状态。
- */
-static linkg_cellular_step_t _linkg_cellular_state_wait_sim(void)
-{
-    if (cellular_runtime_session_active(&g_cellular.runtime))
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_CHECK_SIM);
-    }
-
-    return _linkg_cellular_step_wait();
-}
-
-/**
- * @brief 根据CPIN事实决定SIM会话后续流程。
- */
-static linkg_cellular_step_t _linkg_cellular_state_check_sim(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    int error;
-
-    if (info == NULL || !_linkg_cellular_meta_current(&info->local.sim_meta))
-    {
-        if (cellular_runtime_state_timed_out(&g_cellular.runtime, now_ms))
-        {
-            error = info != NULL && info->local.sim_meta.last_error != 0
-                ? info->local.sim_meta.last_error
-                : -ETIMEDOUT;
-
-            return _linkg_cellular_step_failed(error);
-        }
-
-        return _linkg_cellular_step_wait();
-    }
-
-    switch (info->local.sim_state)
-    {
-        case LINKG_CELLULAR_SIM_STATE_READY:
-            return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION);
-
-        case LINKG_CELLULAR_SIM_STATE_PIN_REQUIRED:
-            if (g_cellular.config.pin[0] == '\0' || cellular_runtime_pin_attempted(&g_cellular.runtime))
-            {
-                return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_PIN);
-            }
-
-            return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_ENTER_PIN);
-
-        case LINKG_CELLULAR_SIM_STATE_PUK_REQUIRED:
-            return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_PUK);
-
-        case LINKG_CELLULAR_SIM_STATE_ABSENT:
-            return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_SIM);
-
-        case LINKG_CELLULAR_SIM_STATE_NOT_READY:
-        case LINKG_CELLULAR_SIM_STATE_UNKNOWN:
-        default:
-            if (cellular_runtime_state_timed_out(&g_cellular.runtime, now_ms))
-            {
-                return _linkg_cellular_step_failed(-ETIMEDOUT);
-            }
-
-            return _linkg_cellular_step_wait();
-    }
-}
-
-/**
- * @brief 在当前物理插卡会话中安全执行一次用户PIN输入。
- */
-static linkg_cellular_step_t _linkg_cellular_state_enter_pin(uint64_t now_ms)
-{
-    at_channel_t *channel;
-    int           ret;
-
-    if (g_cellular.config.pin[0] == '\0')
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_PIN);
-    }
-
-    ret = cellular_runtime_mark_pin_attempted(&g_cellular.runtime, now_ms);
-    if (ret != 0)
-    {
-        if (ret == -EALREADY)
-        {
-            return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_PIN);
-        }
-
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    ret = cellular_runtime_note_attempt(&g_cellular.runtime, now_ms);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    channel = _linkg_cellular_get_channel();
-    if (channel == NULL)
-    {
-        return _linkg_cellular_step_fatal(-ENODEV);
-    }
-
-    ret = rg255_cmd_enter_pin(channel, g_cellular.config.pin);
-    if (ret != 0)
-    {
-        if (_linkg_cellular_action_error_fatal(ret))
-        {
-            return _linkg_cellular_step_fatal(ret);
-        }
-
-        LINKG_LOG_WARN("CELLULAR: enter SIM PIN returned error=%d, action=query-truth", ret);
-    }
-
-    _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_SIM);
-
-    return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_CHECK_SIM);
-}
-
-/**
- * @brief 处理等待用户提供正确PIN或更换SIM状态。
- */
-static linkg_cellular_step_t _linkg_cellular_state_wait_pin(const cellular_status_info_t *info)
-{
-    if (info == NULL || !_linkg_cellular_meta_current(&info->local.sim_meta))
-    {
-        return _linkg_cellular_step_wait();
-    }
-
-    if (info->local.sim_state == LINKG_CELLULAR_SIM_STATE_READY)
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION);
-    }
-
-    if (info->local.sim_state == LINKG_CELLULAR_SIM_STATE_PUK_REQUIRED)
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_PUK);
-    }
-
-    return _linkg_cellular_step_wait();
-}
-
-/**
- * @brief 处理等待用户人工解除SIM PUK状态。
- */
-static linkg_cellular_step_t _linkg_cellular_state_wait_puk(const cellular_status_info_t *info)
-{
-    if (info == NULL || !_linkg_cellular_meta_current(&info->local.sim_meta))
-    {
-        return _linkg_cellular_step_wait();
-    }
-
-    if (info->local.sim_state == LINKG_CELLULAR_SIM_STATE_READY)
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION);
-    }
-
-    if (info->local.sim_state == LINKG_CELLULAR_SIM_STATE_PIN_REQUIRED)
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_PIN);
-    }
-
-    return _linkg_cellular_step_wait();
-}
-
-/**
- * @brief 等待移动网络注册成功。
- */
-static linkg_cellular_step_t _linkg_cellular_state_wait_registration(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    int error;
-
-    if (info != NULL && _linkg_cellular_meta_current(&info->network.registration_meta))
-    {
-        if (info->network.registration == LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED)
-        {
-            return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_PREPARE_PDP);
-        }
-
-        if (info->network.registration == LINKG_CELLULAR_REGISTRATION_STATE_DENIED)
-        {
-            return _linkg_cellular_step_failed(-EACCES);
-        }
-    }
-
-    if (!cellular_runtime_state_timed_out(&g_cellular.runtime, now_ms))
-    {
-        return _linkg_cellular_step_wait();
-    }
-
-    error = info != NULL && info->network.registration_meta.last_error != 0
-        ? info->network.registration_meta.last_error
-        : -ETIMEDOUT;
-
-    return _linkg_cellular_step_failed(error);
-}
-
-/**
- * @brief 查询全部PDP配置并由Owner选择或创建数据上下文。
- */
-static linkg_cellular_step_t _linkg_cellular_state_prepare_pdp(uint64_t now_ms)
-{
-    rg255_pdp_config_t configs[RG255_PDP_CONTEXT_MAX];
-    at_channel_t      *channel;
-    const char        *selected_apn;
-    size_t             count;
-    uint8_t            selected_cid;
-    bool               create;
-    int                ret;
-
-    channel = _linkg_cellular_get_channel();
-    if (channel == NULL)
-    {
-        return _linkg_cellular_step_fatal(-ENODEV);
-    }
-
-    ret = cellular_runtime_note_attempt(&g_cellular.runtime, now_ms);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    memset(configs, 0, sizeof(configs));
-    count = 0U;
-    ret = rg255_query_pdp_configs(channel, configs, RG255_PDP_CONTEXT_MAX, &count);
-    if (ret != 0)
-    {
-        return _linkg_cellular_action_error_fatal(ret)
-            ? _linkg_cellular_step_fatal(ret)
-            : _linkg_cellular_step_failed(ret);
-    }
-
-    selected_apn = NULL;
-    selected_cid = 0U;
-    create       = false;
-
-    ret = _linkg_cellular_select_pdp_context(configs,
-                                             count,
-                                             g_cellular.config.apn,
-                                             &selected_cid,
-                                             &selected_apn,
-                                             &create);
-    if (ret != 0)
-    {
-        if (ret == -ENOSPC)
-        {
-            LINKG_LOG_WARN("CELLULAR: no free PDP context for configured APN");
-        }
-
-        return _linkg_cellular_step_failed(ret);
-    }
-
-    if (create)
-    {
-        ret = rg255_cmd_set_pdp_context(channel, selected_cid, selected_apn);
-        if (ret != 0)
-        {
-            return _linkg_cellular_action_error_fatal(ret)
-                ? _linkg_cellular_step_fatal(ret)
-                : _linkg_cellular_step_failed(ret);
-        }
-    }
-
-    ret = cellular_runtime_set_pdp_cid(&g_cellular.runtime, selected_cid, now_ms);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    ret = cellular_status_set_pdp_cid(selected_cid);
-    if (ret != 0)
-    {
-        cellular_runtime_clear_pdp_cid(&g_cellular.runtime, now_ms);
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    LINKG_LOG_INFO("CELLULAR: PDP context selected, cid=%u, apn=%s, source=%s",
-                   (unsigned int)selected_cid,
-                   selected_apn,
-                   create ? "created" : "existing");
-
-    return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_ACTIVATE_PDP);
-}
-
-/**
- * @brief 请求激活默认PDP上下文并转入事实确认状态。
- */
-static linkg_cellular_step_t _linkg_cellular_state_activate_pdp(uint64_t now_ms)
-{
-    at_channel_t *channel;
-    uint8_t       pdp_cid;
-    int           ret;
-
-    channel = _linkg_cellular_get_channel();
-    if (channel == NULL)
-    {
-        return _linkg_cellular_step_fatal(-ENODEV);
-    }
-
-    ret = cellular_runtime_note_attempt(&g_cellular.runtime, now_ms);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    if (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid))
-    {
-        return _linkg_cellular_step_fatal(-EPROTO);
-    }
-
-    g_cellular.pdp_action_started = true;
-
-    ret = rg255_cmd_set_pdp_active(channel, pdp_cid, true);
-    if (ret != 0)
-    {
-        if (_linkg_cellular_action_error_fatal(ret))
-        {
-            return _linkg_cellular_step_fatal(ret);
-        }
-
-        LINKG_LOG_WARN("CELLULAR: activate PDP returned error=%d, action=query-truth", ret);
-    }
-
-    return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_PDP);
-}
-
-/**
- * @brief 等待Status确认默认PDP上下文已经激活。
- */
-static linkg_cellular_step_t _linkg_cellular_state_wait_pdp(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    int error;
-
-    if (info != NULL && _linkg_cellular_meta_current(&info->pdp.active_meta) && info->pdp.active)
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_START_NETDEV);
-    }
-
-    if (!cellular_runtime_state_timed_out(&g_cellular.runtime, now_ms))
-    {
-        return _linkg_cellular_step_wait();
-    }
-
-    error = info != NULL && info->pdp.active_meta.last_error != 0
-        ? info->pdp.active_meta.last_error
-        : -ETIMEDOUT;
-
-    return _linkg_cellular_step_failed(error);
-}
-
-/**
- * @brief 请求启动RG255 USB网络设备连接并转入事实确认状态。
- */
-static linkg_cellular_step_t _linkg_cellular_state_start_netdev(uint64_t now_ms)
-{
-    at_channel_t *channel;
-    uint8_t       pdp_cid;
-    int           ret;
-
-    channel = _linkg_cellular_get_channel();
-    if (channel == NULL)
-    {
-        return _linkg_cellular_step_fatal(-ENODEV);
-    }
-
-    ret = cellular_runtime_note_attempt(&g_cellular.runtime, now_ms);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    if (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid))
-    {
-        return _linkg_cellular_step_fatal(-EPROTO);
-    }
-
-    g_cellular.netdev_action_started = true;
-
-    ret = rg255_cmd_start_netdev(channel, pdp_cid);
-    if (ret != 0)
-    {
-        if (_linkg_cellular_action_error_fatal(ret))
-        {
-            return _linkg_cellular_step_fatal(ret);
-        }
-
-        LINKG_LOG_WARN("CELLULAR: start QNETDEV returned error=%d, action=query-truth", ret);
-    }
-
-    return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_NETDEV);
-}
-
-/**
- * @brief 等待Status确认USB网络设备已经连接。
- */
-static linkg_cellular_step_t _linkg_cellular_state_wait_netdev(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    uint8_t pdp_cid;
-    int error;
-
-    if (!cellular_runtime_get_pdp_cid(&g_cellular.runtime, &pdp_cid))
-    {
-        return _linkg_cellular_step_fatal(-EPROTO);
-    }
-
-    if (info != NULL && _linkg_cellular_meta_current(&info->netdev.state.meta) &&
-        info->netdev.state.connected && info->netdev.state.cid == pdp_cid)
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_PREPARE_HOST);
-    }
-
-    if (!cellular_runtime_state_timed_out(&g_cellular.runtime, now_ms))
-    {
-        return _linkg_cellular_step_wait();
-    }
-
-    error = info != NULL && info->netdev.state.meta.last_error != 0
-        ? info->netdev.state.meta.last_error
-        : -ETIMEDOUT;
-
-    return _linkg_cellular_step_failed(error);
-}
-
-/**
- * @brief 准备Linux蜂窝网络接口并获取IPv4网络配置。
- *
- * @note LinkG开启转发后usb0必须使用accept_ra=2，确保IPv6 RA/SLAAC继续工作。
- */
-static linkg_cellular_step_t _linkg_cellular_state_prepare_host(uint64_t now_ms)
-{
-    int ret;
-
-    ret = cellular_runtime_note_attempt(&g_cellular.runtime, now_ms);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    ret = linkg_network_interface_wait(LINKG_RESOURCE_INTERFACE_CELLULAR, 3000U);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_failed(ret);
-    }
-
-    ret = linkg_network_interface_ipv6_accept_ra_set( LINKG_RESOURCE_INTERFACE_CELLULAR, LINKG_NETWORK_IPV6_ACCEPT_RA_FORCE);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_failed(ret);
-    }
-
-    ret = linkg_network_interface_set_up(
-        LINKG_RESOURCE_INTERFACE_CELLULAR,
-        true);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_failed(ret);
-    }
-
-    ret = linkg_os_run("udhcpc",
-                       "-f",
-                       "-n",
-                       "-q",
-                       "-t",
-                       "5",
-                       "-i",
-                       LINKG_RESOURCE_INTERFACE_CELLULAR,
-                       NULL);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_failed(ret);
-    }
-
-    _linkg_cellular_request_refresh(CELLULAR_STATUS_REFRESH_HOST |
-                                    CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK);
-
-    return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_WAIT_HOST);
-}
-
-/**
- * @brief 等待Linux Host网络配置完整匹配RG255期望事实。
- */
-static linkg_cellular_step_t _linkg_cellular_state_wait_host(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    if (_linkg_cellular_host_ready(info))
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY);
-    }
-
-    if (cellular_runtime_state_timed_out(&g_cellular.runtime, now_ms))
-    {
-        return _linkg_cellular_step_failed(-ETIMEDOUT);
-    }
-
-    return _linkg_cellular_step_wait();
-}
-
-/**
- * @brief 通过指定地址族和usb0接口执行一次公网连通性探测。
- */
-static int _linkg_cellular_probe_connectivity(bool ipv6)
-{
-    if (ipv6)
-    {
-        return linkg_os_run("ping6",
-                            "-I",
-                            LINKG_RESOURCE_INTERFACE_CELLULAR,
-                            "-c",
-                            "1",
-                            "-W",
-                            "2",
-                            LINKG_CELLULAR_VERIFY_TARGET,
-                            NULL);
-    }
-
-    return linkg_os_run("ping",
-                        "-4",
-                        "-I",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        "-c",
-                        "1",
-                        "-W",
-                        "2",
-                        LINKG_CELLULAR_VERIFY_TARGET,
-                        NULL);
-}
-
-/**
- * @brief 顺序验证IPv4和IPv6真实公网连通性。
- */
-static linkg_cellular_step_t _linkg_cellular_state_verify(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    bool ipv6;
-    int  ret;
-
-    if (!_linkg_cellular_host_ready(info))
-    {
-        return _linkg_cellular_step_failed(-ENETDOWN);
-    }
-
-    if (g_cellular.runtime.next_action_ms != 0U &&
-        !cellular_runtime_action_due(&g_cellular.runtime, now_ms))
-    {
-        return _linkg_cellular_step_wait();
-    }
-
-    cellular_runtime_clear_action(&g_cellular.runtime, now_ms);
-
-    ipv6 = g_cellular.verify_ipv4_done;
-
-    ret = cellular_runtime_note_attempt(&g_cellular.runtime, now_ms);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    ret = _linkg_cellular_probe_connectivity(ipv6);
-    if (ret == 0)
-    {
-        g_cellular.verify_failure_count = 0U;
-
-        if (!ipv6)
-        {
-            g_cellular.verify_ipv4_done = true;
-
-            ret = cellular_runtime_schedule_action(&g_cellular.runtime,
-                                                   now_ms,
-                                                   LINKG_CELLULAR_VERIFY_NEXT_FAMILY_DELAY_MS);
-            if (ret != 0)
-            {
-                return _linkg_cellular_step_fatal(ret);
-            }
-
-            return _linkg_cellular_step_wait();
-        }
-
-        g_cellular.verify_ipv6_done = true;
-
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_ONLINE);
-    }
-
-    g_cellular.verify_failure_count++;
-
-    if (g_cellular.verify_failure_count >= LINKG_CELLULAR_VERIFY_FAILURE_LIMIT ||
-        cellular_runtime_state_timed_out(&g_cellular.runtime, now_ms))
-    {
-        return _linkg_cellular_step_failed(-ENETUNREACH);
-    }
-
-    ret = cellular_runtime_schedule_action(&g_cellular.runtime,
-                                           now_ms,
-                                           LINKG_CELLULAR_VERIFY_RETRY_MS);
-    if (ret != 0)
-    {
-        return _linkg_cellular_step_fatal(ret);
-    }
-
-    return _linkg_cellular_step_wait();
-}
-
-/**
- * @brief 维护已经验证上线的蜂窝数据链状态。
- */
-static linkg_cellular_step_t _linkg_cellular_state_online(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    int ret;
-
-    if (_linkg_cellular_online_invalid(info))
-    {
-        return _linkg_cellular_step_failed(-ENETDOWN);
-    }
-
-    if (g_cellular.runtime.next_action_ms == 0U)
-    {
-        ret = cellular_runtime_schedule_action(&g_cellular.runtime,
-                                               now_ms,
-                                               LINKG_CELLULAR_ONLINE_VERIFY_INTERVAL_MS);
-        if (ret != 0)
-        {
-            return _linkg_cellular_step_fatal(ret);
-        }
-
-        return _linkg_cellular_step_wait();
-    }
-
-    if (cellular_runtime_action_due(&g_cellular.runtime, now_ms))
-    {
-        return _linkg_cellular_step_done(CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY);
-    }
-
-    return _linkg_cellular_step_wait();
-}
-
-/**
- * @brief 等待统一连接重试退避期限到达。
- */
-static linkg_cellular_step_t _linkg_cellular_state_retry_wait(void)
-{
-    if (!cellular_runtime_retry_due(&g_cellular.runtime, linkg_time_elapsed_ms()))
-    {
-        return _linkg_cellular_step_wait();
-    }
-
-    return _linkg_cellular_step_done(g_cellular.runtime.retry_target_state);
-}
-
-/**
- * @brief 执行当前运行状态的一步处理。
- */
-static linkg_cellular_step_t _linkg_cellular_run_current_state(const cellular_status_info_t *info, uint64_t now_ms)
-{
-    switch (g_cellular.runtime.state)
-    {
-        case CELLULAR_RUNTIME_STATE_IDLE:
-            return _linkg_cellular_state_idle();
-
-        case CELLULAR_RUNTIME_STATE_WAIT_SIM:
-            return _linkg_cellular_state_wait_sim();
-
-        case CELLULAR_RUNTIME_STATE_CHECK_SIM:
-            return _linkg_cellular_state_check_sim(info, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_ENTER_PIN:
-            return _linkg_cellular_state_enter_pin(now_ms);
-
-        case CELLULAR_RUNTIME_STATE_WAIT_PIN:
-            return _linkg_cellular_state_wait_pin(info);
-
-        case CELLULAR_RUNTIME_STATE_WAIT_PUK:
-            return _linkg_cellular_state_wait_puk(info);
-
-        case CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION:
-            return _linkg_cellular_state_wait_registration(info, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_PREPARE_PDP:
-            return _linkg_cellular_state_prepare_pdp(now_ms);
-
-        case CELLULAR_RUNTIME_STATE_ACTIVATE_PDP:
-            return _linkg_cellular_state_activate_pdp(now_ms);
-
-        case CELLULAR_RUNTIME_STATE_WAIT_PDP:
-            return _linkg_cellular_state_wait_pdp(info, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_START_NETDEV:
-            return _linkg_cellular_state_start_netdev(now_ms);
-
-        case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
-            return _linkg_cellular_state_wait_netdev(info, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_PREPARE_HOST:
-            return _linkg_cellular_state_prepare_host(now_ms);
-
-        case CELLULAR_RUNTIME_STATE_WAIT_HOST:
-            return _linkg_cellular_state_wait_host(info, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY:
-            return _linkg_cellular_state_verify(info, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_ONLINE:
-            return _linkg_cellular_state_online(info, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_RETRY_WAIT:
-            return _linkg_cellular_state_retry_wait();
-
-        case CELLULAR_RUNTIME_STATE_NONE:
-        default:
-            return _linkg_cellular_step_fatal(-EPROTO);
-    }
-}
-
-/****************************** 失败处理 ******************************/
-
-/**
- * @brief 根据当前SIM会话累计重试次数计算有上限退避时间。
- */
-static uint64_t _linkg_cellular_retry_delay(void)
-{
-    uint64_t delay_ms;
-    uint32_t shift;
-
-    shift = g_cellular.runtime.retry_count;
-    if (shift > 4U)
-    {
-        shift = 4U;
-    }
-
-    delay_ms = LINKG_CELLULAR_RETRY_BASE_MS << shift;
-    if (delay_ms > LINKG_CELLULAR_RETRY_MAX_MS)
-    {
-        delay_ms = LINKG_CELLULAR_RETRY_MAX_MS;
-    }
-
-    return delay_ms;
-}
-
-/**
- * @brief 记录当前状态失败并执行对应V1统一恢复策略。
- */
-static int _linkg_cellular_handle_state_failure(int error, uint64_t now_ms)
-{
-    cellular_runtime_state_t failed_state;
-    cellular_runtime_state_t retry_target;
-    uint64_t                 retry_delay_ms;
-    int                      cleanup_ret;
-    int                      ret;
-
-    ret = cellular_runtime_record_failure(&g_cellular.runtime, error, now_ms);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    failed_state = g_cellular.runtime.failed_state;
-
-    LINKG_LOG_WARN("CELLULAR: runtime state failed, state=%s, error=%d",
-                   cellular_runtime_state_name(failed_state),
-                   error);
-
-    switch (failed_state)
-    {
-        case CELLULAR_RUNTIME_STATE_CHECK_SIM:
-            retry_target = CELLULAR_RUNTIME_STATE_CHECK_SIM;
-            break;
-
-        case CELLULAR_RUNTIME_STATE_ENTER_PIN:
-            return _linkg_cellular_enter_state(CELLULAR_RUNTIME_STATE_WAIT_PIN, now_ms);
-
-        case CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION:
-            retry_target = CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION;
-            break;
-
-        case CELLULAR_RUNTIME_STATE_PREPARE_PDP:
-        case CELLULAR_RUNTIME_STATE_ACTIVATE_PDP:
-        case CELLULAR_RUNTIME_STATE_WAIT_PDP:
-        case CELLULAR_RUNTIME_STATE_START_NETDEV:
-        case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
-        case CELLULAR_RUNTIME_STATE_PREPARE_HOST:
-        case CELLULAR_RUNTIME_STATE_WAIT_HOST:
-        case CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY:
-        case CELLULAR_RUNTIME_STATE_ONLINE:
-            retry_target = CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION;
-            break;
-
-        default:
-            return -EPROTO;
-    }
-
-    if (failed_state != CELLULAR_RUNTIME_STATE_CHECK_SIM)
-    {
-        cleanup_ret = _linkg_cellular_cleanup_data_session();
-        if (cleanup_ret != 0)
-        {
-            LINKG_LOG_WARN("CELLULAR: data cleanup during retry returned error=%d", cleanup_ret);
-        }
-    }
-
-    retry_delay_ms = _linkg_cellular_retry_delay();
-
-    ret = cellular_runtime_schedule_retry(&g_cellular.runtime,
-                                          retry_target,
-                                          now_ms,
-                                          retry_delay_ms);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    LINKG_LOG_INFO("CELLULAR: retry scheduled, target=%s, delay_ms=%llu, count=%u",
-                   cellular_runtime_state_name(retry_target),
-                   (unsigned long long)retry_delay_ms,
-                   (unsigned int)g_cellular.runtime.retry_count);
-
-    return 0;
-}
-
 /****************************** Owner轮询 ******************************/
 
 /**
- * @brief 获取Status与Runtime最近的Owner处理期限。
+ * @brief 获取Status与FSM最近的Owner处理期限。
  */
 static uint64_t _linkg_cellular_get_owner_deadline(void)
 {
@@ -2259,7 +642,7 @@ static uint64_t _linkg_cellular_get_owner_deadline(void)
     uint64_t status_deadline;
 
     status_deadline  = cellular_status_get_deadline();
-    runtime_deadline = cellular_runtime_get_deadline(&g_cellular.runtime);
+    runtime_deadline = cellular_fsm_get_deadline(&g_cellular.fsm);
 
     return _linkg_cellular_min_deadline(status_deadline, runtime_deadline);
 }
@@ -2341,8 +724,8 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
     cellular_monitor_events_t     events;
     cellular_status_info_t        info;
     cellular_status_refresh_mask_t event_refresh;
-    linkg_cellular_step_t         step;
-    uint64_t                      now_ms;
+    cellular_fsm_step_t            step;
+    uint64_t                       now_ms;
     int                           session_result;
     int                           ret;
 
@@ -2371,7 +754,7 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
             return ret;
         }
 
-        session_result = _linkg_cellular_sync_sim_session(&events, &info, now_ms);
+        session_result = cellular_fsm_sync_sim_session(&g_cellular.fsm, _linkg_cellular_get_channel(), &events, &info, now_ms);
         if (session_result < 0)
         {
             return session_result;
@@ -2382,12 +765,12 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
             continue;
         }
 
-        step = _linkg_cellular_run_current_state(&info, now_ms);
+        step = cellular_fsm_run(&g_cellular.fsm, &g_cellular.config, _linkg_cellular_get_channel(), &info, now_ms);
 
         switch (step.result)
         {
             case CELLULAR_RUNTIME_STEP_DONE:
-                ret = _linkg_cellular_enter_state(step.next_state, now_ms);
+                ret = cellular_fsm_enter(&g_cellular.fsm, step.next_state, now_ms);
                 if (ret != 0)
                 {
                     return ret;
@@ -2396,7 +779,7 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
                 continue;
 
             case CELLULAR_RUNTIME_STEP_FAILED:
-                ret = _linkg_cellular_handle_state_failure(step.error, now_ms);
+                ret = cellular_fsm_handle_failure(&g_cellular.fsm, _linkg_cellular_get_channel(), step.error, now_ms);
                 if (ret != 0)
                 {
                     return ret;
@@ -2434,20 +817,11 @@ static int _linkg_cellular_stop_runtime(void)
 
     first_error = 0;
 
-    if (cellular_runtime_session_active(&g_cellular.runtime))
+    ret = cellular_fsm_stop_session(&g_cellular.fsm, _linkg_cellular_get_channel(), linkg_time_elapsed_ms());
+    if (ret != 0)
     {
-        ret = _linkg_cellular_cleanup_data_session();
-        if (ret != 0)
-        {
-            _linkg_cellular_record_first_error(&first_error, ret);
-        }
-
-        cellular_runtime_end_session(&g_cellular.runtime, linkg_time_elapsed_ms());
+        _linkg_cellular_record_first_error(&first_error, ret);
     }
-
-    cellular_status_clear_pdp_cid();
-    g_cellular.pdp_action_started    = false;
-    g_cellular.netdev_action_started = false;
 
     if (g_cellular.status_started)
     {
@@ -2472,9 +846,7 @@ static int _linkg_cellular_stop_runtime(void)
     }
 
     _linkg_cellular_destroy_channel();
-    cellular_runtime_reset(&g_cellular.runtime, linkg_time_elapsed_ms());
-    g_cellular.requested_refresh = CELLULAR_STATUS_REFRESH_NONE;
-    _linkg_cellular_reset_verify();
+    cellular_fsm_reset(&g_cellular.fsm, linkg_time_elapsed_ms());
 
     return first_error;
 }
@@ -2486,9 +858,9 @@ static int _linkg_cellular_stop_runtime(void)
  */
 int linkg_cellular_init(const linkg_cellular_config_t *config)
 {
-    cellular_runtime_t runtime;
-    uint64_t           now_ms;
-    int                ret;
+    cellular_fsm_t fsm;
+    uint64_t       now_ms;
+    int            ret;
 
     if (config == NULL)
     {
@@ -2503,7 +875,7 @@ int linkg_cellular_init(const linkg_cellular_config_t *config)
 
     now_ms = linkg_time_elapsed_ms();
 
-    ret = cellular_runtime_init(&runtime, now_ms);
+    ret = cellular_fsm_init(&fsm, now_ms);
     if (ret != 0)
     {
         return ret;
@@ -2537,7 +909,7 @@ int linkg_cellular_init(const linkg_cellular_config_t *config)
     pthread_mutex_lock(&g_cellular.lock);
 
     g_cellular.config              = *config;
-    g_cellular.runtime             = runtime;
+    g_cellular.fsm                 = fsm;
     g_cellular.monitor_initialized = true;
     g_cellular.status_initialized  = true;
     g_cellular.lifecycle           = LINKG_CELLULAR_LIFECYCLE_INITIALIZED;
@@ -2570,9 +942,14 @@ int linkg_cellular_start(void)
 
     if (g_cellular.lifecycle != LINKG_CELLULAR_LIFECYCLE_INITIALIZED)
     {
-        ret = g_cellular.lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED
-            ? -ENODEV
-            : -EALREADY;
+        if (g_cellular.lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED)
+        {
+            ret = -ENODEV;
+        }
+        else
+        {
+            ret = -EALREADY;
+        }
 
         pthread_mutex_unlock(&g_cellular.lock);
         return ret;
@@ -2621,10 +998,9 @@ int linkg_cellular_start(void)
 
     g_cellular.status_started = true;
 
-    cellular_runtime_reset(&g_cellular.runtime, linkg_time_elapsed_ms());
+    cellular_fsm_reset(&g_cellular.fsm, linkg_time_elapsed_ms());
 
-    ret = _linkg_cellular_enter_state(CELLULAR_RUNTIME_STATE_WAIT_SIM,
-                                      linkg_time_elapsed_ms());
+    ret = cellular_fsm_enter(&g_cellular.fsm, CELLULAR_RUNTIME_STATE_WAIT_SIM, linkg_time_elapsed_ms());
     if (ret != 0)
     {
         goto fail_runtime;
@@ -2673,9 +1049,12 @@ int linkg_cellular_run(linkg_thread_t *owner_thread)
 
     if (lifecycle != LINKG_CELLULAR_LIFECYCLE_RUNNING)
     {
-        return lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED
-            ? -ENODEV
-            : -ENETDOWN;
+        if (lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED)
+        {
+            return -ENODEV;
+        }
+
+        return -ENETDOWN;
     }
 
     ret = _linkg_cellular_owner_loop(owner_thread);
