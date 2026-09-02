@@ -912,6 +912,61 @@ static int _linkg_cellular_enter_state(cellular_runtime_state_t state, uint64_t 
 /****************************** 数据会话清理 ******************************/
 
 /**
+ * @brief 清理Linux蜂窝接口上一轮数据会话残留的网络状态。
+ */
+static void _linkg_cellular_cleanup_host_network(void)
+{
+    if (!linkg_network_interface_exists(LINKG_RESOURCE_INTERFACE_CELLULAR))
+    {
+        return;
+    }
+
+    // 先关闭接口，阻止旧地址和路由继续被使用。
+    (void)linkg_network_interface_set_up(
+        LINKG_RESOURCE_INTERFACE_CELLULAR,
+        false);
+
+    // 清除上一轮DHCP IPv4地址。
+    linkg_os_run_ignore("ip",
+                        "-4",
+                        "addr",
+                        "flush",
+                        "dev",
+                        LINKG_RESOURCE_INTERFACE_CELLULAR,
+                        "scope",
+                        "global",
+                        NULL);
+
+    // 清除上一轮RA/SLAAC产生的Global IPv6，保留fe80::链路本地地址。
+    linkg_os_run_ignore("ip",
+                        "-6",
+                        "addr",
+                        "flush",
+                        "dev",
+                        LINKG_RESOURCE_INTERFACE_CELLULAR,
+                        "scope",
+                        "global",
+                        NULL);
+
+    // 清除上一轮动态路由。
+    linkg_os_run_ignore("ip",
+                        "-4",
+                        "route",
+                        "flush",
+                        "dev",
+                        LINKG_RESOURCE_INTERFACE_CELLULAR,
+                        NULL);
+
+    linkg_os_run_ignore("ip",
+                        "-6",
+                        "route",
+                        "flush",
+                        "dev",
+                        LINKG_RESOURCE_INTERFACE_CELLULAR,
+                        NULL);
+}
+
+/**
  * @brief 按QNETDEV到PDP的逆序尽力停止当前数据会话。
  *
  * @note 本函数不结束SIM插卡会话；连接失败重试时保留SIM会话和PIN保护。
@@ -929,6 +984,8 @@ static int _linkg_cellular_cleanup_data_session(void)
     }
 
     first_error = 0;
+
+    _linkg_cellular_cleanup_host_network();
 
     if (g_cellular.netdev_action_started)
     {

@@ -1021,15 +1021,35 @@ static bool _cellular_status_refresh_host_ipv4_netmask(cellular_status_info_t *i
 }
 
 /**
- * @brief 刷新Linux蜂窝接口Global IPv6地址事实。
+ * @brief 刷新Linux蜂窝接口当前数据会话对应的Global IPv6地址事实。
  */
 static bool _cellular_status_refresh_host_ipv6(cellular_status_info_t *info, uint64_t now_ms)
 {
-    struct in6_addr address;
-    int             ret;
+    const cellular_status_expected_ipv6_info_t *expected;
+    struct in6_addr                             address;
+    int                                         ret;
+
+    expected = &info->netdev.expected_ipv6;
 
     memset(&address, 0, sizeof(address));
-    ret = linkg_network_interface_get_global_ipv6(LINKG_RESOURCE_INTERFACE_CELLULAR, &address);
+
+    if (expected->meta.confirmed &&
+        expected->meta.last_error == 0 &&
+        expected->valid)
+    {
+        ret = linkg_network_interface_get_global_ipv6_in_prefix(
+            LINKG_RESOURCE_INTERFACE_CELLULAR,
+            &expected->prefix,
+            expected->prefix_length,
+            &address);
+    }
+    else
+    {
+        ret = linkg_network_interface_get_global_ipv6(
+            LINKG_RESOURCE_INTERFACE_CELLULAR,
+            &address);
+    }
+
     if (_cellular_status_host_interface_absent(ret))
     {
         _cellular_status_clear_host(info, now_ms);
@@ -1052,6 +1072,7 @@ static bool _cellular_status_refresh_host_ipv6(cellular_status_info_t *info, uin
 
     info->host.global_ipv6       = address;
     info->host.global_ipv6_valid = linkg_network_ipv6_address_is_global(&address);
+
     _cellular_status_meta_success(&info->host.ipv6_meta, now_ms);
 
     return true;
