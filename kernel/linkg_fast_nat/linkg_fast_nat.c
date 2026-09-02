@@ -205,6 +205,18 @@ static __be32 _linkg_fast_nat_ipv4_prefix_map(__be32 address, const linkg_fast_n
     return to->network | (address & ~from->netmask);
 }
 
+/**
+ * @brief 判断目标地址是否属于Source NETMAP需要处理的LinkG地址空间。
+ *
+ * @note virtual_network用于节点虚拟Endpoint通信；
+ *       tun_network用于TUN本机发起流量的返回路径。
+ */
+static bool _linkg_fast_nat_source_netmap_destination_match(__be32 address)
+{
+    return _linkg_fast_nat_ipv4_in_subnet(address, &g_fast_nat.config.virtual_network) ||
+           _linkg_fast_nat_ipv4_in_subnet(address, &g_fast_nat.config.tun_network);
+}
+
 /****************************** skb辅助 ******************************/
 
 /**
@@ -1222,7 +1234,7 @@ static bool _linkg_fast_nat_prerouting_source_netmap_match(const struct nf_hook_
     }
 
     return _linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network) &&
-           _linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network);
+           _linkg_fast_nat_source_netmap_destination_match(iph->daddr);
 }
 
 /**
@@ -1427,8 +1439,8 @@ static unsigned int _linkg_fast_nat_local_out(void *priv, struct sk_buff *skb, c
      * 在LOCAL_OUT的conntrack hook之前提前标记UNTRACKED。
      */
     if ((g_fast_nat.config.enabled_rules & LINKG_FAST_NAT_RULE_SOURCE_NETMAP) != 0U &&
-        _linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network) &&
-        _linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network))
+    _linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network) &&
+    _linkg_fast_nat_source_netmap_destination_match(iph->daddr))
     {
         _linkg_fast_nat_mark_untracked(skb);
     }
@@ -1495,26 +1507,31 @@ static unsigned int _linkg_fast_nat_postrouting(void *priv, struct sk_buff *skb,
     /**
      * Rule 4:
      * Ethernet进入LinkG时，将源地址映射为本节点虚拟Endpoint地址。
-     * 该规则也负责Rule 5远端回包的源地址恢复。
+     *
+     * 目标为virtual_network时属于Ethernet主动访问远端虚拟Endpoint，
+     * 需要建立Source NETMAP方向状态。
+     *
+     * 目标为tun_network时属于TUN发起流量的返回路径，
+     * 只执行无状态Source NETMAP，不建立方向状态。
      */
     if ((g_fast_nat.config.enabled_rules & LINKG_FAST_NAT_RULE_SOURCE_NETMAP) != 0U &&
         state->out->ifindex == g_fast_nat.config.tun_ifindex &&
         _linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network) &&
-        _linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network))
+        _linkg_fast_nat_source_netmap_destination_match(iph->daddr))
     {
-        /**
-         * 在真正修改源IP之前建立正向流方向状态。
-         * 返回包到达本节点linkg0后即可据此识别为已有流的reply，
-         * 从而只做目的地址恢复而不再次执行VIRTUAL_ETHERNET_SNAT。
-         */
-        ret = _linkg_fast_nat_flow_track_source_netmap(skb);
-        if (ret != 0)
+        if (_linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network))
         {
-            skb->mark &= ~LINKG_FAST_NAT_MARK_MASK;
-            return NF_DROP;
+            ret = _linkg_fast_nat_flow_track_source_netmap(skb);
+            if (ret != 0)
+            {
+                skb->mark &= ~LINKG_FAST_NAT_MARK_MASK;
+                return NF_DROP;
+            }
         }
 
-        ret = _linkg_fast_nat_source_netmap(skb, &g_fast_nat.config.ethernet_network, &g_fast_nat.config.local_virtual_subnet);
+        ret = _linkg_fast_nat_source_netmap(skb,
+                                            &g_fast_nat.config.ethernet_network,
+                                            &g_fast_nat.config.local_virtual_subnet);
         if (ret != 0)
         {
             skb->mark &= ~LINKG_FAST_NAT_MARK_MASK;
