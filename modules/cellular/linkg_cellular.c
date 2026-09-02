@@ -36,8 +36,8 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_AT_DEVICE                         "/dev/ttyUSB1"  // RG255 AT控制串口设备
-#define LINKG_CELLULAR_VERIFY_TARGET                     "www.baidu.com" // V1公网连通性验证目标
+#define LINKG_CELLULAR_AT_DEVICE                         "/dev/ttyUSB1"   // RG255 AT控制串口设备
+#define LINKG_CELLULAR_VERIFY_TARGET                     "www.baidu.com"  // V1公网连通性验证目标
 #define LINKG_CELLULAR_AT_BAUDRATE                       115200           // RG255 AT串口波特率
 #define LINKG_CELLULAR_AT_READY_TIMEOUT_MS               30000U           // AT通道整体就绪等待时间
 #define LINKG_CELLULAR_AT_READY_RETRY_MS                 500U             // AT通道就绪失败重试间隔
@@ -73,27 +73,27 @@ typedef struct
 {
     cellular_runtime_step_result_t result;     // 当前状态处理结果
     cellular_runtime_state_t       next_state; // DONE时需要进入的后续状态
-    int                            error;       // FAILED或FATAL时的错误码
+    int                            error;      // FAILED或FATAL时的错误码
 } linkg_cellular_step_t;
 
 typedef struct
 {
-    pthread_mutex_t             lock;                  // 模块状态锁，保护生命周期和AT通道引用
-    linkg_cellular_config_t      config;                // 蜂窝模块配置副本
-    cellular_runtime_t           runtime;               // network-cell Owner唯一运行状态
-    at_channel_t                *channel;               // RG255 AT通道，模块持有对象所有权
-    cellular_status_refresh_mask_t requested_refresh;   // Owner下一轮需要强制确认的状态事实
-    linkg_cellular_lifecycle_t   lifecycle;             // 蜂窝模块生命周期
-    int                          last_error;             // 最近一次不可恢复生命周期错误
-    bool                         monitor_initialized;    // Monitor软件资源是否已经初始化
-    bool                         status_initialized;     // Status软件资源是否已经初始化
-    bool                         monitor_started;        // Monitor是否已经注册URC回调
-    bool                         status_started;         // Status是否已经借用当前AT通道
-    bool                         pdp_action_started;     // 当前SIM会话是否执行过PDP激活动作
-    bool                         netdev_action_started;  // 当前SIM会话是否执行过QNETDEV启动动作
-    bool                         verify_ipv4_done;       // 当前验证轮次IPv4是否已经通过
-    bool                         verify_ipv6_done;       // 当前验证轮次IPv6是否已经通过
-    uint32_t                     verify_failure_count;   // 当前地址族连续公网探测失败次数
+    pthread_mutex_t                lock;                   // 模块状态锁，保护生命周期和AT通道引用
+    linkg_cellular_config_t        config;                 // 蜂窝模块配置副本
+    cellular_runtime_t             runtime;                // network-cell Owner唯一运行状态
+    at_channel_t                  *channel;                // RG255 AT通道，模块持有对象所有权
+    cellular_status_refresh_mask_t requested_refresh;      // Owner下一轮需要强制确认的状态事实
+    linkg_cellular_lifecycle_t     lifecycle;              // 蜂窝模块生命周期
+    int                            last_error;             // 最近一次不可恢复生命周期错误
+    bool                           monitor_initialized;    // Monitor软件资源是否已经初始化
+    bool                           status_initialized;     // Status软件资源是否已经初始化
+    bool                           monitor_started;        // Monitor是否已经注册URC回调
+    bool                           status_started;         // Status是否已经借用当前AT通道
+    bool                           pdp_action_started;     // 当前SIM会话是否执行过PDP激活动作
+    bool                           netdev_action_started;  // 当前SIM会话是否执行过QNETDEV启动动作
+    bool                           verify_ipv4_done;       // 当前验证轮次IPv4是否已经通过
+    bool                           verify_ipv6_done;       // 当前验证轮次IPv6是否已经通过
+    uint32_t                       verify_failure_count;   // 当前地址族连续公网探测失败次数
 } linkg_cellular_context_t;
 
 /****************************** 全局上下文 ******************************/
