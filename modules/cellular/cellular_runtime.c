@@ -34,6 +34,7 @@ static bool _cellular_runtime_state_valid(cellular_runtime_state_t state)
         case CELLULAR_RUNTIME_STATE_WAIT_PDP:
         case CELLULAR_RUNTIME_STATE_START_NETDEV:
         case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
+        case CELLULAR_RUNTIME_STATE_PREPARE_HOST:
         case CELLULAR_RUNTIME_STATE_WAIT_HOST:
         case CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY:
         case CELLULAR_RUNTIME_STATE_ONLINE:
