@@ -414,13 +414,11 @@ static void _cellular_fsm_request_state_refresh(cellular_fsm_t *fsm, cellular_ru
             break;
 
         case CELLULAR_RUNTIME_STATE_WAIT_REGISTRATION:
-            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_REGISTRATION |
-                                       CELLULAR_STATUS_REFRESH_RADIO);
+            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_REGISTRATION | CELLULAR_STATUS_REFRESH_RADIO);
             break;
 
         case CELLULAR_RUNTIME_STATE_WAIT_PDP:
-            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_PDP |
-                                       CELLULAR_STATUS_REFRESH_PDP_ADDRESS);
+            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_PDP | CELLULAR_STATUS_REFRESH_PDP_ADDRESS);
             break;
 
         case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
@@ -479,9 +477,7 @@ int cellular_fsm_enter(cellular_fsm_t *fsm, cellular_runtime_state_t state, uint
     if (state == CELLULAR_RUNTIME_STATE_ONLINE)
     {
         cellular_runtime_clear_failure(&fsm->runtime, now_ms);
-        ret = cellular_runtime_schedule_action(&fsm->runtime,
-                                               now_ms,
-                                               CELLULAR_FSM_ONLINE_VERIFY_INTERVAL_MS);
+        ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_ONLINE_VERIFY_INTERVAL_MS);
         if (ret != 0)
         {
             return ret;
@@ -492,9 +488,7 @@ int cellular_fsm_enter(cellular_fsm_t *fsm, cellular_runtime_state_t state, uint
 
     if (previous != state)
     {
-        LINKG_LOG_INFO("CELLULAR: runtime state changed, old=%s, new=%s",
-                       cellular_runtime_state_name(previous),
-                       cellular_runtime_state_name(state));
+        LINKG_LOG_INFO("CELLULAR: runtime state changed, old=%s, new=%s", cellular_runtime_state_name(previous), cellular_runtime_state_name(state));
     }
 
     return 0;
@@ -1553,9 +1547,9 @@ static cellular_fsm_step_t _cellular_fsm_state_online(cellular_fsm_t *fsm, const
 /**
  * @brief 等待统一连接重试退避期限到达。
  */
-static cellular_fsm_step_t _cellular_fsm_state_retry_wait(const cellular_fsm_t *fsm)
+static cellular_fsm_step_t _cellular_fsm_state_retry_wait(const cellular_fsm_t *fsm, uint64_t now_ms)
 {
-    if (!cellular_runtime_retry_due(&fsm->runtime, linkg_time_elapsed_ms()))
+    if (!cellular_runtime_retry_due(&fsm->runtime, now_ms))
     {
         return _cellular_fsm_step_wait();
     }
@@ -1624,7 +1618,7 @@ cellular_fsm_step_t cellular_fsm_run(cellular_fsm_t *fsm, const linkg_cellular_c
             return _cellular_fsm_state_online(fsm, info, now_ms);
 
         case CELLULAR_RUNTIME_STATE_RETRY_WAIT:
-            return _cellular_fsm_state_retry_wait(fsm);
+            return _cellular_fsm_state_retry_wait(fsm, now_ms);
 
         case CELLULAR_RUNTIME_STATE_NONE:
         default:

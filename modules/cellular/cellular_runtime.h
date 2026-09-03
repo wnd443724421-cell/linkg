@@ -50,10 +50,11 @@ typedef enum
 /****************************** 运行上下文 ******************************/
 
 /**
- * @brief 蜂窝模块内部逻辑运行状态。
+ * @brief 蜂窝连接状态机内部运行状态。
  *
- * @note 仅允许network-cell Owner线程修改；Monitor、Status、Dial和Verify模块
- *       均不得直接修改该结构体，也不得通过本模块执行任何硬件副作用。
+ * @note 仅允许network-cell Owner线程通过cellular_fsm修改；
+ *       Monitor、Status及platform层均不得直接修改该结构体，
+ *       cellular_runtime本身不得执行任何硬件副作用。
  */
 typedef struct
 {
