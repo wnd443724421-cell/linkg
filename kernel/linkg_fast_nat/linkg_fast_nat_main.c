@@ -78,22 +78,6 @@ typedef enum
 
 typedef linkg_fast_nat_rule_result_t (*linkg_fast_nat_rule_func_t)(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 
-/****************************** Fast NAT规则表 ******************************/
-
-static const linkg_fast_nat_rule_func_t g_prerouting_rules[] =
-{
-};
-
-static const linkg_fast_nat_rule_func_t g_local_out_rules[] =
-{
-};
-
-static const linkg_fast_nat_rule_func_t g_postrouting_rules[] =
-{
-    _linkg_fast_nat_postrouting_ethernet_to_virtual,
-};
-
-
 /**
  * @brief Fast NAT SNAT映射项。
  *
@@ -171,6 +155,25 @@ static linkg_fast_nat_context_t g_fast_nat =
     .flow_lock    = __SPIN_LOCK_UNLOCKED(g_fast_nat.flow_lock),     // Source NETMAP方向锁
     .state        = LINKG_FAST_NAT_STATE_UNCONFIGURED               // 尚未配置
 };
+
+/* 前置声明 */
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_virtual(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
+
+/****************************** Fast NAT规则表 ******************************/
+
+static const linkg_fast_nat_rule_func_t g_prerouting_rules[] =
+{
+};
+
+static const linkg_fast_nat_rule_func_t g_local_out_rules[] =
+{
+};
+
+static const linkg_fast_nat_rule_func_t g_postrouting_rules[] =
+{
+    _linkg_fast_nat_postrouting_ethernet_to_virtual,
+};
+
 
 /****************************** SNAT映射 ******************************/
 
