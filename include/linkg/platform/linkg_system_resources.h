@@ -46,6 +46,7 @@ extern "C" {
 #define LINKG_RESOURCE_INTERFACE_CELLULAR  "usb0"   // 蜂窝网络接口
 #define LINKG_RESOURCE_INTERFACE_TUN       "linkg0" // LinkG虚拟网络接口
 #define LINKG_RESOURCE_INTERFACE_ETHERNET  "eth0"   // 以太网接口
+#define LINKG_RESOURCE_INTERFACE_LOOPBACK  "lo"     // 本机回环接口
 
 /****************************** 蜂窝硬件 ******************************/
 

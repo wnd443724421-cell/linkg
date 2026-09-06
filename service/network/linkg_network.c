@@ -36,6 +36,7 @@
 #define LINKG_NETWORK_ETHERNET_IRQ_LINE_MAX              512U              // /proc/interrupts单行缓冲区长度
 #define LINKG_NETWORK_ETHERNET_DEVICE_NAME_MAX           128U              // Ethernet平台设备名称缓冲区长度
 #define LINKG_NETWORK_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U               // IRQ affinity写入值缓冲区长度
+#define LINKG_NETWORK_NODE_ADDRESS_PREFIX                32U               // 本机节点IPv4地址固定前缀
 
 /****************************** 全局上下文 ******************************/
 
@@ -74,6 +75,69 @@ static void _linkg_network_record_first_error(int *first_error, int error)
     {
         *first_error = error;
     }
+}
+
+
+/****************************** 本机节点地址 ******************************/
+
+/**
+ * @brief 配置本机节点IPv4地址。
+ */
+static int _linkg_network_node_address_start(void)
+{
+    struct in_addr address;
+    int            ret;
+
+    if (g_network.node_address_started)
+    {
+        return 0;
+    }
+
+    ret = linkg_network_config_get_node_address(&g_network.network_config, g_network.network_config.node_id, &address);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_network_interface_add_ipv4(LINKG_RESOURCE_INTERFACE_LOOPBACK, &address, LINKG_NETWORK_NODE_ADDRESS_PREFIX);
+    if (ret != 0 && ret != -EEXIST)
+    {
+        return ret;
+    }
+
+    g_network.node_address_started = true;
+
+    return 0;
+}
+
+/**
+ * @brief 删除本机节点IPv4地址。
+ */
+static int _linkg_network_node_address_stop(void)
+{
+    struct in_addr address;
+    int            ret;
+
+    if (!g_network.node_address_started)
+    {
+        return 0;
+    }
+
+    ret = linkg_network_config_get_node_address(&g_network.network_config, g_network.network_config.node_id, &address);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_network_interface_remove_ipv4(LINKG_RESOURCE_INTERFACE_LOOPBACK, &address, LINKG_NETWORK_NODE_ADDRESS_PREFIX);
+    if (ret != 0 && ret != -EADDRNOTAVAIL)
+    {
+        return ret;
+    }
+
+    g_network.node_address_started = false;
+
+    return 0;
 }
 
 /****************************** 工作线程辅助 ******************************/
@@ -998,6 +1062,13 @@ int linkg_network_start(void)
         goto fail;
     }
 
+    ret = _linkg_network_node_address_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start local node address failed, error=%d", ret);
+        goto fail;
+    }
+
     if (g_network.wifi_config.enabled)
     {
         ret = _linkg_network_worker_wait_start(&g_network.wifi_worker);
@@ -1061,6 +1132,13 @@ fail:
             LINKG_LOG_ERROR("rollback cellular worker failed, error=%d", cleanup_ret);
             _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
         }
+    }
+
+    cleanup_ret = _linkg_network_node_address_stop();
+    if (cleanup_ret != 0)
+    {
+        LINKG_LOG_ERROR("rollback local node address failed, error=%d", cleanup_ret);
+        _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
     }
 
     cleanup_ret = _linkg_network_ethernet_stop();
@@ -1154,6 +1232,12 @@ int linkg_network_stop(void)
             _linkg_network_record_first_error(&first_error, ret);
         }
     }
+    ret = _linkg_network_node_address_stop();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("stop local node address failed, error=%d", ret);
+        _linkg_network_record_first_error(&first_error, ret);
+    }
 
     ret = _linkg_network_ethernet_stop();
     if (ret != 0)
@@ -1214,11 +1298,12 @@ int linkg_network_deinit(void)
     }
 
     if (g_network.ethernet_started ||
-        g_network.ipv4_forwarding_enabled ||
-        (g_network.wifi_worker.initialized &&
-         linkg_thread_is_started(&g_network.wifi_worker.thread)) ||
-        (g_network.cellular_worker.initialized &&
-         linkg_thread_is_started(&g_network.cellular_worker.thread)))
+    g_network.node_address_started ||
+    g_network.ipv4_forwarding_enabled ||
+    (g_network.wifi_worker.initialized &&
+     linkg_thread_is_started(&g_network.wifi_worker.thread)) ||
+    (g_network.cellular_worker.initialized &&
+     linkg_thread_is_started(&g_network.cellular_worker.thread)))
     {
         return -EBUSY;
     }

@@ -24,6 +24,7 @@
 #define LINKG_NETWORK_ETHERNET_IPV4_PREFIX       24U // Ethernet网络固定前缀
 #define LINKG_NETWORK_VIRTUAL_NODE_SHIFT         8U  // 虚拟地址中Node ID位移
 #define LINKG_NETWORK_ETHERNET_GATEWAY_HOST_ID   1U  // LinkG Ethernet固定主机编号
+#define LINKG_NETWORK_VIRTUAL_NODE_HOST_ID       1U  // LinkG Ethernet固定主机编号
 
 /****************************** 枚举转换 ******************************/
 
@@ -984,6 +985,34 @@ int linkg_network_config_get_node_virtual_subnet(const linkg_network_config_t *c
         memset(subnet, 0, sizeof(*subnet));
         return CONFIG_ERR_VALIDATE;
     }
+
+    return CONFIG_OK;
+}
+
+/**
+ * @brief 获取指定节点的本机虚拟IPv4地址。
+ */
+int linkg_network_config_get_node_address(const linkg_network_config_t *config, uint8_t node_id, struct in_addr *address)
+{
+    linkg_network_ipv4_config_t subnet;
+    uint32_t                    value;
+    int                         ret;
+
+    if (config == NULL || address == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    ret = linkg_network_config_get_node_virtual_subnet(config, node_id, &subnet);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    value = ntohl(subnet.ip.s_addr);
+    value |= LINKG_NETWORK_VIRTUAL_NODE_HOST_ID;
+
+    address->s_addr = htonl(value);
 
     return CONFIG_OK;
 }

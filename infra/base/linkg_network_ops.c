@@ -1061,6 +1061,188 @@ int linkg_network_interface_get_ipv4_netmask(const char *ifname, struct in_addr 
 }
 
 /**
+ * @brief 增加或删除网络接口IPv4地址。
+ */
+static int _network_interface_modify_ipv4_address(const char *ifname, const struct in_addr *address, uint8_t prefix_length, bool add)
+{
+    struct
+    {
+        struct nlmsghdr header;
+        struct ifaddrmsg address;
+        unsigned char attributes[2U * RTA_SPACE(sizeof(struct in_addr))];
+    } request;
+    struct sockaddr_nl kernel_address;
+    struct rtattr     *attribute;
+    unsigned char      buffer[4096];
+    unsigned int       ifindex;
+    uint32_t           sequence;
+    ssize_t            received;
+    ssize_t            sent;
+    int                remaining;
+    int                fd;
+
+    if (!_network_interface_name_valid(ifname) ||
+        !linkg_network_ipv4_address_valid(address) ||
+        prefix_length > 32U)
+    {
+        return -EINVAL;
+    }
+
+    ifindex = if_nametoindex(ifname);
+    if (ifindex == 0U)
+    {
+        return -ENODEV;
+    }
+
+    fd = _network_route_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+
+    memset(&request, 0, sizeof(request));
+
+    sequence = 1U;
+
+    request.header.nlmsg_len   = NLMSG_LENGTH(sizeof(request.address));
+    request.header.nlmsg_type  = add ? RTM_NEWADDR : RTM_DELADDR;
+    request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    request.header.nlmsg_seq   = sequence;
+
+    if (add)
+    {
+        request.header.nlmsg_flags |= NLM_F_CREATE | NLM_F_EXCL;
+    }
+
+    request.address.ifa_family    = AF_INET;
+    request.address.ifa_prefixlen = prefix_length;
+    request.address.ifa_scope     = RT_SCOPE_UNIVERSE;
+    request.address.ifa_index     = ifindex;
+
+    attribute = (struct rtattr *)((unsigned char *)&request +
+                                  NLMSG_ALIGN(request.header.nlmsg_len));
+
+    attribute->rta_type = IFA_LOCAL;
+    attribute->rta_len  = RTA_LENGTH(sizeof(*address));
+
+    memcpy(RTA_DATA(attribute), address, sizeof(*address));
+
+    request.header.nlmsg_len = NLMSG_ALIGN(request.header.nlmsg_len) +
+                               RTA_LENGTH(sizeof(*address));
+
+    attribute = (struct rtattr *)((unsigned char *)&request +
+                                  NLMSG_ALIGN(request.header.nlmsg_len));
+
+    attribute->rta_type = IFA_ADDRESS;
+    attribute->rta_len  = RTA_LENGTH(sizeof(*address));
+
+    memcpy(RTA_DATA(attribute), address, sizeof(*address));
+
+    request.header.nlmsg_len = NLMSG_ALIGN(request.header.nlmsg_len) +
+                               RTA_LENGTH(sizeof(*address));
+
+    memset(&kernel_address, 0, sizeof(kernel_address));
+    kernel_address.nl_family = AF_NETLINK;
+
+    sent = sendto(fd,
+                  &request,
+                  request.header.nlmsg_len,
+                  0,
+                  (const struct sockaddr *)&kernel_address,
+                  sizeof(kernel_address));
+    if (sent < 0)
+    {
+        return _network_control_socket_close(fd, -errno);
+    }
+
+    if ((size_t)sent != request.header.nlmsg_len)
+    {
+        return _network_control_socket_close(fd, -EIO);
+    }
+
+    while (true)
+    {
+        struct nlmsghdr *message;
+
+        received = recv(fd, buffer, sizeof(buffer), 0);
+        if (received < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return _network_control_socket_close(fd, -errno);
+        }
+
+        if (received == 0)
+        {
+            return _network_control_socket_close(fd, -EIO);
+        }
+
+        if (received > INT_MAX)
+        {
+            return _network_control_socket_close(fd, -EOVERFLOW);
+        }
+
+        remaining = (int)received;
+        message   = (struct nlmsghdr *)buffer;
+
+        while (NLMSG_OK(message, remaining))
+        {
+            const struct nlmsgerr *netlink_error;
+
+            if (message->nlmsg_seq != sequence)
+            {
+                message = NLMSG_NEXT(message, remaining);
+                continue;
+            }
+
+            if (message->nlmsg_type != NLMSG_ERROR)
+            {
+                message = NLMSG_NEXT(message, remaining);
+                continue;
+            }
+
+            if (NLMSG_PAYLOAD(message, 0) < sizeof(*netlink_error))
+            {
+                return _network_control_socket_close(fd, -EBADMSG);
+            }
+
+            netlink_error = (const struct nlmsgerr *)NLMSG_DATA(message);
+
+            if (netlink_error->error != 0)
+            {
+                return _network_control_socket_close(fd, netlink_error->error);
+            }
+
+            return _network_control_socket_close(fd, 0);
+        }
+
+        if (remaining != 0)
+        {
+            return _network_control_socket_close(fd, -EBADMSG);
+        }
+    }
+}
+
+/**
+ * @brief 向网络接口增加IPv4地址。
+ */
+int linkg_network_interface_add_ipv4(const char *ifname, const struct in_addr *address, uint8_t prefix_length)
+{
+    return _network_interface_modify_ipv4_address(ifname, address, prefix_length, true);
+}
+
+/**
+ * @brief 从网络接口删除IPv4地址。
+ */
+int linkg_network_interface_remove_ipv4(const char *ifname, const struct in_addr *address, uint8_t prefix_length)
+{
+    return _network_interface_modify_ipv4_address(ifname, address, prefix_length, false);
+}
+
+/**
  * @brief 获取满足指定条件的网络接口IPv6地址。
  */
 static int _network_interface_get_ipv6(const char *ifname, bool global_only, const struct in6_addr *prefix, uint8_t prefix_length, struct in6_addr *address)

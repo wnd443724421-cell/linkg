@@ -50,6 +50,7 @@ typedef struct
     linkg_network_worker_t  wifi_worker;             // Wi-Fi Owner线程
     linkg_network_worker_t  cellular_worker;         // 5G管理线程
     bool                    ethernet_started;        // Ethernet是否已启动
+    bool                    node_address_started;    // 本机节点IPv4地址是否已经配置
     bool                    ipv4_forwarding_enabled; // IPv4转发是否已启用
     bool                    wifi_initialized;        // Wi-Fi模块是否初始化
     bool                    cellular_initialized;    // 5G模块是否初始化

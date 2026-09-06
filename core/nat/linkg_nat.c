@@ -26,9 +26,8 @@
 /****************************** 模块常量 ******************************/
 
 #define LINKG_NAT_SNAT_PORT_START                  40000U                                                             // Fast SNAT转换端口池起始端口
-#define LINKG_NAT_SNAT_PORT_END                    44095U                                                             // Fast SNAT转换端口池结束端口，共4096个端口
 #define LINKG_NAT_DRIVER_MODULE_NAME               "linkg_fast_nat"                                                   // Fast NAT内核模块名称
-#define LINKG_NAT_DRIVER_MODULE_DIRECTORY          "/app/current/drivers"                                              // Fast NAT内核模块目录
+#define LINKG_NAT_DRIVER_MODULE_DIRECTORY          "/app/current/drivers"                                             // Fast NAT内核模块目录
 #define LINKG_NAT_DRIVER_MODULE_FILE               "linkg_fast_nat.ko"                                                // Fast NAT内核模块文件名
 #define LINKG_NAT_DRIVER_MODULE_PATH               LINKG_NAT_DRIVER_MODULE_DIRECTORY "/" LINKG_NAT_DRIVER_MODULE_FILE // Fast NAT内核模块完整路径
 #define LINKG_NAT_DRIVER_MODULE_LINE_MAX           256U                                                               // /proc/modules单行缓冲区长度
@@ -160,9 +159,7 @@ static int _linkg_nat_get_ifindex(const char *ifname, int32_t *ifindex)
 }
 
 /**
- * @brief 构造下发给Fast NAT驱动的完整配置。
- *
- * 当前LinkG固定启用现有7条NAT规则，不提供运行期通用规则配置。
+ * @brief 构造下发给Fast NAT驱动的运行配置。
  */
 static int _linkg_nat_build_driver_config(linkg_fast_nat_config_t *config)
 {
@@ -175,9 +172,8 @@ static int _linkg_nat_build_driver_config(linkg_fast_nat_config_t *config)
 
     memset(config, 0, sizeof(*config));
 
-    config->version       = LINKG_FAST_NAT_UAPI_VERSION;
-    config->struct_size   = sizeof(*config);
-    config->enabled_rules = LINKG_FAST_NAT_RULE_ALL;
+    config->version     = LINKG_FAST_NAT_UAPI_VERSION;
+    config->struct_size = sizeof(*config);
 
     _linkg_nat_build_subnet(&g_nat.ethernet_network, &config->ethernet_network);
     _linkg_nat_build_subnet(&g_nat.tun_network, &config->tun_network);
@@ -199,7 +195,6 @@ static int _linkg_nat_build_driver_config(linkg_fast_nat_config_t *config)
     }
 
     config->snat_port_start = LINKG_NAT_SNAT_PORT_START;
-    config->snat_port_end   = LINKG_NAT_SNAT_PORT_END;
 
     return 0;
 }
@@ -420,41 +415,6 @@ static int _linkg_nat_driver_configure(void)
     return _linkg_nat_driver_ioctl(LINKG_FAST_NAT_IOC_SET_CONFIG, &config);
 }
 
-/**
- * @brief 校验Fast NAT驱动启动后的运行状态。
- */
-static int _linkg_nat_driver_validate_running(void)
-{
-    linkg_fast_nat_status_t status;
-    int                     ret;
-
-    memset(&status, 0, sizeof(status));
-
-    ret = _linkg_nat_driver_ioctl(LINKG_FAST_NAT_IOC_GET_STATUS, &status);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (status.version != LINKG_FAST_NAT_UAPI_VERSION ||
-        status.struct_size != sizeof(status))
-    {
-        return -EPROTO;
-    }
-
-    if (status.state != LINKG_FAST_NAT_STATE_RUNNING)
-    {
-        return -EIO;
-    }
-
-    if (status.enabled_rules != LINKG_FAST_NAT_RULE_ALL)
-    {
-        return -EIO;
-    }
-
-    return 0;
-}
-
 /****************************** 生命周期 ******************************/
 
 /**
@@ -497,7 +457,7 @@ int linkg_nat_init(const linkg_network_config_t *network_config)
  * @brief 启动Fast NAT。
  *
  * linkg0已经由TUN模块创建后，解析Ethernet和TUN接口ifindex，
- * 将现有7条固定规则所需参数一次性下发给内核驱动并启动数据面。
+ * 将Fast NAT数据面所需运行参数一次性下发给内核驱动并启动数据面。
  */
 int linkg_nat_start(void)
 {
@@ -541,15 +501,6 @@ int linkg_nat_start(void)
     ret = _linkg_nat_driver_ioctl(LINKG_FAST_NAT_IOC_START, NULL);
     if (ret != 0)
     {
-        (void)_linkg_nat_driver_close();
-        (void)_linkg_nat_driver_module_unload();
-        return ret;
-    }
-
-    ret = _linkg_nat_driver_validate_running();
-    if (ret != 0)
-    {
-        (void)_linkg_nat_driver_ioctl(LINKG_FAST_NAT_IOC_STOP, NULL);
         (void)_linkg_nat_driver_close();
         (void)_linkg_nat_driver_module_unload();
         return ret;

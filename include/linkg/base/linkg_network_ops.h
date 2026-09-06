@@ -54,6 +54,8 @@ int  linkg_network_interface_set_mac(const char *ifname, const uint8_t mac[LINKG
 int  linkg_network_interface_set_ipv4(const char *ifname, const struct in_addr *address, const struct in_addr *netmask);
 int  linkg_network_interface_get_ipv4(const char *ifname, struct in_addr *address);
 int  linkg_network_interface_get_ipv4_netmask(const char *ifname, struct in_addr *netmask);
+int  linkg_network_interface_add_ipv4(const char *ifname, const struct in_addr *address, uint8_t prefix_length);
+int  linkg_network_interface_remove_ipv4(const char *ifname, const struct in_addr *address, uint8_t prefix_length);
 int  linkg_network_interface_get_ipv6(const char *ifname, struct in6_addr *address);
 int  linkg_network_interface_get_global_ipv6(const char *ifname, struct in6_addr *address);
 int  linkg_network_interface_get_global_ipv6_in_prefix(const char *ifname, const struct in6_addr *prefix, uint8_t prefix_length, struct in6_addr *address);

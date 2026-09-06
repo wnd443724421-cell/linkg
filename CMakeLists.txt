@@ -38,7 +38,9 @@ set(LINKG_INCLUDE_ROOTS
 set(LINKG_INCLUDE_DIRS)
 
 foreach(root IN LISTS LINKG_INCLUDE_ROOTS)
-    file(GLOB_RECURSE root_headers CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/${root}/*.h")
+    file(GLOB_RECURSE root_headers CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/${root}/*.h"
+    )
 
     foreach(header IN LISTS root_headers)
         get_filename_component(header_dir "${header}" DIRECTORY)
@@ -74,7 +76,9 @@ file(GLOB_RECURSE LINKG_THIRD_PARTY_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/third_party/cjson/*.c"
 )
 
-set(LINKG_MAIN_SOURCE "${CMAKE_SOURCE_DIR}/app/linkg_main.c")
+set(LINKG_MAIN_SOURCE
+    "${CMAKE_SOURCE_DIR}/app/linkg_main.c"
+)
 
 if(NOT EXISTS "${LINKG_MAIN_SOURCE}")
     message(FATAL_ERROR "Main source not found: ${LINKG_MAIN_SOURCE}")
@@ -134,17 +138,19 @@ if(ARCHITECTURE STREQUAL "arm")
         "${CMAKE_BINARY_DIR}/kernel/linkg_fast_nat"
     )
 
-    set(LINKG_FAST_NAT_SOURCE
-        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat.c"
-    )
-
-    set(LINKG_FAST_NAT_UAPI
+    set(LINKG_FAST_NAT_FILES
+        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_main.c"
+        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_utils.c"
+        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_internal.h"
         "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_uapi.h"
-    )
-
-    set(LINKG_FAST_NAT_KBUILD
         "${LINKG_FAST_NAT_SOURCE_DIR}/Kbuild"
     )
+
+    foreach(file IN LISTS LINKG_FAST_NAT_FILES)
+        if(NOT EXISTS "${file}")
+            message(FATAL_ERROR "Fast NAT file not found: ${file}")
+        endif()
+    endforeach()
 
     if(DEFINED ENV{LICHEE_TOP_DIR} AND NOT "$ENV{LICHEE_TOP_DIR}" STREQUAL "")
         set(LINKG_TINA_ROOT "$ENV{LICHEE_TOP_DIR}")
@@ -164,20 +170,10 @@ if(ARCHITECTURE STREQUAL "arm")
         "TinaLinux kernel build directory"
     )
 
-    if(NOT EXISTS "${LINKG_FAST_NAT_SOURCE}")
-        message(FATAL_ERROR "Fast NAT source not found: ${LINKG_FAST_NAT_SOURCE}")
-    endif()
-
-    if(NOT EXISTS "${LINKG_FAST_NAT_UAPI}")
-        message(FATAL_ERROR "Fast NAT UAPI not found: ${LINKG_FAST_NAT_UAPI}")
-    endif()
-
-    if(NOT EXISTS "${LINKG_FAST_NAT_KBUILD}")
-        message(FATAL_ERROR "Fast NAT Kbuild not found: ${LINKG_FAST_NAT_KBUILD}")
-    endif()
-
     if(NOT EXISTS "${LINKG_KERNEL_SOURCE_DIR}/Makefile")
-        message(FATAL_ERROR "Kernel source tree invalid: ${LINKG_KERNEL_SOURCE_DIR}")
+        message(FATAL_ERROR
+            "Kernel source tree invalid: ${LINKG_KERNEL_SOURCE_DIR}"
+        )
     endif()
 
     if(NOT EXISTS "${LINKG_KERNEL_BUILD_DIR}/include/config/auto.conf")
@@ -248,17 +244,27 @@ if(ARCHITECTURE STREQUAL "arm")
 
         COMMAND
             "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE}"
-            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat.c"
+            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_main.c"
+            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_main.c"
 
         COMMAND
             "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_UAPI}"
+            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_utils.c"
+            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_utils.c"
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E copy_if_different
+            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_internal.h"
+            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_internal.h"
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E copy_if_different
+            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_uapi.h"
             "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_uapi.h"
 
         COMMAND
             "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_KBUILD}"
+            "${LINKG_FAST_NAT_SOURCE_DIR}/Kbuild"
             "${LINKG_FAST_NAT_BUILD_DIR}/Kbuild"
 
         COMMAND
@@ -276,9 +282,7 @@ if(ARCHITECTURE STREQUAL "arm")
             "${LINKG_FAST_NAT_OUTPUT}"
 
         DEPENDS
-            "${LINKG_FAST_NAT_SOURCE}"
-            "${LINKG_FAST_NAT_UAPI}"
-            "${LINKG_FAST_NAT_KBUILD}"
+            ${LINKG_FAST_NAT_FILES}
 
         COMMENT
             "Building LinkG Fast NAT kernel module"
