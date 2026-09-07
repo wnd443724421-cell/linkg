@@ -1358,8 +1358,13 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_virt
         return LINKG_FAST_NAT_RULE_CONTINUE;
     }
 
-    if (!linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network) ||
-        !linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network))
+    if (!linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network))
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    if (!linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network) &&
+        !linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.tun_network))
     {
         return LINKG_FAST_NAT_RULE_CONTINUE;
     }

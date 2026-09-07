@@ -200,7 +200,7 @@ static linkg_fast_nat_context_t g_fast_nat =
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_reverse_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_ethernet_flow_record(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_linkg_to_ethernet(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
-static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_virtual(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_linkg(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_source_translate(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 
 /****************************** Fast NAT规则表 ******************************/
@@ -218,7 +218,7 @@ static const linkg_fast_nat_rule_func_t g_local_out_rules[] =
 
 static const linkg_fast_nat_rule_func_t g_postrouting_rules[] =
 {
-    _linkg_fast_nat_postrouting_ethernet_to_virtual,
+    _linkg_fast_nat_postrouting_ethernet_to_linkg,
     _linkg_fast_nat_postrouting_source_translate,
 };
 
@@ -1457,20 +1457,25 @@ static unsigned int _linkg_fast_nat_local_out(void *priv, struct sk_buff *skb, c
 /**
  * @brief 处理Ethernet流量进入远端虚拟网络的Source NETMAP规则。
  */
-static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_virtual(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_linkg(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
 {
-    int ret;
+    bool destination_is_virtual;
+    bool destination_is_tun;
+    int  ret;
 
     if (state->out == NULL || state->out->ifindex != g_fast_nat.config.tun_ifindex)
     {
         return LINKG_FAST_NAT_RULE_CONTINUE;
     }
 
-    if (!linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network) ||
-        !linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.virtual_network))
+    destination_is_virtual = linkg_fast_nat_ipv4_in_subnet( iph->daddr, &g_fast_nat.config.virtual_network);
+    destination_is_tun = linkg_fast_nat_ipv4_in_subnet( iph->daddr, &g_fast_nat.config.tun_network);
+
+    if (!destination_is_virtual && !destination_is_tun)
     {
         return LINKG_FAST_NAT_RULE_CONTINUE;
     }
+
 
     ret = linkg_fast_nat_source_netmap(skb, &g_fast_nat.config.ethernet_network, &g_fast_nat.config.local_virtual_subnet);
     if (ret != 0)
