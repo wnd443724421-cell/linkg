@@ -1455,27 +1455,21 @@ static unsigned int _linkg_fast_nat_local_out(void *priv, struct sk_buff *skb, c
 /****************************** POSTROUTING ******************************/
 
 /**
- * @brief 处理Ethernet流量进入远端虚拟网络的Source NETMAP规则。
+ * @brief 处理Ethernet源流量进入LinkG网络的Source NETMAP规则。
  */
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_linkg(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
 {
-    bool destination_is_virtual;
-    bool destination_is_tun;
-    int  ret;
+    int ret;
 
     if (state->out == NULL || state->out->ifindex != g_fast_nat.config.tun_ifindex)
     {
         return LINKG_FAST_NAT_RULE_CONTINUE;
     }
 
-    destination_is_virtual = linkg_fast_nat_ipv4_in_subnet( iph->daddr, &g_fast_nat.config.virtual_network);
-    destination_is_tun = linkg_fast_nat_ipv4_in_subnet( iph->daddr, &g_fast_nat.config.tun_network);
-
-    if (!destination_is_virtual && !destination_is_tun)
+    if (!linkg_fast_nat_ipv4_in_subnet(iph->saddr, &g_fast_nat.config.ethernet_network))
     {
         return LINKG_FAST_NAT_RULE_CONTINUE;
     }
-
 
     ret = linkg_fast_nat_source_netmap(skb, &g_fast_nat.config.ethernet_network, &g_fast_nat.config.local_virtual_subnet);
     if (ret != 0)
