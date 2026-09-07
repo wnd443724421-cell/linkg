@@ -585,12 +585,7 @@ static int _linkg_fast_nat_mapping_get_or_create(const linkg_fast_nat_mapping_ke
  * TCP/UDP额外校验远端源端口；ICMP Echo只有Identifier，
  * translated Identifier已经用于定位槽位，因此仅校验协议和远端IPv4地址。
  */
-static int _linkg_fast_nat_mapping_reverse_lookup(__u32 slot,
-                                                  __u8 protocol,
-                                                  __be32 remote_ip,
-                                                  __be16 remote_id,
-                                                  __be32 *original_ip,
-                                                  __be16 *original_id)
+static int _linkg_fast_nat_mapping_reverse_lookup(__u32 slot, __u8 protocol, __be32 remote_ip, __be16 remote_id, __be32 *original_ip, __be16 *original_id)
 {
     linkg_fast_nat_entry_t *entry;
     unsigned long           flags;
@@ -1719,7 +1714,6 @@ static int _linkg_fast_nat_stop(void)
 
     return 0;
 }
-
 
 /****************************** ioctl ******************************/
 
