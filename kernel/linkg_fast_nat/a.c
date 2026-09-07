@@ -64,8 +64,6 @@
 #define LINKG_FAST_NAT_FLOW_GC_INTERVAL       (5U  * HZ)                                                  // Flow超时扫描周期
 
 #define LINKG_FAST_NAT_MARK_HAIRPIN           0x80000000U                                                 // 当前skb由本地Ethernet DNAT产生，需要Hairpin SNAT
-#define LINKG_FAST_NAT_MARK_REVERSE           0x40000000U                                                 // 当前skb属于已有Fast NAT流的返回方向，禁止再次执行状态SNAT
-#define LINKG_FAST_NAT_MARK_MASK              (LINKG_FAST_NAT_MARK_HAIRPIN | LINKG_FAST_NAT_MARK_REVERSE) // Fast NAT内部skb标记掩码
 
 #define LINKG_FAST_NAT_PRIORITY_EARLY         (NF_IP_PRI_RAW + 50)                                        // conntrack之前执行
 #define LINKG_FAST_NAT_PRIORITY_POSTROUTING   (NF_IP_PRI_NAT_SRC - 10)                                    // 常规Source NAT之前执行
@@ -199,11 +197,12 @@ static linkg_fast_nat_context_t g_fast_nat =
 
 /* 前置声明 */
 
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_reverse_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_ethernet_flow_record(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_linkg_to_ethernet(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_virtual(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_source_translate(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
-static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_reverse_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
+
 /****************************** Fast NAT规则表 ******************************/
 
 static const linkg_fast_nat_rule_func_t g_prerouting_rules[] =
@@ -576,6 +575,109 @@ static int _linkg_fast_nat_mapping_get_or_create(const linkg_fast_nat_mapping_ke
     _linkg_fast_nat_mapping_fast_update(insert_slot);
 
     *slot = insert_slot;
+    return 0;
+}
+
+/**
+ * @brief 根据translated ID对应槽位反查SNAT映射。
+ *
+ * 回包通过translated ID直接定位Mapping槽位，不执行Hash查询。
+ * TCP/UDP额外校验远端源端口；ICMP Echo只有Identifier，
+ * translated Identifier已经用于定位槽位，因此仅校验协议和远端IPv4地址。
+ */
+static int _linkg_fast_nat_mapping_reverse_lookup(__u32 slot,
+                                                  __u8 protocol,
+                                                  __be32 remote_ip,
+                                                  __be16 remote_id,
+                                                  __be32 *original_ip,
+                                                  __be16 *original_id)
+{
+    linkg_fast_nat_entry_t *entry;
+    unsigned long           flags;
+    unsigned long           last_seen;
+    unsigned long           now;
+    bool                    check_remote_id;
+
+    if (slot >= LINKG_FAST_NAT_SLOT_COUNT || original_ip == NULL || original_id == NULL)
+    {
+        return -EINVAL;
+    }
+
+    entry = &g_fast_nat.mappings[slot];
+
+    if (smp_load_acquire(&entry->state) != LINKG_FAST_NAT_ENTRY_ACTIVE)
+    {
+        return -ENOENT;
+    }
+
+    if (READ_ONCE(entry->key.protocol) != protocol)
+    {
+        return -ENOENT;
+    }
+
+    if (READ_ONCE(entry->key.remote_ip) != remote_ip)
+    {
+        return -ENOENT;
+    }
+
+    check_remote_id = protocol == IPPROTO_TCP || protocol == IPPROTO_UDP;
+    if (check_remote_id && READ_ONCE(entry->key.remote_id) != remote_id)
+    {
+        return -ENOENT;
+    }
+
+    now       = jiffies;
+    last_seen = READ_ONCE(entry->last_seen);
+
+    if (!time_after_eq(now, last_seen + LINKG_FAST_NAT_MAPPING_REFRESH_TIME))
+    {
+        *original_ip = READ_ONCE(entry->key.original_ip);
+        *original_id = READ_ONCE(entry->key.original_id);
+
+        if (smp_load_acquire(&entry->state) != LINKG_FAST_NAT_ENTRY_ACTIVE)
+        {
+            return -ENOENT;
+        }
+
+        if (READ_ONCE(entry->key.protocol) != protocol || READ_ONCE(entry->key.remote_ip) != remote_ip)
+        {
+            return -ENOENT;
+        }
+
+        if (check_remote_id && READ_ONCE(entry->key.remote_id) != remote_id)
+        {
+            return -ENOENT;
+        }
+
+        return 0;
+    }
+
+    spin_lock_irqsave(&g_fast_nat.mapping_lock, flags);
+
+    if (entry->state != LINKG_FAST_NAT_ENTRY_ACTIVE)
+    {
+        spin_unlock_irqrestore(&g_fast_nat.mapping_lock, flags);
+        return -ENOENT;
+    }
+
+    if (entry->key.protocol != protocol || entry->key.remote_ip != remote_ip)
+    {
+        spin_unlock_irqrestore(&g_fast_nat.mapping_lock, flags);
+        return -ENOENT;
+    }
+
+    if (check_remote_id && entry->key.remote_id != remote_id)
+    {
+        spin_unlock_irqrestore(&g_fast_nat.mapping_lock, flags);
+        return -ENOENT;
+    }
+
+    *original_ip = entry->key.original_ip;
+    *original_id = entry->key.original_id;
+    entry->last_seen = now;
+
+    spin_unlock_irqrestore(&g_fast_nat.mapping_lock, flags);
+
     return 0;
 }
 
@@ -1111,6 +1213,96 @@ static int _linkg_fast_nat_config_validate(const linkg_fast_nat_config_t *config
 /****************************** PREROUTING ******************************/
 
 /**
+ * @brief 处理Ethernet入口的Fast NAT SNAT返回报文。
+ *
+ * 仅处理目的IPv4为本节点Ethernet地址、且目的ID落在SNAT translated ID范围内的报文。
+ * translated ID直接映射到Mapping数组槽位，验证远端五元组后恢复原始目的IPv4和目的ID。
+ * 未命中有效Mapping时继续正常协议栈处理，不影响本机Ethernet服务。
+ */
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_reverse_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
+{
+    unsigned int transport_offset;
+    __be32       original_ip;
+    __be16       source_id;
+    __be16       destination_id;
+    __be16       original_id;
+    __u32        translated_id;
+    __u32        slot;
+    int          ret;
+
+    if (state->in == NULL || state->in->ifindex != g_fast_nat.config.ethernet_ifindex)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    if (iph->daddr != g_fast_nat.config.ethernet_ip)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    transport_offset = (unsigned int)iph->ihl * 4U;
+
+    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, false, &destination_id);
+    if (ret == -EOPNOTSUPP)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    translated_id = (__u32)ntohs(destination_id);
+
+    if (translated_id < (__u32)g_fast_nat.config.snat_port_start)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    slot = translated_id - (__u32)g_fast_nat.config.snat_port_start;
+    if (slot >= LINKG_FAST_NAT_SLOT_COUNT)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, true, &source_id);
+    if (ret == -EOPNOTSUPP)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    ret = _linkg_fast_nat_mapping_reverse_lookup(slot,
+                                                 iph->protocol,
+                                                 iph->saddr,
+                                                 source_id,
+                                                 &original_ip,
+                                                 &original_id);
+    if (ret == -ENOENT)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    ret = linkg_fast_nat_replace_tuple(skb, false, original_ip, original_id);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    return LINKG_FAST_NAT_RULE_DONE;
+}
+
+/**
  * @brief 处理LinkG流量访问本地Ethernet地址的Destination NETMAP规则。
  */
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_linkg_to_ethernet(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
@@ -1203,90 +1395,6 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_ethernet_flow_rec
     }
 
     return LINKG_FAST_NAT_RULE_CONTINUE;
-}
-
-/**
- * @brief 处理Ethernet入口的Fast NAT SNAT返回报文。
- */
-static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_reverse_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
-{
-    linkg_fast_nat_entry_t *entry;
-    unsigned int            transport_offset;
-    __be16                  source_id;
-    __be16                  destination_id;
-    __u32                   translated_id;
-    __u32                   slot;
-    int                     ret;
-
-    if (state->in == NULL || state->in->ifindex != g_fast_nat.config.ethernet_ifindex)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    if (iph->daddr != g_fast_nat.config.ethernet_ip)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    transport_offset = (unsigned int)iph->ihl * 4U;
-
-    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, false, &destination_id);
-    if (ret == -EOPNOTSUPP)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    if (ret != 0)
-    {
-        return LINKG_FAST_NAT_RULE_DROP;
-    }
-
-    translated_id = (__u32)ntohs(destination_id);
-
-    if (translated_id < (__u32)g_fast_nat.config.snat_port_start)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    slot = translated_id - (__u32)g_fast_nat.config.snat_port_start;
-
-    if (slot >= LINKG_FAST_NAT_SLOT_COUNT)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, true, &source_id);
-    if (ret != 0)
-    {
-        return LINKG_FAST_NAT_RULE_DROP;
-    }
-
-    entry = &g_fast_nat.mappings[slot];
-
-    if (smp_load_acquire(&entry->state) != LINKG_FAST_NAT_ENTRY_ACTIVE)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    if (entry->key.protocol != iph->protocol)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    if (entry->key.remote_ip != iph->saddr)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    if (entry->key.remote_id != source_id)
-    {
-        return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    // 恢复目的IP和目的ID
-    ...
-
-    return LINKG_FAST_NAT_RULE_DONE;
 }
 
 /**
@@ -1401,11 +1509,6 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_source_translate
     if (!linkg_fast_nat_ipv4_in_subnet(iph->daddr, &g_fast_nat.config.ethernet_network))
     {
         return LINKG_FAST_NAT_RULE_CONTINUE;
-    }
-
-    if ((skb->mark & LINKG_FAST_NAT_MARK_REVERSE) != 0U)
-    {
-        return LINKG_FAST_NAT_RULE_DONE;
     }
 
     transport_offset = (unsigned int)iph->ihl * 4U;
@@ -1617,6 +1720,7 @@ static int _linkg_fast_nat_stop(void)
 
     return 0;
 }
+
 
 /****************************** ioctl ******************************/
 

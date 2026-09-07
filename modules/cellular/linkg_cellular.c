@@ -8,6 +8,7 @@
 
 #include "linkg_cellular.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
@@ -193,6 +194,32 @@ static void _linkg_cellular_set_channel(at_channel_t *channel)
 }
 
 /**
+ * @brief 记录蜂窝数据链成功上线时的Host地址。
+ */
+static void _linkg_cellular_log_connected(const cellular_status_info_t *info)
+{
+    char        ipv4[INET_ADDRSTRLEN];
+    char        ipv6[INET6_ADDRSTRLEN];
+    const char *ipv4_text;
+    const char *ipv6_text;
+
+    ipv4_text = "<unavailable>";
+    ipv6_text = "<unavailable>";
+
+    if (info != NULL && info->host.ipv4_valid && inet_ntop(AF_INET, &info->host.ipv4, ipv4, sizeof(ipv4)) != NULL)
+    {
+        ipv4_text = ipv4;
+    }
+
+    if (info != NULL && info->host.global_ipv6_valid && inet_ntop(AF_INET6, &info->host.global_ipv6, ipv6, sizeof(ipv6)) != NULL)
+    {
+        ipv6_text = ipv6;
+    }
+
+    CELLULAR_INFO("data link connected, ipv4=%s, ipv6=%s", ipv4_text, ipv6_text);
+}
+
+/**
  * @brief 销毁当前模块持有的AT通道对象。
  */
 static void _linkg_cellular_destroy_channel(void)
@@ -285,10 +312,7 @@ static int _linkg_cellular_create_ready_channel(at_channel_t **out)
         {
             error = errno != 0 ? -errno : -EIO;
 
-            CELLULAR_DEBUG("AT channel create failed, device=%s, attempt=%u, error=%d",
-                           LINKG_CELLULAR_AT_DEVICE,
-                           attempt,
-                           error);
+            CELLULAR_DEBUG("AT channel create failed, device=%s, attempt=%u, error=%d", LINKG_CELLULAR_AT_DEVICE, attempt, error);
         }
         else
         {
@@ -321,10 +345,7 @@ static int _linkg_cellular_create_ready_channel(at_channel_t **out)
                 now_ms = linkg_time_elapsed_ms();
                 *out   = channel;
 
-                CELLULAR_INFO("AT channel ready, device=%s, attempts=%u, elapsed_ms=%llu",
-                              LINKG_CELLULAR_AT_DEVICE,
-                              attempt,
-                              (unsigned long long)(now_ms - started_ms));
+                CELLULAR_INFO("AT channel ready, device=%s, attempts=%u, elapsed_ms=%llu", LINKG_CELLULAR_AT_DEVICE, attempt, (unsigned long long)(now_ms - started_ms));
 
                 return 0;
             }
@@ -337,11 +358,7 @@ static int _linkg_cellular_create_ready_channel(at_channel_t **out)
 
         if (now_ms - started_ms >= LINKG_CELLULAR_AT_READY_TIMEOUT_MS)
         {
-            CELLULAR_WARN("AT channel ready timeout, device=%s, attempts=%u, elapsed_ms=%llu, error=%d",
-                          LINKG_CELLULAR_AT_DEVICE,
-                          attempt,
-                          (unsigned long long)(now_ms - started_ms),
-                          error);
+            CELLULAR_WARN("AT channel ready timeout, device=%s, attempts=%u, elapsed_ms=%llu, error=%d", LINKG_CELLULAR_AT_DEVICE, attempt, (unsigned long long)(now_ms - started_ms), error);
 
             return error;
         }
@@ -361,9 +378,7 @@ static int _linkg_cellular_create_ready_channel(at_channel_t **out)
  */
 static rg255_sim_insert_level_t _linkg_cellular_required_sim_insert_level(void)
 {
-    return LINKG_RESOURCE_CELLULAR_SIM_INSERT_ACTIVE_HIGH
-        ? RG255_SIM_INSERT_LEVEL_HIGH
-        : RG255_SIM_INSERT_LEVEL_LOW;
+    return LINKG_RESOURCE_CELLULAR_SIM_INSERT_ACTIVE_HIGH ? RG255_SIM_INSERT_LEVEL_HIGH : RG255_SIM_INSERT_LEVEL_LOW;
 }
 
 /**
@@ -625,6 +640,8 @@ static int _linkg_cellular_enable_runtime_urcs(at_channel_t *channel)
         return ret;
     }
 
+    CELLULAR_DEBUG("runtime URCs enabled");
+
     return 0;
 }
 
@@ -644,16 +661,14 @@ static cellular_status_refresh_mask_t _linkg_cellular_refresh_from_events(const 
 
     refresh = CELLULAR_STATUS_REFRESH_NONE;
 
-    if ((events->mask & (CELLULAR_MONITOR_EVENT_SIM_PRESENCE_CHANGED |
-                         CELLULAR_MONITOR_EVENT_SIM_STATE_CHANGED)) != 0U)
+    if ((events->mask & (CELLULAR_MONITOR_EVENT_SIM_PRESENCE_CHANGED | CELLULAR_MONITOR_EVENT_SIM_STATE_CHANGED)) != 0U)
     {
         refresh |= CELLULAR_STATUS_REFRESH_SIM;
     }
 
     if ((events->mask & CELLULAR_MONITOR_EVENT_REGISTRATION_CHANGED) != 0U)
     {
-        refresh |= CELLULAR_STATUS_REFRESH_REGISTRATION |
-                   CELLULAR_STATUS_REFRESH_RADIO;
+        refresh |= CELLULAR_STATUS_REFRESH_REGISTRATION | CELLULAR_STATUS_REFRESH_RADIO;
     }
 
     if ((events->mask & CELLULAR_MONITOR_EVENT_RADIO_CHANGED) != 0U)
@@ -663,8 +678,7 @@ static cellular_status_refresh_mask_t _linkg_cellular_refresh_from_events(const 
 
     if ((events->mask & CELLULAR_MONITOR_EVENT_PDP_CHANGED) != 0U)
     {
-        refresh |= CELLULAR_STATUS_REFRESH_PDP |
-                   CELLULAR_STATUS_REFRESH_PDP_ADDRESS;
+        refresh |= CELLULAR_STATUS_REFRESH_PDP | CELLULAR_STATUS_REFRESH_PDP_ADDRESS;
     }
 
     if ((events->mask & CELLULAR_MONITOR_EVENT_NETDEV_CHANGED) != 0U)
@@ -791,13 +805,13 @@ static int _linkg_cellular_poll_owner(linkg_thread_t *owner_thread, uint64_t now
  */
 static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
 {
-    cellular_monitor_events_t     events;
-    cellular_status_info_t        info;
+    cellular_monitor_events_t      events;
+    cellular_status_info_t         info;
     cellular_status_refresh_mask_t event_refresh;
     cellular_fsm_step_t            step;
     uint64_t                       now_ms;
-    int                           session_result;
-    int                           ret;
+    int                            session_result;
+    int                            ret;
 
     while (linkg_thread_is_running(owner_thread))
     {
@@ -812,6 +826,7 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
 
         if ((events.mask & CELLULAR_MONITOR_EVENT_MODEM_POWERED_DOWN) != 0U)
         {
+            CELLULAR_WARN("modem powered down");
             return -ENODEV;
         }
 
@@ -844,6 +859,11 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
                 if (ret != 0)
                 {
                     return ret;
+                }
+
+                if (step.next_state == CELLULAR_RUNTIME_STATE_ONLINE)
+                {
+                    _linkg_cellular_log_connected(&info);
                 }
 
                 continue;
@@ -987,11 +1007,8 @@ int linkg_cellular_init(const linkg_cellular_config_t *config)
 
     pthread_mutex_unlock(&g_cellular.lock);
 
-    CELLULAR_INFO("module initialized, enabled=%d, network_mode=%d, apn=%s, pin_configured=%d",
-              config->enabled ? 1 : 0,
-              (int)config->network_mode,
-              config->apn[0] != '\0' ? config->apn : "<auto>",
-              config->pin[0] != '\0' ? 1 : 0);
+    CELLULAR_INFO("module initialized");
+    CELLULAR_DEBUG("config loaded, enabled=%d, network_mode=%d, apn=%s, pin_configured=%d", config->enabled ? 1 : 0, (int)config->network_mode, config->apn[0] != '\0' ? config->apn : "<auto>", config->pin[0] != '\0' ? 1 : 0);
 
     return 0;
 
@@ -999,6 +1016,8 @@ fail:
     pthread_mutex_lock(&g_cellular.lock);
     _linkg_cellular_reset_context_locked();
     pthread_mutex_unlock(&g_cellular.lock);
+
+    CELLULAR_WARN("module initialization failed, error=%d", ret);
 
     return ret;
 }
@@ -1035,6 +1054,8 @@ int linkg_cellular_start(void)
 
     pthread_mutex_unlock(&g_cellular.lock);
 
+    CELLULAR_INFO("module starting");
+
     channel = NULL;
 
     ret = _linkg_cellular_create_ready_channel(&channel);
@@ -1059,6 +1080,7 @@ int linkg_cellular_start(void)
     }
 
     g_cellular.monitor_started = true;
+    CELLULAR_DEBUG("monitor started");
 
     ret = _linkg_cellular_enable_runtime_urcs(_linkg_cellular_get_channel());
     if (ret != 0)
@@ -1073,6 +1095,7 @@ int linkg_cellular_start(void)
     }
 
     g_cellular.status_started = true;
+    CELLULAR_DEBUG("status started");
 
     cellular_fsm_reset(&g_cellular.fsm, linkg_time_elapsed_ms());
 
@@ -1084,8 +1107,8 @@ int linkg_cellular_start(void)
 
     _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_RUNNING, 0);
 
-    CELLULAR_INFO("module started, initial_state=WAIT_SIM");
-    
+    CELLULAR_INFO("module started");
+
     return 0;
 
 fail_runtime:
@@ -1096,6 +1119,7 @@ fail_runtime:
     }
 
     _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_INITIALIZED, ret);
+    CELLULAR_WARN("module start failed, error=%d", ret);
 
     return ret;
 
@@ -1104,6 +1128,7 @@ fail_channel:
 
 fail:
     _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_INITIALIZED, ret);
+    CELLULAR_WARN("module start failed, error=%d", ret);
 
     return ret;
 }
@@ -1135,10 +1160,17 @@ int linkg_cellular_run(linkg_thread_t *owner_thread)
         return -ENETDOWN;
     }
 
+    CELLULAR_DEBUG("owner loop started");
+
     ret = _linkg_cellular_owner_loop(owner_thread);
     if (ret != 0 && linkg_thread_is_running(owner_thread))
     {
         _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_FAILED, ret);
+        CELLULAR_WARN("owner loop failed, error=%d", ret);
+    }
+    else
+    {
+        CELLULAR_DEBUG("owner loop stopped");
     }
 
     return ret;
@@ -1171,9 +1203,20 @@ int linkg_cellular_stop(void)
 
     pthread_mutex_unlock(&g_cellular.lock);
 
+    CELLULAR_INFO("module stopping");
+
     ret = _linkg_cellular_stop_runtime();
 
     _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_INITIALIZED, ret);
+
+    if (ret == 0)
+    {
+        CELLULAR_INFO("module stopped");
+    }
+    else
+    {
+        CELLULAR_WARN("module stopped with cleanup error=%d", ret);
+    }
 
     return ret;
 }
@@ -1224,6 +1267,15 @@ int linkg_cellular_deinit(void)
     pthread_mutex_lock(&g_cellular.lock);
     _linkg_cellular_reset_context_locked();
     pthread_mutex_unlock(&g_cellular.lock);
+
+    if (first_error == 0)
+    {
+        CELLULAR_INFO("module deinitialized");
+    }
+    else
+    {
+        CELLULAR_WARN("module deinitialized with cleanup error=%d", first_error);
+    }
 
     return first_error;
 }

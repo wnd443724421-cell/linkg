@@ -112,7 +112,7 @@ static void _wifi_status_reset_context_locked(void)
     memset(&g_wifi_status.config, 0, sizeof(g_wifi_status.config));
     memset(&g_wifi_status.info, 0, sizeof(g_wifi_status.info));
 
-    g_wifi_status.config.role   = LINKG_DEVICE_ROLE_UNKNOWN;
+    g_wifi_status.config.role    = LINKG_DEVICE_ROLE_UNKNOWN;
     g_wifi_status.initialized    = false;
     g_wifi_status.nb_initialized = false;
     g_wifi_status.nb_started     = false;

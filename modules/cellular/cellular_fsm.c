@@ -14,7 +14,6 @@
 #include <string.h>
 #include <strings.h>
 
-#include "linkg_log.h"
 #include "linkg_network_ops.h"
 #include "linkg_os.h"
 #include "linkg_system_resources.h"
@@ -22,6 +21,8 @@
 
 #include "rg255_cmd.h"
 #include "rg255_query.h"
+
+#include "cellular_internal.h"
 
 /****************************** 状态机常量 ******************************/
 
@@ -66,12 +67,14 @@ void cellular_fsm_reset(cellular_fsm_t *fsm, uint64_t now_ms)
     }
 
     cellular_runtime_reset(&fsm->runtime, now_ms);
-    fsm->requested_refresh      = CELLULAR_STATUS_REFRESH_NONE;
-    fsm->pdp_action_started     = false;
-    fsm->netdev_action_started  = false;
-    fsm->verify_ipv4_done       = false;
-    fsm->verify_ipv6_done       = false;
-    fsm->verify_failure_count   = 0U;
+
+    fsm->requested_refresh     = CELLULAR_STATUS_REFRESH_NONE;
+    fsm->pdp_action_started    = false;
+    fsm->netdev_action_started = false;
+    fsm->online_verify_active  = false;
+    fsm->verify_ipv4_done      = false;
+    fsm->verify_ipv6_done      = false;
+    fsm->verify_failure_count  = 0U;
 }
 
 /****************************** Owner调度 ******************************/
@@ -175,12 +178,8 @@ static bool _cellular_fsm_pdp_is_ims(const rg255_pdp_config_t *config)
  * 明确配置APN时优先复用同APN双栈上下文，否则返回第一个未占用CID用于创建。
  * 未配置APN时只允许复用唯一的非IMS双栈上下文。
  */
-static int _cellular_fsm_select_pdp_context(const rg255_pdp_config_t *configs,
-                                              size_t count,
-                                              const char *required_apn,
-                                              uint8_t *selected_cid,
-                                              const char **selected_apn,
-                                              bool *create)
+static int _cellular_fsm_select_pdp_context(const rg255_pdp_config_t *configs, size_t count, const char *required_apn,
+                                            uint8_t *selected_cid, const char **selected_apn, bool *create)
 {
     bool occupied[RG255_PDP_CONTEXT_ID_MAX + 1U];
     const rg255_pdp_config_t *candidate;
@@ -188,8 +187,7 @@ static int _cellular_fsm_select_pdp_context(const rg255_pdp_config_t *configs,
     size_t index;
     uint8_t cid;
 
-    if (configs == NULL || required_apn == NULL || selected_cid == NULL ||
-        selected_apn == NULL || create == NULL || count > RG255_PDP_CONTEXT_MAX)
+    if (configs == NULL || required_apn == NULL || selected_cid == NULL || selected_apn == NULL || create == NULL || count > RG255_PDP_CONTEXT_MAX)
     {
         return -EINVAL;
     }
@@ -208,8 +206,7 @@ static int _cellular_fsm_select_pdp_context(const rg255_pdp_config_t *configs,
 
         occupied[cid] = true;
 
-        if (_cellular_fsm_pdp_is_ims(&configs[index]) ||
-            configs[index].pdp_type != RG255_PDP_TYPE_IPV4V6)
+        if (_cellular_fsm_pdp_is_ims(&configs[index]) || configs[index].pdp_type != RG255_PDP_TYPE_IPV4V6)
         {
             continue;
         }
@@ -422,23 +419,17 @@ static void _cellular_fsm_request_state_refresh(cellular_fsm_t *fsm, cellular_ru
             break;
 
         case CELLULAR_RUNTIME_STATE_WAIT_NETDEV:
-            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_NETDEV |
-                                       CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK |
-                                       CELLULAR_STATUS_REFRESH_HOST);
+            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_NETDEV | CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK | CELLULAR_STATUS_REFRESH_HOST);
             break;
 
         case CELLULAR_RUNTIME_STATE_WAIT_HOST:
-            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_PDP_ADDRESS |
-                                       CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK |
-                                       CELLULAR_STATUS_REFRESH_HOST);
+            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_PDP_ADDRESS | CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK | CELLULAR_STATUS_REFRESH_HOST);
             break;
 
         case CELLULAR_RUNTIME_STATE_ONLINE:
-            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_SIM |
-                                       CELLULAR_STATUS_REFRESH_REGISTRATION |
-                                       CELLULAR_STATUS_REFRESH_PDP |
-                                       CELLULAR_STATUS_REFRESH_NETDEV |
-                                       CELLULAR_STATUS_REFRESH_HOST);
+            _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_SIM | CELLULAR_STATUS_REFRESH_REGISTRATION |
+                                               CELLULAR_STATUS_REFRESH_PDP | CELLULAR_STATUS_REFRESH_NETDEV |
+                                               CELLULAR_STATUS_REFRESH_HOST);
             break;
 
         default:
@@ -476,6 +467,9 @@ int cellular_fsm_enter(cellular_fsm_t *fsm, cellular_runtime_state_t state, uint
 
     if (state == CELLULAR_RUNTIME_STATE_ONLINE)
     {
+        fsm->online_verify_active = false;
+        _cellular_fsm_reset_verify(fsm);
+
         cellular_runtime_clear_failure(&fsm->runtime, now_ms);
         ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_ONLINE_VERIFY_INTERVAL_MS);
         if (ret != 0)
@@ -488,7 +482,12 @@ int cellular_fsm_enter(cellular_fsm_t *fsm, cellular_runtime_state_t state, uint
 
     if (previous != state)
     {
-        LINKG_LOG_INFO("CELLULAR: runtime state changed, old=%s, new=%s", cellular_runtime_state_name(previous), cellular_runtime_state_name(state));
+        CELLULAR_DEBUG("runtime state changed, old=%s, new=%s", cellular_runtime_state_name(previous), cellular_runtime_state_name(state));
+
+        if (state == CELLULAR_RUNTIME_STATE_ONLINE)
+        {
+            CELLULAR_INFO("data link online");
+        }
     }
 
     return 0;
@@ -507,48 +506,18 @@ static void _cellular_fsm_cleanup_host_network(void)
     }
 
     // 先关闭接口，阻止旧地址和路由继续被使用。
-    (void)linkg_network_interface_set_up(
-        LINKG_RESOURCE_INTERFACE_CELLULAR,
-        false);
+    (void)linkg_network_interface_set_up(LINKG_RESOURCE_INTERFACE_CELLULAR, false);
 
     // 清除上一轮DHCP IPv4地址。
-    linkg_os_run_ignore("ip",
-                        "-4",
-                        "addr",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        "scope",
-                        "global",
-                        NULL);
+    linkg_os_run_ignore("ip", "-4", "addr", "flush", "dev", LINKG_RESOURCE_INTERFACE_CELLULAR, "scope", "global", NULL);
 
     // 清除上一轮RA/SLAAC产生的Global IPv6，保留fe80::链路本地地址。
-    linkg_os_run_ignore("ip",
-                        "-6",
-                        "addr",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        "scope",
-                        "global",
-                        NULL);
+    linkg_os_run_ignore("ip", "-6", "addr", "flush", "dev", LINKG_RESOURCE_INTERFACE_CELLULAR, "scope", "global", NULL);
 
     // 清除上一轮动态路由。
-    linkg_os_run_ignore("ip",
-                        "-4",
-                        "route",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        NULL);
+    linkg_os_run_ignore("ip", "-4", "route", "flush", "dev", LINKG_RESOURCE_INTERFACE_CELLULAR, NULL);
 
-    linkg_os_run_ignore("ip",
-                        "-6",
-                        "route",
-                        "flush",
-                        "dev",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        NULL);
+    linkg_os_run_ignore("ip", "-6", "route", "flush", "dev", LINKG_RESOURCE_INTERFACE_CELLULAR, NULL);
 }
 
 /**
@@ -580,7 +549,7 @@ static int _cellular_fsm_cleanup_data_session(cellular_fsm_t *fsm, at_channel_t 
 
     if ((fsm->netdev_action_started || fsm->pdp_action_started) && !pdp_cid_valid)
     {
-        LINKG_LOG_WARN("CELLULAR: data cleanup skipped without selected PDP CID");
+        CELLULAR_WARN("data cleanup skipped without selected PDP CID");
         _cellular_fsm_record_first_error(&first_error, -EPROTO);
     }
 
@@ -589,7 +558,7 @@ static int _cellular_fsm_cleanup_data_session(cellular_fsm_t *fsm, at_channel_t 
         ret = rg255_cmd_stop_netdev(channel, pdp_cid);
         if (ret != 0)
         {
-            LINKG_LOG_WARN("CELLULAR: stop QNETDEV failed, error=%d", ret);
+            CELLULAR_WARN("stop QNETDEV failed, error=%d", ret);
             _cellular_fsm_record_first_error(&first_error, ret);
         }
     }
@@ -599,16 +568,14 @@ static int _cellular_fsm_cleanup_data_session(cellular_fsm_t *fsm, at_channel_t 
         ret = rg255_cmd_set_pdp_active(channel, pdp_cid, false);
         if (ret != 0)
         {
-            LINKG_LOG_WARN("CELLULAR: deactivate PDP failed, error=%d", ret);
+            CELLULAR_WARN("deactivate PDP failed, error=%d", ret);
             _cellular_fsm_record_first_error(&first_error, ret);
         }
     }
 
-    _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_PDP |
-                                       CELLULAR_STATUS_REFRESH_PDP_ADDRESS |
-                                       CELLULAR_STATUS_REFRESH_NETDEV |
-                                       CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK |
-                                       CELLULAR_STATUS_REFRESH_HOST);
+    _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_PDP | CELLULAR_STATUS_REFRESH_PDP_ADDRESS |
+                                         CELLULAR_STATUS_REFRESH_NETDEV | CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK |
+                                         CELLULAR_STATUS_REFRESH_HOST);
 
     _cellular_fsm_reset_verify(fsm);
 
@@ -700,20 +667,17 @@ static bool _cellular_fsm_host_ready(const cellular_status_info_t *info)
     expected_ipv4 = &info->netdev.expected_ipv4;
     expected_ipv6 = &info->netdev.expected_ipv6;
 
-    if (!_cellular_fsm_meta_current(&info->pdp.address_meta) ||
-        !info->pdp.global_ipv6_valid)
+    if (!_cellular_fsm_meta_current(&info->pdp.address_meta) || !info->pdp.global_ipv6_valid)
     {
         return false;
     }
 
-    if (!_cellular_fsm_meta_current(&expected_ipv4->meta) || !expected_ipv4->valid ||
-        !_cellular_fsm_meta_current(&expected_ipv6->meta) || !expected_ipv6->valid)
+    if (!_cellular_fsm_meta_current(&expected_ipv4->meta) || !expected_ipv4->valid || !_cellular_fsm_meta_current(&expected_ipv6->meta) || !expected_ipv6->valid)
     {
         return false;
     }
 
-    if (!_cellular_fsm_meta_current(&host->interface_meta) || !host->interface_present ||
-        !_cellular_fsm_meta_current(&host->interface_up_meta) || !host->interface_up)
+    if (!_cellular_fsm_meta_current(&host->interface_meta) || !host->interface_present || !_cellular_fsm_meta_current(&host->interface_up_meta) || !host->interface_up)
     {
         return false;
     }
@@ -732,22 +696,17 @@ static bool _cellular_fsm_host_ready(const cellular_status_info_t *info)
         return false;
     }
 
-    if (!_cellular_fsm_meta_current(&host->ipv6_meta) || !host->global_ipv6_valid ||
-        !_cellular_fsm_meta_current(&host->ipv6_route_meta) || !host->ipv6_gateway_valid)
+    if (!_cellular_fsm_meta_current(&host->ipv6_meta) || !host->global_ipv6_valid || !_cellular_fsm_meta_current(&host->ipv6_route_meta) || !host->ipv6_gateway_valid)
     {
         return false;
     }
 
-    if (!_cellular_fsm_ipv6_in_prefix(&host->global_ipv6,
-                                        &expected_ipv6->prefix,
-                                        expected_ipv6->prefix_length))
+    if (!_cellular_fsm_ipv6_in_prefix(&host->global_ipv6, &expected_ipv6->prefix, expected_ipv6->prefix_length))
     {
         return false;
     }
 
-    return memcmp(&host->ipv6_gateway,
-                  &expected_ipv6->gateway,
-                  sizeof(host->ipv6_gateway)) == 0;
+    return memcmp(&host->ipv6_gateway, &expected_ipv6->gateway, sizeof(host->ipv6_gateway)) == 0;
 }
 
 /**
@@ -762,14 +721,12 @@ static bool _cellular_fsm_online_invalid(const cellular_fsm_t *fsm, const cellul
         return true;
     }
 
-    if (_cellular_fsm_meta_current(&info->local.sim_meta) &&
-        info->local.sim_state != LINKG_CELLULAR_SIM_STATE_READY)
+    if (_cellular_fsm_meta_current(&info->local.sim_meta) && info->local.sim_state != LINKG_CELLULAR_SIM_STATE_READY)
     {
         return true;
     }
 
-    if (_cellular_fsm_meta_current(&info->network.registration_meta) &&
-        info->network.registration != LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED)
+    if (_cellular_fsm_meta_current(&info->network.registration_meta) && info->network.registration != LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED)
     {
         return true;
     }
@@ -779,8 +736,7 @@ static bool _cellular_fsm_online_invalid(const cellular_fsm_t *fsm, const cellul
         return true;
     }
 
-    if (_cellular_fsm_meta_current(&info->netdev.state.meta) &&
-        !info->netdev.state.connected)
+    if (_cellular_fsm_meta_current(&info->netdev.state.meta) && !info->netdev.state.connected)
     {
         return true;
     }
@@ -841,17 +797,27 @@ int cellular_fsm_sync_sim_session(cellular_fsm_t *fsm, at_channel_t *channel, co
 
     if (physical_removed || sim_state == LINKG_CELLULAR_SIM_STATE_ABSENT)
     {
+        bool session_active;
+        bool state_changed;
+
+        session_active = cellular_runtime_session_active(&fsm->runtime);
+        state_changed  = session_active || fsm->runtime.state != CELLULAR_RUNTIME_STATE_WAIT_SIM;
+
         ret = _cellular_fsm_handle_sim_removed(fsm, channel, now_ms);
         if (ret != 0)
         {
-            LINKG_LOG_WARN("CELLULAR: cleanup after SIM removal returned error=%d", ret);
+            CELLULAR_WARN("cleanup after SIM removal returned error=%d", ret);
         }
 
-        return 1;
+        if (session_active)
+        {
+            CELLULAR_INFO("SIM removed, session ended");
+        }
+
+        return state_changed ? 1 : 0;
     }
 
-    if (!cellular_runtime_session_active(&fsm->runtime) &&
-        sim_state != LINKG_CELLULAR_SIM_STATE_UNKNOWN)
+    if (!cellular_runtime_session_active(&fsm->runtime) && sim_state != LINKG_CELLULAR_SIM_STATE_UNKNOWN)
     {
         ret = cellular_runtime_begin_session(&fsm->runtime, now_ms);
         if (ret != 0)
@@ -869,12 +835,12 @@ int cellular_fsm_sync_sim_session(cellular_fsm_t *fsm, at_channel_t *channel, co
             return ret;
         }
 
+        CELLULAR_INFO("SIM session started");
+
         return 1;
     }
 
-    if (cellular_runtime_session_active(&fsm->runtime) &&
-        sim_state != LINKG_CELLULAR_SIM_STATE_UNKNOWN &&
-        sim_state != LINKG_CELLULAR_SIM_STATE_READY)
+    if (cellular_runtime_session_active(&fsm->runtime) && sim_state != LINKG_CELLULAR_SIM_STATE_UNKNOWN && sim_state != LINKG_CELLULAR_SIM_STATE_READY)
     {
         switch (fsm->runtime.state)
         {
@@ -932,7 +898,7 @@ static cellular_fsm_step_t _cellular_fsm_state_check_sim(const cellular_fsm_t *f
     {
         if (cellular_runtime_state_timed_out(&fsm->runtime, now_ms))
         {
-                    error = -ETIMEDOUT;
+            error = -ETIMEDOUT;
             if (info != NULL && info->local.sim_meta.last_error != 0)
             {
                 error = info->local.sim_meta.last_error;
@@ -1017,7 +983,11 @@ static cellular_fsm_step_t _cellular_fsm_state_enter_pin(cellular_fsm_t *fsm, co
             return _cellular_fsm_step_fatal(ret);
         }
 
-        LINKG_LOG_WARN("CELLULAR: enter SIM PIN returned error=%d, action=query-truth", ret);
+        CELLULAR_WARN("enter SIM PIN returned error=%d, action=query-truth", ret);
+    }
+    else
+    {
+        CELLULAR_DEBUG("SIM PIN submitted, action=query-truth");
     }
 
     _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_SIM);
@@ -1082,6 +1052,7 @@ static cellular_fsm_step_t _cellular_fsm_state_wait_registration(const cellular_
     {
         if (info->network.registration == LINKG_CELLULAR_REGISTRATION_STATE_REGISTERED)
         {
+            CELLULAR_DEBUG("network registration confirmed");
             return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_PREPARE_PDP);
         }
 
@@ -1141,21 +1112,18 @@ static cellular_fsm_step_t _cellular_fsm_state_prepare_pdp(cellular_fsm_t *fsm, 
         return _cellular_fsm_step_failed(ret);
     }
 
+    CELLULAR_DEBUG("PDP contexts queried, count=%zu", count);
+
     selected_apn = NULL;
     selected_cid = 0U;
     create       = false;
 
-    ret = _cellular_fsm_select_pdp_context(configs,
-                                             count,
-                                             config->apn,
-                                             &selected_cid,
-                                             &selected_apn,
-                                             &create);
+    ret = _cellular_fsm_select_pdp_context(configs, count, config->apn, &selected_cid, &selected_apn, &create);
     if (ret != 0)
     {
         if (ret == -ENOSPC)
         {
-            LINKG_LOG_WARN("CELLULAR: no free PDP context for configured APN");
+            CELLULAR_WARN("no free PDP context for configured APN");
         }
 
         return _cellular_fsm_step_failed(ret);
@@ -1188,10 +1156,7 @@ static cellular_fsm_step_t _cellular_fsm_state_prepare_pdp(cellular_fsm_t *fsm, 
         return _cellular_fsm_step_fatal(ret);
     }
 
-    LINKG_LOG_INFO("CELLULAR: PDP context selected, cid=%u, apn=%s, source=%s",
-                   (unsigned int)selected_cid,
-                   selected_apn,
-                   create ? "created" : "existing");
+    CELLULAR_INFO("PDP context selected, cid=%u, apn=%s, source=%s", (unsigned int)selected_cid, selected_apn, create ? "created" : "existing");
 
     return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_ACTIVATE_PDP);
 }
@@ -1230,7 +1195,11 @@ static cellular_fsm_step_t _cellular_fsm_state_activate_pdp(cellular_fsm_t *fsm,
             return _cellular_fsm_step_fatal(ret);
         }
 
-        LINKG_LOG_WARN("CELLULAR: activate PDP returned error=%d, action=query-truth", ret);
+        CELLULAR_WARN("activate PDP returned error=%d, action=query-truth", ret);
+    }
+    else
+    {
+        CELLULAR_DEBUG("PDP activation requested, cid=%u", (unsigned int)pdp_cid);
     }
 
     return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_WAIT_PDP);
@@ -1245,6 +1214,7 @@ static cellular_fsm_step_t _cellular_fsm_state_wait_pdp(const cellular_fsm_t *fs
 
     if (info != NULL && _cellular_fsm_meta_current(&info->pdp.active_meta) && info->pdp.active)
     {
+        CELLULAR_DEBUG("PDP activation confirmed");
         return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_START_NETDEV);
     }
 
@@ -1296,7 +1266,11 @@ static cellular_fsm_step_t _cellular_fsm_state_start_netdev(cellular_fsm_t *fsm,
             return _cellular_fsm_step_fatal(ret);
         }
 
-        LINKG_LOG_WARN("CELLULAR: start QNETDEV returned error=%d, action=query-truth", ret);
+        CELLULAR_WARN("start QNETDEV returned error=%d, action=query-truth", ret);
+    }
+    else
+    {
+        CELLULAR_DEBUG("QNETDEV start requested, cid=%u", (unsigned int)pdp_cid);
     }
 
     return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_WAIT_NETDEV);
@@ -1315,9 +1289,9 @@ static cellular_fsm_step_t _cellular_fsm_state_wait_netdev(const cellular_fsm_t 
         return _cellular_fsm_step_fatal(-EPROTO);
     }
 
-    if (info != NULL && _cellular_fsm_meta_current(&info->netdev.state.meta) &&
-        info->netdev.state.connected && info->netdev.state.cid == pdp_cid)
+    if (info != NULL && _cellular_fsm_meta_current(&info->netdev.state.meta) && info->netdev.state.connected && info->netdev.state.cid == pdp_cid)
     {
+        CELLULAR_DEBUG("QNETDEV connection confirmed, cid=%u", (unsigned int)pdp_cid);
         return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_PREPARE_HOST);
     }
 
@@ -1362,30 +1336,21 @@ static cellular_fsm_step_t _cellular_fsm_state_prepare_host(cellular_fsm_t *fsm,
         return _cellular_fsm_step_failed(ret);
     }
 
-    ret = linkg_network_interface_set_up(
-        LINKG_RESOURCE_INTERFACE_CELLULAR,
-        true);
+    ret = linkg_network_interface_set_up(LINKG_RESOURCE_INTERFACE_CELLULAR, true);
     if (ret != 0)
     {
         return _cellular_fsm_step_failed(ret);
     }
 
-    ret = linkg_os_run("udhcpc",
-                       "-f",
-                       "-n",
-                       "-q",
-                       "-t",
-                       "5",
-                       "-i",
-                       LINKG_RESOURCE_INTERFACE_CELLULAR,
-                       NULL);
+    ret = linkg_os_run("udhcpc", "-f", "-n", "-q", "-t", "5", "-i", LINKG_RESOURCE_INTERFACE_CELLULAR, NULL);
     if (ret != 0)
     {
         return _cellular_fsm_step_failed(ret);
     }
 
-    _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_HOST |
-                                       CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK);
+    CELLULAR_DEBUG("host IPv4 DHCP configuration acquired");
+
+    _cellular_fsm_request_refresh(fsm, CELLULAR_STATUS_REFRESH_HOST | CELLULAR_STATUS_REFRESH_EXPECTED_NETWORK);
 
     return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_WAIT_HOST);
 }
@@ -1397,6 +1362,7 @@ static cellular_fsm_step_t _cellular_fsm_state_wait_host(const cellular_fsm_t *f
 {
     if (_cellular_fsm_host_ready(info))
     {
+        CELLULAR_DEBUG("host network configuration confirmed");
         return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY);
     }
 
@@ -1415,27 +1381,10 @@ static int _cellular_fsm_probe_connectivity(bool ipv6)
 {
     if (ipv6)
     {
-        return linkg_os_run("ping6",
-                            "-I",
-                            LINKG_RESOURCE_INTERFACE_CELLULAR,
-                            "-c",
-                            "1",
-                            "-W",
-                            "2",
-                            CELLULAR_FSM_VERIFY_TARGET,
-                            NULL);
+        return linkg_os_run("ping6", "-I", LINKG_RESOURCE_INTERFACE_CELLULAR, "-c", "1", "-W", "2", CELLULAR_FSM_VERIFY_TARGET, NULL);
     }
 
-    return linkg_os_run("ping",
-                        "-4",
-                        "-I",
-                        LINKG_RESOURCE_INTERFACE_CELLULAR,
-                        "-c",
-                        "1",
-                        "-W",
-                        "2",
-                        CELLULAR_FSM_VERIFY_TARGET,
-                        NULL);
+    return linkg_os_run("ping", "-4", "-I", LINKG_RESOURCE_INTERFACE_CELLULAR, "-c", "1", "-W", "2", CELLULAR_FSM_VERIFY_TARGET, NULL);
 }
 
 /**
@@ -1451,8 +1400,7 @@ static cellular_fsm_step_t _cellular_fsm_state_verify(cellular_fsm_t *fsm, const
         return _cellular_fsm_step_failed(-ENETDOWN);
     }
 
-    if (fsm->runtime.next_action_ms != 0U &&
-        !cellular_runtime_action_due(&fsm->runtime, now_ms))
+    if (fsm->runtime.next_action_ms != 0U && !cellular_runtime_action_due(&fsm->runtime, now_ms))
     {
         return _cellular_fsm_step_wait();
     }
@@ -1475,10 +1423,9 @@ static cellular_fsm_step_t _cellular_fsm_state_verify(cellular_fsm_t *fsm, const
         if (!ipv6)
         {
             fsm->verify_ipv4_done = true;
+            CELLULAR_DEBUG("connectivity verification passed, family=IPv4");
 
-            ret = cellular_runtime_schedule_action(&fsm->runtime,
-                                                   now_ms,
-                                                   CELLULAR_FSM_VERIFY_NEXT_FAMILY_DELAY_MS);
+            ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_VERIFY_NEXT_FAMILY_DELAY_MS);
             if (ret != 0)
             {
                 return _cellular_fsm_step_fatal(ret);
@@ -1488,21 +1435,94 @@ static cellular_fsm_step_t _cellular_fsm_state_verify(cellular_fsm_t *fsm, const
         }
 
         fsm->verify_ipv6_done = true;
+        CELLULAR_DEBUG("connectivity verification passed, family=IPv6");
 
         return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_ONLINE);
     }
 
     fsm->verify_failure_count++;
 
-    if (fsm->verify_failure_count >= CELLULAR_FSM_VERIFY_FAILURE_LIMIT ||
-        cellular_runtime_state_timed_out(&fsm->runtime, now_ms))
+    if (fsm->verify_failure_count >= CELLULAR_FSM_VERIFY_FAILURE_LIMIT || cellular_runtime_state_timed_out(&fsm->runtime, now_ms))
     {
         return _cellular_fsm_step_failed(-ENETUNREACH);
     }
 
-    ret = cellular_runtime_schedule_action(&fsm->runtime,
-                                           now_ms,
-                                           CELLULAR_FSM_VERIFY_RETRY_MS);
+    ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_VERIFY_RETRY_MS);
+    if (ret != 0)
+    {
+        return _cellular_fsm_step_fatal(ret);
+    }
+
+    return _cellular_fsm_step_wait();
+}
+
+/**
+ * @brief 在ONLINE状态内执行一步公网健康复核。
+ */
+static cellular_fsm_step_t _cellular_fsm_online_verify(cellular_fsm_t *fsm, const cellular_status_info_t *info, uint64_t now_ms)
+{
+    bool ipv6;
+    int  ret;
+
+    if (!_cellular_fsm_host_ready(info))
+    {
+        return _cellular_fsm_step_failed(-ENETDOWN);
+    }
+
+    if (fsm->runtime.next_action_ms != 0U && !cellular_runtime_action_due(&fsm->runtime, now_ms))
+    {
+        return _cellular_fsm_step_wait();
+    }
+
+    cellular_runtime_clear_action(&fsm->runtime, now_ms);
+
+    ipv6 = fsm->verify_ipv4_done;
+
+    ret = _cellular_fsm_probe_connectivity(ipv6);
+    if (ret == 0)
+    {
+        fsm->verify_failure_count = 0U;
+
+        if (!ipv6)
+        {
+            fsm->verify_ipv4_done = true;
+
+            ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_VERIFY_NEXT_FAMILY_DELAY_MS);
+            if (ret != 0)
+            {
+                return _cellular_fsm_step_fatal(ret);
+            }
+
+            return _cellular_fsm_step_wait();
+        }
+
+        fsm->verify_ipv6_done      = true;
+        fsm->online_verify_active = false;
+
+        _cellular_fsm_reset_verify(fsm);
+
+        ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_ONLINE_VERIFY_INTERVAL_MS);
+        if (ret != 0)
+        {
+            return _cellular_fsm_step_fatal(ret);
+        }
+
+        CELLULAR_DEBUG("online connectivity verification succeeded");
+
+        return _cellular_fsm_step_wait();
+    }
+
+    fsm->verify_failure_count++;
+
+    CELLULAR_DEBUG("online connectivity verification failed, family=%s, count=%u", ipv6 ? "IPv6" : "IPv4", (unsigned int)fsm->verify_failure_count);
+
+    if (fsm->verify_failure_count >= CELLULAR_FSM_VERIFY_FAILURE_LIMIT)
+    {
+        fsm->online_verify_active = false;
+        return _cellular_fsm_step_failed(-ENETUNREACH);
+    }
+
+    ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_VERIFY_RETRY_MS);
     if (ret != 0)
     {
         return _cellular_fsm_step_fatal(ret);
@@ -1523,11 +1543,14 @@ static cellular_fsm_step_t _cellular_fsm_state_online(cellular_fsm_t *fsm, const
         return _cellular_fsm_step_failed(-ENETDOWN);
     }
 
+    if (fsm->online_verify_active)
+    {
+        return _cellular_fsm_online_verify(fsm, info, now_ms);
+    }
+
     if (fsm->runtime.next_action_ms == 0U)
     {
-        ret = cellular_runtime_schedule_action(&fsm->runtime,
-                                               now_ms,
-                                               CELLULAR_FSM_ONLINE_VERIFY_INTERVAL_MS);
+        ret = cellular_runtime_schedule_action(&fsm->runtime, now_ms, CELLULAR_FSM_ONLINE_VERIFY_INTERVAL_MS);
         if (ret != 0)
         {
             return _cellular_fsm_step_fatal(ret);
@@ -1536,12 +1559,19 @@ static cellular_fsm_step_t _cellular_fsm_state_online(cellular_fsm_t *fsm, const
         return _cellular_fsm_step_wait();
     }
 
-    if (cellular_runtime_action_due(&fsm->runtime, now_ms))
+    if (!cellular_runtime_action_due(&fsm->runtime, now_ms))
     {
-        return _cellular_fsm_step_done(CELLULAR_RUNTIME_STATE_VERIFY_CONNECTIVITY);
+        return _cellular_fsm_step_wait();
     }
 
-    return _cellular_fsm_step_wait();
+    cellular_runtime_clear_action(&fsm->runtime, now_ms);
+
+    fsm->online_verify_active = true;
+    _cellular_fsm_reset_verify(fsm);
+
+    CELLULAR_DEBUG("online connectivity verification started");
+
+    return _cellular_fsm_online_verify(fsm, info, now_ms);
 }
 
 /**
@@ -1675,9 +1705,7 @@ int cellular_fsm_handle_failure(cellular_fsm_t *fsm, at_channel_t *channel, int 
 
     failed_state = fsm->runtime.failed_state;
 
-    LINKG_LOG_WARN("CELLULAR: runtime state failed, state=%s, error=%d",
-                   cellular_runtime_state_name(failed_state),
-                   error);
+    CELLULAR_WARN("runtime state failed, state=%s, error=%d", cellular_runtime_state_name(failed_state), error);
 
     switch (failed_state)
     {
@@ -1713,25 +1741,19 @@ int cellular_fsm_handle_failure(cellular_fsm_t *fsm, at_channel_t *channel, int 
         cleanup_ret = _cellular_fsm_cleanup_data_session(fsm, channel);
         if (cleanup_ret != 0)
         {
-            LINKG_LOG_WARN("CELLULAR: data cleanup during retry returned error=%d", cleanup_ret);
+            CELLULAR_WARN("data cleanup during retry returned error=%d", cleanup_ret);
         }
     }
 
     retry_delay_ms = _cellular_fsm_retry_delay(fsm);
 
-    ret = cellular_runtime_schedule_retry(&fsm->runtime,
-                                          retry_target,
-                                          now_ms,
-                                          retry_delay_ms);
+    ret = cellular_runtime_schedule_retry(&fsm->runtime, retry_target, now_ms, retry_delay_ms);
     if (ret != 0)
     {
         return ret;
     }
 
-    LINKG_LOG_INFO("CELLULAR: retry scheduled, target=%s, delay_ms=%llu, count=%u",
-                   cellular_runtime_state_name(retry_target),
-                   (unsigned long long)retry_delay_ms,
-                   (unsigned int)fsm->runtime.retry_count);
+    CELLULAR_DEBUG("retry scheduled, target=%s, delay_ms=%llu, count=%u", cellular_runtime_state_name(retry_target), (unsigned long long)retry_delay_ms, (unsigned int)fsm->runtime.retry_count);
 
     return 0;
 }
