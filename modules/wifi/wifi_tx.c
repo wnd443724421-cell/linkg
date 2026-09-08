@@ -24,6 +24,7 @@
 #include "linkg_network_ops.h"
 #include "linkg_packet_pool.h"
 #include "wifi_traffic.h"
+#include "wifi_internal.h"
 
 /****************************** 发送参数 ******************************/
 
@@ -155,12 +156,22 @@ static int _linkg_wifi_tx_validate_packet(const linkg_packet_t *packet)
  */
 static void _linkg_wifi_tx_record_dropped(linkg_path_t *path, const linkg_packet_t *packet)
 {
+    static _Atomic uint64_t dropped_count;
+    uint64_t                count;
+
     if (path == NULL || packet == NULL)
     {
         return;
     }
 
     linkg_path_record_tx_dropped(path, packet->data_length, 1U);
+
+    count = atomic_fetch_add(&dropped_count, 1U) + 1U;
+
+    if ((count % 1000U) == 0U)
+    {
+        WIFI_WARN("TX主动丢包累计=%llu", (unsigned long long)count);
+    }
 }
 
 /****************************** Scratch管理 ******************************/
@@ -338,6 +349,8 @@ static int _linkg_wifi_tx_send_direct(linkg_wifi_tx_t *tx, linkg_wifi_traffic_cl
     {
         error = -errno;
 
+        WIFI_WARN("TX sendmmsg失败，traffic=%u packets=%u error=%d", (unsigned int)traffic_class, valid_count, error);
+
         for (index = 0U; index < valid_count; index++)
         {
             original_index = scratch->packet_indices[index];
@@ -363,6 +376,15 @@ static int _linkg_wifi_tx_send_direct(linkg_wifi_tx_t *tx, linkg_wifi_traffic_cl
     }
 
     sent_count = (uint32_t)ret;
+
+    if (sent_count < valid_count)
+    {
+        if (sent_count < valid_count)
+        {
+            WIFI_WARN("TX sendmmsg部分发送，traffic=%u submit=%u sent=%u dropped=%u", (unsigned int)traffic_class, valid_count, sent_count, valid_count - sent_count);
+        }
+    }
+
     sent_bytes = 0U;
 
     for (index = 0U; index < sent_count; index++)

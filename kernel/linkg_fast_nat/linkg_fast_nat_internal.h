@@ -23,6 +23,8 @@
 bool   linkg_fast_nat_ipv4_in_subnet(__be32 address, const linkg_fast_nat_ipv4_subnet_t *subnet);
 bool   linkg_fast_nat_ipv4_subnet_normalized(const linkg_fast_nat_ipv4_subnet_t *subnet);
 bool   linkg_fast_nat_ipv4_netmask_valid(__be32 netmask);
+bool   linkg_fast_nat_ipv4_subnet_contains(const linkg_fast_nat_ipv4_subnet_t *outer, const linkg_fast_nat_ipv4_subnet_t *inner);
+bool   linkg_fast_nat_ipv4_subnet_overlap(const linkg_fast_nat_ipv4_subnet_t *left, const linkg_fast_nat_ipv4_subnet_t *right);
 __be32 linkg_fast_nat_ipv4_prefix_map(__be32 address, const linkg_fast_nat_ipv4_subnet_t *from, const linkg_fast_nat_ipv4_subnet_t *to);
 
 /****************************** skb辅助 ******************************/

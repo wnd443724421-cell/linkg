@@ -21,9 +21,9 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_LINK_MANAGER_WIFI_REALTIME_SNDBUF_SIZE 16384U     // 实时UDP发送缓冲请求值，16KiB
-#define LINKG_LINK_MANAGER_WIFI_VIDEO_SNDBUF_SIZE    32768U     // 视频UDP发送缓冲请求值，32KiB
-#define LINKG_LINK_MANAGER_WIFI_DATA_SNDBUF_SIZE     65536U     // 普通数据UDP发送缓冲请求值，64KiB
+#define LINKG_LINK_MANAGER_WIFI_REALTIME_SNDBUF_SIZE 655360U     // 实时UDP发送缓冲请求值，16KiB
+#define LINKG_LINK_MANAGER_WIFI_VIDEO_SNDBUF_SIZE    655360U     // 视频UDP发送缓冲请求值，32KiB
+#define LINKG_LINK_MANAGER_WIFI_DATA_SNDBUF_SIZE     655360U     // 普通数据UDP发送缓冲请求值，64KiB
 #define LINKG_LINK_MANAGER_CELLULAR_NAME             "cellular" // 蜂窝业务链路名称
 #define LINKG_LINK_MANAGER_WIFI_NAME                 "wifi"     // Wi-Fi业务链路名称
 #define LINKG_LINK_MANAGER_MAX_LINKS                 2U         // 最大业务链路数量，Wi-Fi和蜂窝各一条

@@ -86,6 +86,47 @@ bool linkg_fast_nat_ipv4_netmask_valid(__be32 netmask)
 }
 
 /**
+ * @brief 判断IPv4子网是否完整包含另一个子网。
+ */
+bool linkg_fast_nat_ipv4_subnet_contains(const linkg_fast_nat_ipv4_subnet_t *outer, const linkg_fast_nat_ipv4_subnet_t *inner)
+{
+    __u32 outer_mask;
+    __u32 inner_mask;
+    __u32 outer_network;
+    __u32 inner_network;
+
+    if (outer == NULL || inner == NULL)
+    {
+        return false;
+    }
+
+    outer_mask    = ntohl(outer->netmask);
+    inner_mask    = ntohl(inner->netmask);
+    outer_network = ntohl(outer->network);
+    inner_network = ntohl(inner->network);
+
+    if ((inner_mask & outer_mask) != outer_mask)
+    {
+        return false;
+    }
+
+    return (inner_network & outer_mask) == outer_network;
+}
+
+/**
+ * @brief 判断两个IPv4子网是否存在地址重叠。
+ */
+bool linkg_fast_nat_ipv4_subnet_overlap(const linkg_fast_nat_ipv4_subnet_t *left, const linkg_fast_nat_ipv4_subnet_t *right)
+{
+    if (left == NULL || right == NULL)
+    {
+        return false;
+    }
+
+    return linkg_fast_nat_ipv4_in_subnet(left->network, right) || linkg_fast_nat_ipv4_in_subnet(right->network, left);
+}
+
+/**
  * @brief 按目标子网替换IPv4网络前缀并保留Host部分。
  *
  * 调用前要求from和to使用相同netmask。
@@ -370,7 +411,7 @@ int linkg_fast_nat_replace_transport_id(struct sk_buff *skb, bool source, __be16
     if (iph->protocol == IPPROTO_TCP)
     {
         tcph = (struct tcphdr *)(skb_network_header(skb) + transport_offset);
-        inet_proto_csum_replace2(&tcph->check, skb, old_id, new_id, true);
+        inet_proto_csum_replace2(&tcph->check, skb, old_id, new_id, false);
     }
     else
     {
@@ -378,7 +419,7 @@ int linkg_fast_nat_replace_transport_id(struct sk_buff *skb, bool source, __be16
 
         if (udph->check != 0 || skb->ip_summed == CHECKSUM_PARTIAL)
         {
-            inet_proto_csum_replace2(&udph->check, skb, old_id, new_id, true);
+            inet_proto_csum_replace2(&udph->check, skb, old_id, new_id, false);
 
             if (udph->check == 0)
             {
