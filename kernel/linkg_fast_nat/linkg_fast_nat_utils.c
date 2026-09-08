@@ -15,10 +15,11 @@
 #include <linux/tcp.h>
 #include <linux/types.h>
 #include <linux/udp.h>
-#include <net/ip.h>
 
 #include <net/checksum.h>
+#include <net/ip.h>
 #include <net/netfilter/nf_conntrack.h>
+#include <net/tcp.h>
 
 /****************************** 内部类型 ******************************/
 
@@ -412,6 +413,144 @@ int linkg_fast_nat_replace_tuple(struct sk_buff *skb, bool source, __be32 new_ip
     }
 
     return linkg_fast_nat_replace_ipv4(skb, source, new_ip);
+}
+
+/**
+ * @brief 限制TCP SYN报文中的MSS上限。
+ *
+ * 仅处理IPv4 TCP SYN/SYN-ACK报文中的MSS Option。
+ * MSS小于等于max_mss或未携带MSS Option时保持原报文不变。
+ * 修改MSS后同步增量更新TCP校验和。
+ */
+int linkg_fast_nat_tcp_mss_clamp(struct sk_buff *skb, __u16 max_mss)
+{
+    struct iphdr  *iph;
+    struct tcphdr *tcph;
+    unsigned int   transport_offset;
+    unsigned int   tcp_header_length;
+    unsigned int   option_length;
+    unsigned int   index;
+    __u8          *options;
+    __be16         old_mss;
+    __be16         new_mss;
+    __u8           kind;
+    __u8           length;
+    int            ret;
+
+    if (skb == NULL || max_mss == 0U)
+    {
+        return -EINVAL;
+    }
+
+    ret = linkg_fast_nat_get_ipv4(skb, &iph, &transport_offset);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (iph->protocol != IPPROTO_TCP)
+    {
+        return -EOPNOTSUPP;
+    }
+
+    if (!pskb_may_pull(skb, transport_offset + sizeof(struct tcphdr)))
+    {
+        return -EINVAL;
+    }
+
+    iph  = ip_hdr(skb);
+    tcph = (struct tcphdr *)(skb_network_header(skb) + transport_offset);
+
+    if (!tcph->syn)
+    {
+        return 0;
+    }
+
+    tcp_header_length = (unsigned int)tcph->doff * 4U;
+    if (tcp_header_length < sizeof(struct tcphdr))
+    {
+        return -EINVAL;
+    }
+
+    if ((unsigned int)ntohs(iph->tot_len) < transport_offset + tcp_header_length)
+    {
+        return -EINVAL;
+    }
+
+    if (!pskb_may_pull(skb, transport_offset + tcp_header_length))
+    {
+        return -EINVAL;
+    }
+
+    iph  = ip_hdr(skb);
+    tcph = (struct tcphdr *)(skb_network_header(skb) + transport_offset);
+
+    option_length = tcp_header_length - sizeof(struct tcphdr);
+    options       = (__u8 *)tcph + sizeof(struct tcphdr);
+
+    for (index = 0U; index < option_length;)
+    {
+        kind = options[index];
+
+        if (kind == TCPOPT_EOL)
+        {
+            break;
+        }
+
+        if (kind == TCPOPT_NOP)
+        {
+            index++;
+            continue;
+        }
+
+        if (index + 1U >= option_length)
+        {
+            return -EINVAL;
+        }
+
+        length = options[index + 1U];
+
+        if (length < 2U || index + length > option_length)
+        {
+            return -EINVAL;
+        }
+
+        if (kind != TCPOPT_MSS)
+        {
+            index += length;
+            continue;
+        }
+
+        if (length != TCPOLEN_MSS)
+        {
+            return -EINVAL;
+        }
+
+        memcpy(&old_mss, &options[index + 2U], sizeof(old_mss));
+
+        if (ntohs(old_mss) <= max_mss)
+        {
+            return 0;
+        }
+
+        if (skb_try_make_writable(skb, transport_offset + tcp_header_length))
+        {
+            return -ENOMEM;
+        }
+
+        iph     = ip_hdr(skb);
+        tcph    = (struct tcphdr *)(skb_network_header(skb) + transport_offset);
+        options = (__u8 *)tcph + sizeof(struct tcphdr);
+
+        new_mss = htons(max_mss);
+
+        inet_proto_csum_replace2(&tcph->check, skb, old_mss, new_mss, false);
+        memcpy(&options[index + 2U], &new_mss, sizeof(new_mss));
+
+        return 0;
+    }
+
+    return 0;
 }
 
 /****************************** NAT基础动作 ******************************/

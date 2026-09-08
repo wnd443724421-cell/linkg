@@ -87,7 +87,7 @@ struct lq_tun_batch_write
 #define LINKG_TUN_BATCH_SIZE                      16U                                                     // 单次批量读写最大包数
 #define LINKG_TUN_BATCH_MIN_PKTS                  5U                                                      // 批量读取最小聚合目标
 #define LINKG_TUN_BATCH_TIMEOUT_US                60U                                                     // 批量读取最大聚合等待时间
-#define LINKG_TUN_TX_QUEUE_LENGTH                 32U                                                     // TUN内核发送队列长度
+#define LINKG_TUN_TX_QUEUE_LENGTH                 500U                                                    // TUN内核发送队列长度
 #define LINKG_TUN_POLL_FD_COUNT                   2U                                                      // poll描述符数量
 #define LINKG_TUN_POOL_RETRY_MS                   1U                                                      // 数据包池耗尽重试间隔
 #define LINKG_TUN_IPV4_HEADER_MIN                 20U                                                     // IPv4最小头长度
@@ -726,7 +726,7 @@ static void _linkg_tun_process_read_batch(uint32_t packet_count)
     ret = linkg_transport_send_batch(g_tun.tx_items, tx_count, LINKG_TRANSPORT_TYPE_USER_DATA, LINKG_SCHEDULER_POLICY_DEFAULT, LINKG_LINK_ID_INVALID);
     if (ret != 0)
     {
-        LINKG_TUN_DEBUG("transport send batch completed with error, count=%u, error=%d", tx_count, ret);
+        //LINKG_TUN_DEBUG("transport send batch completed with error, count=%u, error=%d", tx_count, ret);
     }
 }
 

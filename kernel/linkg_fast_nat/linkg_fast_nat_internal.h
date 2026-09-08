@@ -33,6 +33,7 @@ void linkg_fast_nat_mark_untracked(struct sk_buff *skb);
 int  linkg_fast_nat_replace_ipv4(struct sk_buff *skb, bool source, __be32 new_ip);
 int  linkg_fast_nat_replace_transport_id(struct sk_buff *skb, bool source, __be16 new_id);
 int  linkg_fast_nat_replace_tuple(struct sk_buff *skb, bool source, __be32 new_ip, __be16 new_id);
+int  linkg_fast_nat_tcp_mss_clamp(struct sk_buff *skb, __u16 max_mss);
 
 /****************************** NAT基础动作 ******************************/
 

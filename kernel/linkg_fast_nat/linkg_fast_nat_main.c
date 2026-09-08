@@ -68,6 +68,7 @@
 #define LINKG_FAST_NAT_PRIORITY_EARLY         (NF_IP_PRI_RAW + 50)                                        // conntrack之前执行
 #define LINKG_FAST_NAT_PRIORITY_POSTROUTING   (NF_IP_PRI_NAT_SRC - 10)                                    // 常规Source NAT之前执行
 
+#define LINKG_FAST_NAT_TCP_MSS_MAX            1396U                                                       // LinkG IPv6/UDP隧道下TCP MSS上限
 
 /****************************** SNAT定义 ******************************/
 
@@ -197,16 +198,20 @@ static linkg_fast_nat_context_t g_fast_nat =
 
 /* 前置声明 */
 
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_tcp_mss_clamp(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_reverse_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_ethernet_flow_record(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_linkg_to_ethernet(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
+
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_ethernet_to_linkg(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_postrouting_source_translate(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph);
+
 
 /****************************** Fast NAT规则表 ******************************/
 
 static const linkg_fast_nat_rule_func_t g_prerouting_rules[] =
 {
+    _linkg_fast_nat_prerouting_tcp_mss_clamp,
     _linkg_fast_nat_prerouting_reverse_snat,
     _linkg_fast_nat_prerouting_ethernet_flow_record,
     _linkg_fast_nat_prerouting_linkg_to_ethernet,
@@ -1208,6 +1213,46 @@ static int _linkg_fast_nat_config_validate(const linkg_fast_nat_config_t *config
 /****************************** PREROUTING ******************************/
 
 /**
+ * @brief 限制TCP握手报文MSS，避免LinkG传输层对TCP数据再次分片。
+ */
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_prerouting_tcp_mss_clamp(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
+{
+    struct tcphdr *tcph;
+    unsigned int   transport_offset;
+    int            ret;
+
+    (void)state;
+
+    if (iph->protocol != IPPROTO_TCP)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    transport_offset = (unsigned int)iph->ihl * 4U;
+
+    if (!pskb_may_pull(skb, transport_offset + sizeof(struct tcphdr)))
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    iph  = ip_hdr(skb);
+    tcph = (struct tcphdr *)(skb_network_header(skb) + transport_offset);
+
+    if (!tcph->syn)
+    {
+        return LINKG_FAST_NAT_RULE_CONTINUE;
+    }
+
+    ret = linkg_fast_nat_tcp_mss_clamp(skb, LINKG_FAST_NAT_TCP_MSS_MAX);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    return LINKG_FAST_NAT_RULE_CONTINUE;
+}
+
+/**
  * @brief 处理Ethernet入口的Fast NAT SNAT返回报文。
  *
  * 仅处理目的IPv4为本节点Ethernet地址、且目的ID落在SNAT translated ID范围内的报文。
@@ -1429,6 +1474,8 @@ static unsigned int _linkg_fast_nat_prerouting(void *priv, struct sk_buff *skb, 
         {
             return NF_DROP;
         }
+
+        iph = ip_hdr(skb);
     }
 
     return NF_ACCEPT;
