@@ -2,8 +2,8 @@
  * @file wifi_tx_queue.c
  * @brief LinkG Wi-Fi发送等待队列实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-28
+ * @version 1.2.0
+ * @date 2026-09-09
  */
 
 #include "wifi_tx_queue.h"
@@ -44,8 +44,6 @@ static uint32_t _linkg_wifi_tx_queue_next(const linkg_wifi_tx_queue_t *queue, ui
 
 /**
  * @brief 释放Queue持有的单个元素引用并清空元素。
- *
- * @note Queue分别持有Packet和Path的一个引用，本函数负责对称释放。
  */
 static void _linkg_wifi_tx_queue_release_item(linkg_wifi_tx_queue_item_t *item)
 {
@@ -100,11 +98,11 @@ linkg_wifi_tx_queue_t *linkg_wifi_tx_queue_create(uint32_t capacity)
 }
 
 /**
- * @brief 销毁Wi-Fi发送等待队列并释放全部持有引用。
+ * @brief 清空Wi-Fi发送等待队列并释放全部持有引用。
  *
- * @note 调用前不得再有其他线程访问Queue。
+ * @note 调用方必须保证当前没有其他线程并发访问Queue。
  */
-void linkg_wifi_tx_queue_destroy(linkg_wifi_tx_queue_t *queue)
+void linkg_wifi_tx_queue_clear(linkg_wifi_tx_queue_t *queue)
 {
     if (queue == NULL)
     {
@@ -118,6 +116,24 @@ void linkg_wifi_tx_queue_destroy(linkg_wifi_tx_queue_t *queue)
         queue->head = _linkg_wifi_tx_queue_next(queue, queue->head);
         queue->count--;
     }
+
+    queue->head = 0U;
+    queue->tail = 0U;
+}
+
+/**
+ * @brief 销毁Wi-Fi发送等待队列并释放全部持有引用。
+ *
+ * @note 调用前不得再有其他线程访问Queue。
+ */
+void linkg_wifi_tx_queue_destroy(linkg_wifi_tx_queue_t *queue)
+{
+    if (queue == NULL)
+    {
+        return;
+    }
+
+    linkg_wifi_tx_queue_clear(queue);
 
     free(queue->items);
     free(queue);
@@ -151,6 +167,19 @@ uint32_t linkg_wifi_tx_queue_capacity(const linkg_wifi_tx_queue_t *queue)
     return queue->capacity;
 }
 
+/**
+ * @brief 获取等待队列当前剩余容量。
+ */
+uint32_t linkg_wifi_tx_queue_available(const linkg_wifi_tx_queue_t *queue)
+{
+    if (queue == NULL || queue->count >= queue->capacity)
+    {
+        return 0U;
+    }
+
+    return queue->capacity - queue->count;
+}
+
 /****************************** 队列操作 ******************************/
 
 /**
@@ -180,7 +209,7 @@ int linkg_wifi_tx_queue_push_batch(linkg_wifi_tx_queue_t *queue, linkg_packet_t 
         return 0;
     }
 
-    available  = queue->capacity - queue->count;
+    available  = linkg_wifi_tx_queue_available(queue);
     push_count = count;
 
     if (push_count > available)

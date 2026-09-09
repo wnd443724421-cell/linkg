@@ -21,18 +21,15 @@ typedef struct linkg_wifi_flowctrl linkg_wifi_flowctrl_t;
 
 typedef struct
 {
-    uint32_t be_queue_length;     // 驱动BE发送队列长度
-    uint32_t vi_queue_length;     // 驱动VI发送队列长度
-    uint32_t vo_queue_length;     // 驱动VO发送队列长度
+    uint32_t be_queue_length;     // 驱动BE发送队列长度，仅用于统计
+    uint32_t vi_queue_length;     // 驱动VI发送队列长度，仅用于统计
+    uint32_t vo_queue_length;     // 驱动VO发送队列长度，仅用于统计
     uint32_t flowctrl_off_count;  // FLOWCTRL_OFF累计触发次数
-    uint32_t normal_batch_limit;  // 当前VIDEO/DATA单次最大准入数量
-    uint32_t requested_count;     // 本次请求发送数量
-    uint32_t allowed_count;       // 本次允许发送数量
-    uint64_t read_us;             // 驱动流控状态读取耗时，单位微秒
-    uint8_t  tx_allowed;          // 驱动当前发送允许状态
+    uint64_t read_us;             // 驱动状态读取耗时，单位微秒
+    bool     driver_tx_allowed;   // 驱动原始发送允许状态
+    bool     new_off_detected;    // 本次是否观察到新的FLOWCTRL_OFF
+    bool     submit_allowed;      // 本次是否最终允许提交
     bool     status_valid;        // 本次驱动状态是否有效
-    bool     backed_off;          // 本次是否触发批次退避
-    bool     waterline_blocked;   // 本次是否因队列水位阻塞
 } linkg_wifi_flowctrl_sample_t;
 
 /****************************** 生命周期 ******************************/
@@ -44,7 +41,12 @@ void                   linkg_wifi_flowctrl_stop(linkg_wifi_flowctrl_t *flowctrl)
 
 /****************************** 发送准入 ******************************/
 
-int linkg_wifi_flowctrl_admit(linkg_wifi_flowctrl_t *flowctrl, uint32_t requested_count, uint32_t *allowed_count, linkg_wifi_flowctrl_sample_t *sample);
+/**
+ * @brief 检查当前Wi-Fi是否允许提交一个新的发送批次。
+ */
+int linkg_wifi_flowctrl_check(linkg_wifi_flowctrl_t *flowctrl,
+                              bool *submit_allowed,
+                              linkg_wifi_flowctrl_sample_t *sample);
 
 #ifdef __cplusplus
 }

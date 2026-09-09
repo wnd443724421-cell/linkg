@@ -33,11 +33,13 @@ typedef struct
 
 linkg_wifi_tx_queue_t *linkg_wifi_tx_queue_create(uint32_t capacity);
 void                   linkg_wifi_tx_queue_destroy(linkg_wifi_tx_queue_t *queue);
+void                   linkg_wifi_tx_queue_clear(linkg_wifi_tx_queue_t *queue);
 
 /****************************** 状态查询 ******************************/
 
 uint32_t linkg_wifi_tx_queue_count(const linkg_wifi_tx_queue_t *queue);
 uint32_t linkg_wifi_tx_queue_capacity(const linkg_wifi_tx_queue_t *queue);
+uint32_t linkg_wifi_tx_queue_available(const linkg_wifi_tx_queue_t *queue);
 
 /****************************** 队列操作 ******************************/
 

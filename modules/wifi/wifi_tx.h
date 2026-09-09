@@ -28,7 +28,7 @@ void             linkg_wifi_tx_stop(linkg_wifi_tx_t *tx);
 
 /****************************** 数据发送 ******************************/
 
-// results为0表示Wi-Fi已接受发送责任，可能已发送或进入VIDEO/DATA等待队列；负数表示拒绝。
+// results为0表示Wi-Fi已接受发送责任，Packet可能已提交Socket，也可能进入对应REALTIME/VIDEO/DATA等待队列；负数表示拒绝。
 int linkg_wifi_tx_submit(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, int *results);
 
 #ifdef __cplusplus

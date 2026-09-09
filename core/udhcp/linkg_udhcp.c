@@ -537,10 +537,9 @@ static int _linkg_udhcp_config_file_write(const linkg_udhcp_runtime_config_t *co
         return -saved_errno;
     }
 
-    LINKG_LOG_DEBUG("DHCP configuration generated, default_gateway=%d, option33=%d, dns=%d",
-                    config->default_gateway ? 1 : 0,
-                    option33_supported ? 1 : 0,
-                    config->default_gateway ? 1 : 0);
+    LINKG_LOG_DEBUG("DHCP configuration generated, default_gateway=%d, classless_routes=1, dns=%d",
+                config->default_gateway ? 1 : 0,
+                config->default_gateway ? 1 : 0);
 
     return 0;
 }
