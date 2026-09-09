@@ -21,22 +21,26 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_LINK_MANAGER_WIFI_REALTIME_SNDBUF_SIZE 655360U     // 实时UDP发送缓冲请求值，16KiB
-#define LINKG_LINK_MANAGER_WIFI_VIDEO_SNDBUF_SIZE    655360U     // 视频UDP发送缓冲请求值，32KiB
-#define LINKG_LINK_MANAGER_WIFI_DATA_SNDBUF_SIZE     655360U     // 普通数据UDP发送缓冲请求值，64KiB
-#define LINKG_LINK_MANAGER_CELLULAR_NAME             "cellular" // 蜂窝业务链路名称
-#define LINKG_LINK_MANAGER_WIFI_NAME                 "wifi"     // Wi-Fi业务链路名称
-#define LINKG_LINK_MANAGER_MAX_LINKS                 2U         // 最大业务链路数量，Wi-Fi和蜂窝各一条
+#define LINKG_LINK_MANAGER_WIFI_REALTIME_SNDBUF_SIZE (32U   * 1024U) // 实时UDP发送缓冲请求值，32KiB
+#define LINKG_LINK_MANAGER_WIFI_VIDEO_SNDBUF_SIZE    (64U   * 1024U) // 视频UDP发送缓冲请求值，64KiB
+#define LINKG_LINK_MANAGER_WIFI_DATA_SNDBUF_SIZE     (128U  * 1024U) // 普通数据UDP发送缓冲请求值，128KiB
+#define LINKG_LINK_MANAGER_WIFI_REALTIME_RCVBUF_SIZE (256U  * 1024U) // 实时UDP接收缓冲请求值，256KiB
+#define LINKG_LINK_MANAGER_WIFI_VIDEO_RCVBUF_SIZE    (512U  * 1024U) // 视频UDP接收缓冲请求值，512KiB
+#define LINKG_LINK_MANAGER_WIFI_DATA_RCVBUF_SIZE     (1024U * 1024U) // 普通数据UDP接收缓冲请求值，1MiB
+
+#define LINKG_LINK_MANAGER_CELLULAR_NAME             "cellular"      // 蜂窝业务链路名称
+#define LINKG_LINK_MANAGER_WIFI_NAME                 "wifi"          // Wi-Fi业务链路名称
+#define LINKG_LINK_MANAGER_MAX_LINKS                 2U              // 最大业务链路数量，Wi-Fi和蜂窝各一条
 
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
     linkg_link_t                    *links[LINKG_LINK_MANAGER_MAX_LINKS]; // 本地业务链路对象
-    linkg_link_receive_batch_func_t  receive;                            // 上层统一接收处理函数
-    void                            *receive_user_data;                  // 接收处理私有数据
-    uint32_t                         count;                              // 当前已创建业务链路数量
-    bool                             initialized;                        // 模块是否已经初始化
+    linkg_link_receive_batch_func_t  receive;                             // 上层统一接收处理函数
+    void                            *receive_user_data;                   // 接收处理私有数据
+    uint32_t                         count;                               // 当前已创建业务链路数量
+    bool                             initialized;                         // 模块是否已经初始化
 } linkg_link_manager_context_t;
 
 typedef struct
@@ -247,12 +251,15 @@ static int _linkg_link_manager_create_wifi(const linkg_config_t *config, const l
 
     memset(&wifi_config, 0, sizeof(wifi_config));
 
-    wifi_config.data_port                 = LINKG_RESOURCE_UDP_PORT_WIFI_DATA;
-	wifi_config.realtime_port             = LINKG_RESOURCE_UDP_PORT_WIFI_REALTIME;
-	wifi_config.video_port                = LINKG_RESOURCE_UDP_PORT_WIFI_VIDEO;
-	wifi_config.data_send_buffer_size     = LINKG_LINK_MANAGER_WIFI_DATA_SNDBUF_SIZE;
-	wifi_config.realtime_send_buffer_size = LINKG_LINK_MANAGER_WIFI_REALTIME_SNDBUF_SIZE;
-	wifi_config.video_send_buffer_size    = LINKG_LINK_MANAGER_WIFI_VIDEO_SNDBUF_SIZE;
+    wifi_config.data_port                    = LINKG_RESOURCE_UDP_PORT_WIFI_DATA;
+    wifi_config.realtime_port                = LINKG_RESOURCE_UDP_PORT_WIFI_REALTIME;
+    wifi_config.video_port                   = LINKG_RESOURCE_UDP_PORT_WIFI_VIDEO;
+    wifi_config.data_send_buffer_size        = LINKG_LINK_MANAGER_WIFI_DATA_SNDBUF_SIZE;
+    wifi_config.realtime_send_buffer_size    = LINKG_LINK_MANAGER_WIFI_REALTIME_SNDBUF_SIZE;
+    wifi_config.video_send_buffer_size       = LINKG_LINK_MANAGER_WIFI_VIDEO_SNDBUF_SIZE;
+    wifi_config.data_receive_buffer_size     = LINKG_LINK_MANAGER_WIFI_DATA_RCVBUF_SIZE;
+    wifi_config.realtime_receive_buffer_size = LINKG_LINK_MANAGER_WIFI_REALTIME_RCVBUF_SIZE;
+    wifi_config.video_receive_buffer_size    = LINKG_LINK_MANAGER_WIFI_VIDEO_RCVBUF_SIZE;
 
     link = NULL;
 

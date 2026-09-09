@@ -34,31 +34,33 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_WIFI_LINK_IPV4_HEADER_SIZE 20U   // IPv4最小头部长度
-#define LINKG_WIFI_LINK_UDP_HEADER_SIZE  8U    // UDP头部长度
-#define LINKG_WIFI_LINK_MTU              1500U // Wi-Fi接口MTU
-#define LINKG_WIFI_LINK_IP_TOS_DATA      0x00  // 普通数据流量，映射WMM AC_BE
-#define LINKG_WIFI_LINK_IP_TOS_VIDEO     0x80  // 视频流量，映射WMM AC_VI
-#define LINKG_WIFI_LINK_IP_TOS_REALTIME  0xC0  // 实时流量，映射WMM AC_VO
-#define LINKG_WIFI_LINK_UDP_PAYLOAD_MAX  (LINKG_WIFI_LINK_MTU - LINKG_WIFI_LINK_IPV4_HEADER_SIZE - LINKG_WIFI_LINK_UDP_HEADER_SIZE) // 单个UDP报文最大负载
+#define LINKG_WIFI_LINK_IPV4_HEADER_SIZE     20U   // IPv4最小头部长度
+#define LINKG_WIFI_LINK_UDP_HEADER_SIZE      8U    // UDP头部长度
+#define LINKG_WIFI_LINK_MTU                  1500U // Wi-Fi接口MTU
+#define LINKG_WIFI_LINK_IP_TOS_DATA          0x00  // 普通数据流量，映射WMM AC_BE
+#define LINKG_WIFI_LINK_IP_TOS_VIDEO         0x80  // 视频流量，映射WMM AC_VI
+#define LINKG_WIFI_LINK_IP_TOS_REALTIME      0xC0  // 实时流量，映射WMM AC_VO
+#define LINKG_WIFI_LINK_RECEIVE_BUFFER_SIZE (1U * 1024U * 1024U) // UDP接收缓冲请求值，1MiB
+#define LINKG_WIFI_LINK_UDP_PAYLOAD_MAX     (LINKG_WIFI_LINK_MTU - LINKG_WIFI_LINK_IPV4_HEADER_SIZE - LINKG_WIFI_LINK_UDP_HEADER_SIZE) // 单个UDP报文最大负载
 
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
-    linkg_link_t           base;                                           // 链路基类，必须为首成员
+    linkg_link_t            base;                                              // 链路基类，必须为首成员
 
-    struct in_addr         local_address;                                  // 当前绑定的本地IPv4地址
-    uint16_t               service_ports[LINKG_WIFI_TRAFFIC_COUNT];        // 各业务UDP服务端口
-    uint32_t               send_buffer_sizes[LINKG_WIFI_TRAFFIC_COUNT];    // 各业务UDP发送缓冲请求值
-    int                    socket_fds[LINKG_WIFI_TRAFFIC_COUNT];           // 各业务UDP收发套接字
-    int                    rx_epoll_fd;                                    // 三业务接收聚合描述符
+    struct in_addr          local_address;                                     // 当前绑定的本地IPv4地址
+    uint16_t                service_ports[LINKG_WIFI_TRAFFIC_COUNT];           // 各业务UDP服务端口
+    uint32_t                send_buffer_sizes[LINKG_WIFI_TRAFFIC_COUNT];       // 各业务UDP发送缓冲请求值
+    uint32_t                receive_buffer_sizes[LINKG_WIFI_TRAFFIC_COUNT];    // 各业务UDP接收缓冲请求值
+    int                     socket_fds[LINKG_WIFI_TRAFFIC_COUNT];              // 各业务UDP收发套接字
+    int                     rx_epoll_fd;                                       // 三业务接收聚合描述符
 
-    linkg_wifi_tx_t       *tx;                                             // Wi-Fi发送模块
+    linkg_wifi_tx_t        *tx;                                                // Wi-Fi发送模块
 
-    struct mmsghdr        *rx_messages;                                    // 批量接收消息数组
-    struct iovec          *rx_iovecs;                                      // 批量接收缓冲区数组
-    uint32_t               rx_capacity;                                    // 接收描述符容量
+    struct mmsghdr         *rx_messages;                                       // 批量接收消息数组
+    struct iovec           *rx_iovecs;                                         // 批量接收缓冲区数组
+    uint32_t                rx_capacity;                                       // 接收描述符容量
 } linkg_wifi_link_t;
 
 _Static_assert(offsetof(linkg_wifi_link_t, base) == 0U, "linkg_link_t must be the first member");
@@ -89,11 +91,16 @@ static int _wifi_link_traffic_tos(linkg_wifi_traffic_class_t traffic_class)
 /**
  * @brief 创建并绑定单个业务UDP套接字。
  */
-static int _wifi_link_open_socket(const struct in_addr *local_address, uint16_t local_port, int tos, uint32_t send_buffer_size, int *out)
+static int _wifi_link_open_socket(const struct in_addr *local_address, uint16_t local_port, int tos, uint32_t send_buffer_size, uint32_t receive_buffer_size, int *out)
 {
     struct sockaddr_in local;
-    int                socket_fd;
+    socklen_t          option_length;
+    uint64_t           expected_receive_buffer;
+    int                actual_receive_buffer;
+    int                actual_send_buffer;
+    int                receive_buffer;
     int                send_buffer;
+    int                socket_fd;
     int                enable;
     int                ret;
 
@@ -102,7 +109,7 @@ static int _wifi_link_open_socket(const struct in_addr *local_address, uint16_t 
         return -EINVAL;
     }
 
-    if (send_buffer_size > (uint32_t)INT_MAX)
+    if (send_buffer_size > (uint32_t)INT_MAX || receive_buffer_size > (uint32_t)INT_MAX)
     {
         return -EINVAL;
     }
@@ -136,11 +143,86 @@ static int _wifi_link_open_socket(const struct in_addr *local_address, uint16_t 
         }
     }
 
-    ret = setsockopt(socket_fd,
-                     SOL_SOCKET,
-                     SO_BINDTODEVICE,
-                     WIFI_PLATFORM_INTERFACE_NAME,
-                     strlen(WIFI_PLATFORM_INTERFACE_NAME));
+    if (receive_buffer_size > 0U)
+    {
+        receive_buffer = (int)receive_buffer_size;
+
+        ret = setsockopt(socket_fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof(receive_buffer));
+        if (ret != 0)
+        {
+            ret = -errno;
+            goto fail_socket;
+        }
+
+        actual_receive_buffer = 0;
+        option_length         = sizeof(actual_receive_buffer);
+
+        ret = getsockopt(socket_fd, SOL_SOCKET, SO_RCVBUF, &actual_receive_buffer, &option_length);
+        if (ret != 0)
+        {
+            ret = -errno;
+            goto fail_socket;
+        }
+
+        expected_receive_buffer = (uint64_t)receive_buffer_size * 2U;
+
+        if ((uint64_t)actual_receive_buffer < expected_receive_buffer)
+        {
+            ret = setsockopt(socket_fd, SOL_SOCKET, SO_RCVBUFFORCE, &receive_buffer, sizeof(receive_buffer));
+            if (ret != 0)
+            {
+                LINKG_LOG_WARN("Wi-Fi UDP receive buffer limited, port=%u, requested=%u, actual=%d, force_error=%d",
+                               local_port,
+                               receive_buffer_size,
+                               actual_receive_buffer,
+                               errno);
+            }
+            else
+            {
+                actual_receive_buffer = 0;
+                option_length         = sizeof(actual_receive_buffer);
+
+                ret = getsockopt(socket_fd, SOL_SOCKET, SO_RCVBUF, &actual_receive_buffer, &option_length);
+                if (ret != 0)
+                {
+                    ret = -errno;
+                    goto fail_socket;
+                }
+
+                if ((uint64_t)actual_receive_buffer < expected_receive_buffer)
+                {
+                    LINKG_LOG_WARN("Wi-Fi UDP receive buffer below request, port=%u, requested=%u, actual=%d",
+                                   local_port,
+                                   receive_buffer_size,
+                                   actual_receive_buffer);
+                }
+            }
+        }
+    }
+
+    actual_send_buffer = 0;
+    option_length      = sizeof(actual_send_buffer);
+
+    ret = getsockopt(socket_fd, SOL_SOCKET, SO_SNDBUF, &actual_send_buffer, &option_length);
+    if (ret != 0)
+    {
+        ret = -errno;
+        goto fail_socket;
+    }
+
+    actual_receive_buffer = 0;
+    option_length         = sizeof(actual_receive_buffer);
+
+    ret = getsockopt(socket_fd, SOL_SOCKET, SO_RCVBUF, &actual_receive_buffer, &option_length);
+    if (ret != 0)
+    {
+        ret = -errno;
+        goto fail_socket;
+    }
+
+    LINKG_LOG_INFO("Wi-Fi UDP socket buffer, port=%u, sndbuf=%d, rcvbuf=%d", local_port, actual_send_buffer, actual_receive_buffer);
+
+    ret = setsockopt(socket_fd, SOL_SOCKET, SO_BINDTODEVICE, WIFI_PLATFORM_INTERFACE_NAME, strlen(WIFI_PLATFORM_INTERFACE_NAME));
     if (ret != 0)
     {
         ret = -errno;
@@ -474,6 +556,10 @@ static int _wifi_link_init(linkg_link_t *link, const void *config)
     wifi_link->send_buffer_sizes[LINKG_WIFI_TRAFFIC_VIDEO]    = wifi_config->video_send_buffer_size;
     wifi_link->send_buffer_sizes[LINKG_WIFI_TRAFFIC_DATA]     = wifi_config->data_send_buffer_size;
 
+    wifi_link->receive_buffer_sizes[LINKG_WIFI_TRAFFIC_REALTIME] = wifi_config->realtime_receive_buffer_size;
+    wifi_link->receive_buffer_sizes[LINKG_WIFI_TRAFFIC_VIDEO]    = wifi_config->video_receive_buffer_size;
+    wifi_link->receive_buffer_sizes[LINKG_WIFI_TRAFFIC_DATA]     = wifi_config->data_receive_buffer_size;
+
     for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
     {
         wifi_link->socket_fds[class_index] = -1;
@@ -542,11 +628,11 @@ static void _wifi_link_deinit(linkg_link_t *link)
 
     for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
     {
-        wifi_link->service_ports[class_index]     = 0U;
-        wifi_link->send_buffer_sizes[class_index] = 0U;
-        wifi_link->socket_fds[class_index]        = -1;
+        wifi_link->service_ports[class_index]        = 0U;
+        wifi_link->send_buffer_sizes[class_index]    = 0U;
+        wifi_link->receive_buffer_sizes[class_index] = 0U;
+        wifi_link->socket_fds[class_index]           = -1;
     }
-
     wifi_link->rx_epoll_fd = -1;
 
     memset(&wifi_link->local_address, 0, sizeof(wifi_link->local_address));
@@ -562,6 +648,7 @@ static int _wifi_link_open(linkg_link_t *link)
     linkg_wifi_traffic_class_t   traffic_class;
     uint32_t                     class_index;
     uint32_t                     send_buffer_size;
+    uint32_t                     receive_buffer_size;
     int                          epoll_fd;
     int                          tos;
     int                          ret;
@@ -599,9 +686,10 @@ static int _wifi_link_open(linkg_link_t *link)
 
     for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
     {
-        traffic_class   = (linkg_wifi_traffic_class_t)class_index;
-        tos             = _wifi_link_traffic_tos(traffic_class);
-        send_buffer_size = wifi_link->send_buffer_sizes[traffic_class];
+        traffic_class       = (linkg_wifi_traffic_class_t)class_index;
+        tos                 = _wifi_link_traffic_tos(traffic_class);
+        send_buffer_size    = wifi_link->send_buffer_sizes[traffic_class];
+        receive_buffer_size = wifi_link->receive_buffer_sizes[traffic_class];
 
         if (tos < 0)
         {
@@ -613,6 +701,7 @@ static int _wifi_link_open(linkg_link_t *link)
                                      wifi_link->service_ports[class_index],
                                      tos,
                                      send_buffer_size,
+                                     receive_buffer_size,
                                      &socket_fds[class_index]);
         if (ret != 0)
         {

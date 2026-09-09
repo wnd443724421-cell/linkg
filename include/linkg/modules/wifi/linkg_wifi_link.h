@@ -18,12 +18,15 @@ extern "C" {
 
 typedef struct
 {
-    uint16_t data_port;                  // 全网固定普通数据UDP端口，主机字节序
-    uint16_t realtime_port;              // 全网固定实时数据UDP端口，主机字节序
-    uint16_t video_port;                 // 全网固定视频数据UDP端口，主机字节序
-    uint32_t data_send_buffer_size;      // 普通数据UDP发送缓冲区
-    uint32_t video_send_buffer_size;     // 视频UDP发送缓冲区
-    uint32_t realtime_send_buffer_size;  // 实时UDP发送缓冲区
+    uint16_t data_port;                      // 全网固定普通数据UDP端口，主机字节序
+    uint16_t realtime_port;                  // 全网固定实时数据UDP端口，主机字节序
+    uint16_t video_port;                     // 全网固定视频数据UDP端口，主机字节序
+    uint32_t data_send_buffer_size;          // 普通数据UDP发送缓冲区
+    uint32_t video_send_buffer_size;         // 视频UDP发送缓冲区
+    uint32_t realtime_send_buffer_size;      // 实时UDP发送缓冲区
+    uint32_t data_receive_buffer_size;       // 普通数据UDP接收缓冲区
+    uint32_t video_receive_buffer_size;      // 视频UDP接收缓冲区
+    uint32_t realtime_receive_buffer_size;   // 实时UDP接收缓冲区
 } linkg_wifi_link_config_t;
 
 /****************************** 生命周期 ******************************/
