@@ -7,6 +7,7 @@
 #define LINKG_NETWORK_CONFIG_H
 
 #include <netinet/in.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "cJSON.h"
@@ -47,6 +48,15 @@ typedef struct
     linkg_network_traffic_rule_t rules[LINKG_NETWORK_TRAFFIC_RULE_MAX]; // 业务流量分类规则
 } linkg_network_traffic_config_t;
 
+/**
+ * @brief DHCP服务配置
+ */
+typedef struct
+{
+    bool enabled;         // 是否启用DHCP服务
+    bool default_gateway; // 是否向客户端下发默认网关
+} linkg_network_dhcp_config_t;
+
 typedef struct
 {
     struct in_addr ip;      // IPv4地址或网络地址，网络字节序
@@ -55,10 +65,11 @@ typedef struct
 
 typedef struct
 {
-    uint8_t                        node_id;           // LinkG节点编号
-    struct in_addr                 virtual_network;   // 组网虚拟网络基地址，同一组网成员必须一致
-    struct in_addr                 ethernet_network;  // Ethernet网络基地址，本节点独立配置
-    linkg_network_traffic_config_t traffic;           // 用户业务流量分类配置
+    uint8_t                        node_id;          // LinkG节点编号
+    struct in_addr                 virtual_network;  // 组网虚拟网络基地址，同一组网成员必须一致
+    struct in_addr                 ethernet_network; // Ethernet网络基地址，本节点独立配置
+    linkg_network_dhcp_config_t    dhcp;             // Ethernet DHCP服务配置
+    linkg_network_traffic_config_t traffic;          // 用户业务流量分类配置
 } linkg_network_config_t;
 
 /****************************** 配置处理 ******************************/

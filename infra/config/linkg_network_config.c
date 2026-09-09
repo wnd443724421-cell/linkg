@@ -2,8 +2,8 @@
  * @file linkg_network_config.c
  * @brief LinkG网络配置处理接口实现
  * @author Dawn
- * @version 1.3.0
- * @date 2026-08-28
+ * @version 1.4.0
+ * @date 2026-09-09
  */
 
 #include "linkg_network_config.h"
@@ -455,6 +455,52 @@ static int _network_ipv4_network_parse(const cJSON *node, const char *key, uint8
 }
 
 /**
+ * @brief 解析DHCP服务配置。
+ *
+ * dhcp节点允许缺省，缺省时保留linkg_network_config_set_default()设置的默认值。
+ * 一旦提供dhcp节点，enabled和default_gateway必须同时存在且为JSON布尔值。
+ */
+static int _network_dhcp_config_parse(const cJSON *node, linkg_network_dhcp_config_t *out)
+{
+    const cJSON *dhcp;
+    const cJSON *enabled;
+    const cJSON *default_gateway;
+
+    if (node == NULL || out == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    dhcp = cJSON_GetObjectItemCaseSensitive(node, "dhcp");
+    if (dhcp == NULL)
+    {
+        return CONFIG_OK;
+    }
+
+    if (!cJSON_IsObject(dhcp))
+    {
+        return CONFIG_ERR_PARSE;
+    }
+
+    enabled = cJSON_GetObjectItemCaseSensitive(dhcp, "enabled");
+    if (enabled == NULL || !cJSON_IsBool(enabled))
+    {
+        return CONFIG_ERR_PARSE;
+    }
+
+    default_gateway = cJSON_GetObjectItemCaseSensitive(dhcp, "default_gateway");
+    if (default_gateway == NULL || !cJSON_IsBool(default_gateway))
+    {
+        return CONFIG_ERR_PARSE;
+    }
+
+    out->enabled         = cJSON_IsTrue(enabled);
+    out->default_gateway = cJSON_IsTrue(default_gateway);
+
+    return CONFIG_OK;
+}
+
+/**
  * @brief 解析用户业务流量分类配置。
  */
 static int _network_traffic_config_parse(const cJSON *node, linkg_network_traffic_config_t *out)
@@ -584,6 +630,47 @@ static int _network_ipv4_network_to_json(cJSON *parent, const char *key, const s
 }
 
 /**
+ * @brief 将DHCP服务配置转换为JSON对象。
+ */
+static int _network_dhcp_config_to_json(cJSON *parent, const linkg_network_dhcp_config_t *config)
+{
+    cJSON *object;
+    int    ret;
+
+    if (parent == NULL || config == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    object = cJSON_CreateObject();
+    if (object == NULL)
+    {
+        return CONFIG_ERR_MEMORY;
+    }
+
+    if (cJSON_AddBoolToObject(object, "enabled", config->enabled) == NULL)
+    {
+        cJSON_Delete(object);
+        return CONFIG_ERR_MEMORY;
+    }
+
+    if (cJSON_AddBoolToObject(object, "default_gateway", config->default_gateway) == NULL)
+    {
+        cJSON_Delete(object);
+        return CONFIG_ERR_MEMORY;
+    }
+
+    ret = linkg_json_add_object(parent, "dhcp", object);
+    if (ret != LINKG_JSON_OK)
+    {
+        cJSON_Delete(object);
+        return config_json_write_error(ret);
+    }
+
+    return CONFIG_OK;
+}
+
+/**
  * @brief 将用户业务流量分类配置转换为JSON数组。
  */
 static int _network_traffic_config_to_json(cJSON *parent, const linkg_network_traffic_config_t *config)
@@ -692,6 +779,9 @@ void linkg_network_config_set_default(linkg_network_config_t *out)
     }
 
     memset(out, 0, sizeof(*out));
+
+    out->dhcp.enabled         = true;
+    out->dhcp.default_gateway = false;
 }
 
 /**
@@ -779,6 +869,12 @@ int linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out)
         return ret;
     }
 
+    ret = _network_dhcp_config_parse(node, &temp.dhcp);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
     ret = _network_traffic_config_parse(node, &temp.traffic);
     if (ret != CONFIG_OK)
     {
@@ -836,6 +932,13 @@ int linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_net
     }
 
     ret = _network_ipv4_network_to_json(object, "ethernet_network", &config->ethernet_network, LINKG_NETWORK_ETHERNET_IPV4_PREFIX);
+    if (ret != CONFIG_OK)
+    {
+        cJSON_Delete(object);
+        return ret;
+    }
+
+    ret = _network_dhcp_config_to_json(object, &config->dhcp);
     if (ret != CONFIG_OK)
     {
         cJSON_Delete(object);

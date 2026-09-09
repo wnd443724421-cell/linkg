@@ -40,10 +40,10 @@
  */
 typedef struct
 {
-    pthread_mutex_t    lock;         // 当前业务类别发送Scratch保护锁
-    struct mmsghdr    *messages;     // 预分配sendmmsg消息数组
-    struct iovec      *iovecs;       // 预分配iovec数组
-    struct sockaddr_in *destinations; // 预分配目标地址数组
+    pthread_mutex_t    lock;           // 当前业务类别发送Scratch保护锁
+    struct mmsghdr    *messages;       // 预分配sendmmsg消息数组
+    struct iovec      *iovecs;         // 预分配iovec数组
+    struct sockaddr_in *destinations;  // 预分配目标地址数组
     uint32_t          *packet_indices; // 预分配有效Packet原始索引数组
 } linkg_wifi_tx_scratch_t;
 

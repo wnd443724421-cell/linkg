@@ -2,8 +2,8 @@
  * @file linkg_fast_nat_uapi.h
  * @brief LinkG Fast NAT内核模块用户态接口定义
  * @author Dawn
- * @version 2.0.0
- * @date 2026-09-06
+ * @version 2.1.0
+ * @date 2026-09-09
  */
 
 #ifndef LINKG_FAST_NAT_UAPI_H
@@ -62,7 +62,9 @@ typedef struct
     __u16 snat_port_start; // Fast SNAT动态端口池起始端口
     __u16 reserved0;       // 对齐及后续扩展预留
 
-    __u32 reserved[8]; // 后续UAPI扩展预留
+    __s32 uplink_ifindex; // 外部网络上行接口ifindex
+
+    __u32 reserved[7]; // 后续UAPI扩展预留
 } linkg_fast_nat_config_t;
 
 /****************************** IOCTL定义 ******************************/

@@ -44,6 +44,7 @@ typedef struct
     linkg_network_ipv4_config_t ethernet_network;     // 本节点Ethernet网络
     linkg_network_ipv4_config_t ethernet;             // 本节点Ethernet接口IPv4配置
     int                         driver_fd;            // Fast NAT字符设备句柄
+    bool                        uplink_enabled;       // 外部蜂窝上行是否启用
     bool                        driver_loaded;        // Fast NAT内核模块是否由当前NAT生命周期持有
     bool                        initialized;          // 模块是否已经初始化
     bool                        started;              // Fast NAT是否已经启动
@@ -53,10 +54,11 @@ typedef struct
 
 static linkg_nat_context_t g_nat =
 {
-    .driver_fd     = -1,    // Fast NAT字符设备尚未打开
-    .driver_loaded = false, // Fast NAT内核模块尚未加载
-    .initialized   = false, // NAT控制模块尚未初始化
-    .started       = false  // Fast NAT尚未启动
+    .driver_fd      = -1,    // Fast NAT字符设备尚未打开
+    .uplink_enabled = false, // 外部蜂窝上行默认未启用
+    .driver_loaded  = false, // Fast NAT内核模块尚未加载
+    .initialized    = false, // NAT控制模块尚未初始化
+    .started        = false  // Fast NAT尚未启动
 };
 
 /****************************** 配置辅助 ******************************/
@@ -192,6 +194,15 @@ static int _linkg_nat_build_driver_config(linkg_fast_nat_config_t *config)
     if (ret != 0)
     {
         return ret;
+    }
+
+    if (g_nat.uplink_enabled)
+    {
+        ret = _linkg_nat_get_ifindex(LINKG_RESOURCE_INTERFACE_CELLULAR, &config->uplink_ifindex);
+        if (ret != 0)
+        {
+            return ret;
+        }
     }
 
     config->snat_port_start = LINKG_NAT_SNAT_PORT_START;
@@ -420,10 +431,10 @@ static int _linkg_nat_driver_configure(void)
 /**
  * @brief 初始化NAT管理模块。
  *
- * 初始化阶段仅缓存当前节点网络参数。
+ * 初始化阶段缓存当前节点网络参数和外部上行启用状态。
  * Fast NAT驱动需要依赖运行中的linkg0，因此字符设备配置在start阶段完成。
  */
-int linkg_nat_init(const linkg_network_config_t *network_config)
+int linkg_nat_init(const linkg_network_config_t *network_config, bool uplink_enabled)
 {
     linkg_nat_context_t context;
     int                 ret;
@@ -446,7 +457,8 @@ int linkg_nat_init(const linkg_network_config_t *network_config)
         return ret;
     }
 
-    context.initialized = true;
+    context.uplink_enabled = uplink_enabled;
+    context.initialized    = true;
 
     g_nat = context;
 
@@ -456,8 +468,8 @@ int linkg_nat_init(const linkg_network_config_t *network_config)
 /**
  * @brief 启动Fast NAT。
  *
- * linkg0已经由TUN模块创建后，解析Ethernet和TUN接口ifindex，
- * 将Fast NAT数据面所需运行参数一次性下发给内核驱动并启动数据面。
+ * linkg0已经由TUN模块创建后解析Ethernet和TUN接口ifindex；
+ * 外部蜂窝上行启用时额外解析Uplink接口ifindex，否则向驱动下发0表示禁用Uplink NAT。
  */
 int linkg_nat_start(void)
 {

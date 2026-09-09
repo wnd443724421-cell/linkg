@@ -3,9 +3,13 @@
         "role": "sta"
     },
     "network": {
-        "node_id": 20,
+        "node_id": 3,
         "virtual_network": "172.28.0.0",
-        "ethernet_network": "192.168.2.0",
+        "ethernet_network": "192.168.1.0",
+        "dhcp": {
+            "enabled": true,
+            "default_gateway": false
+        },
         "traffic_rules": [
             {
                 "class": "realtime",
@@ -16,7 +20,7 @@
             {
                 "class": "video",
                 "protocol": "udp",
-                "start": 5600,
+                "start": 5610,
                 "end": 5610
             },
             {
@@ -42,7 +46,7 @@
                 "security": "wpa2-psk"
             },
             "wideband": {
-                "work_mode": "narrow",
+                "work_mode": "wide",
                 "narrow_params": {
                     "mode": "fixed",
                     "bandwidth": 10,

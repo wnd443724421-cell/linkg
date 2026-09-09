@@ -12,6 +12,7 @@
 #include <linux/fs.h>
 #include <linux/icmp.h>
 #include <linux/if.h>
+#include <linux/inetdevice.h>
 #include <linux/ip.h>
 #include <linux/jhash.h>
 #include <linux/kernel.h>
@@ -86,6 +87,7 @@
 #define LINKG_FAST_NAT_SNAT_TUN             2U // TUN节点访问Ethernet
 #define LINKG_FAST_NAT_SNAT_HAIRPIN         3U // Ethernet Hairpin访问
 #define LINKG_FAST_NAT_SNAT_LOCAL           4U // 本机访问本地Ethernet Virtual Endpoint
+#define LINKG_FAST_NAT_SNAT_UPLINK          5U // Ethernet Host通过外部上行访问网络
 
 /****************************** 规则定义 ******************************/
 
@@ -477,7 +479,8 @@ static int _linkg_fast_nat_mapping_get_or_create(const linkg_fast_nat_mapping_ke
     if (snat_type != LINKG_FAST_NAT_SNAT_VIRTUAL &&
         snat_type != LINKG_FAST_NAT_SNAT_TUN &&
         snat_type != LINKG_FAST_NAT_SNAT_HAIRPIN &&
-        snat_type != LINKG_FAST_NAT_SNAT_LOCAL)
+        snat_type != LINKG_FAST_NAT_SNAT_LOCAL &&
+        snat_type != LINKG_FAST_NAT_SNAT_UPLINK)
     {
         return -EINVAL;
     }
@@ -1175,6 +1178,63 @@ static bool _linkg_fast_nat_local_virtual_endpoint(__be32 address)
 }
 
 /**
+ * @brief 获取指定网络接口当前可用的IPv4地址。
+ */
+static int _linkg_fast_nat_interface_ipv4_get(const struct net_device *device, __be32 *address)
+{
+    struct in_device *in_device;
+    __be32            selected_address;
+
+    if (device == NULL || address == NULL)
+    {
+        return -EINVAL;
+    }
+
+    selected_address = 0;
+
+    rcu_read_lock();
+
+    in_device = __in_dev_get_rcu(device);
+    if (in_device != NULL)
+    {
+        selected_address = inet_confirm_addr(dev_net(device), in_device, 0, 0, RT_SCOPE_UNIVERSE);
+    }
+
+    rcu_read_unlock();
+
+    if (selected_address == 0)
+    {
+        return -EADDRNOTAVAIL;
+    }
+
+    *address = selected_address;
+
+    return 0;
+}
+
+/**
+ * @brief 判断IPv4分片是否来自需要执行Uplink SNAT的Ethernet Host。
+ */
+static bool _linkg_fast_nat_uplink_fragment_requires_snat(struct sk_buff *skb)
+{
+    struct iphdr *iph;
+
+    if (skb == NULL || !pskb_may_pull(skb, sizeof(struct iphdr)))
+    {
+        return false;
+    }
+
+    iph = ip_hdr(skb);
+    if (iph == NULL || iph->version != 4 || iph->ihl < 5 || !ip_is_fragment(iph))
+    {
+        return false;
+    }
+
+    return _linkg_fast_nat_ipv4_host_usable(iph->saddr, &g_fast_nat.config.ethernet_network) &&
+           iph->saddr != g_fast_nat.config.ethernet_ip;
+}
+
+/**
  * @brief 校验用户态下发的Fast NAT配置。
  */
 static int _linkg_fast_nat_config_validate(const linkg_fast_nat_config_t *config)
@@ -1223,7 +1283,19 @@ static int _linkg_fast_nat_config_validate(const linkg_fast_nat_config_t *config
         return -EINVAL;
     }
 
-    if (config->ethernet_ifindex <= 0 || config->tun_ifindex <= 0 || config->ethernet_ifindex == config->tun_ifindex)
+    if (config->ethernet_ifindex <= 0 || config->tun_ifindex <= 0 || config->uplink_ifindex < 0)
+    {
+        return -EINVAL;
+    }
+
+    if (config->ethernet_ifindex == config->tun_ifindex)
+    {
+        return -EINVAL;
+    }
+
+    if (config->uplink_ifindex > 0 &&
+        (config->uplink_ifindex == config->ethernet_ifindex ||
+         config->uplink_ifindex == config->tun_ifindex))
     {
         return -EINVAL;
     }
@@ -1350,6 +1422,11 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_reverse_snat(str
     if (ret != 0)
     {
         return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    if (snat_type == LINKG_FAST_NAT_SNAT_UPLINK)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
     }
 
     if (snat_type == LINKG_FAST_NAT_SNAT_HAIRPIN || snat_type == LINKG_FAST_NAT_SNAT_LOCAL)
@@ -1515,6 +1592,112 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_tun_rx_destination_netmap(st
     }
 
     ret = linkg_fast_nat_destination_netmap(skb, &g_fast_nat.config.local_virtual_subnet, &g_fast_nat.config.ethernet_network);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    return LINKG_FAST_NAT_RULE_STOP;
+}
+
+/****************************** Uplink RX规则 ******************************/
+
+/**
+ * @brief 恢复Uplink入口的Internet SNAT返回报文。
+ */
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_uplink_rx_reverse_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
+{
+    unsigned int transport_offset;
+    __be32       uplink_ip;
+    __be32       original_ip;
+    __be16       source_id;
+    __be16       destination_id;
+    __be16       original_id;
+    __u32        translated_id;
+    __u32        slot;
+    __u8         snat_type;
+    int          ret;
+
+    if (g_fast_nat.config.uplink_ifindex <= 0 || state->in == NULL ||
+        state->in->ifindex != g_fast_nat.config.uplink_ifindex)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    ret = _linkg_fast_nat_interface_ipv4_get(state->in, &uplink_ip);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    if (iph->daddr != uplink_ip)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    transport_offset = (unsigned int)iph->ihl * 4U;
+
+    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, false, &destination_id);
+    if (ret == -EOPNOTSUPP)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    translated_id = (__u32)ntohs(destination_id);
+
+    if (translated_id < (__u32)g_fast_nat.config.snat_port_start)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    slot = translated_id - (__u32)g_fast_nat.config.snat_port_start;
+    if (slot >= LINKG_FAST_NAT_SLOT_COUNT)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    iph = ip_hdr(skb);
+
+    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, true, &source_id);
+    if (ret == -EOPNOTSUPP)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    iph = ip_hdr(skb);
+
+    ret = _linkg_fast_nat_mapping_reverse_lookup(slot, iph->protocol, iph->saddr, source_id, &original_ip, &original_id, &snat_type);
+    if (ret == -ENOENT)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    if (snat_type != LINKG_FAST_NAT_SNAT_UPLINK)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    if (!_linkg_fast_nat_ipv4_host_usable(original_ip, &g_fast_nat.config.ethernet_network) || original_ip == g_fast_nat.config.ethernet_ip)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    ret = linkg_fast_nat_replace_tuple(skb, false, original_ip, original_id);
     if (ret != 0)
     {
         return LINKG_FAST_NAT_RULE_DROP;
@@ -1772,6 +1955,82 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_tun_tx_source_netmap(struct 
     return LINKG_FAST_NAT_RULE_STOP;
 }
 
+/****************************** Uplink TX规则 ******************************/
+
+/**
+ * @brief 将Ethernet Host通过外部上行发送的报文执行Source NAT。
+ */
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_uplink_tx_source_snat(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
+{
+    linkg_fast_nat_mapping_key_t mapping_key;
+    unsigned int                 transport_offset;
+    __be32                       uplink_ip;
+    __be16                       source_id;
+    __be16                       destination_id;
+    __be16                       translated_id;
+    __u32                        mapping_slot;
+    int                          ret;
+
+    if (g_fast_nat.config.uplink_ifindex <= 0 || state->out == NULL ||
+        state->out->ifindex != g_fast_nat.config.uplink_ifindex)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    if (!_linkg_fast_nat_ipv4_host_usable(iph->saddr, &g_fast_nat.config.ethernet_network) || iph->saddr == g_fast_nat.config.ethernet_ip)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    transport_offset = (unsigned int)iph->ihl * 4U;
+
+    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, true, &source_id);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    iph = ip_hdr(skb);
+
+    ret = linkg_fast_nat_get_transport_id(skb, iph, transport_offset, false, &destination_id);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    iph = ip_hdr(skb);
+
+    ret = _linkg_fast_nat_interface_ipv4_get(state->out, &uplink_ip);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    memset(&mapping_key, 0, sizeof(mapping_key));
+
+    mapping_key.original_ip = iph->saddr;
+    mapping_key.remote_ip   = iph->daddr;
+    mapping_key.original_id = source_id;
+    mapping_key.remote_id   = destination_id;
+    mapping_key.protocol    = iph->protocol;
+
+    ret = _linkg_fast_nat_mapping_get_or_create(&mapping_key, LINKG_FAST_NAT_SNAT_UPLINK, &mapping_slot);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    translated_id = htons((__u16)((__u32)g_fast_nat.config.snat_port_start + mapping_slot));
+
+    ret = linkg_fast_nat_replace_tuple(skb, true, uplink_ip, translated_id);
+    if (ret != 0)
+    {
+        return LINKG_FAST_NAT_RULE_DROP;
+    }
+
+    return LINKG_FAST_NAT_RULE_STOP;
+}
+
 /****************************** Fast NAT规则表 ******************************/
 
 static const linkg_fast_nat_rule_func_t g_ethernet_rx_rules[] =
@@ -1784,6 +2043,11 @@ static const linkg_fast_nat_rule_func_t g_ethernet_rx_rules[] =
 static const linkg_fast_nat_rule_func_t g_tun_rx_rules[] =
 {
     _linkg_fast_nat_tun_rx_destination_netmap,
+};
+
+static const linkg_fast_nat_rule_func_t g_uplink_rx_rules[] =
+{
+    _linkg_fast_nat_uplink_rx_reverse_snat,
 };
 
 static const linkg_fast_nat_rule_func_t g_local_out_rules[] =
@@ -1800,6 +2064,11 @@ static const linkg_fast_nat_rule_func_t g_tun_tx_rules[] =
 {
     _linkg_fast_nat_tun_tx_tcp_mss_clamp,
     _linkg_fast_nat_tun_tx_source_netmap,
+};
+
+static const linkg_fast_nat_rule_func_t g_uplink_tx_rules[] =
+{
+    _linkg_fast_nat_uplink_tx_source_snat,
 };
 
 /****************************** Netfilter Hook ******************************/
@@ -1825,7 +2094,10 @@ static unsigned int _linkg_fast_nat_prerouting(void *priv, struct sk_buff *skb, 
         return NF_ACCEPT;
     }
 
-    if (state->in->ifindex != g_fast_nat.config.ethernet_ifindex && state->in->ifindex != g_fast_nat.config.tun_ifindex)
+    if (state->in->ifindex != g_fast_nat.config.ethernet_ifindex &&
+        state->in->ifindex != g_fast_nat.config.tun_ifindex &&
+        (g_fast_nat.config.uplink_ifindex <= 0 ||
+         state->in->ifindex != g_fast_nat.config.uplink_ifindex))
     {
         return NF_ACCEPT;
     }
@@ -1844,6 +2116,11 @@ static unsigned int _linkg_fast_nat_prerouting(void *priv, struct sk_buff *skb, 
     if (state->in->ifindex == g_fast_nat.config.tun_ifindex)
     {
         return _linkg_fast_nat_run_rules(g_tun_rx_rules, ARRAY_SIZE(g_tun_rx_rules), skb, state, iph);
+    }
+
+    if (g_fast_nat.config.uplink_ifindex > 0 && state->in->ifindex == g_fast_nat.config.uplink_ifindex)
+    {
+        return _linkg_fast_nat_run_rules(g_uplink_rx_rules, ARRAY_SIZE(g_uplink_rx_rules), skb, state, iph);
     }
 
     return NF_ACCEPT;
@@ -1895,7 +2172,10 @@ static unsigned int _linkg_fast_nat_postrouting(void *priv, struct sk_buff *skb,
         return NF_ACCEPT;
     }
 
-    if (state->out->ifindex != g_fast_nat.config.ethernet_ifindex && state->out->ifindex != g_fast_nat.config.tun_ifindex)
+    if (state->out->ifindex != g_fast_nat.config.ethernet_ifindex &&
+        state->out->ifindex != g_fast_nat.config.tun_ifindex &&
+        (g_fast_nat.config.uplink_ifindex <= 0 ||
+         state->out->ifindex != g_fast_nat.config.uplink_ifindex))
     {
         return NF_ACCEPT;
     }
@@ -1903,6 +2183,14 @@ static unsigned int _linkg_fast_nat_postrouting(void *priv, struct sk_buff *skb,
     ret = linkg_fast_nat_get_ipv4(skb, &iph, &transport_offset);
     if (ret != 0)
     {
+        if (g_fast_nat.config.uplink_ifindex > 0 &&
+            state->out->ifindex == g_fast_nat.config.uplink_ifindex &&
+            ret == -EOPNOTSUPP &&
+            _linkg_fast_nat_uplink_fragment_requires_snat(skb))
+        {
+            return NF_DROP;
+        }
+
         return NF_ACCEPT;
     }
 
@@ -1914,6 +2202,12 @@ static unsigned int _linkg_fast_nat_postrouting(void *priv, struct sk_buff *skb,
     if (state->out->ifindex == g_fast_nat.config.tun_ifindex)
     {
         return _linkg_fast_nat_run_rules(g_tun_tx_rules, ARRAY_SIZE(g_tun_tx_rules), skb, state, iph);
+    }
+
+    if (g_fast_nat.config.uplink_ifindex > 0 &&
+        state->out->ifindex == g_fast_nat.config.uplink_ifindex)
+    {
+        return _linkg_fast_nat_run_rules(g_uplink_tx_rules, ARRAY_SIZE(g_uplink_tx_rules), skb, state, iph);
     }
 
     return NF_ACCEPT;

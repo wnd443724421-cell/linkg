@@ -2,8 +2,8 @@
  * @file linkg_main.c
  * @brief LinkG应用程序入口
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-30
+ * @version 1.2.0
+ * @date 2026-09-09
  */
 
 #include <errno.h>
@@ -30,6 +30,7 @@
 #include "linkg_time.h"
 #include "linkg_transport.h"
 #include "linkg_tun.h"
+#include "linkg_udhcp.h"
 
 /****************************** 应用资源 ******************************/
 
@@ -58,12 +59,14 @@ typedef struct
     bool                route_initialized;           // Route模块是否已经初始化
     bool                nat_initialized;             // NAT模块是否已经初始化
     bool                discovery_initialized;       // Discovery模块是否已经初始化
+    bool                udhcp_initialized;           // UDHCP模块是否已经初始化
     bool                network_started;             // Network Service是否进入过start生命周期
     bool                link_manager_started;        // Link Manager是否进入过start生命周期
     bool                tun_started;                 // TUN模块是否进入过start生命周期
     bool                route_started;               // Route模块是否进入过start生命周期
     bool                nat_started;                 // NAT模块是否进入过start生命周期
     bool                discovery_started;           // Discovery模块是否进入过start生命周期
+    bool                udhcp_started;               // UDHCP模块是否进入过start生命周期
 } linkg_app_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -88,7 +91,8 @@ static bool _linkg_app_has_initialized_modules(void)
            g_app.tun_initialized ||
            g_app.route_initialized ||
            g_app.nat_initialized ||
-           g_app.discovery_initialized;
+           g_app.discovery_initialized ||
+           g_app.udhcp_initialized;
 }
 
 /**
@@ -101,7 +105,8 @@ static bool _linkg_app_has_started_modules(void)
            g_app.tun_started ||
            g_app.route_started ||
            g_app.nat_started ||
-           g_app.discovery_started;
+           g_app.discovery_started ||
+           g_app.udhcp_started;
 }
 
 /**
@@ -266,7 +271,7 @@ static int _linkg_app_init(void)
 
     g_app.route_initialized = true;
 
-    ret = linkg_nat_init(&config.network);
+    ret = linkg_nat_init(&config.network, config.links.cellular.enabled);
     if (ret != 0)
     {
         LINKG_LOG_ERROR("initialize NAT module failed, error=%d", ret);
@@ -285,6 +290,15 @@ static int _linkg_app_init(void)
 
     g_app.discovery_initialized = true;
 
+    ret = linkg_udhcp_init(&config.network);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize UDHCP module failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.udhcp_initialized = true;
+
     LINKG_LOG_INFO("application modules initialized");
 
     return 0;
@@ -296,7 +310,7 @@ static int _linkg_app_init(void)
  * @brief 启动全部具有运行态的应用模块。
  *
  * 启动顺序严格按照运行依赖建立：
- * Network -> Link Manager -> TUN -> Route -> NAT -> Discovery。
+ * Network -> Link Manager -> TUN -> Route -> NAT -> Discovery -> UDHCP。
  */
 static int _linkg_app_start(void)
 {
@@ -313,7 +327,8 @@ static int _linkg_app_start(void)
         !g_app.tun_initialized ||
         !g_app.route_initialized ||
         !g_app.nat_initialized ||
-        !g_app.discovery_initialized)
+        !g_app.discovery_initialized ||
+        !g_app.udhcp_initialized)
     {
         return -ENODEV;
     }
@@ -386,7 +401,7 @@ static int _linkg_app_start(void)
     }
 
     /**
-     * Discovery最后启动。
+     * Discovery在DHCP之前启动。
      * 从此刻开始Peer上线流程才允许创建Node、Transport、Path和Linux Route状态。
      */
     g_app.discovery_started = true;
@@ -395,6 +410,20 @@ static int _linkg_app_start(void)
     if (ret != 0)
     {
         LINKG_LOG_ERROR("start discovery module failed, error=%d", ret);
+        return ret;
+    }
+
+    /**
+     * UDHCP最后启动。
+     * 此时Ethernet、TUN、Route、NAT和Discovery均已经进入运行态，
+     * DHCP Client一旦获取地址和虚拟网络路由即可直接使用完整LinkG数据面。
+     */
+    g_app.udhcp_started = true;
+
+    ret = linkg_udhcp_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start UDHCP module failed, error=%d", ret);
         return ret;
     }
 
@@ -416,7 +445,23 @@ static int _linkg_app_stop(void)
     int ret;
 
     /**
-     * Discovery必须最先停止。
+     * UDHCP必须最先停止，避免应用拆除期间继续向新接入设备分配地址和路由。
+     * 已经获得租约的客户端不依赖udhcpd进程继续运行。
+     */
+    if (g_app.udhcp_started)
+    {
+        ret = linkg_udhcp_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop UDHCP module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.udhcp_started = false;
+    }
+
+    /**
+     * Discovery随后停止。
      * 停止过程中仍需要Link、Route等下层资源发送LEAVE并注销Peer状态。
      */
     if (g_app.discovery_started)
@@ -513,6 +558,18 @@ static int _linkg_app_deinit(void)
     if (_linkg_app_has_started_modules())
     {
         return -EBUSY;
+    }
+
+    if (g_app.udhcp_initialized)
+    {
+        ret = linkg_udhcp_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize UDHCP module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.udhcp_initialized = false;
     }
 
     if (g_app.discovery_initialized)
