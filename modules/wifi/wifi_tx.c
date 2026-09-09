@@ -2,7 +2,7 @@
  * @file wifi_tx.c
  * @brief LinkG Wi-Fi发送模块实现
  * @author Dawn
- * @version 1.4.0
+ * @version 1.4.1
  * @date 2026-09-09
  */
 
@@ -21,7 +21,6 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 
-#include "linkg_network_ops.h"
 #include "linkg_packet_pool.h"
 #include "linkg_time.h"
 #include "wifi_flowctrl.h"
@@ -31,13 +30,8 @@
 
 /****************************** 发送参数 ******************************/
 
-#define LINKG_WIFI_TX_IPV4_HEADER_SIZE     20U                                                                                  // IPv4最小头部长度
-#define LINKG_WIFI_TX_UDP_HEADER_SIZE      8U                                                                                   // UDP头部长度
-#define LINKG_WIFI_TX_MTU                  1500U                                                                                // Wi-Fi接口MTU
-#define LINKG_WIFI_TX_UDP_PAYLOAD_MAX      (LINKG_WIFI_TX_MTU - LINKG_WIFI_TX_IPV4_HEADER_SIZE - LINKG_WIFI_TX_UDP_HEADER_SIZE) // 单个UDP报文最大负载
-
 #define LINKG_WIFI_TX_BATCH_SIZE_MAX       32U                                                                                  // 单次发送调度最大Packet数量
-#define LINKG_WIFI_TX_QUEUE_BATCH_COUNT    4U                                                                                   // 单业务等待队列最多缓存批次数
+#define LINKG_WIFI_TX_QUEUE_BATCH_COUNT    5U                                                                                   // 单业务等待队列最多缓存批次数
 
 /****************************** 内部类型 ******************************/
 
@@ -58,7 +52,6 @@ typedef struct
 typedef struct
 {
     uint32_t class_count[LINKG_WIFI_TRAFFIC_COUNT]; // 各业务类别本轮计划提交数量
-    uint32_t total_count;                           // 本轮计划提交总数量
 } linkg_wifi_tx_plan_t;
 
 /**
@@ -111,125 +104,6 @@ static int _linkg_wifi_tx_class_to_traffic(linkg_link_tx_class_t tx_class, linkg
     }
 }
 
-/**
- * @brief 判断Packet业务标志是否与Wi-Fi业务类别一致。
- */
-static bool _linkg_wifi_tx_packet_matches_traffic(const linkg_packet_t *packet, linkg_wifi_traffic_class_t traffic_class)
-{
-    if (packet == NULL)
-    {
-        return false;
-    }
-
-    switch (traffic_class)
-    {
-        case LINKG_WIFI_TRAFFIC_REALTIME:
-            return linkg_packet_is_realtime(packet);
-
-        case LINKG_WIFI_TRAFFIC_VIDEO:
-            return linkg_packet_is_video(packet);
-
-        case LINKG_WIFI_TRAFFIC_DATA:
-            return linkg_packet_is_data(packet);
-
-        default:
-            return false;
-    }
-}
-
-/****************************** 参数校验 ******************************/
-
-/**
- * @brief 校验Wi-Fi下一跳Endpoint是否合法。
- */
-static int _linkg_wifi_tx_validate_destination(const linkg_wifi_tx_t *tx, const linkg_path_endpoint_t *destination)
-{
-    const struct sockaddr_in *target;
-
-    if (tx == NULL || destination == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (destination->length != sizeof(struct sockaddr_in))
-    {
-        return -EDESTADDRREQ;
-    }
-
-    if (destination->address.ss_family != AF_INET)
-    {
-        return -EAFNOSUPPORT;
-    }
-
-    target = (const struct sockaddr_in *)&destination->address;
-
-    if (!linkg_network_ipv4_address_valid(&target->sin_addr))
-    {
-        return -EDESTADDRREQ;
-    }
-
-    if (target->sin_port != htons(tx->service_ports[LINKG_WIFI_TRAFFIC_DATA]))
-    {
-        return -EDESTADDRREQ;
-    }
-
-    return 0;
-}
-
-/**
- * @brief 校验单个待发送Packet是否合法。
- */
-static int _linkg_wifi_tx_validate_packet(const linkg_packet_t *packet)
-{
-    if (packet == NULL || packet->pool == NULL || packet->slot == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (packet->data_length == 0U)
-    {
-        return -EINVAL;
-    }
-
-    if (packet->data_length > LINKG_WIFI_TX_UDP_PAYLOAD_MAX)
-    {
-        return -EMSGSIZE;
-    }
-
-    if (packet->data_offset > packet->pool->slot_size ||
-        packet->data_length > packet->pool->slot_size - packet->data_offset)
-    {
-        return -EINVAL;
-    }
-
-    return 0;
-}
-
-/**
- * @brief 校验同一业务类别的完整发送批次。
- */
-static int _linkg_wifi_tx_validate_batch(linkg_packet_t *const *packets, uint32_t count, linkg_wifi_traffic_class_t traffic_class)
-{
-    uint32_t index;
-    int      ret;
-
-    for (index = 0U; index < count; index++)
-    {
-        ret = _linkg_wifi_tx_validate_packet(packets[index]);
-        if (ret != 0)
-        {
-            return ret;
-        }
-
-        if (!_linkg_wifi_tx_packet_matches_traffic(packets[index], traffic_class))
-        {
-            return -EINVAL;
-        }
-    }
-
-    return 0;
-}
-
 /****************************** Path统计 ******************************/
 
 /**
@@ -268,85 +142,24 @@ static void _linkg_wifi_tx_record_failed(linkg_path_t *path, const linkg_packet_
     linkg_path_record_tx_failed(path, packet->data_length, 1U);
 }
 
-/**
- * @brief 记录单个等待Packet因Path失效而过期。
- */
-static void _linkg_wifi_tx_record_expired(linkg_path_t *path, const linkg_packet_t *packet)
-{
-    if (path == NULL || packet == NULL)
-    {
-        return;
-    }
-
-    linkg_path_record_tx_expired(path, packet->data_length, 1U);
-}
-
 /****************************** Queue辅助 ******************************/
 
 /**
- * @brief 判断当前Queue队首是否属于一个需要整体丢弃的TX Group。
- */
-static bool _linkg_wifi_tx_queue_head_grouped(const linkg_wifi_tx_queue_item_t *items, uint32_t count)
-{
-    uint32_t flags;
-    uint32_t index;
-
-    if (items == NULL || count == 0U || items[0].packet == NULL)
-    {
-        return false;
-    }
-
-    flags = items[0].packet->flags & LINKG_PACKET_FLAG_TX_GROUP_MASK;
-    if ((flags & (LINKG_PACKET_FLAG_TX_GROUP_FIRST | LINKG_PACKET_FLAG_TX_GROUP_LAST)) != 0U)
-    {
-        return true;
-    }
-
-    /**
-     * 当前队首可能是一次partial send后遗留的TX Group尾部。
-     * 如果在下一个Group FIRST出现之前先看到LAST，则把当前前缀视为同一Group剩余部分。
-     */
-    for (index = 1U; index < count; index++)
-    {
-        if (items[index].packet == NULL)
-        {
-            break;
-        }
-
-        flags = items[index].packet->flags & LINKG_PACKET_FLAG_TX_GROUP_MASK;
-
-        if ((flags & LINKG_PACKET_FLAG_TX_GROUP_FIRST) != 0U)
-        {
-            break;
-        }
-
-        if ((flags & LINKG_PACKET_FLAG_TX_GROUP_LAST) != 0U)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-/**
- * @brief 从指定业务队列丢弃最旧完整TX Group或单个普通Packet。
+ * @brief 从指定业务队列丢弃最旧Packet，完整两片TX Group尽量一起丢弃。
  *
- * @note 调用方必须持有tx->lock。
+ * @note Transport保证单个TX Group最多包含两个连续Packet。
+ *       调用方必须持有tx->lock。
  */
 static uint32_t _linkg_wifi_tx_drop_oldest_locked(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class)
 {
-    linkg_wifi_tx_scratch_t *scratch;
-    linkg_wifi_tx_queue_t   *queue;
-    uint32_t                 dropped_total;
-    uint32_t                 peek_count;
-    uint32_t                 drop_count;
-    uint32_t                 queue_count;
-    uint32_t                 flags;
-    uint32_t                 index;
-    bool                     grouped;
-    bool                     found_last;
-    int                      ret;
+    linkg_wifi_tx_queue_item_t items[2];
+    linkg_wifi_tx_queue_t     *queue;
+    uint32_t                   first_flags;
+    uint32_t                   second_flags;
+    uint32_t                   peek_count;
+    uint32_t                   drop_count;
+    uint32_t                   index;
+    int                        ret;
 
     queue = tx->queues[traffic_class];
     if (queue == NULL)
@@ -354,99 +167,39 @@ static uint32_t _linkg_wifi_tx_drop_oldest_locked(linkg_wifi_tx_t *tx, linkg_wif
         return 0U;
     }
 
-    queue_count = linkg_wifi_tx_queue_count(queue);
-    if (queue_count == 0U)
-    {
-        return 0U;
-    }
-
-    scratch = &tx->scratch[traffic_class];
-
-    peek_count = queue_count;
-    if (peek_count > LINKG_WIFI_TX_BATCH_SIZE_MAX)
-    {
-        peek_count = LINKG_WIFI_TX_BATCH_SIZE_MAX;
-    }
-
-    peek_count = linkg_wifi_tx_queue_peek_batch(queue, scratch->items, peek_count);
+    peek_count = linkg_wifi_tx_queue_peek_batch(queue, items, 2U);
     if (peek_count == 0U)
     {
         return 0U;
     }
 
-    grouped       = _linkg_wifi_tx_queue_head_grouped(scratch->items, peek_count);
-    dropped_total = 0U;
+    drop_count  = 1U;
+    first_flags = items[0].packet->flags & LINKG_PACKET_FLAG_TX_GROUP_MASK;
 
-    do
+    // 完整两片TX Group仍在Queue中时一起丢弃。
+    if ((first_flags & LINKG_PACKET_FLAG_TX_GROUP_FIRST) != 0U && peek_count == 2U)
     {
-        peek_count = linkg_wifi_tx_queue_count(queue);
-        if (peek_count == 0U)
+        second_flags = items[1].packet->flags & LINKG_PACKET_FLAG_TX_GROUP_MASK;
+
+        if ((second_flags & LINKG_PACKET_FLAG_TX_GROUP_LAST) != 0U)
         {
-            break;
-        }
-
-        if (peek_count > LINKG_WIFI_TX_BATCH_SIZE_MAX)
-        {
-            peek_count = LINKG_WIFI_TX_BATCH_SIZE_MAX;
-        }
-
-        peek_count = linkg_wifi_tx_queue_peek_batch(queue, scratch->items, peek_count);
-        if (peek_count == 0U)
-        {
-            break;
-        }
-
-        drop_count = 1U;
-        found_last = false;
-
-        if (grouped)
-        {
-            drop_count = peek_count;
-
-            for (index = 0U; index < peek_count; index++)
-            {
-                if (scratch->items[index].packet == NULL)
-                {
-                    drop_count = index;
-                    break;
-                }
-
-                flags = scratch->items[index].packet->flags & LINKG_PACKET_FLAG_TX_GROUP_MASK;
-                if ((flags & LINKG_PACKET_FLAG_TX_GROUP_LAST) != 0U)
-                {
-                    drop_count = index + 1U;
-                    found_last = true;
-                    break;
-                }
-            }
-        }
-
-        if (drop_count == 0U)
-        {
-            break;
-        }
-
-        for (index = 0U; index < drop_count; index++)
-        {
-            _linkg_wifi_tx_record_dropped(scratch->items[index].path, scratch->items[index].packet);
-        }
-
-        ret = linkg_wifi_tx_queue_discard_batch(queue, drop_count);
-        if (ret != 0)
-        {
-            break;
-        }
-
-        dropped_total += drop_count;
-
-        if (!grouped || found_last)
-        {
-            break;
+            drop_count = 2U;
         }
     }
-    while (linkg_wifi_tx_queue_count(queue) > 0U);
 
-    return dropped_total;
+    // Queue丢弃会释放Packet和Path引用，因此必须提前记录丢包统计。
+    for (index = 0U; index < drop_count; index++)
+    {
+        _linkg_wifi_tx_record_dropped(items[index].path, items[index].packet);
+    }
+
+    ret = linkg_wifi_tx_queue_discard_batch(queue, drop_count);
+    if (ret != 0)
+    {
+        return 0U;
+    }
+
+    return drop_count;
 }
 
 /**
@@ -552,7 +305,6 @@ static void _linkg_wifi_tx_build_plan_locked(linkg_wifi_tx_t *tx, linkg_wifi_tra
         }
 
         plan->class_count[index] = take_count;
-        plan->total_count       += take_count;
         remaining               -= take_count;
     }
 }
@@ -570,28 +322,16 @@ static bool _linkg_wifi_tx_error_transient(int error)
 /**
  * @brief 使用预分配Scratch对当前Queue元素执行一次非阻塞sendmmsg。
  *
- * @return 大于等于0表示成功提交的连续前缀数量；小于0表示sendmmsg错误。
- *
- * @note 不执行流控、不操作Queue、不负责重试或丢包，调用方必须持有tx->lock。
+ * 大于等于0表示成功提交的连续前缀数量，小于0表示sendmmsg错误。
+ * 输入Queue元素、Socket和批次数量均由调用链保证有效。
+ * 不执行流控、不操作Queue、不负责重试或丢包，调用方必须持有tx->lock。
  */
 static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class, linkg_wifi_tx_queue_item_t *items, uint32_t count)
 {
     linkg_wifi_tx_scratch_t  *scratch;
     const struct sockaddr_in *target;
     uint32_t                  index;
-    int                       socket_fd;
     int                       ret;
-
-    if (tx == NULL || items == NULL || count == 0U || count > tx->capacity || count > LINKG_WIFI_TX_BATCH_SIZE_MAX)
-    {
-        return -EINVAL;
-    }
-
-    socket_fd = tx->socket_fds[traffic_class];
-    if (socket_fd < 0)
-    {
-        return -ENODEV;
-    }
 
     scratch = &tx->scratch[traffic_class];
 
@@ -599,11 +339,6 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
 
     for (index = 0U; index < count; index++)
     {
-        if (items[index].packet == NULL || items[index].path == NULL)
-        {
-            return -EINVAL;
-        }
-
         target = (const struct sockaddr_in *)&items[index].destination.address;
 
         scratch->destinations[index] = *target;
@@ -620,7 +355,7 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
 
     do
     {
-        ret = sendmmsg(socket_fd, scratch->messages, count, MSG_DONTWAIT | MSG_NOSIGNAL);
+        ret = sendmmsg(tx->socket_fds[traffic_class], scratch->messages, count, MSG_DONTWAIT | MSG_NOSIGNAL);
     }
     while (ret < 0 && errno == EINTR);
 
@@ -640,22 +375,21 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
 /****************************** QoS发送 ******************************/
 
 /**
- * @brief 从指定业务队列执行当前计划数量的发送。
+ * @brief 从指定业务队列提交当前计划数量的数据包。
  *
- * @param stopped 返回true表示本轮出现partial或发送压力，后续低优先级业务不得继续提交。
- *
- * @note 调用方必须持有tx->lock。
+ * stopped为true表示本轮出现partial或发送压力，
+ * 后续低优先级业务不得继续提交。
+ * 调用方必须持有tx->lock。
  */
 static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class, uint32_t planned_count, bool *stopped)
 {
     linkg_wifi_tx_scratch_t *scratch;
     linkg_wifi_tx_queue_t   *queue;
+    uint32_t                 submitted_total;
     uint32_t                 remaining;
     uint32_t                 peek_count;
     uint32_t                 send_count;
-    uint32_t                 valid_prefix;
     uint32_t                 sent_count;
-    uint32_t                 submitted_total;
     uint32_t                 index;
     int                      ret;
 
@@ -674,58 +408,40 @@ static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_
     scratch = &tx->scratch[traffic_class];
     queue   = tx->queues[traffic_class];
 
-    remaining       = planned_count;
     submitted_total = 0U;
+    remaining       = planned_count;
 
-    while (remaining > 0U && linkg_wifi_tx_queue_count(queue) > 0U)
+    while (remaining > 0U)
     {
-        peek_count = remaining;
-        if (peek_count > LINKG_WIFI_TX_BATCH_SIZE_MAX)
-        {
-            peek_count = LINKG_WIFI_TX_BATCH_SIZE_MAX;
-        }
-
-        peek_count = linkg_wifi_tx_queue_peek_batch(queue, scratch->items, peek_count);
+        peek_count = linkg_wifi_tx_queue_peek_batch(queue, scratch->items, remaining);
         if (peek_count == 0U)
         {
             break;
         }
 
-        valid_prefix = 0U;
+        /**
+         * Path状态属于运行期动态状态。
+         * 只提交队首连续有效Path的数据，遇到失效Path后停止当前前缀。
+         */
+        send_count = 0U;
 
         for (index = 0U; index < peek_count; index++)
         {
-            if (scratch->items[index].packet == NULL || scratch->items[index].path == NULL)
-            {
-                break;
-            }
-
             if (!linkg_path_is_active(scratch->items[index].path))
             {
                 break;
             }
 
-            if (_linkg_wifi_tx_validate_packet(scratch->items[index].packet) != 0)
-            {
-                break;
-            }
-
-            valid_prefix++;
+            send_count++;
         }
 
-        if (valid_prefix == 0U)
+        /**
+         * 队首Path已经失效，当前Packet不再允许通过原Path发送。
+         * 主动丢弃后继续尝试使用本轮剩余发送额度。
+         */
+        if (send_count == 0U)
         {
-            if (scratch->items[0].packet != NULL && scratch->items[0].path != NULL)
-            {
-                if (!linkg_path_is_active(scratch->items[0].path))
-                {
-                    _linkg_wifi_tx_record_expired(scratch->items[0].path, scratch->items[0].packet);
-                }
-                else
-                {
-                    _linkg_wifi_tx_record_dropped(scratch->items[0].path, scratch->items[0].packet);
-                }
-            }
+            _linkg_wifi_tx_record_dropped(scratch->items[0].path, scratch->items[0].packet);
 
             ret = linkg_wifi_tx_queue_discard_batch(queue, 1U);
             if (ret != 0)
@@ -737,35 +453,49 @@ static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_
             continue;
         }
 
-        send_count = valid_prefix;
-
         ret = _linkg_wifi_tx_send_once_locked(tx, traffic_class, scratch->items, send_count);
         if (ret < 0)
         {
-            if (_linkg_wifi_tx_error_transient(ret))
+            int send_error;
+
+            send_error = ret;
+
+            if (_linkg_wifi_tx_error_transient(send_error))
             {
                 *stopped = true;
                 return (int)submitted_total;
             }
 
-            WIFI_WARN("TX sendmmsg失败，traffic=%u packets=%u error=%d",
-                      (unsigned int)traffic_class,
-                      send_count,
-                      ret);
+            WIFI_WARN("TX sendmmsg失败，traffic=%u packets=%u error=%d", (unsigned int)traffic_class, send_count, send_error);
 
             for (index = 0U; index < send_count; index++)
             {
                 _linkg_wifi_tx_record_failed(scratch->items[index].path, scratch->items[index].packet);
             }
 
-            linkg_wifi_tx_queue_discard_batch(queue, send_count);
+            ret = linkg_wifi_tx_queue_discard_batch(queue, send_count);
+            if (ret != 0)
+            {
+                *stopped = true;
+                return ret;
+            }
 
             *stopped = true;
-            return ret;
+            return send_error;
         }
 
         sent_count = (uint32_t)ret;
 
+        /**
+         * sendmmsg返回成功数量必须是当前提交前缀长度以内。
+         */
+        if (sent_count > send_count)
+        {
+            *stopped = true;
+            return -EIO;
+        }
+
+        // Queue释放Packet和Path引用前先完成成功发送统计。
         for (index = 0U; index < sent_count; index++)
         {
             linkg_path_record_tx_success(scratch->items[index].path, scratch->items[index].packet->data_length, 1U);
@@ -784,13 +514,14 @@ static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_
             submitted_total += sent_count;
         }
 
+        /**
+         * partial表示本轮已经出现发送压力。
+         * 未提交Packet继续保留在当前业务队列队首，
+         * 后续低优先级业务本轮不得继续提交。
+         */
         if (sent_count < send_count)
         {
-            WIFI_WARN("TX sendmmsg部分发送，traffic=%u submit=%u sent=%u pending=%u",
-                      (unsigned int)traffic_class,
-                      send_count,
-                      sent_count,
-                      send_count - sent_count);
+            WIFI_DEBUG("TX sendmmsg部分发送，traffic=%u submit=%u sent=%u pending=%u", (unsigned int)traffic_class, send_count, sent_count, send_count - sent_count);
 
             *stopped = true;
             break;
@@ -846,10 +577,7 @@ static int _linkg_wifi_tx_dispatch_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_t
 
         stopped = false;
 
-        ret = _linkg_wifi_tx_dispatch_class_locked(tx,
-                                                   (linkg_wifi_traffic_class_t)index,
-                                                   plan.class_count[index],
-                                                   &stopped);
+        ret = _linkg_wifi_tx_dispatch_class_locked(tx, (linkg_wifi_traffic_class_t)index, plan.class_count[index], &stopped);
         if (ret < 0)
         {
             return ret;
@@ -1087,7 +815,7 @@ int linkg_wifi_tx_submit(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_link_tx_
         return -EINVAL;
     }
 
-    if (count > tx->capacity || count > LINKG_WIFI_TX_BATCH_SIZE_MAX)
+    if (count > tx->capacity)
     {
         return -EOVERFLOW;
     }
@@ -1098,23 +826,6 @@ int linkg_wifi_tx_submit(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_link_tx_
     }
 
     ret = _linkg_wifi_tx_class_to_traffic(tx_class, &traffic_class);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (tx->socket_fds[traffic_class] < 0)
-    {
-        return -ENODEV;
-    }
-
-    ret = _linkg_wifi_tx_validate_destination(tx, destination);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_wifi_tx_validate_batch(packets, count, traffic_class);
     if (ret != 0)
     {
         return ret;
@@ -1144,12 +855,7 @@ int linkg_wifi_tx_submit(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_link_tx_
         return 0;
     }
 
-    ret = _linkg_wifi_tx_enqueue_locked(tx,
-                                        traffic_class,
-                                        path,
-                                        destination,
-                                        packets,
-                                        count);
+    ret = _linkg_wifi_tx_enqueue_locked(tx, traffic_class, path, destination, packets, count);
     if (ret != 0)
     {
         for (index = 0U; index < count; index++)
@@ -1171,9 +877,7 @@ int linkg_wifi_tx_submit(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_link_tx_
     ret = _linkg_wifi_tx_dispatch_once_locked(tx, traffic_class);
     if (ret < 0)
     {
-        WIFI_WARN("TX等待队列调度失败，trigger=%u error=%d",
-                  (unsigned int)traffic_class,
-                  ret);
+        WIFI_WARN("TX等待队列调度失败，trigger=%u error=%d", (unsigned int)traffic_class, ret);
     }
 
     pthread_mutex_unlock(&tx->lock);
