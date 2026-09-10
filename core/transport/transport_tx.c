@@ -14,6 +14,8 @@
 #include "linkg_packet_pool.h"
 #include "linkg_time.h"
 
+/****************************** 模块常量 ******************************/
+
 #define LINKG_TRANSPORT_TX_BATCH_MAX        32U
 #define LINKG_TRANSPORT_TX_WIRE_BATCH_MAX  (LINKG_TRANSPORT_TX_BATCH_MAX * LINKG_TRANSPORT_FRAGMENT_COUNT_MAX)
 
@@ -38,9 +40,9 @@ typedef struct
  */
 typedef struct
 {
-    linkg_packet_t *packets[LINKG_TRANSPORT_FRAME_BATCH_MAX];         // 已编码Transport Wire Frame
-    uint32_t        payload_lengths[LINKG_TRANSPORT_FRAME_BATCH_MAX]; // 各Wire Frame实际Transport载荷长度
-    uint32_t        count;                                            // 当前Wire Frame数量
+    linkg_packet_t *packets[LINKG_TRANSPORT_TX_WIRE_BATCH_MAX];         // 已编码Transport Wire Frame
+    uint32_t        payload_lengths[LINKG_TRANSPORT_TX_WIRE_BATCH_MAX]; // 各Wire Frame实际Transport载荷长度
+    uint32_t        count;                                              // 当前Wire Frame数量
 } linkg_transport_tx_frame_batch_t;
 
 /****************************** 参数校验 ******************************/
@@ -50,8 +52,7 @@ typedef struct
  */
 static bool _linkg_transport_tx_node_id_valid(uint8_t node_id)
 {
-    return node_id >= LINKG_RESOURCE_NODE_ID_MIN &&
-           node_id <= LINKG_RESOURCE_NODE_ID_MAX;
+    return node_id >= LINKG_RESOURCE_NODE_ID_MIN && node_id <= LINKG_RESOURCE_NODE_ID_MAX;
 }
 
 /**
@@ -78,7 +79,7 @@ static int _linkg_transport_tx_validate_context(const linkg_transport_tx_context
 }
 
 /**
- * @brief 校验Transport编码所需Packet条件。
+ * @brief 校验Transport编码所需Packet。
  */
 static int _linkg_transport_tx_validate_packet(const linkg_packet_t *packet)
 {
@@ -112,10 +113,7 @@ static int _linkg_transport_tx_validate_packet(const linkg_packet_t *packet)
 }
 
 /**
- * @brief 校验Transport正常发送逻辑Batch。
- *
- * @note 本接口只检查Transport自身协议和编码要求，
- *       Link、Path及当前链路运行状态由下层Link负责校验。
+ * @brief 校验Transport正常发送批次。
  */
 static int _linkg_transport_tx_validate_batch(const linkg_transport_tx_context_t *context, const linkg_transport_tx_item_t *items, uint32_t count)
 {
@@ -125,6 +123,11 @@ static int _linkg_transport_tx_validate_batch(const linkg_transport_tx_context_t
     if (items == NULL || count == 0U)
     {
         return -EINVAL;
+    }
+
+    if (count > LINKG_TRANSPORT_TX_BATCH_MAX)
+    {
+        return -EOVERFLOW;
     }
 
     ret = _linkg_transport_tx_validate_context(context);
@@ -155,45 +158,12 @@ static int _linkg_transport_tx_validate_batch(const linkg_transport_tx_context_t
     return 0;
 }
 
-/****************************** Chunk划分 ******************************/
-
-/**
- * @brief 计算当前Wire Frame预算能够容纳的逻辑Packet数量。
- *
- * @note 普通Packet占用一个Wire Frame，分片Packet占用两个Wire Frame。
- *       分片Packet始终作为完整逻辑单元加入Chunk，FIRST和LAST不会跨Chunk拆分。
- */
-static uint32_t _linkg_transport_tx_get_chunk_count(const linkg_transport_tx_item_t *items, uint32_t count)
-{
-    uint32_t frame_count;
-    uint32_t item_frames;
-    uint32_t index;
-
-    frame_count = 0U;
-
-    for (index = 0U; index < count; index++)
-    {
-        item_frames = items[index].packet->data_length > LINKG_TRANSPORT_PAYLOAD_MAX_SIZE ?
-                      LINKG_TRANSPORT_FRAGMENT_COUNT_MAX :
-                      1U;
-
-        if (frame_count + item_frames > LINKG_TRANSPORT_FRAME_BATCH_MAX)
-        {
-            break;
-        }
-
-        frame_count += item_frames;
-    }
-
-    return index;
-}
-
 /****************************** 分片准备 ******************************/
 
 /**
  * @brief 初始化逻辑Packet状态并准备全部分片尾包。
  *
- * @note 本阶段不会修改调用方原始Packet。
+ * @note 本阶段不修改调用方原始Packet。
  */
 static int _linkg_transport_tx_prepare_states(const linkg_transport_tx_item_t *items, linkg_transport_tx_state_t *states, uint32_t count)
 {
@@ -499,7 +469,7 @@ static int _linkg_transport_tx_encode_fragmented(const linkg_transport_tx_item_t
 }
 
 /**
- * @brief 按逻辑Packet顺序编码整个Transport Chunk。
+ * @brief 按逻辑Packet顺序编码整个Transport批次。
  *
  * @note 分片Packet的FIRST和LAST始终连续写入Wire批次。
  */
@@ -554,12 +524,14 @@ static linkg_link_tx_class_t _linkg_transport_tx_link_class(linkg_transport_clas
 /**
  * @brief 将同一Wire Frame批次提交全部Scheduler Target。
  *
- * @note 当前count已经由Transport Chunk保证不超过单次Wire Frame预算。
- *       单个Wire Frame只要至少被一个Target接管即视为成功。
+ * @note Transport允许一次生成最多64个Wire Frame，
+ *       具体Link负责按照自身tx_batch_size继续拆分物理批次。
+ *
+ * @note 单个Wire Frame只要至少被一个Target接管即视为成功。
  */
-int linkg_transport_submit_wire_batch(const linkg_transport_tx_context_t *context, linkg_packet_t *const *packets, uint32_t count, int *results)
+static int _linkg_transport_tx_submit_wire_batch(const linkg_transport_tx_context_t *context, linkg_packet_t *const *packets, uint32_t count, int *results)
 {
-    int                   target_results[LINKG_TRANSPORT_FRAME_BATCH_MAX];
+    int                   target_results[LINKG_TRANSPORT_TX_WIRE_BATCH_MAX];
     linkg_link_tx_class_t tx_class;
     uint32_t              accepted_count;
     uint32_t              target_index;
@@ -651,10 +623,6 @@ static uint32_t _linkg_transport_tx_finalize_results(const linkg_transport_tx_it
             continue;
         }
 
-        /**
-         * 第一个Wire Frame没有被任何Target接管时，
-         * 调用方原Packet仍可恢复到Transport编码前布局。
-         */
         if (frame_results[states[index].frame_offset] != 0)
         {
             items[index].packet->data_offset = states[index].original_data_offset;
@@ -700,7 +668,7 @@ static void _linkg_transport_tx_record_stats(linkg_transport_peer_class_t *peer_
 }
 
 /**
- * @brief 获取当前Peer/Class发送状态并锁定发送顺序。
+ * @brief 获取当前Peer/Class中继发送状态并锁定发送顺序。
  *
  * @note 返回成功后仅持有peer_class->tx_order_lock，
  *       g_transport.lock已经释放。
@@ -743,75 +711,6 @@ static int _linkg_transport_tx_acquire_forward_state(const linkg_transport_tx_co
     return 0;
 }
 
-/****************************** Chunk发送 ******************************/
-
-/**
- * @brief 发送一个不超过单次Wire Frame预算的Transport逻辑Packet Chunk。
- *
- * @note 当前Chunk已经保证每个逻辑Packet完整位于本Chunk，
- *       分片FIRST和LAST不会跨两个Link batch。
- */
-static int _linkg_transport_tx_send_chunk(const linkg_transport_tx_context_t *context, const linkg_transport_tx_item_t *items, uint32_t count, int *results)
-{
-    int                              frame_results[LINKG_TRANSPORT_FRAME_BATCH_MAX];
-    linkg_transport_tx_frame_batch_t frame_batch;
-    linkg_transport_tx_state_t       states[LINKG_TRANSPORT_FRAME_BATCH_MAX];
-    linkg_transport_peer_class_t    *peer_class;
-    uint32_t                         sequence_start;
-    uint32_t                         success_count;
-    int                              accepted_frames;
-    int                              ret;
-
-    ret = _linkg_transport_tx_prepare_states(items, states, count);
-    if (ret != 0)
-    {
-        _linkg_transport_tx_cleanup_states(states, count);
-        return ret;
-    }
-
-    ret = _linkg_transport_tx_acquire_state(context, states, count, &peer_class);
-    if (ret != 0)
-    {
-        _linkg_transport_tx_cleanup_states(states, count);
-        return ret;
-    }
-
-    sequence_start = peer_class->tx_sequence;
-
-    ret = _linkg_transport_tx_encode_batch(items, states, count, peer_class, &frame_batch);
-    if (ret != 0)
-    {
-        peer_class->tx_sequence = sequence_start;
-
-        _linkg_transport_tx_restore_packets(items, states, count);
-        pthread_mutex_unlock(&peer_class->tx_order_lock);
-        _linkg_transport_tx_cleanup_states(states, count);
-
-        return ret;
-    }
-
-    accepted_frames = linkg_transport_submit_wire_batch(context, frame_batch.packets, frame_batch.count, frame_results);
-
-    /**
-     * 当前Chunk没有任何Wire Frame被任一Target接管时，
-     * 对端不可能观察到本Chunk分配的sequence，可以安全回退。
-     */
-    if (accepted_frames == 0)
-    {
-        peer_class->tx_sequence = sequence_start;
-    }
-
-    _linkg_transport_tx_record_stats(peer_class, &frame_batch, frame_results);
-
-    success_count = _linkg_transport_tx_finalize_results(items, states, count, frame_results, results);
-
-    pthread_mutex_unlock(&peer_class->tx_order_lock);
-
-    _linkg_transport_tx_cleanup_states(states, count);
-
-    return (int)success_count;
-}
-
 /**
  * @brief 记录当前Peer/Class中继发送统计。
  */
@@ -845,10 +744,90 @@ static void _linkg_transport_tx_record_forward_stats(linkg_transport_peer_class_
     }
 }
 
+/****************************** Chunk发送 ******************************/
+
+/**
+ * @brief 发送一个最多32个逻辑Packet的Transport内部Chunk。
+ *
+ * @note 当前Chunk最多展开为64个Transport Wire Frame，
+ *       Link层负责继续按照自身tx_batch_size拆分物理发送批次。
+ */
+static int _linkg_transport_tx_send_chunk(const linkg_transport_tx_context_t *context, const linkg_transport_tx_item_t *items, uint32_t count, int *results)
+{
+    int                              frame_results[LINKG_TRANSPORT_TX_WIRE_BATCH_MAX];
+    linkg_transport_tx_frame_batch_t frame_batch;
+    linkg_transport_tx_state_t       states[LINKG_TRANSPORT_TX_BATCH_MAX];
+    linkg_transport_peer_class_t    *peer_class;
+    uint32_t                         sequence_start;
+    uint32_t                         success_count;
+    int                              accepted_frames;
+    int                              ret;
+
+    ret = _linkg_transport_tx_validate_batch(context, items, count);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _linkg_transport_tx_prepare_states(items, states, count);
+    if (ret != 0)
+    {
+        _linkg_transport_tx_cleanup_states(states, count);
+        return ret;
+    }
+
+    ret = _linkg_transport_tx_acquire_state(context, states, count, &peer_class);
+    if (ret != 0)
+    {
+        _linkg_transport_tx_cleanup_states(states, count);
+        return ret;
+    }
+
+    sequence_start = peer_class->tx_sequence;
+
+    ret = _linkg_transport_tx_encode_batch(items, states, count, peer_class, &frame_batch);
+    if (ret != 0)
+    {
+        peer_class->tx_sequence = sequence_start;
+
+        _linkg_transport_tx_restore_packets(items, states, count);
+        pthread_mutex_unlock(&peer_class->tx_order_lock);
+        _linkg_transport_tx_cleanup_states(states, count);
+
+        return ret;
+    }
+
+    accepted_frames = _linkg_transport_tx_submit_wire_batch(context, frame_batch.packets, frame_batch.count, frame_results);
+
+    /**
+     * 当前Chunk没有任何Wire Frame被任一Target接管时，
+     * 对端不可能观察到本Chunk分配的sequence，可以安全回退。
+     */
+    if (accepted_frames == 0)
+    {
+        peer_class->tx_sequence = sequence_start;
+    }
+
+    _linkg_transport_tx_record_stats(peer_class, &frame_batch, frame_results);
+
+    success_count = _linkg_transport_tx_finalize_results(items, states, count, frame_results, results);
+
+    pthread_mutex_unlock(&peer_class->tx_order_lock);
+    _linkg_transport_tx_cleanup_states(states, count);
+
+    return (int)success_count;
+}
+
 /****************************** 数据发送 ******************************/
 
 /**
  * @brief 批量发送Scheduler已经完成调度的Transport逻辑Packet。
+ *
+ * @note 调用方可以提交任意数量逻辑Packet，Transport固定按最多32个逻辑Packet拆分内部Chunk。
+ *       每个Chunk最多展开为64个Wire Frame，不按分片结果额外遍历或动态切分Chunk。
+ *
+ * @return 小于0表示全部Chunk均未正常执行；
+ *         大于等于0表示成功完整提交的原始逻辑Packet总数量。
  */
 int linkg_transport_send_batch(const linkg_transport_tx_context_t *context, const linkg_transport_tx_item_t *items, uint32_t count, int *results)
 {
@@ -941,24 +920,24 @@ int linkg_transport_send(const linkg_transport_tx_context_t *context, const link
 /**
  * @brief 批量转发Scheduler已经完成下一跳调度的Transport Wire Frame。
  *
- * @note packets中的Packet必须保持完整Transport Wire格式。
- *       本函数不重新编码、不重新分片，也不修改packet_id、
- *       source_node_id和destination_node_id，仅更新当前下一跳sequence。
+ * @note items中的Packet必须保持完整Transport Wire格式。
+ *       本函数不重新编码、不重新分片，也不修改packet_id、source_node_id和destination_node_id，
+ *       仅按照当前下一跳Peer/Class重新分配逐跳sequence。
  *
  * @note 一个调用只对应一个直接Peer、一个业务Class和一个发送计划。
- *       packets中的原始顺序必须保持不变，分片FIRST和LAST必须连续。
+ *       当前中继批次最大32帧，分片FIRST和LAST必须保持连续。
  *
  * @return 小于0表示整个batch未进入正常Link提交流程；
  *         大于等于0表示至少被一个Target接管的Wire Frame数量。
  */
 int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, const linkg_transport_forward_item_t *items, uint32_t count, int *results)
 {
-    linkg_packet_t                   *packets[LINKG_TRANSPORT_FORWARD_BATCH_MAX];
-    linkg_transport_peer_class_t     *peer_class;
-    uint32_t                          sequence_start;
-    uint32_t                          index;
-    int                               accepted_count;
-    int                               ret;
+    linkg_packet_t               *packets[LINKG_TRANSPORT_FORWARD_BATCH_MAX];
+    linkg_transport_peer_class_t *peer_class;
+    uint32_t                      sequence_start;
+    uint32_t                      index;
+    int                           accepted_count;
+    int                           ret;
 
     if (!g_transport.initialized)
     {
@@ -968,6 +947,25 @@ int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, c
     if (context == NULL || items == NULL || results == NULL || count == 0U)
     {
         return -EINVAL;
+    }
+
+    if (count > LINKG_TRANSPORT_FORWARD_BATCH_MAX)
+    {
+        return -EOVERFLOW;
+    }
+
+    ret = _linkg_transport_tx_validate_context(context);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    for (index = 0U; index < count; index++)
+    {
+        if (items[index].packet == NULL || items[index].payload_length == 0U)
+        {
+            return -EINVAL;
+        }
     }
 
     ret = _linkg_transport_tx_acquire_forward_state(context, &peer_class);
@@ -993,7 +991,7 @@ int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, c
         }
     }
 
-    accepted_count = linkg_transport_submit_wire_batch(context, packets, count, results);
+    accepted_count = _linkg_transport_tx_submit_wire_batch(context, packets, count, results);
 
     if (accepted_count == 0)
     {

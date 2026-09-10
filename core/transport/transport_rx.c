@@ -445,7 +445,7 @@ static void _linkg_transport_rx_flush_forwards(linkg_transport_forward_batch_t *
  *
  * @note 同一Link下相同来源端点只建立一个Group，后续Path查询和物理RX统计按Group聚合。
  */
-static void _linkg_transport_rx_build_source_groups(const linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_rx_source_group_t *groups, uint32_t *group_count)
+static void _linkg_transport_rx_build_source_groups(const linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_rx_source_group_t *groups, uint32_t *group_count, linkg_transport_rx_batch_stats_t *stats)
 {
     uint32_t current_group_count;
     uint32_t group_index;
@@ -476,10 +476,11 @@ static void _linkg_transport_rx_build_source_groups(const linkg_link_rx_item_t *
         {
             if (current_group_count >= LINKG_RESOURCE_NETWORK_STA_MAX)
             {
-                states[index].source_group_index = LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID;
+                LINKG_LOG_DEBUG("transport RX source group overflow, index=%u, group_count=%u, max=%u", index, current_group_count, LINKG_RESOURCE_NETWORK_STA_MAX);
+                stats->unattributed_frames++;
                 continue;
             }
-            groups[current_group_count].source = items[index].source;
+
             groups[group_index].source = items[index].source;
             current_group_count++;
         }
@@ -611,22 +612,18 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
     uint64_t                      now_ms;
     uint32_t                      group_index;
     uint32_t                      index;
-    bool                          have_decoded;
     bool                          out_of_order;
     int                           ret;
-
-    have_decoded = false;
 
     for (index = 0U; index < count; index++)
     {
         if (states[index].decoded)
         {
-            have_decoded = true;
             break;
         }
     }
 
-    if (!have_decoded)
+    if (index == count)
     {
         return 0;
     }
@@ -702,9 +699,9 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
 static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_rx_batch_stats_t *stats)
 {
     linkg_transport_reassembly_submit_item_t reassembly_items[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
-    uint32_t                                 logical_indices[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
+    uint32_t                                 state_indices[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
     uint32_t                                 reassembly_count;
-    uint32_t                                 logical_index;
+    uint32_t                                 state_index;
     uint32_t                                 index;
     int                                      ret;
 
@@ -725,7 +722,7 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
         reassembly_items[reassembly_count].result           = -EINPROGRESS;
         reassembly_items[reassembly_count].peer_node_id     = states[index].peer_node_id;
 
-        logical_indices[reassembly_count] = index;
+        state_indices[reassembly_count] = index;
         reassembly_count++;
     }
 
@@ -739,8 +736,8 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
     {
         for (index = 0U; index < reassembly_count; index++)
         {
-            logical_index = logical_indices[index];
-            states[logical_index].reassembly_result = ret;
+            state_index = state_indices[index];
+            states[state_index].reassembly_result = ret;
             stats->invalid_frames++;
 
             if (reassembly_items[index].completed_packet != NULL)
@@ -754,22 +751,22 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
 
     for (index = 0U; index < reassembly_count; index++)
     {
-        logical_index = logical_indices[index];
+        state_index = state_indices[index];
 
-        states[logical_index].reassembly_result = reassembly_items[index].result;
-        states[logical_index].completed_packet  = reassembly_items[index].completed_packet;
+        states[state_index].reassembly_result = reassembly_items[index].result;
+        states[state_index].completed_packet  = reassembly_items[index].completed_packet;
 
-        if (states[logical_index].reassembly_result < 0)
+        if (states[state_index].reassembly_result < 0)
         {
-            if (states[logical_index].completed_packet != NULL)
+            if (states[state_index].completed_packet != NULL)
             {
-                linkg_packet_release(states[logical_index].completed_packet);
-                states[logical_index].completed_packet = NULL;
+                linkg_packet_release(states[state_index].completed_packet);
+                states[state_index].completed_packet = NULL;
             }
 
             stats->invalid_frames++;
         }
-        else if (states[logical_index].reassembly_result == 1 && states[logical_index].completed_packet == NULL)
+        else if (states[state_index].reassembly_result == 1 && states[state_index].completed_packet == NULL)
         {
             stats->invalid_frames++;
         }
@@ -892,7 +889,7 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
  */
 static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_item_t *items, uint32_t count, linkg_transport_delivery_batch_t *delivery_batches, linkg_transport_forward_batch_t *forward_batches)
 {
-    linkg_transport_rx_source_group_t groups[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
+    linkg_transport_rx_source_group_t groups[LINKG_RESOURCE_NETWORK_STA_MAX];
     linkg_transport_rx_state_t        states[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
     linkg_transport_rx_batch_stats_t  stats;
     uint32_t                          group_count;
@@ -904,7 +901,7 @@ static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_it
 
     group_count = 0U;
 
-    _linkg_transport_rx_build_source_groups(items, states, count, groups, &group_count);
+    _linkg_transport_rx_build_source_groups(items, states, count, groups, &group_count, &stats);
     _linkg_transport_rx_resolve_source_groups(link_id, groups, group_count, &stats);
     _linkg_transport_rx_decode_batch(items, states, count, groups, &stats);
 
