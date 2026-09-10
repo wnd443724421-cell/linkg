@@ -176,7 +176,13 @@ static int _linkg_scheduler_submit_link_batch(linkg_scheduler_tx_item_t *items, 
         packets[index] = items[item_index].packet;
     }
 
-    ret = linkg_link_submit_batch(link, path, &destination, packets, group->count, results);
+    ret = linkg_link_submit_batch(link,
+                              path,
+                              LINKG_LINK_TX_CLASS_DATA,
+                              &destination,
+                              packets,
+                              group->count,
+                              results);
 
     // Link同步提交返回后释放Scheduler持有的Path引用。
     linkg_path_release(path);

@@ -2,38 +2,36 @@
  * @file link_rx.c
  * @brief LinkG链路接收处理实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-28
+ * @version 1.2.0
+ * @date 2026-09-10
  */
 
 #include "linkg_link.h"
 
 #include <errno.h>
 #include <poll.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "linkg_log.h"
-#include "linkg_packet_pool.h"
-#include "linkg_time.h"
 
 #include "link_internal.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_LINK_RX_POLL_TIMEOUT_MS 1000 // 接收线程最大轮询等待时间
-#define LINKG_LINK_RX_POLL_FD_COUNT   2U   // 接收线程等待描述符数量
-#define LINKG_LINK_RX_POOL_RETRY_MS   1U   // 数据包池耗尽重试间隔
+#define LINKG_LINK_RX_POLL_TIMEOUT_MS    1000 // 接收线程最大轮询等待时间
+#define LINKG_LINK_RX_POLL_FD_COUNT      2U   // 接收线程等待描述符数量
 
 /****************************** 内部辅助 ******************************/
 
 /**
- * @brief 释放指定范围内接收元素持有的数据包基础引用。
+ * @brief 释放接收元素持有的Packet基础引用。
  *
- * @note 接收批次中的Packet基础引用由Link RX持有，本函数负责对称释放并清空接收元素。
+ * receive_batch成功返回后对应Packet基础引用归Link RX所有，
+ * 上层receive回调仅同步借用。
  */
-static void _linkg_link_release_rx_items(linkg_link_rx_item_t *items, uint32_t offset, uint32_t count)
+static void _linkg_link_release_rx_items(linkg_link_rx_item_t *items, uint32_t count)
 {
-    uint32_t end;
     uint32_t index;
 
     if (items == NULL || count == 0U)
@@ -41,9 +39,7 @@ static void _linkg_link_release_rx_items(linkg_link_rx_item_t *items, uint32_t o
         return;
     }
 
-    end = offset + count;
-
-    for (index = offset; index < end; index++)
+    for (index = 0U; index < count; index++)
     {
         if (items[index].packet != NULL)
         {
@@ -60,17 +56,15 @@ static void _linkg_link_release_rx_items(linkg_link_rx_item_t *items, uint32_t o
 /**
  * @brief 运行链路批量接收线程。
  *
- * @note Link RX持有每轮从Packet Pool申请的数据包基础引用。
- *       receive回调仅同步借用有效Packet，回调需要异步保存Packet时必须自行增加引用。
+ * 具体Link负责产生已经接收完成的Packet，并通过receive_batch将Packet基础引用
+ * 转移给Link RX。上层receive回调仅同步借用，异步保存时必须自行增加引用。
  */
 void linkg_link_rx_thread(linkg_thread_t *thread, void *user_data)
 {
     struct pollfd        descriptors[LINKG_LINK_RX_POLL_FD_COUNT];
     linkg_link_runtime_t *runtime;
     linkg_link_t         *link;
-    uint32_t              allocated_count;
     uint32_t              received_count;
-    uint32_t              index;
     int                   wakeup_fd;
     int                   link_fd;
     int                   ret;
@@ -82,7 +76,7 @@ void linkg_link_rx_thread(linkg_thread_t *thread, void *user_data)
 
     link = user_data;
 
-    if (link->runtime == NULL || link->packet_pool == NULL || link->ops == NULL)
+    if (link->runtime == NULL || link->ops == NULL)
     {
         return;
     }
@@ -175,63 +169,44 @@ void linkg_link_rx_thread(linkg_thread_t *thread, void *user_data)
             continue;
         }
 
-        // 持续接收直到当前接收队列暂时排空。
+        // 持续消费直到具体Link当前已经接收完成的数据暂时排空。
         while (linkg_thread_is_running(thread))
         {
-            allocated_count = linkg_packet_pool_alloc_batch(link->packet_pool, runtime->rx_packets, runtime->rx_batch_size);
-            if (allocated_count == 0U)
-            {
-                // 避免Packet Pool耗尽时持续触发可读轮询形成忙等。
-                linkg_time_sleep_ms(LINKG_LINK_RX_POOL_RETRY_MS);
-                break;
-            }
-
-            for (index = 0U; index < allocated_count; index++)
-            {
-                runtime->rx_items[index].packet = runtime->rx_packets[index];
-                memset(&runtime->rx_items[index].source, 0, sizeof(runtime->rx_items[index].source));
-
-                runtime->rx_packets[index] = NULL;
-            }
-
-            ret = link->ops->receive_batch(link, runtime->rx_items, allocated_count);
+            ret = link->ops->receive_batch(link, runtime->rx_items, runtime->rx_batch_size);
             if (ret < 0)
             {
                 LINKG_LOG_ERROR("receive link batch failed, link=%s, capacity=%u, error=%d",
                                 link->name,
-                                allocated_count,
+                                runtime->rx_batch_size,
                                 ret);
-
-                _linkg_link_release_rx_items(runtime->rx_items, 0U, allocated_count);
                 break;
             }
 
-            if ((uint32_t)ret > allocated_count)
+            if ((uint32_t)ret > runtime->rx_batch_size)
             {
                 LINKG_LOG_ERROR("invalid link RX batch result, link=%s, received=%d, capacity=%u",
                                 link->name,
                                 ret,
-                                allocated_count);
+                                runtime->rx_batch_size);
 
-                _linkg_link_release_rx_items(runtime->rx_items, 0U, allocated_count);
+                _linkg_link_release_rx_items(runtime->rx_items, runtime->rx_batch_size);
                 break;
             }
 
             received_count = (uint32_t)ret;
-
-            if (received_count > 0U && runtime->receive != NULL)
-            {
-                // 上层同步借用有效Packet，异步保存时由上层自行增加引用。
-                runtime->receive(link, runtime->rx_items, received_count, runtime->receive_user_data);
-            }
-
-            // 本轮申请的全部Packet基础引用始终由Link RX统一释放。
-            _linkg_link_release_rx_items(runtime->rx_items, 0U, allocated_count);
-
             if (received_count == 0U)
             {
                 break;
             }
+
+            if (runtime->receive != NULL)
+            {
+                // 上层同步借用Packet，异步保存时由上层自行增加引用。
+                runtime->receive(link, runtime->rx_items, received_count, runtime->receive_user_data);
+            }
+
+            // receive_batch转移给Link RX的Packet基础引用在回调返回后统一释放。
+            _linkg_link_release_rx_items(runtime->rx_items, received_count);
         }
     }
 

@@ -2,8 +2,8 @@
  * @file wifi_rx.c
  * @brief LinkG Wi-Fi接收模块实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-09-09
+ * @version 1.1.0
+ * @date 2026-09-10
  */
 
 #define _GNU_SOURCE
@@ -12,72 +12,79 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
 #include "linkg_network_ops.h"
-#include "linkg_packet_pool.h"
+#include "linkg_time.h"
 
+#include "wifi_internal.h"
+#include "wifi_rx_queue.h"
 #include "wifi_traffic.h"
 
-/****************************** 接收参数 ******************************/
+/****************************** 模块常量 ******************************/
 
-#define LINKG_WIFI_RX_IPV4_HEADER_SIZE     20U                                                                               // IPv4最小头部长度
-#define LINKG_WIFI_RX_UDP_HEADER_SIZE      8U                                                                                // UDP头部长度
-#define LINKG_WIFI_RX_MTU                  1500U                                                                             // Wi-Fi接口MTU
-#define LINKG_WIFI_RX_UDP_PAYLOAD_MAX      (LINKG_WIFI_RX_MTU - LINKG_WIFI_RX_IPV4_HEADER_SIZE - LINKG_WIFI_RX_UDP_HEADER_SIZE) // 单个UDP报文最大负载
+#define LINKG_WIFI_RX_IPV4_HEADER_SIZE       20U                                                                                  // IPv4最小头部长度
+#define LINKG_WIFI_RX_UDP_HEADER_SIZE        8U                                                                                   // UDP头部长度
+#define LINKG_WIFI_RX_MTU                    1500U                                                                                // Wi-Fi接口MTU
+#define LINKG_WIFI_RX_UDP_PAYLOAD_MAX        (LINKG_WIFI_RX_MTU - LINKG_WIFI_RX_IPV4_HEADER_SIZE - LINKG_WIFI_RX_UDP_HEADER_SIZE) // 单个UDP报文最大负载
+#define LINKG_WIFI_RX_BATCH_SIZE_MAX         32U                                                                                  // 单次Socket接收和上层交付最大Packet数量
+#define LINKG_WIFI_RX_QUEUE_BATCH_COUNT      5U                                                                                   // 单业务接收队列最多缓存批次数
+#define LINKG_WIFI_RX_EPOLL_EVENT_COUNT      (LINKG_WIFI_TRAFFIC_COUNT + 1U)                                                       // 三业务Socket和Worker唤醒描述符数量
+#define LINKG_WIFI_RX_WORKER_WAKEUP_EVENT    LINKG_WIFI_TRAFFIC_COUNT                                                             // Worker唤醒事件索引
+#define LINKG_WIFI_RX_WORKER_CPU_CORE        1                                                                                    // RX生产线程绑定CPU1
+#define LINKG_WIFI_RX_RETRY_MS               1U                                                                                   // Queue或Packet Pool暂不可用时重试间隔
 
 /****************************** 内部类型 ******************************/
+
+/**
+ * @brief Wi-Fi接收生产线程预分配Scratch。
+ */
+typedef struct
+{
+    linkg_wifi_rx_queue_item_t items[LINKG_WIFI_RX_BATCH_SIZE_MAX];    // 当前接收完成Queue元素
+    linkg_packet_t            *packets[LINKG_WIFI_RX_BATCH_SIZE_MAX];  // 当前从Packet Pool申请的Packet
+    struct mmsghdr             messages[LINKG_WIFI_RX_BATCH_SIZE_MAX]; // recvmmsg消息数组
+    struct iovec               iovecs[LINKG_WIFI_RX_BATCH_SIZE_MAX];   // recvmmsg缓冲区数组
+} linkg_wifi_rx_scratch_t;
 
 /**
  * @brief Wi-Fi接收模块运行上下文。
  */
 struct linkg_wifi_rx
 {
-    struct mmsghdr   *messages;       // 批量接收消息数组
-    struct iovec     *iovecs;         // 批量接收缓冲区数组
+    pthread_t                  worker;                              // Socket接收生产线程
+    linkg_wifi_rx_scratch_t    scratch;                             // 生产线程预分配Scratch
+    linkg_wifi_rx_queue_item_t consume_items[LINKG_WIFI_RX_BATCH_SIZE_MAX]; // Link RX消费临时元素
+    linkg_wifi_rx_queue_t     *queues[LINKG_WIFI_TRAFFIC_COUNT];    // 三业务SPSC接收FIFO
 
-    int              *socket_fds;     // 借用Wi-Fi Link业务Socket数组
-    const uint16_t   *service_ports;  // 借用Wi-Fi Link业务端口数组
+    linkg_packet_pool_t       *packet_pool;                         // 借用Link Packet Pool
+    int                       *socket_fds;                          // 借用Wi-Fi Link业务Socket数组
+    const uint16_t            *service_ports;                       // 借用Wi-Fi Link业务端口数组
 
-    uint32_t          capacity;       // 接收描述符容量
-    int               epoll_fd;       // 三业务接收聚合描述符
+    uint32_t                   capacity;                            // 单次接收和交付最大Packet数量
+    uint32_t                   queue_capacity;                      // 单业务接收队列最大Packet数量
+
+    int                        socket_epoll_fd;                     // Worker监听三业务Socket的epoll描述符
+    int                        worker_wakeup_fd;                    // 停止时唤醒Worker的eventfd
+    int                        notify_fd;                           // 通知Link RX存在已完成Packet的eventfd
+
+    bool                       worker_created;                      // Worker线程是否已经创建
+    _Atomic bool               started;                             // 接收模块运行状态
+    _Atomic bool               notify_pending;                      // Link RX通知周期是否已经激活
 };
 
 /****************************** 内部辅助 ******************************/
-
-/**
- * @brief 将业务套接字加入接收epoll。
- */
-static int _linkg_wifi_rx_register_socket(int epoll_fd, int socket_fd, linkg_wifi_traffic_class_t traffic_class)
-{
-    struct epoll_event event;
-    int                ret;
-
-    if (epoll_fd < 0 || socket_fd < 0)
-    {
-        return -EINVAL;
-    }
-
-    memset(&event, 0, sizeof(event));
-
-    event.events   = EPOLLIN;
-    event.data.u32 = (uint32_t)traffic_class;
-
-    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, socket_fd, &event);
-    if (ret != 0)
-    {
-        return -errno;
-    }
-
-    return 0;
-}
 
 /**
  * @brief 关闭并清空单个描述符。
@@ -110,15 +117,138 @@ static int _linkg_wifi_rx_close_fd(int *descriptor)
 }
 
 /**
+ * @brief 将描述符加入Worker接收epoll。
+ */
+static int _linkg_wifi_rx_register_fd(int epoll_fd, int descriptor, uint32_t event_index)
+{
+    struct epoll_event event;
+    int                ret;
+
+    if (epoll_fd < 0 || descriptor < 0)
+    {
+        return -EINVAL;
+    }
+
+    memset(&event, 0, sizeof(event));
+
+    event.events   = EPOLLIN;
+    event.data.u32 = event_index;
+
+    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, descriptor, &event);
+    if (ret != 0)
+    {
+        return -errno;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 写入eventfd唤醒指定等待方。
+ */
+static int _linkg_wifi_rx_signal_fd(int descriptor)
+{
+    eventfd_t value;
+    int       ret;
+
+    if (descriptor < 0)
+    {
+        return -ENODEV;
+    }
+
+    value = 1U;
+
+    do
+    {
+        ret = eventfd_write(descriptor, value);
+    }
+    while (ret != 0 && errno == EINTR);
+
+    if (ret != 0)
+    {
+        if (errno == EAGAIN)
+        {
+            return 0;
+        }
+
+        return -errno;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 清除Link RX接收通知eventfd。
+ */
+static int _linkg_wifi_rx_clear_notify(linkg_wifi_rx_t *rx)
+{
+    eventfd_t value;
+    int       ret;
+
+    do
+    {
+        ret = eventfd_read(rx->notify_fd, &value);
+    }
+    while (ret != 0 && errno == EINTR);
+
+    if (ret != 0)
+    {
+        if (errno == EAGAIN)
+        {
+            return 0;
+        }
+
+        return -errno;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 判断三个接收Queue是否全部为空。
+ */
+static bool _linkg_wifi_rx_queues_empty(const linkg_wifi_rx_t *rx)
+{
+    uint32_t class_index;
+
+    for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
+    {
+        if (linkg_wifi_rx_queue_count(rx->queues[class_index]) > 0U)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * @brief 在当前通知周期首次入队时唤醒Link RX。
+ */
+static int _linkg_wifi_rx_notify_link(linkg_wifi_rx_t *rx)
+{
+    int ret;
+
+    if (atomic_exchange_explicit(&rx->notify_pending, true, memory_order_acq_rel))
+    {
+        return 0;
+    }
+
+    ret = _linkg_wifi_rx_signal_fd(rx->notify_fd);
+    if (ret != 0)
+    {
+        atomic_store_explicit(&rx->notify_pending, false, memory_order_release);
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
  * @brief 根据接收业务类别设置Packet业务标志。
  */
 static void _linkg_wifi_rx_set_received_class(linkg_packet_t *packet, linkg_wifi_traffic_class_t traffic_class)
 {
-    if (packet == NULL)
-    {
-        return;
-    }
-
     linkg_packet_set_data(packet);
 
     if (traffic_class == LINKG_WIFI_TRAFFIC_REALTIME)
@@ -132,18 +262,13 @@ static void _linkg_wifi_rx_set_received_class(linkg_packet_t *packet, linkg_wifi
 }
 
 /**
- * @brief 获取指定业务套接字当前待处理错误。
+ * @brief 获取指定业务Socket当前待处理错误。
  */
 static int _linkg_wifi_rx_socket_error(const linkg_wifi_rx_t *rx, linkg_wifi_traffic_class_t traffic_class)
 {
     socklen_t error_length;
     int       socket_error;
     int       ret;
-
-    if (rx == NULL || traffic_class >= LINKG_WIFI_TRAFFIC_COUNT)
-    {
-        return -EINVAL;
-    }
 
     socket_error = 0;
     error_length = sizeof(socket_error);
@@ -158,169 +283,333 @@ static int _linkg_wifi_rx_socket_error(const linkg_wifi_rx_t *rx, linkg_wifi_tra
 }
 
 /**
- * @brief 从指定业务套接字批量接收数据包。
- *
- * @note items中的Packet由Link RX提供基础引用，本函数仅填充Packet内容和来源Endpoint。
+ * @brief 释放当前Scratch中尚未转移所有权的Packet。
  */
-static int _linkg_wifi_rx_receive_from(linkg_wifi_rx_t *rx, linkg_wifi_traffic_class_t traffic_class, linkg_link_rx_item_t *items, uint32_t capacity)
+static void _linkg_wifi_rx_release_packets(linkg_wifi_rx_scratch_t *scratch, uint32_t count)
 {
-    linkg_link_rx_item_t temporary;
-    struct sockaddr_in  *source;
-    linkg_packet_t      *packet;
-    uint32_t             packet_capacity;
-    uint32_t             valid_count;
-    uint32_t             index;
-    int                  socket_fd;
-    int                  ret;
+    uint32_t index;
 
-    if (rx == NULL || items == NULL)
+    for (index = 0U; index < count; index++)
     {
-        return -EINVAL;
-    }
-
-    if (traffic_class >= LINKG_WIFI_TRAFFIC_COUNT)
-    {
-        return -EINVAL;
-    }
-
-    socket_fd = rx->socket_fds[traffic_class];
-    if (socket_fd < 0)
-    {
-        return -ENODEV;
-    }
-
-    memset(rx->messages, 0, (size_t)capacity * sizeof(*rx->messages));
-
-    for (index = 0U; index < capacity; index++)
-    {
-        packet = items[index].packet;
-        if (packet == NULL)
+        if (scratch->packets[index] != NULL)
         {
-            return -EINVAL;
+            linkg_packet_release(scratch->packets[index]);
+            scratch->packets[index] = NULL;
         }
+    }
+}
 
+/**
+ * @brief 对指定业务Socket执行一次批量接收并将有效Packet加入对应Queue。
+ *
+ * Packet从Pool获得基础引用。成功入队后基础引用转移给Queue，
+ * 无效报文、未使用Packet和异常未入队Packet由本函数释放。
+ */
+static int _linkg_wifi_rx_receive_once(linkg_wifi_rx_t *rx, linkg_wifi_traffic_class_t traffic_class)
+{
+    linkg_wifi_rx_scratch_t *scratch;
+    linkg_wifi_rx_queue_t   *queue;
+    struct sockaddr_in      *source;
+    linkg_packet_t          *packet;
+    uint32_t                 packet_capacity;
+    uint32_t                 request_count;
+    uint32_t                 allocated_count;
+    uint32_t                 valid_count;
+    uint32_t                 pushed_count;
+    uint32_t                 available;
+    uint32_t                 index;
+    int                      socket_fd;
+    int                      ret;
+
+    queue     = rx->queues[traffic_class];
+    socket_fd = rx->socket_fds[traffic_class];
+    scratch   = &rx->scratch;
+
+    available = linkg_wifi_rx_queue_available(queue);
+    if (available == 0U)
+    {
+        return 0;
+    }
+
+    request_count = available;
+    if (request_count > rx->capacity)
+    {
+        request_count = rx->capacity;
+    }
+
+    memset(scratch->packets, 0, request_count * sizeof(scratch->packets[0]));
+
+    allocated_count = linkg_packet_pool_alloc_batch(rx->packet_pool, scratch->packets, request_count);
+    if (allocated_count == 0U)
+    {
+        return 0;
+    }
+
+    memset(scratch->messages, 0, allocated_count * sizeof(scratch->messages[0]));
+
+    for (index = 0U; index < allocated_count; index++)
+    {
+        packet          = scratch->packets[index];
         packet_capacity = linkg_packet_capacity(packet);
+
         if (packet_capacity == 0U)
         {
+            _linkg_wifi_rx_release_packets(scratch, allocated_count);
             return -ENOBUFS;
         }
 
         packet->data_length = 0U;
         linkg_packet_set_data(packet);
 
-        memset(&items[index].source, 0, sizeof(items[index].source));
+        scratch->items[index].packet = packet;
+        memset(&scratch->items[index].source, 0, sizeof(scratch->items[index].source));
 
-        rx->iovecs[index].iov_base = linkg_packet_data(packet);
-        rx->iovecs[index].iov_len  = packet_capacity;
+        scratch->iovecs[index].iov_base = linkg_packet_data(packet);
+        scratch->iovecs[index].iov_len  = packet_capacity;
 
-        if (rx->iovecs[index].iov_len > LINKG_WIFI_RX_UDP_PAYLOAD_MAX)
+        if (scratch->iovecs[index].iov_len > LINKG_WIFI_RX_UDP_PAYLOAD_MAX)
         {
-            rx->iovecs[index].iov_len = LINKG_WIFI_RX_UDP_PAYLOAD_MAX;
+            scratch->iovecs[index].iov_len = LINKG_WIFI_RX_UDP_PAYLOAD_MAX;
         }
 
-        rx->messages[index].msg_hdr.msg_name    = &items[index].source.address;
-        rx->messages[index].msg_hdr.msg_namelen = sizeof(items[index].source.address);
-        rx->messages[index].msg_hdr.msg_iov     = &rx->iovecs[index];
-        rx->messages[index].msg_hdr.msg_iovlen  = 1U;
+        scratch->messages[index].msg_hdr.msg_name    = &scratch->items[index].source.address;
+        scratch->messages[index].msg_hdr.msg_namelen = sizeof(scratch->items[index].source.address);
+        scratch->messages[index].msg_hdr.msg_iov     = &scratch->iovecs[index];
+        scratch->messages[index].msg_hdr.msg_iovlen  = 1U;
     }
 
     do
     {
-        ret = recvmmsg(socket_fd, rx->messages, capacity, MSG_DONTWAIT, NULL);
+        ret = recvmmsg(socket_fd, scratch->messages, allocated_count, MSG_DONTWAIT, NULL);
     }
     while (ret < 0 && errno == EINTR);
 
     if (ret < 0)
     {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        ret = -errno;
+
+        _linkg_wifi_rx_release_packets(scratch, allocated_count);
+
+        if (ret == -EAGAIN || ret == -EWOULDBLOCK)
         {
             return 0;
         }
 
-        return -errno;
+        return ret;
     }
 
     valid_count = 0U;
 
     for (index = 0U; index < (uint32_t)ret; index++)
     {
-        packet          = items[index].packet;
+        packet          = scratch->packets[index];
         packet_capacity = linkg_packet_capacity(packet);
 
-        items[index].source.length = rx->messages[index].msg_hdr.msg_namelen;
+        scratch->items[index].source.length = scratch->messages[index].msg_hdr.msg_namelen;
 
-        if ((rx->messages[index].msg_hdr.msg_flags & MSG_TRUNC) != 0)
+        if ((scratch->messages[index].msg_hdr.msg_flags & MSG_TRUNC) != 0 ||
+            scratch->messages[index].msg_len == 0U ||
+            scratch->messages[index].msg_len > packet_capacity ||
+            scratch->messages[index].msg_len > LINKG_WIFI_RX_UDP_PAYLOAD_MAX ||
+            scratch->items[index].source.length != sizeof(struct sockaddr_in) ||
+            scratch->items[index].source.address.ss_family != AF_INET)
         {
+            linkg_packet_release(packet);
+            scratch->packets[index] = NULL;
             continue;
         }
 
-        if (rx->messages[index].msg_len == 0U)
-        {
-            continue;
-        }
+        source = (struct sockaddr_in *)&scratch->items[index].source.address;
 
-        if (rx->messages[index].msg_len > packet_capacity)
+        if (!linkg_network_ipv4_address_valid(&source->sin_addr) ||
+            source->sin_port != htons(rx->service_ports[traffic_class]))
         {
-            continue;
-        }
-
-        if (rx->messages[index].msg_len > LINKG_WIFI_RX_UDP_PAYLOAD_MAX)
-        {
-            continue;
-        }
-
-        if (items[index].source.length != sizeof(struct sockaddr_in))
-        {
-            continue;
-        }
-
-        if (items[index].source.address.ss_family != AF_INET)
-        {
-            continue;
-        }
-
-        source = (struct sockaddr_in *)&items[index].source.address;
-
-        if (!linkg_network_ipv4_address_valid(&source->sin_addr))
-        {
-            continue;
-        }
-
-        if (source->sin_port != htons(rx->service_ports[traffic_class]))
-        {
+            linkg_packet_release(packet);
+            scratch->packets[index] = NULL;
             continue;
         }
 
         // 统一使用DATA端口表示同一Wi-Fi Peer的规范化Endpoint。
         source->sin_port = htons(rx->service_ports[LINKG_WIFI_TRAFFIC_DATA]);
 
-        packet->data_length = rx->messages[index].msg_len;
-
+        packet->data_length = scratch->messages[index].msg_len;
         _linkg_wifi_rx_set_received_class(packet, traffic_class);
 
         if (valid_count != index)
         {
-            temporary          = items[valid_count];
-            items[valid_count] = items[index];
-            items[index]       = temporary;
+            scratch->items[valid_count] = scratch->items[index];
         }
 
+        scratch->packets[index] = NULL;
         valid_count++;
     }
 
-    return (int)valid_count;
+    for (index = (uint32_t)ret; index < allocated_count; index++)
+    {
+        if (scratch->packets[index] != NULL)
+        {
+            linkg_packet_release(scratch->packets[index]);
+            scratch->packets[index] = NULL;
+        }
+    }
+
+    if (valid_count == 0U)
+    {
+        return 0;
+    }
+
+    pushed_count = linkg_wifi_rx_queue_push_batch(queue, scratch->items, valid_count);
+
+    // 预留Queue空间后正常情况下必须完整入队，异常剩余Packet仍由生产线程释放。
+    for (index = pushed_count; index < valid_count; index++)
+    {
+        if (scratch->items[index].packet != NULL)
+        {
+            linkg_packet_release(scratch->items[index].packet);
+            scratch->items[index].packet = NULL;
+        }
+    }
+
+    for (index = 0U; index < pushed_count; index++)
+    {
+        scratch->items[index].packet = NULL;
+    }
+
+    if (pushed_count > 0U)
+    {
+        ret = _linkg_wifi_rx_notify_link(rx);
+        if (ret != 0)
+        {
+            WIFI_WARN("RX通知Link线程失败，traffic=%u packets=%u error=%d", (unsigned int)traffic_class, pushed_count, ret);
+        }
+    }
+
+    return (int)pushed_count;
+}
+
+/**
+ * @brief 运行Wi-Fi Socket接收生产线程。
+ */
+static void *_linkg_wifi_rx_worker(void *user_data)
+{
+    struct epoll_event         events[LINKG_WIFI_RX_EPOLL_EVENT_COUNT];
+    bool                       ready[LINKG_WIFI_TRAFFIC_COUNT];
+    linkg_wifi_rx_t           *rx;
+    linkg_wifi_traffic_class_t traffic_class;
+    uint32_t                   event_index;
+    uint32_t                   class_index;
+    bool                       progressed;
+    int                        event_count;
+    int                        socket_error;
+    int                        ret;
+
+    rx = user_data;
+    if (rx == NULL)
+    {
+        return NULL;
+    }
+
+    WIFI_DEBUG("RX生产线程启动");
+
+    while (atomic_load(&rx->started))
+    {
+        memset(ready, 0, sizeof(ready));
+
+        do
+        {
+            event_count = epoll_wait(rx->socket_epoll_fd, events, LINKG_WIFI_RX_EPOLL_EVENT_COUNT, -1);
+        }
+        while (event_count < 0 && errno == EINTR && atomic_load(&rx->started));
+
+        if (!atomic_load(&rx->started))
+        {
+            break;
+        }
+
+        if (event_count < 0)
+        {
+            WIFI_WARN("RX epoll_wait失败，error=%d", -errno);
+            break;
+        }
+
+        for (event_index = 0U; event_index < (uint32_t)event_count; event_index++)
+        {
+            if (events[event_index].data.u32 == LINKG_WIFI_RX_WORKER_WAKEUP_EVENT)
+            {
+                continue;
+            }
+
+            if (events[event_index].data.u32 >= LINKG_WIFI_TRAFFIC_COUNT)
+            {
+                WIFI_WARN("RX epoll事件索引异常，event=%u", events[event_index].data.u32);
+                continue;
+            }
+
+            traffic_class = (linkg_wifi_traffic_class_t)events[event_index].data.u32;
+
+            if ((events[event_index].events & (EPOLLERR | EPOLLHUP)) != 0U)
+            {
+                socket_error = _linkg_wifi_rx_socket_error(rx, traffic_class);
+                WIFI_WARN("RX Socket异常，traffic=%u error=%d", (unsigned int)traffic_class, socket_error);
+                continue;
+            }
+
+            if ((events[event_index].events & EPOLLIN) != 0U)
+            {
+                ready[traffic_class] = true;
+            }
+        }
+
+        progressed = false;
+
+        // 每轮每个ready业务最多接收一批，保持Socket排空优先级同时避免低优先级长期饥饿。
+        for (class_index = LINKG_WIFI_TRAFFIC_REALTIME; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
+        {
+            traffic_class = (linkg_wifi_traffic_class_t)class_index;
+
+            if (!ready[traffic_class])
+            {
+                continue;
+            }
+
+            ret = _linkg_wifi_rx_receive_once(rx, traffic_class);
+            if (ret < 0)
+            {
+                WIFI_WARN("RX批量接收失败，traffic=%u error=%d", (unsigned int)traffic_class, ret);
+                continue;
+            }
+
+            if (ret > 0)
+            {
+                progressed = true;
+            }
+        }
+
+        if (!progressed)
+        {
+            linkg_time_sleep_ms(LINKG_WIFI_RX_RETRY_MS);
+        }
+    }
+
+    WIFI_DEBUG("RX生产线程退出");
+
+    return NULL;
 }
 
 /****************************** 生命周期 ******************************/
 
 /**
  * @brief 创建Wi-Fi接收模块。
+ *
+ * packet_pool、socket_fds和service_ports仅借用，生命周期由Wi-Fi Link保证。
+ * 每个业务类别创建独立SPSC Queue，生产端为Wi-Fi RX Worker，消费端为Link RX线程。
  */
-linkg_wifi_rx_t *linkg_wifi_rx_create(uint32_t capacity, int *socket_fds, const uint16_t *service_ports)
+linkg_wifi_rx_t *linkg_wifi_rx_create(uint32_t capacity, linkg_packet_pool_t *packet_pool, int *socket_fds, const uint16_t *service_ports)
 {
     linkg_wifi_rx_t *rx;
+    uint32_t         class_index;
 
-    if (capacity == 0U || socket_fds == NULL || service_ports == NULL)
+    if (capacity == 0U || capacity > LINKG_WIFI_RX_BATCH_SIZE_MAX || packet_pool == NULL || socket_fds == NULL || service_ports == NULL)
     {
         return NULL;
     }
@@ -331,30 +620,39 @@ linkg_wifi_rx_t *linkg_wifi_rx_create(uint32_t capacity, int *socket_fds, const 
         return NULL;
     }
 
-    rx->socket_fds    = socket_fds;
-    rx->service_ports = service_ports;
-    rx->capacity      = capacity;
-    rx->epoll_fd      = -1;
+    rx->packet_pool      = packet_pool;
+    rx->socket_fds       = socket_fds;
+    rx->service_ports    = service_ports;
+    rx->capacity         = capacity;
+    rx->queue_capacity   = capacity * LINKG_WIFI_RX_QUEUE_BATCH_COUNT;
+    rx->socket_epoll_fd  = -1;
+    rx->worker_wakeup_fd = -1;
+    rx->notify_fd        = -1;
+    rx->worker_created   = false;
 
-    rx->messages = calloc(rx->capacity, sizeof(*rx->messages));
-    if (rx->messages == NULL)
-    {
-        goto fail_rx;
-    }
+    atomic_store(&rx->started, false);
+    atomic_store(&rx->notify_pending, false);
 
-    rx->iovecs = calloc(rx->capacity, sizeof(*rx->iovecs));
-    if (rx->iovecs == NULL)
+    for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
     {
-        goto fail_messages;
+        rx->queues[class_index] = linkg_wifi_rx_queue_create(rx->queue_capacity);
+        if (rx->queues[class_index] == NULL)
+        {
+            goto fail_queues;
+        }
     }
 
     return rx;
 
-fail_messages:
-    free(rx->messages);
-    rx->messages = NULL;
+fail_queues:
+    while (class_index > 0U)
+    {
+        class_index--;
 
-fail_rx:
+        linkg_wifi_rx_queue_destroy(rx->queues[class_index]);
+        rx->queues[class_index] = NULL;
+    }
+
     free(rx);
 
     return NULL;
@@ -362,9 +660,13 @@ fail_rx:
 
 /**
  * @brief 销毁Wi-Fi接收模块。
+ *
+ * 调用前Link RX消费线程不能再访问rx。
  */
 void linkg_wifi_rx_destroy(linkg_wifi_rx_t *rx)
 {
+    uint32_t class_index;
+
     if (rx == NULL)
     {
         return;
@@ -372,12 +674,11 @@ void linkg_wifi_rx_destroy(linkg_wifi_rx_t *rx)
 
     (void)linkg_wifi_rx_stop(rx);
 
-    free(rx->iovecs);
-    free(rx->messages);
-
-    rx->iovecs   = NULL;
-    rx->messages = NULL;
-    rx->capacity = 0U;
+    for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
+    {
+        linkg_wifi_rx_queue_destroy(rx->queues[class_index]);
+        rx->queues[class_index] = NULL;
+    }
 
     free(rx);
 }
@@ -387,17 +688,18 @@ void linkg_wifi_rx_destroy(linkg_wifi_rx_t *rx)
  */
 int linkg_wifi_rx_start(linkg_wifi_rx_t *rx)
 {
-    linkg_wifi_traffic_class_t traffic_class;
-    uint32_t                   class_index;
-    int                        epoll_fd;
-    int                        ret;
+    pthread_attr_t worker_attr;
+    cpu_set_t      cpu_set;
+    uint32_t       class_index;
+    bool           attr_initialized;
+    int            ret;
 
     if (rx == NULL)
     {
         return -EINVAL;
     }
 
-    if (rx->epoll_fd >= 0)
+    if (atomic_load(&rx->started) || rx->worker_created)
     {
         return -EALREADY;
     }
@@ -410,46 +712,169 @@ int linkg_wifi_rx_start(linkg_wifi_rx_t *rx)
         }
     }
 
-    epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-    if (epoll_fd < 0)
+    rx->socket_epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (rx->socket_epoll_fd < 0)
     {
         return -errno;
     }
 
+    rx->worker_wakeup_fd = eventfd(0U, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (rx->worker_wakeup_fd < 0)
+    {
+        ret = -errno;
+        goto fail_epoll;
+    }
+
+    rx->notify_fd = eventfd(0U, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (rx->notify_fd < 0)
+    {
+        ret = -errno;
+        goto fail_wakeup;
+    }
+
+    ret = _linkg_wifi_rx_register_fd(rx->socket_epoll_fd, rx->worker_wakeup_fd, LINKG_WIFI_RX_WORKER_WAKEUP_EVENT);
+    if (ret != 0)
+    {
+        goto fail_notify;
+    }
+
     for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
     {
-        traffic_class = (linkg_wifi_traffic_class_t)class_index;
-
-        ret = _linkg_wifi_rx_register_socket(epoll_fd, rx->socket_fds[class_index], traffic_class);
+        ret = _linkg_wifi_rx_register_fd(rx->socket_epoll_fd, rx->socket_fds[class_index], class_index);
         if (ret != 0)
         {
-            (void)_linkg_wifi_rx_close_fd(&epoll_fd);
-            return ret;
+            goto fail_notify;
         }
     }
 
-    rx->epoll_fd = epoll_fd;
+    attr_initialized = false;
+
+    ret = pthread_attr_init(&worker_attr);
+    if (ret != 0)
+    {
+        ret = -ret;
+        goto fail_notify;
+    }
+
+    attr_initialized = true;
+
+    CPU_ZERO(&cpu_set);
+    CPU_SET(LINKG_WIFI_RX_WORKER_CPU_CORE, &cpu_set);
+
+    ret = pthread_attr_setaffinity_np(&worker_attr, sizeof(cpu_set), &cpu_set);
+    if (ret != 0)
+    {
+        ret = -ret;
+        goto fail_attr;
+    }
+
+    atomic_store(&rx->notify_pending, false);
+    atomic_store(&rx->started, true);
+
+    ret = pthread_create(&rx->worker, &worker_attr, _linkg_wifi_rx_worker, rx);
+    if (ret != 0)
+    {
+        atomic_store(&rx->started, false);
+        ret = -ret;
+        goto fail_attr;
+    }
+
+    rx->worker_created = true;
+
+    pthread_attr_destroy(&worker_attr);
+
+    WIFI_DEBUG("RX生产线程绑定CPU%u", LINKG_WIFI_RX_WORKER_CPU_CORE);
 
     return 0;
+
+fail_attr:
+    if (attr_initialized)
+    {
+        pthread_attr_destroy(&worker_attr);
+    }
+
+fail_notify:
+    (void)_linkg_wifi_rx_close_fd(&rx->notify_fd);
+
+fail_wakeup:
+    (void)_linkg_wifi_rx_close_fd(&rx->worker_wakeup_fd);
+
+fail_epoll:
+    (void)_linkg_wifi_rx_close_fd(&rx->socket_epoll_fd);
+
+    return ret;
 }
 
 /**
  * @brief 停止Wi-Fi接收模块。
+ *
+ * 停止生产线程后清空三业务Queue，并释放其中尚未消费的Packet基础引用。
  */
 int linkg_wifi_rx_stop(linkg_wifi_rx_t *rx)
 {
+    uint32_t class_index;
+    int      first_error;
+    int      ret;
+
     if (rx == NULL)
     {
         return -EINVAL;
     }
 
-    return _linkg_wifi_rx_close_fd(&rx->epoll_fd);
+    first_error = 0;
+
+    if (atomic_exchange(&rx->started, false))
+    {
+        ret = _linkg_wifi_rx_signal_fd(rx->worker_wakeup_fd);
+        if (ret != 0)
+        {
+            first_error = ret;
+        }
+    }
+
+    if (rx->worker_created)
+    {
+        ret = pthread_join(rx->worker, NULL);
+        if (ret != 0 && first_error == 0)
+        {
+            first_error = -ret;
+        }
+
+        rx->worker_created = false;
+    }
+
+    for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
+    {
+        linkg_wifi_rx_queue_clear(rx->queues[class_index]);
+    }
+
+    atomic_store_explicit(&rx->notify_pending, false, memory_order_release);
+
+    ret = _linkg_wifi_rx_close_fd(&rx->notify_fd);
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    ret = _linkg_wifi_rx_close_fd(&rx->worker_wakeup_fd);
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    ret = _linkg_wifi_rx_close_fd(&rx->socket_epoll_fd);
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    return first_error;
 }
 
 /****************************** 数据接收 ******************************/
 
 /**
- * @brief 获取Wi-Fi接收等待描述符。
+ * @brief 获取Link RX用于等待已完成Wi-Fi Packet的通知描述符。
  */
 int linkg_wifi_rx_get_fd(linkg_wifi_rx_t *rx)
 {
@@ -458,26 +883,29 @@ int linkg_wifi_rx_get_fd(linkg_wifi_rx_t *rx)
         return -EINVAL;
     }
 
-    if (rx->epoll_fd < 0)
+    if (rx->notify_fd < 0)
     {
         return -ENODEV;
     }
 
-    return rx->epoll_fd;
+    return rx->notify_fd;
 }
 
 /**
- * @brief 按实时、视频、普通顺序批量接收Wi-Fi数据包。
+ * @brief 按实时、视频、普通顺序批量交付已经接收完成的Wi-Fi Packet。
+ *
+ * 每个返回Packet的基础引用从对应Wi-Fi RX Queue转移给Link RX，
+ * items为输出数组，同一批次允许混合REALTIME、VIDEO和DATA。
  */
 int linkg_wifi_rx_receive_batch(linkg_wifi_rx_t *rx, linkg_link_rx_item_t *items, uint32_t capacity)
 {
-    struct epoll_event         events[LINKG_WIFI_TRAFFIC_COUNT];
-    linkg_wifi_traffic_class_t traffic_class;
-    bool                       ready[LINKG_WIFI_TRAFFIC_COUNT] = { false };
-    uint32_t                   class_index;
-    uint32_t                   event_index;
-    int                        event_count;
-    int                        ret;
+    linkg_wifi_rx_queue_t *queue;
+    uint32_t               received_count;
+    uint32_t               remaining;
+    uint32_t               pop_count;
+    uint32_t               class_index;
+    uint32_t               index;
+    int                    ret;
 
     if (rx == NULL || items == NULL)
     {
@@ -489,66 +917,65 @@ int linkg_wifi_rx_receive_batch(linkg_wifi_rx_t *rx, linkg_link_rx_item_t *items
         return 0;
     }
 
-    if (rx->epoll_fd < 0)
-    {
-        return -ENODEV;
-    }
-
     if (capacity > rx->capacity)
     {
         return -EOVERFLOW;
     }
 
-    do
+    if (rx->notify_fd < 0)
     {
-        event_count = epoll_wait(rx->epoll_fd, events, LINKG_WIFI_TRAFFIC_COUNT, 0);
-    }
-    while (event_count < 0 && errno == EINTR);
-
-    if (event_count < 0)
-    {
-        return -errno;
+        return -ENODEV;
     }
 
-    for (event_index = 0U; event_index < (uint32_t)event_count; event_index++)
+retry:
+    received_count = 0U;
+    remaining      = capacity;
+
+    for (class_index = LINKG_WIFI_TRAFFIC_REALTIME; class_index < LINKG_WIFI_TRAFFIC_COUNT && remaining > 0U; class_index++)
     {
-        if (events[event_index].data.u32 >= LINKG_WIFI_TRAFFIC_COUNT)
-        {
-            return -EIO;
-        }
+        queue = rx->queues[class_index];
 
-        traffic_class = (linkg_wifi_traffic_class_t)events[event_index].data.u32;
-
-        if ((events[event_index].events & EPOLLERR) != 0U)
-        {
-            return _linkg_wifi_rx_socket_error(rx, traffic_class);
-        }
-
-        if ((events[event_index].events & EPOLLHUP) != 0U)
-        {
-            return -EPIPE;
-        }
-
-        if ((events[event_index].events & EPOLLIN) != 0U)
-        {
-            ready[traffic_class] = true;
-        }
-    }
-
-    for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
-    {
-        traffic_class = (linkg_wifi_traffic_class_t)class_index;
-
-        if (!ready[traffic_class])
+        pop_count = linkg_wifi_rx_queue_pop_batch(queue, rx->consume_items, remaining);
+        if (pop_count == 0U)
         {
             continue;
         }
 
-        ret = _linkg_wifi_rx_receive_from(rx, traffic_class, items, capacity);
-        if (ret != 0)
+        for (index = 0U; index < pop_count; index++)
         {
-            return ret;
+            items[received_count + index].packet = rx->consume_items[index].packet;
+            items[received_count + index].source = rx->consume_items[index].source;
+
+            rx->consume_items[index].packet = NULL;
         }
+
+        received_count += pop_count;
+        remaining      -= pop_count;
+    }
+
+    if (received_count > 0U)
+    {
+        return (int)received_count;
+    }
+
+    /**
+     * 当前三个Queue已经暂时消费为空。
+     * 先清除本轮eventfd累计通知，再撤销notify_pending。
+     * Producer若在撤销前入队不会重复通知，下面重新检查Queue并继续消费；
+     * Producer若在撤销后入队则会重新写notify_fd，不会丢失下一轮唤醒。
+     */
+    ret = _linkg_wifi_rx_clear_notify(rx);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    atomic_store_explicit(&rx->notify_pending, false, memory_order_release);
+
+    if (!_linkg_wifi_rx_queues_empty(rx))
+    {
+        atomic_store_explicit(&rx->notify_pending, true, memory_order_release);
+        goto retry;
     }
 
     return 0;

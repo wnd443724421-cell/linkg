@@ -2,8 +2,8 @@
  * @file link_runtime.c
  * @brief LinkG链路运行资源实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-28
+ * @version 1.2.0
+ * @date 2026-09-10
  */
 
 #include "link_internal.h"
@@ -16,8 +16,8 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_LINK_RX_THREAD_NAME     "link-rx" // 链路接收线程名称
-#define LINKG_LINK_RX_THREAD_CPU_CORE 1         // RX线程绑定CPU1
+#define LINKG_LINK_RX_THREAD_NAME      "link-rx" // 链路接收线程名称
+#define LINKG_LINK_RX_THREAD_CPU_CORE  1         // RX线程绑定CPU1
 
 /****************************** 运行资源 ******************************/
 
@@ -78,13 +78,6 @@ int linkg_link_runtime_create(linkg_link_t *link, const linkg_link_config_t *con
         goto fail_io_lock;
     }
 
-    runtime->rx_packets = calloc(runtime->rx_batch_size, sizeof(*runtime->rx_packets));
-    if (runtime->rx_packets == NULL)
-    {
-        ret = -ENOMEM;
-        goto fail_rx_items;
-    }
-
     memset(&rx_thread_config, 0, sizeof(rx_thread_config));
 
     rx_thread_config.cpu_core         = LINKG_LINK_RX_THREAD_CPU_CORE;
@@ -97,15 +90,12 @@ int linkg_link_runtime_create(linkg_link_t *link, const linkg_link_config_t *con
                                         &rx_thread_config);
     if (ret != 0)
     {
-        goto fail_rx_packets;
+        goto fail_rx_items;
     }
 
     link->runtime = runtime;
 
     return 0;
-
-fail_rx_packets:
-    free(runtime->rx_packets);
 
 fail_rx_items:
     free(runtime->rx_items);
@@ -153,7 +143,6 @@ void linkg_link_runtime_destroy(linkg_link_t *link)
         LINKG_LOG_ERROR("destroy link control lock failed, link=%s, error=%d", link->name, ret);
     }
 
-    free(runtime->rx_packets);
     free(runtime->rx_items);
     free(runtime);
 

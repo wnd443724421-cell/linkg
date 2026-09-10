@@ -21,7 +21,7 @@ extern "C" {
 
 #define LINKG_LINK_ID_INVALID             0U  // 无效链路运行实例标识
 #define LINKG_LINK_NAME_MAX               12U // 链路名称最大长度，包含结束符
-#define LINKG_LINK_TX_BATCH_SIZE_DEFAULT  32U // 默认内部发送批次最大包数
+#define LINKG_LINK_TX_BATCH_SIZE_DEFAULT  32U // 默认单次发送批次最大包数
 #define LINKG_LINK_RX_BATCH_SIZE_DEFAULT  32U // 默认内部接收批次最大包数
 
 /****************************** 前置声明 ******************************/
@@ -78,8 +78,8 @@ typedef struct
 {
     const char                     *name;              // 链路名称
     linkg_link_access_t             access;            // 链路接入类型
-    uint32_t                        tx_batch_size;     // 内部发送批次最大包数
-    uint32_t                        rx_batch_size;     // 内部接收批次最大包数
+    uint32_t                        tx_batch_size;      // 单次发送批次最大包数
+    uint32_t                        rx_batch_size;      // 内部接收批次最大包数
     linkg_packet_pool_t            *packet_pool;       // 链路接收使用的数据包池
     linkg_link_receive_batch_func_t receive;           // 批量接收处理函数
     void                           *receive_user_data; // 接收处理私有数据
@@ -98,7 +98,6 @@ struct linkg_link_ops
     int  (*close)(linkg_link_t *link); // 关闭具体链路运行资源
 
     int  (*get_rx_fd)(linkg_link_t *link); // 获取接收等待描述符
-
     int  (*send_batch)(linkg_link_t *link, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, int *results);
     int  (*receive_batch)(linkg_link_t *link, linkg_link_rx_item_t *items, uint32_t capacity);
 };
@@ -125,8 +124,8 @@ void linkg_link_destroy(linkg_link_t *link);
 
 /****************************** 数据发送 ******************************/
 
-int linkg_link_submit(linkg_link_t *link, linkg_path_t *path, const linkg_path_endpoint_t *destination, linkg_packet_t *packet);
-int linkg_link_submit_batch(linkg_link_t *link, linkg_path_t *path, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, int *results);
+int linkg_link_submit(linkg_link_t *link, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *packet);
+int linkg_link_submit_batch(linkg_link_t *link, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, int *results);
 
 /****************************** 属性查询 ******************************/
 

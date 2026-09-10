@@ -2,8 +2,8 @@
  * @file linkg_wifi_link.c
  * @brief LinkG Wi-Fi数据链路实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-28
+ * @version 1.2.0
+ * @date 2026-09-10
  */
 
 #define _GNU_SOURCE
@@ -292,7 +292,7 @@ static int _wifi_link_init(linkg_link_t *link, const void *config)
         return -EINVAL;
     }
 
-    if (link->runtime == NULL)
+    if (link->runtime == NULL || link->packet_pool == NULL)
     {
         return -ENODEV;
     }
@@ -325,7 +325,10 @@ static int _wifi_link_init(linkg_link_t *link, const void *config)
         return -ENOMEM;
     }
 
-    wifi_link->rx = linkg_wifi_rx_create(link->runtime->rx_batch_size, wifi_link->socket_fds, wifi_link->service_ports);
+    wifi_link->rx = linkg_wifi_rx_create(link->runtime->rx_batch_size,
+                                         link->packet_pool,
+                                         wifi_link->socket_fds,
+                                         wifi_link->service_ports);
     if (wifi_link->rx == NULL)
     {
         linkg_wifi_tx_destroy(wifi_link->tx);
