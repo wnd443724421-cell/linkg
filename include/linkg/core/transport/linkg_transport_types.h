@@ -30,6 +30,17 @@ extern "C" {
 #define LINKG_TRANSPORT_FLAG_FRAGMENT              0x0001U                         // 当前帧属于LinkG内部分片
 #define LINKG_TRANSPORT_FLAG_VALID_MASK            LINKG_TRANSPORT_FLAG_FRAGMENT   // 当前有效帧标志掩码
 
+/****************************** 业务类别 ******************************/
+
+typedef enum
+{
+    LINKG_TRANSPORT_CLASS_REALTIME = 0, // 实时业务
+    LINKG_TRANSPORT_CLASS_VIDEO,        // 视频业务
+    LINKG_TRANSPORT_CLASS_DATA,         // 普通数据
+    LINKG_TRANSPORT_CLASS_COUNT         // 业务类别数量
+} linkg_transport_class_t;
+
+
 /****************************** 帧类型 ******************************/
 
 typedef enum

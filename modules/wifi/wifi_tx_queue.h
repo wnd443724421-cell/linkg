@@ -46,6 +46,7 @@ uint32_t linkg_wifi_tx_queue_available(const linkg_wifi_tx_queue_t *queue);
 int      linkg_wifi_tx_queue_push_batch(linkg_wifi_tx_queue_t *queue, linkg_packet_t *const *packets, uint32_t count, linkg_path_t *path, const linkg_path_endpoint_t *destination, uint64_t enqueue_us, uint32_t *pushed_count);
 uint32_t linkg_wifi_tx_queue_peek_batch(const linkg_wifi_tx_queue_t *queue, linkg_wifi_tx_queue_item_t *items, uint32_t capacity);
 int      linkg_wifi_tx_queue_discard_batch(linkg_wifi_tx_queue_t *queue, uint32_t count);
+int      linkg_wifi_tx_queue_purge_path(linkg_wifi_tx_queue_t *queue, linkg_path_t *path, uint32_t *purged_count);
 
 #ifdef __cplusplus
 }

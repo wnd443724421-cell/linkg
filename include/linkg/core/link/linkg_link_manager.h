@@ -33,6 +33,10 @@ int linkg_link_manager_deinit(void);
 int linkg_link_manager_register_receive_handler(linkg_link_receive_batch_func_t receive, void *user_data);
 int linkg_link_manager_unregister_receive_handler(void);
 
+/****************************** 发送清理 ******************************/
+
+int linkg_link_manager_purge_tx_path(linkg_path_t *path, uint32_t *purged_count);
+
 /****************************** 链路查询 ******************************/
 
 linkg_link_t *linkg_link_manager_get(uint32_t link_id);

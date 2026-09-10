@@ -2,8 +2,8 @@
  * @file wifi_tx.c
  * @brief LinkG Wi-Fi发送模块实现
  * @author Dawn
- * @version 1.4.1
- * @date 2026-09-09
+ * @version 1.5.0
+ * @date 2026-09-10
  */
 
 #define _GNU_SOURCE
@@ -789,6 +789,74 @@ void linkg_wifi_tx_stop(linkg_wifi_tx_t *tx)
     }
 
     pthread_mutex_unlock(&tx->lock);
+}
+
+/****************************** 队列清理 ******************************/
+
+/**
+ * @brief 清理三业务发送队列中引用指定Path的待发送Packet。
+ *
+ * @note 本接口用于Peer或Path退役后的控制面强制清理。
+ *       不要求TX处于started状态；与正常submit/dispatch共用tx->lock串行化。
+ *       Queue层只删除指针等于目标Path的元素并释放其Packet和Path引用。
+ */
+int linkg_wifi_tx_purge_path(linkg_wifi_tx_t *tx, linkg_path_t *path, uint32_t *purged_count)
+{
+    uint32_t queue_purged;
+    uint32_t total_purged;
+    uint32_t index;
+    int      first_error;
+    int      ret;
+
+    if (tx == NULL || path == NULL || purged_count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *purged_count = 0U;
+
+    ret = pthread_mutex_lock(&tx->lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    first_error = 0;
+    total_purged = 0U;
+
+    for (index = 0U; index < LINKG_WIFI_TRAFFIC_COUNT; index++)
+    {
+        if (tx->queues[index] == NULL)
+        {
+            if (first_error == 0)
+            {
+                first_error = -ENODEV;
+            }
+
+            continue;
+        }
+
+        queue_purged = 0U;
+
+        ret = linkg_wifi_tx_queue_purge_path(tx->queues[index], path, &queue_purged);
+        if (ret != 0)
+        {
+            if (first_error == 0)
+            {
+                first_error = ret;
+            }
+
+            continue;
+        }
+
+        total_purged += queue_purged;
+    }
+
+    *purged_count = total_purged;
+
+    pthread_mutex_unlock(&tx->lock);
+
+    return first_error;
 }
 
 /****************************** 数据发送 ******************************/

@@ -47,7 +47,7 @@ int linkg_link_create(const linkg_link_config_t *config, const linkg_link_ops_t 
         return -EINVAL;
     }
 
-    if (ops->get_rx_fd == NULL || ops->send_batch == NULL || ops->receive_batch == NULL)
+    if (ops->get_rx_fd == NULL || ops->send_batch == NULL || ops->receive_batch == NULL || ops->purge_tx_path == NULL)
     {
         return -EINVAL;
     }

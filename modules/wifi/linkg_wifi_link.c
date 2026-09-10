@@ -547,6 +547,34 @@ static int _wifi_link_send_batch(linkg_link_t *link, linkg_path_t *path, linkg_l
     return linkg_wifi_tx_submit(wifi_link->tx, path, tx_class, destination, packets, count, results);
 }
 
+
+/**
+ * @brief 清理Wi-Fi链路发送队列中引用指定Path的待发送Packet。
+ *
+ * @note 本函数只负责将Link基类的清理请求下沉到Wi-Fi TX模块。
+ *       具体三业务队列的扫描、Packet释放和Path释放由Wi-Fi TX模块完成。
+ */
+static int _wifi_link_purge_tx_path(linkg_link_t *link, linkg_path_t *path, uint32_t *purged_count)
+{
+    linkg_wifi_link_t *wifi_link;
+
+    if (link == NULL || path == NULL || purged_count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *purged_count = 0U;
+
+    wifi_link = (linkg_wifi_link_t *)link;
+
+    if (wifi_link->tx == NULL)
+    {
+        return -ENODEV;
+    }
+
+    return linkg_wifi_tx_purge_path(wifi_link->tx, path, purged_count);
+}
+
 /****************************** 数据接收 ******************************/
 
 /**
@@ -570,14 +598,15 @@ static int _wifi_link_receive_batch(linkg_link_t *link, linkg_link_rx_item_t *it
 
 static const linkg_link_ops_t g_wifi_link_ops =
 {
-    .instance_size = sizeof(linkg_wifi_link_t),
-    .init          = _wifi_link_init,
-    .deinit        = _wifi_link_deinit,
-    .open          = _wifi_link_open,
-    .close         = _wifi_link_close,
-    .get_rx_fd     = _wifi_link_get_rx_fd,
-    .send_batch    = _wifi_link_send_batch,
-    .receive_batch = _wifi_link_receive_batch,
+    .instance_size      = sizeof(linkg_wifi_link_t),
+    .init               = _wifi_link_init,
+    .deinit             = _wifi_link_deinit,
+    .open               = _wifi_link_open,
+    .close              = _wifi_link_close,
+    .get_rx_fd          = _wifi_link_get_rx_fd,
+    .send_batch         = _wifi_link_send_batch,
+    .receive_batch      = _wifi_link_receive_batch,
+    .purge_tx_path      = _wifi_link_purge_tx_path,
 };
 
 /****************************** 生命周期 ******************************/

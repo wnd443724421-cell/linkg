@@ -2,8 +2,8 @@
  * @file linkg_link_manager.c
  * @brief LinkG本地链路管理实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-28
+ * @version 1.2.0
+ * @date 2026-09-10
  */
 
 #include "linkg_link_manager.h"
@@ -668,6 +668,51 @@ int linkg_link_manager_unregister_receive_handler(void)
     g_link_manager.receive_user_data = NULL;
 
     return 0;
+}
+
+/****************************** 发送清理 ******************************/
+
+/**
+ * @brief 清理目标Path所属链路发送队列中引用该Path的待发送Packet。
+ *
+ * @note 目标Path必须已经退出ACTIVE状态。调用前缓存其link_id，只查找并清理
+ *       唯一归属Link；下层返回后不得再次读取Path字段。
+ */
+int linkg_link_manager_purge_tx_path(linkg_path_t *path, uint32_t *purged_count)
+{
+    linkg_link_t *link;
+    uint32_t      link_id;
+
+    if (path == NULL || purged_count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *purged_count = 0U;
+
+    if (!g_link_manager.initialized)
+    {
+        return -ENODEV;
+    }
+
+    if (linkg_path_is_active(path))
+    {
+        return -EBUSY;
+    }
+
+    link_id = path->link_id;
+    if (link_id == LINKG_LINK_ID_INVALID)
+    {
+        return -ENODEV;
+    }
+
+    link = _linkg_link_manager_find(link_id);
+    if (link == NULL)
+    {
+        return -ENOENT;
+    }
+
+    return linkg_link_purge_tx_path(link, path, purged_count);
 }
 
 /****************************** 链路查询 ******************************/

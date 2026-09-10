@@ -11,8 +11,7 @@
 #include "linkg_link.h"
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 /****************************** 前置声明 ******************************/
@@ -25,6 +24,10 @@ linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds
 void                 linkg_cellular_tx_destroy(linkg_cellular_tx_t *tx);
 int                  linkg_cellular_tx_start(linkg_cellular_tx_t *tx);
 void                 linkg_cellular_tx_stop(linkg_cellular_tx_t *tx);
+
+/****************************** 队列清理 ******************************/
+
+int linkg_cellular_tx_purge_path(linkg_cellular_tx_t *tx, linkg_path_t *path, uint32_t *purged_count);
 
 /****************************** 数据发送 ******************************/
 

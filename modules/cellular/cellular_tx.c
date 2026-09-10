@@ -2,7 +2,7 @@
  * @file cellular_tx.c
  * @brief LinkG蜂窝链路发送模块实现
  * @author Dawn
- * @version 1.2.0
+ * @version 1.3.0
  * @date 2026-09-10
  */
 
@@ -25,14 +25,13 @@
 #include "linkg_log.h"
 #include "linkg_packet_pool.h"
 #include "linkg_time.h"
-
 #include "cellular_tx_queue.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX      32U                                        // 单次发送调度最大Packet数量
-#define LINKG_CELLULAR_TX_QUEUE_BATCH_COUNT   5U                                         // 单业务等待队列最多缓存批次数
-#define LINKG_CELLULAR_TX_CONTROL_SIZE        CMSG_SPACE(sizeof(struct in6_pktinfo))     // 单个IPv6 PKTINFO控制区大小
+#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX     32U                                    // 单次发送调度最大Packet数量
+#define LINKG_CELLULAR_TX_QUEUE_BATCH_COUNT  5U                                     // 单业务等待队列最多缓存批次数
+#define LINKG_CELLULAR_TX_CONTROL_SIZE       CMSG_SPACE(sizeof(struct in6_pktinfo))  // 单个IPv6 PKTINFO控制区大小
 
 /****************************** 内部类型 ******************************/
 
@@ -61,18 +60,15 @@ typedef struct
  */
 struct linkg_cellular_tx
 {
-    pthread_mutex_t             lock;                              // 三业务队列和发送调度串行锁
+    pthread_mutex_t             lock;                               // 三业务队列和发送调度串行锁
     linkg_cellular_tx_scratch_t scratch[LINKG_LINK_TX_CLASS_COUNT]; // 三业务预分配Scratch
-    linkg_cellular_tx_queue_t  *queues[LINKG_LINK_TX_CLASS_COUNT]; // 三业务等待FIFO
-
-    int                        *socket_fds;                        // 借用Cellular Link业务Socket数组
-    const uint16_t             *service_ports;                     // 借用Cellular Link业务端口数组
-    const char                 *interface_name;                    // 借用蜂窝出口接口名称
-
-    uint32_t                    capacity;                          // 单次发送调度最大提交Packet数量
-    uint32_t                    queue_capacity;                    // 单业务等待队列最大Packet数量
-
-    _Atomic bool                started;                           // 发送模块运行状态
+    linkg_cellular_tx_queue_t  *queues[LINKG_LINK_TX_CLASS_COUNT];  // 三业务等待FIFO
+    int                        *socket_fds;                          // 借用Cellular Link业务Socket数组
+    const uint16_t             *service_ports;                      // 借用Cellular Link业务端口数组
+    const char                 *interface_name;                     // 借用蜂窝出口接口名称
+    uint32_t                    capacity;                           // 单次发送调度最大提交Packet数量
+    uint32_t                    queue_capacity;                     // 单业务等待队列最大Packet数量
+    _Atomic bool                started;                            // 发送模块运行状态
 };
 
 /****************************** 内部辅助 ******************************/
@@ -175,8 +171,8 @@ static void _linkg_cellular_tx_record_failed(linkg_path_t *path, const linkg_pac
 /**
  * @brief 从指定业务队列丢弃最旧Packet，完整两片TX Group尽量一起丢弃。
  *
- * Transport保证单个TX Group最多包含两个连续Packet。
- * 调用方必须持有tx->lock。
+ * @note Transport保证单个TX Group最多包含两个连续Packet。
+ *       调用方必须持有tx->lock。
  */
 static uint32_t _linkg_cellular_tx_drop_oldest_locked(linkg_cellular_tx_t *tx, linkg_link_tx_class_t tx_class)
 {
@@ -233,7 +229,7 @@ static uint32_t _linkg_cellular_tx_drop_oldest_locked(linkg_cellular_tx_t *tx, l
 /**
  * @brief 为当前新批次腾出足够Queue容量。
  *
- * 调用方必须持有tx->lock。
+ * @note 调用方必须持有tx->lock。
  */
 static int _linkg_cellular_tx_make_room_locked(linkg_cellular_tx_t *tx, linkg_link_tx_class_t tx_class, uint32_t required_count)
 {
@@ -266,7 +262,7 @@ static int _linkg_cellular_tx_make_room_locked(linkg_cellular_tx_t *tx, linkg_li
 /**
  * @brief 将当前完整批次加入对应业务等待队列。
  *
- * 调用方必须持有tx->lock。
+ * @note 调用方必须持有tx->lock。
  */
 static int _linkg_cellular_tx_enqueue_locked(linkg_cellular_tx_t *tx, linkg_link_tx_class_t tx_class, linkg_path_t *path, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count)
 {
@@ -309,13 +305,12 @@ static void _linkg_cellular_tx_build_plan_locked(linkg_cellular_tx_t *tx, linkg_
         LINKG_LINK_TX_CLASS_VIDEO,
         LINKG_LINK_TX_CLASS_DATA
     };
-
-    uint32_t class_limit;
-    uint32_t remaining;
-    uint32_t available;
-    uint32_t take_count;
-    uint32_t order_index;
-    linkg_link_tx_class_t tx_class;
+    uint32_t              class_limit;
+    uint32_t              remaining;
+    uint32_t              available;
+    uint32_t              take_count;
+    uint32_t              order_index;
+    linkg_link_tx_class_t  tx_class;
 
     memset(plan, 0, sizeof(*plan));
 
@@ -368,7 +363,7 @@ static bool _linkg_cellular_tx_error_transient(int error)
 /**
  * @brief 使用预分配Scratch对当前Queue元素执行一次非阻塞sendmmsg。
  *
- * 不执行Queue管理、不负责重试或丢包，调用方必须持有tx->lock。
+ * @note 不执行Queue管理、不负责重试或丢包，调用方必须持有tx->lock。
  */
 static int _linkg_cellular_tx_send_once_locked(linkg_cellular_tx_t *tx, linkg_link_tx_class_t tx_class, linkg_cellular_tx_queue_item_t *items, uint32_t count)
 {
@@ -574,7 +569,7 @@ static int _linkg_cellular_tx_dispatch_class_locked(linkg_cellular_tx_t *tx, lin
 
         if (sent_count < send_count)
         {
-                *stopped = true;
+            *stopped = true;
             break;
         }
     }
@@ -595,7 +590,6 @@ static int _linkg_cellular_tx_dispatch_once_locked(linkg_cellular_tx_t *tx, link
         LINKG_LINK_TX_CLASS_VIDEO,
         LINKG_LINK_TX_CLASS_DATA
     };
-
     linkg_cellular_tx_plan_t plan;
     uint32_t                 class_limit;
     uint32_t                 submitted_total;
@@ -823,6 +817,74 @@ void linkg_cellular_tx_stop(linkg_cellular_tx_t *tx)
     pthread_mutex_unlock(&tx->lock);
 }
 
+/****************************** 队列清理 ******************************/
+
+/**
+ * @brief 清理三业务发送队列中引用指定Path的待发送Packet。
+ *
+ * @note 本接口用于Peer或Path退役后的控制面强制清理。
+ *       不要求TX处于started状态；与正常submit/dispatch共用tx->lock串行化。
+ *       Queue层只删除指针等于目标Path的元素并释放其Packet和Path引用。
+ */
+int linkg_cellular_tx_purge_path(linkg_cellular_tx_t *tx, linkg_path_t *path, uint32_t *purged_count)
+{
+    uint32_t queue_purged;
+    uint32_t total_purged;
+    uint32_t class_index;
+    int      first_error;
+    int      ret;
+
+    if (tx == NULL || path == NULL || purged_count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *purged_count = 0U;
+
+    ret = pthread_mutex_lock(&tx->lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    first_error  = 0;
+    total_purged = 0U;
+
+    for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
+    {
+        if (tx->queues[class_index] == NULL)
+        {
+            if (first_error == 0)
+            {
+                first_error = -ENODEV;
+            }
+
+            continue;
+        }
+
+        queue_purged = 0U;
+
+        ret = linkg_cellular_tx_queue_purge_path(tx->queues[class_index], path, &queue_purged);
+        if (ret != 0)
+        {
+            if (first_error == 0)
+            {
+                first_error = ret;
+            }
+
+            continue;
+        }
+
+        total_purged += queue_purged;
+    }
+
+    *purged_count = total_purged;
+
+    pthread_mutex_unlock(&tx->lock);
+
+    return first_error;
+}
+
 /****************************** 数据发送 ******************************/
 
 /**
@@ -879,6 +941,7 @@ int linkg_cellular_tx_submit(linkg_cellular_tx_t *tx, linkg_path_t *path, linkg_
         }
 
         pthread_mutex_unlock(&tx->lock);
+
         return 0;
     }
 
@@ -891,6 +954,7 @@ int linkg_cellular_tx_submit(linkg_cellular_tx_t *tx, linkg_path_t *path, linkg_
         }
 
         pthread_mutex_unlock(&tx->lock);
+
         return 0;
     }
 

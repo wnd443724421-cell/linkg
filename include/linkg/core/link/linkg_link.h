@@ -19,10 +19,10 @@ extern "C" {
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_LINK_ID_INVALID             0U  // 无效链路运行实例标识
-#define LINKG_LINK_NAME_MAX               12U // 链路名称最大长度，包含结束符
-#define LINKG_LINK_TX_BATCH_SIZE_DEFAULT  32U // 默认单次发送批次最大包数
-#define LINKG_LINK_RX_BATCH_SIZE_DEFAULT  32U // 默认内部接收批次最大包数
+#define LINKG_LINK_ID_INVALID            0U  // 无效链路运行实例标识
+#define LINKG_LINK_NAME_MAX              12U // 链路名称最大长度，包含结束符
+#define LINKG_LINK_TX_BATCH_SIZE_DEFAULT 32U // 默认单次发送批次最大包数
+#define LINKG_LINK_RX_BATCH_SIZE_DEFAULT 32U // 默认内部接收批次最大包数
 
 /****************************** 前置声明 ******************************/
 
@@ -100,6 +100,7 @@ struct linkg_link_ops
     int  (*get_rx_fd)(linkg_link_t *link); // 获取接收等待描述符
     int  (*send_batch)(linkg_link_t *link, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, int *results);
     int  (*receive_batch)(linkg_link_t *link, linkg_link_rx_item_t *items, uint32_t capacity);
+    int  (*purge_tx_path)(linkg_link_t *link, linkg_path_t *path, uint32_t *purged_count); // 清理指定Path持有的待发送Packet
 };
 
 /****************************** 链路基类 ******************************/
@@ -126,6 +127,10 @@ void linkg_link_destroy(linkg_link_t *link);
 
 int linkg_link_submit(linkg_link_t *link, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *packet);
 int linkg_link_submit_batch(linkg_link_t *link, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, int *results);
+
+/****************************** 发送清理 ******************************/
+
+int linkg_link_purge_tx_path(linkg_link_t *link, linkg_path_t *path, uint32_t *purged_count);
 
 /****************************** 属性查询 ******************************/
 

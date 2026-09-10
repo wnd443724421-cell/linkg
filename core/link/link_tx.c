@@ -150,10 +150,6 @@ int linkg_link_submit_batch(linkg_link_t *link, linkg_path_t *path, linkg_link_t
         {
             results[index] = ret;
         }
-
-        pthread_rwlock_unlock(&runtime->io_lock);
-
-        return ret;
     }
 
     accepted_count = 0U;
@@ -214,4 +210,66 @@ int linkg_link_submit(linkg_link_t *link, linkg_path_t *path, linkg_link_tx_clas
     }
 
     return results[0];
+}
+
+
+/****************************** 发送清理 ******************************/
+
+/**
+ * @brief 清理当前链路中引用指定Path的待发送Packet。
+ *
+ * @note 本接口只接受已经退出ACTIVE状态且归属于当前Link的Path。
+ *       不要求Link保持RUNNING状态，只要具体链路运行资源仍处于opened状态，
+ *       就允许进入具体Link清理异步发送队列。
+ *
+ * @note io_lock读锁负责与linkg_link_stop()中的close写锁互斥，
+ *       避免清理过程中具体Link发送队列或Socket资源被并发销毁。
+ *       具体Link返回后不得再读取Path字段，因为最后一个队列引用可能已释放。
+ */
+int linkg_link_purge_tx_path(linkg_link_t *link, linkg_path_t *path, uint32_t *purged_count)
+{
+    linkg_link_runtime_t *runtime;
+    int                   ret;
+
+    if (link == NULL || path == NULL || purged_count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *purged_count = 0U;
+
+    if (link->runtime == NULL || link->ops == NULL || link->ops->purge_tx_path == NULL || link->id == LINKG_LINK_ID_INVALID)
+    {
+        return -ENODEV;
+    }
+
+    if (path->link_id != link->id)
+    {
+        return -EXDEV;
+    }
+
+    if (linkg_path_is_active(path))
+    {
+        return -EBUSY;
+    }
+
+    runtime = link->runtime;
+
+    pthread_rwlock_rdlock(&runtime->io_lock);
+
+    /**
+     * Link已经关闭时具体TX stop/close路径应当已经清空等待队列，
+     * 此时没有运行期异步引用需要继续清理。
+     */
+    if (!runtime->opened)
+    {
+        pthread_rwlock_unlock(&runtime->io_lock);
+        return 0;
+    }
+
+    ret = link->ops->purge_tx_path(link, path, purged_count);
+
+    pthread_rwlock_unlock(&runtime->io_lock);
+
+    return ret;
 }

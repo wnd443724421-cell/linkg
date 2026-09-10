@@ -2,7 +2,7 @@
  * @file cellular_tx_queue.c
  * @brief LinkG蜂窝发送等待队列实现
  * @author Dawn
- * @version 1.2.0
+ * @version 1.3.0
  * @date 2026-09-10
  */
 
@@ -315,6 +315,79 @@ int linkg_cellular_tx_queue_discard_batch(linkg_cellular_tx_queue_t *queue, uint
         queue->head = 0U;
         queue->tail = 0U;
     }
+
+    return 0;
+}
+
+/**
+ * @brief 清理全部引用指定Path的等待元素并保持剩余元素FIFO顺序。
+ *
+ * @note 本接口不提供内部并发保护，调用方必须保证当前Queue操作已经串行化。
+ *       被清理元素持有的Packet和Path引用会在函数返回前全部释放。
+ *       只比较Path指针，不读取目标Path字段，也不清理其他失效或空元素。
+ */
+int linkg_cellular_tx_queue_purge_path(linkg_cellular_tx_queue_t *queue, linkg_path_t *path, uint32_t *purged_count)
+{
+    linkg_cellular_tx_queue_item_t *item;
+    uint32_t                        original_count;
+    uint32_t                        read_index;
+    uint32_t                        write_index;
+    uint32_t                        removed_count;
+    uint32_t                        index;
+
+    if (queue == NULL || path == NULL || purged_count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *purged_count = 0U;
+
+    if (queue->count == 0U)
+    {
+        return 0;
+    }
+
+    original_count = queue->count;
+    read_index     = queue->head;
+    write_index    = queue->head;
+    removed_count  = 0U;
+
+    for (index = 0U; index < original_count; index++)
+    {
+        item = &queue->items[read_index];
+
+        if (item->path == path)
+        {
+            _linkg_cellular_tx_queue_release_item(item);
+            removed_count++;
+        }
+        else
+        {
+            if (write_index != read_index)
+            {
+                queue->items[write_index] = *item;
+                memset(item, 0, sizeof(*item));
+            }
+
+            write_index = _linkg_cellular_tx_queue_next(queue, write_index);
+        }
+
+        read_index = _linkg_cellular_tx_queue_next(queue, read_index);
+    }
+
+    queue->count = original_count - removed_count;
+
+    if (queue->count == 0U)
+    {
+        queue->head = 0U;
+        queue->tail = 0U;
+    }
+    else
+    {
+        queue->tail = write_index;
+    }
+
+    *purged_count = removed_count;
 
     return 0;
 }

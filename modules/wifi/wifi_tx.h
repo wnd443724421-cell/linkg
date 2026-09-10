@@ -26,6 +26,10 @@ void             linkg_wifi_tx_destroy(linkg_wifi_tx_t *tx);
 int              linkg_wifi_tx_start(linkg_wifi_tx_t *tx);
 void             linkg_wifi_tx_stop(linkg_wifi_tx_t *tx);
 
+/****************************** 队列清理 ******************************/
+
+int linkg_wifi_tx_purge_path(linkg_wifi_tx_t *tx, linkg_path_t *path, uint32_t *purged_count);
+
 /****************************** 数据发送 ******************************/
 
 // results为0表示Wi-Fi已接受发送责任，Packet可能已提交Socket，也可能进入对应REALTIME/VIDEO/DATA等待队列；负数表示拒绝。

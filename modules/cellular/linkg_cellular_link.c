@@ -532,6 +532,30 @@ static int _cellular_link_receive_batch(linkg_link_t *link, linkg_link_rx_item_t
     return linkg_cellular_rx_receive_batch(cellular_link->rx, items, capacity);
 }
 
+/**
+ * @brief 清理蜂窝链路发送队列中引用指定Path的待发送Packet。
+ */
+static int _cellular_link_purge_tx_path(linkg_link_t *link, linkg_path_t *path, uint32_t *purged_count)
+{
+    linkg_cellular_link_t *cellular_link;
+
+    if (link == NULL || path == NULL || purged_count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *purged_count = 0U;
+
+    cellular_link = (linkg_cellular_link_t *)link;
+
+    if (cellular_link->tx == NULL)
+    {
+        return -ENODEV;
+    }
+
+    return linkg_cellular_tx_purge_path(cellular_link->tx, path, purged_count);
+}
+
 /****************************** 操作接口 ******************************/
 
 static const linkg_link_ops_t g_cellular_link_ops =
@@ -544,6 +568,7 @@ static const linkg_link_ops_t g_cellular_link_ops =
     .get_rx_fd     = _cellular_link_get_rx_fd,
     .send_batch    = _cellular_link_send_batch,
     .receive_batch = _cellular_link_receive_batch,
+    .purge_tx_path = _cellular_link_purge_tx_path,
 };
 
 /****************************** 生命周期 ******************************/
