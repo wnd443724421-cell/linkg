@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "linkg_link.h"
+#include "linkg_link_manager.h"
 #include "linkg_network_ops.h"
 
 /****************************** 内部类型 ******************************/
@@ -373,32 +374,98 @@ static void _linkg_node_complete_peer_release_locked(linkg_node_peer_slot_t *slo
 }
 
 /**
- * @brief 退役并回收路径。
+ * @brief 在Node锁内持有清理引用并退役活动路径。
  *
- * @note 调用方必须持有Node状态锁；无异步引用时同步reset，否则等待Path回调。
+ * @note 调用方必须持有Node状态锁。临时引用保证Node解锁并同步清理TX Queue之前，
+ *       Path不会进入RELEASED或被复用；返回的引用必须在锁外完成清理后释放。
  */
-static int _linkg_node_retire_path_locked(linkg_path_t *path)
+static int _linkg_node_prepare_path_retire_locked(linkg_path_t *path, linkg_path_t **retired_path)
 {
-    bool released;
-    int ret;
+    linkg_path_state_t state;
+    bool               released;
+    int                ret;
 
-    if (path == NULL)
+    if (path == NULL || retired_path == NULL)
     {
         return -EINVAL;
     }
 
-    ret = linkg_path_retire(path, &released);
+    *retired_path = NULL;
+    state         = linkg_path_get_state(path);
+
+    if (state == LINKG_PATH_STATE_RETIRED || state == LINKG_PATH_STATE_RELEASED)
+    {
+        return 0;
+    }
+
+    if (state != LINKG_PATH_STATE_ACTIVE)
+    {
+        return -ENODEV;
+    }
+
+    ret = linkg_path_acquire(path);
     if (ret != 0)
     {
         return ret;
     }
 
-    if (released)
+    ret = linkg_path_retire(path, &released);
+    if (ret != 0)
     {
-        return linkg_path_reset(path);
+        linkg_path_release(path);
+        return ret;
     }
 
+    if (released)
+    {
+        linkg_path_release(path);
+        return -EFAULT;
+    }
+
+    *retired_path = path;
+
     return 0;
+}
+
+/**
+ * @brief 在Node锁外同步清理已退役Path的TX Queue引用并释放临时引用。
+ *
+ * @note 每个Path在调用前都持有一个清理引用。单条清理失败不会阻止其他Path，
+ *       返回首次错误；释放临时引用后不得继续读取对应Path字段。
+ */
+static int _linkg_node_purge_retired_paths(linkg_path_t *const *paths, uint32_t count)
+{
+    uint32_t purged_count;
+    uint32_t index;
+    int      first_error;
+    int      ret;
+
+    if (paths == NULL && count != 0U)
+    {
+        return -EINVAL;
+    }
+
+    first_error = 0;
+
+    for (index = 0U; index < count; index++)
+    {
+        if (paths[index] == NULL)
+        {
+            continue;
+        }
+
+        purged_count = 0U;
+        ret = linkg_link_manager_purge_tx_path(paths[index], &purged_count);
+
+        linkg_path_release(paths[index]);
+
+        if (ret != 0 && first_error == 0)
+        {
+            first_error = ret;
+        }
+    }
+
+    return first_error;
 }
 
 /**
@@ -812,14 +879,19 @@ out:
 /**
  * @brief 注销直接对端节点并退役全部路径。
  *
- * @note Peer先逻辑下线并停止产生新Path引用，已有异步引用完成后由Path回调最终释放Peer槽位。
+ * @note Peer先逻辑下线并停止产生新Path引用；Node锁内持有清理引用并退役全部Path，
+ *       解锁后同步清理对应Link的TX Queue，剩余在途引用结束后由Path回调释放Peer槽位。
  */
 int linkg_node_unregister_peer(uint8_t node_id)
 {
     linkg_node_peer_slot_t *slot;
-    uint32_t index;
-    int first_error;
-    int ret;
+    linkg_path_t           *retired_paths[LINKG_NODE_PATH_MAX];
+    linkg_path_t           *retired_path;
+    uint32_t                retired_count;
+    uint32_t                index;
+    int                     first_error;
+    int                     purge_ret;
+    int                     ret;
 
     if (!g_node.initialized)
     {
@@ -831,7 +903,10 @@ int linkg_node_unregister_peer(uint8_t node_id)
         return -EINVAL;
     }
 
-    first_error = 0;
+    memset(retired_paths, 0, sizeof(retired_paths));
+
+    retired_count = 0U;
+    first_error   = 0;
 
     ret = _linkg_node_lock();
     if (ret != 0)
@@ -875,10 +950,18 @@ int linkg_node_unregister_peer(uint8_t node_id)
             continue;
         }
 
-        ret = _linkg_node_retire_path_locked(&slot->paths[index]);
+        retired_path = NULL;
+
+        ret = _linkg_node_prepare_path_retire_locked(&slot->paths[index], &retired_path);
         if (ret != 0 && first_error == 0)
         {
             first_error = ret;
+        }
+
+        if (retired_path != NULL)
+        {
+            retired_paths[retired_count] = retired_path;
+            retired_count++;
         }
     }
 
@@ -890,7 +973,15 @@ int linkg_node_unregister_peer(uint8_t node_id)
     ret = first_error;
 
 out:
-    return _linkg_node_unlock(ret);
+    ret = _linkg_node_unlock(ret);
+
+    purge_ret = _linkg_node_purge_retired_paths(retired_paths, retired_count);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return purge_ret;
 }
 
 /****************************** 路径管理 ******************************/
@@ -993,15 +1084,18 @@ out:
 /**
  * @brief 注销指定对端链路路径。
  *
- * @note Path存在异步引用时仅进入RETIRED，最后一个引用释放后由回调完成槽位回收。
+ * @note Node锁内持有清理引用并将Path置为RETIRED，解锁后同步清理对应Link的
+ *       三业务TX Queue；剩余在途引用结束后由回调完成槽位回收。
  */
 int linkg_node_unregister_path(uint8_t node_id, uint32_t link_id)
 {
     linkg_node_peer_slot_t *slot;
     linkg_path_state_t state;
-    linkg_path_t *path;
-    int path_index;
-    int ret;
+    linkg_path_t          *retired_path;
+    linkg_path_t          *path;
+    int                    path_index;
+    int                    purge_ret;
+    int                    ret;
 
     if (!g_node.initialized)
     {
@@ -1012,6 +1106,8 @@ int linkg_node_unregister_path(uint8_t node_id, uint32_t link_id)
     {
         return -EINVAL;
     }
+
+    retired_path = NULL;
 
     ret = _linkg_node_lock();
     if (ret != 0)
@@ -1054,7 +1150,7 @@ int linkg_node_unregister_path(uint8_t node_id, uint32_t link_id)
         goto out;
     }
 
-    ret = _linkg_node_retire_path_locked(path);
+    ret = _linkg_node_prepare_path_retire_locked(path, &retired_path);
     if (ret != 0)
     {
         goto out;
@@ -1066,7 +1162,15 @@ int linkg_node_unregister_path(uint8_t node_id, uint32_t link_id)
     }
 
 out:
-    return _linkg_node_unlock(ret);
+    ret = _linkg_node_unlock(ret);
+
+    purge_ret = _linkg_node_purge_retired_paths(&retired_path, 1U);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return purge_ret;
 }
 
 /**

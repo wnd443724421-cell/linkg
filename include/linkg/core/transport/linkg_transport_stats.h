@@ -34,6 +34,14 @@ typedef struct
     uint64_t last_rx_ms;              // 最近收到有效Transport帧时间
 } linkg_transport_class_stats_t;
 
+/****************************** Peer统计 ******************************/
+
+typedef struct
+{
+    linkg_transport_class_stats_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务类别独立累计统计
+    uint8_t                       peer_node_id;                          // 当前直接Peer节点编号
+} linkg_transport_peer_stats_t;
+
 /****************************** 全局统计 ******************************/
 
 typedef struct

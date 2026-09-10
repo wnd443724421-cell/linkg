@@ -91,64 +91,24 @@ static int _linkg_discovery_register_report_paths(const linkg_discovery_report_t
     return 0;
 }
 
-/**
- * @brief 注销新Report中已经失效的旧数据Path。
- */
-static int _linkg_discovery_unregister_obsolete_paths(const linkg_discovery_report_t *current, const linkg_discovery_report_t *next)
-{
-    uint32_t current_link_id;
-    uint32_t next_link_id;
-    int      first_error;
-    int      ret;
-
-    if (current == NULL || next == NULL)
-    {
-        return -EINVAL;
-    }
-
-    first_error = 0;
-
-    current_link_id = _linkg_discovery_report_link_id(current, LINKG_LINK_ACCESS_WIFI);
-    next_link_id    = _linkg_discovery_report_link_id(next, LINKG_LINK_ACCESS_WIFI);
-
-    if (current_link_id != LINKG_LINK_ID_INVALID &&
-        next_link_id == LINKG_LINK_ID_INVALID)
-    {
-        ret = linkg_node_unregister_path(current->node.node_id, current_link_id);
-        if (ret != 0 && ret != -ENOENT)
-        {
-            first_error = ret;
-        }
-    }
-
-    current_link_id = _linkg_discovery_report_link_id(current, LINKG_LINK_ACCESS_CELLULAR);
-    next_link_id    = _linkg_discovery_report_link_id(next, LINKG_LINK_ACCESS_CELLULAR);
-
-    if (current_link_id != LINKG_LINK_ID_INVALID &&
-        next_link_id == LINKG_LINK_ID_INVALID)
-    {
-        ret = linkg_node_unregister_path(current->node.node_id, current_link_id);
-        if (ret != 0 && ret != -ENOENT && first_error == 0)
-        {
-            first_error = ret;
-        }
-    }
-
-    return first_error;
-}
-
 /****************************** Switch辅助 ******************************/
 
 /**
- * @brief 根据Peer当前可用数据Path构造默认发送计划。
+ * @brief 根据本地已配置业务Link构造Peer默认发送计划。
  *
- * Wi-Fi优先作为主链路，Cellular作为备用链路。
+ * 默认主备角色不随Report中Endpoint的暂态有效性变化。
+ * Wi-Fi优先作为主链路，Cellular始终作为备用链路。
  * SINGLE模式保留secondary，使REDUNDANT调度策略可以同时使用主备链路。
  */
-static void _linkg_discovery_build_send_plan(const linkg_discovery_report_t *report, linkg_send_plan_t *plan)
+static void _linkg_discovery_build_default_send_plan(linkg_send_plan_t *plan)
 {
     uint32_t wifi_link_id;
     uint32_t cellular_link_id;
+
+    if (plan == NULL)
+    {
+        return;
+    }
 
     memset(plan, 0, sizeof(*plan));
 
@@ -156,13 +116,8 @@ static void _linkg_discovery_build_send_plan(const linkg_discovery_report_t *rep
     plan->primary_link_id   = LINKG_LINK_ID_INVALID;
     plan->secondary_link_id = LINKG_LINK_ID_INVALID;
 
-    if (report == NULL)
-    {
-        return;
-    }
-
-    wifi_link_id     = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_WIFI);
-    cellular_link_id = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_CELLULAR);
+    wifi_link_id     = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    cellular_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
 
     if (wifi_link_id != LINKG_LINK_ID_INVALID)
     {
@@ -318,7 +273,7 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, const li
         return ret;
     }
 
-    _linkg_discovery_build_send_plan(report, &plan);
+    _linkg_discovery_build_default_send_plan(&plan);
 
     ret = linkg_switch_set_plan(report->node.node_id, &plan);
     if (ret != 0)
@@ -357,15 +312,15 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, const li
 /**
  * @brief 同步在线直接Peer最新完整状态。
  *
- * 同Session更新仅同步Path与发送计划；
+ * 同Session更新仅注册或更新Report当前声明的Path，不动态注销旧Path，
+ * 也不覆盖Switch模块维护的当前发送计划；
  * Discovery Session变化时额外重置Transport序列和接收窗口。
  * 调用方必须持有Discovery状态锁。
  */
 int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
 {
-    linkg_send_plan_t plan;
-    bool              session_changed;
-    int               ret;
+    bool session_changed;
+    int  ret;
 
     if (peer == NULL || report == NULL || !peer->used || !peer->online)
     {
@@ -395,20 +350,6 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, const link
     }
 
     ret = _linkg_discovery_register_report_paths(report);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    _linkg_discovery_build_send_plan(report, &plan);
-
-    ret = linkg_switch_set_plan(report->node.node_id, &plan);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_discovery_unregister_obsolete_paths(&peer->report, report);
     if (ret != 0)
     {
         return ret;

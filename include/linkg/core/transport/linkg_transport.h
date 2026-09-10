@@ -21,7 +21,8 @@ extern "C"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_TRANSPORT_TX_TARGET_MAX  2U // 单次发送计划最大物理Target数量
+#define LINKG_TRANSPORT_TX_TARGET_MAX    2U  // 主备模型单次最大发送Target数量
+#define LINKG_TRANSPORT_FRAME_BATCH_MAX  32U // 单次Transport发送最大Wire Frame数量
 
 /****************************** 前置声明 ******************************/
 
@@ -67,7 +68,8 @@ typedef int (*linkg_transport_handler_func_t)(const linkg_transport_delivery_t *
 
 typedef struct
 {
-    linkg_packet_t *packet;              // 保留完整Transport Wire头的中继Frame，仅借用引用
+    linkg_packet_t *packet;              // 完整Transport Wire Frame，仅借用引用
+    uint32_t        payload_length;      // 当前Transport Frame实际载荷长度
     uint8_t         destination_node_id; // 最终目标节点编号
     uint8_t         peer_node_id;        // 当前物理上一跳直接Peer节点编号
 } linkg_transport_forward_item_t;
@@ -102,8 +104,7 @@ int linkg_transport_send_batch(const linkg_transport_tx_context_t *context, cons
 
 /****************************** 中继发送 ******************************/
 
-int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, linkg_packet_t *const *packets, uint32_t count, int *results);
-
+int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, const linkg_transport_forward_item_t *items, uint32_t count, int *results);
 /****************************** 统计查询 ******************************/
 
 int linkg_transport_get_peer_stats(uint8_t peer_node_id, linkg_transport_peer_stats_t *stats);

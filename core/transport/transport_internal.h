@@ -12,6 +12,7 @@
 
 #include "linkg_system_resources.h"
 #include "linkg_transport.h"
+#include "linkg_device_config.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -56,9 +57,10 @@ typedef struct
 
 typedef struct
 {
-    linkg_transport_rx_window_t   rx_window;   // 当前Peer当前Class接收窗口
-    linkg_transport_class_stats_t stats;       // 当前Peer当前Class累计统计
-    uint32_t                      tx_sequence; // 当前Peer当前Class逐跳发送序列号
+    pthread_mutex_t                tx_order_lock; // 当前Peer当前Class发送顺序保护锁
+    linkg_transport_rx_window_t    rx_window;     // 当前Peer当前Class接收去重窗口
+    linkg_transport_class_stats_t  stats;         // 当前Peer当前Class累计统计
+    uint32_t                       tx_sequence;   // 当前Peer当前Class逐跳发送序列号
 } linkg_transport_peer_class_t;
 
 typedef struct
@@ -161,6 +163,7 @@ typedef struct
     uint32_t                               next_packet_id;                       // 下一个原始完整数据包编号
     uint32_t                               peer_count;                           // 当前有效Peer数量
     uint8_t                                local_node_id;                        // 本机节点编号
+    linkg_device_role_t                    local_role;                           // 本机角色，用于Peer拓扑约束和接收中继资格判断
     bool                                   initialized;                          // 模块是否已初始化
 } linkg_transport_context_t;
 

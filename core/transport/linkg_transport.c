@@ -2,8 +2,8 @@
  * @file linkg_transport.c
  * @brief LinkG逻辑传输层实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-29
+ * @version 1.2.0
+ * @date 2026-09-10
  */
 
 #include "transport_internal.h"
@@ -31,6 +31,153 @@ static bool _linkg_transport_node_id_valid(uint8_t node_id)
 }
 
 /**
+ * @brief 初始化全部固定Peer槽位的Class发送顺序锁。
+ */
+static int _linkg_transport_peer_tx_locks_init(void)
+{
+    uint32_t initialized_count;
+    uint32_t peer_index;
+    uint32_t class_index;
+    int      ret;
+
+    initialized_count = 0U;
+
+    for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
+    {
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            ret = pthread_mutex_init(&g_transport.peers[peer_index].classes[class_index].tx_order_lock, NULL);
+            if (ret != 0)
+            {
+                goto fail;
+            }
+
+            initialized_count++;
+        }
+    }
+
+    return 0;
+
+fail:
+    while (initialized_count > 0U)
+    {
+        initialized_count--;
+
+        peer_index  = initialized_count / LINKG_TRANSPORT_CLASS_COUNT;
+        class_index = initialized_count % LINKG_TRANSPORT_CLASS_COUNT;
+
+        (void)pthread_mutex_destroy(&g_transport.peers[peer_index].classes[class_index].tx_order_lock);
+    }
+
+    return -ret;
+}
+
+/**
+ * @brief 销毁全部固定Peer槽位的Class发送顺序锁。
+ */
+static void _linkg_transport_peer_tx_locks_deinit(void)
+{
+    uint32_t peer_index;
+    uint32_t class_index;
+
+    for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
+    {
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            (void)pthread_mutex_destroy(&g_transport.peers[peer_index].classes[class_index].tx_order_lock);
+        }
+    }
+}
+
+/**
+ * @brief 锁定指定Peer全部业务类别的发送顺序锁。
+ *
+ * @note 调用方必须已经持有g_transport.lock。
+ *       三个Class始终按照固定索引顺序加锁。
+ */
+static int _linkg_transport_peer_tx_order_lock_all(linkg_transport_peer_t *peer)
+{
+    uint32_t class_index;
+    int      ret;
+
+    if (peer == NULL)
+    {
+        return -EINVAL;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        ret = pthread_mutex_lock(&peer->classes[class_index].tx_order_lock);
+        if (ret != 0)
+        {
+            while (class_index > 0U)
+            {
+                class_index--;
+                pthread_mutex_unlock(&peer->classes[class_index].tx_order_lock);
+            }
+
+            return -ret;
+        }
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 解锁指定Peer全部业务类别的发送顺序锁。
+ *
+ * @note 三个Class按照与加锁相反的顺序释放。
+ */
+static void _linkg_transport_peer_tx_order_unlock_all(linkg_transport_peer_t *peer)
+{
+    uint32_t class_index;
+
+    if (peer == NULL)
+    {
+        return;
+    }
+
+    class_index = LINKG_TRANSPORT_CLASS_COUNT;
+
+    while (class_index > 0U)
+    {
+        class_index--;
+        pthread_mutex_unlock(&peer->classes[class_index].tx_order_lock);
+    }
+}
+
+/**
+ * @brief 重置指定Peer的三业务类别协议状态。
+ *
+ * @note 调用方必须持有g_transport.lock，并确保当前Peer不存在并发TX。
+ *       本函数不会修改tx_order_lock、peer_node_id和valid。
+ */
+static void _linkg_transport_reset_peer_classes(linkg_transport_peer_t *peer, bool clear_stats)
+{
+    linkg_transport_peer_class_t *peer_class;
+    uint32_t                      class_index;
+
+    if (peer == NULL)
+    {
+        return;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        peer_class = &peer->classes[class_index];
+
+        peer_class->tx_sequence = 0U;
+
+        linkg_transport_window_reset(&peer_class->rx_window);
+
+        if (clear_stats)
+        {
+            memset(&peer_class->stats, 0, sizeof(peer_class->stats));
+        }
+    }
+}
+
+/**
  * @brief 查找空闲Peer槽位。
  *
  * @note 调用方必须持有g_transport.lock。
@@ -53,7 +200,7 @@ static linkg_transport_peer_t *_linkg_transport_find_unused_locked(void)
 /**
  * @brief 查找指定直接Peer。
  *
- * @note 调用方必须持有g_transport.lock，返回指针不得在解锁后继续使用。
+ * @note 调用方必须持有g_transport.lock，返回指针不得在解锁后无保护继续使用。
  */
 linkg_transport_peer_t *linkg_transport_find_peer_locked(uint8_t peer_node_id)
 {
@@ -77,12 +224,44 @@ linkg_transport_peer_t *linkg_transport_find_peer_locked(uint8_t peer_node_id)
 }
 
 /**
+ * @brief 查找指定直接Peer的业务类别协议状态。
+ *
+ * @note 调用方必须持有g_transport.lock，返回指针不得在解锁后无保护继续使用。
+ */
+linkg_transport_peer_class_t *linkg_transport_find_peer_class_locked(uint8_t peer_node_id, linkg_transport_class_t traffic_class)
+{
+    linkg_transport_peer_t *peer;
+
+    if (!linkg_transport_class_valid(traffic_class))
+    {
+        return NULL;
+    }
+
+    peer = linkg_transport_find_peer_locked(peer_node_id);
+    if (peer == NULL)
+    {
+        return NULL;
+    }
+
+    return &peer->classes[traffic_class];
+}
+
+/**
  * @brief 校验Transport类型。
  */
 bool linkg_transport_type_valid(linkg_transport_type_t type)
 {
     return type > LINKG_TRANSPORT_TYPE_NONE &&
            type < LINKG_TRANSPORT_TYPE_COUNT;
+}
+
+/**
+ * @brief 校验Transport业务类别。
+ */
+bool linkg_transport_class_valid(linkg_transport_class_t traffic_class)
+{
+    return traffic_class >= LINKG_TRANSPORT_CLASS_REALTIME &&
+           traffic_class < LINKG_TRANSPORT_CLASS_COUNT;
 }
 
 /****************************** 生命周期 ******************************/
@@ -125,6 +304,12 @@ int linkg_transport_init(void)
         return -ret;
     }
 
+    ret = _linkg_transport_peer_tx_locks_init();
+    if (ret != 0)
+    {
+        goto fail_lock;
+    }
+
     g_transport.local_node_id  = local->node_id;
     g_transport.local_role     = local->role;
     g_transport.next_packet_id = 1U;
@@ -133,9 +318,13 @@ int linkg_transport_init(void)
     ret = linkg_transport_reassembly_runtime_init();
     if (ret != 0)
     {
-        goto fail_lock;
+        goto fail_peer_locks;
     }
 
+    /**
+     * STA不具备中继能力，不需要初始化中继分片配对资源。
+     * AP收到非本机Transport Frame时才可能进入中继Fast Path。
+     */
     if (g_transport.local_role == LINKG_DEVICE_ROLE_AP)
     {
         ret = linkg_transport_forward_pair_runtime_init();
@@ -162,9 +351,12 @@ fail_forward_pair:
 fail_reassembly:
     (void)linkg_transport_reassembly_runtime_deinit();
 
-fail_lock:
+fail_peer_locks:
     g_transport.initialized = false;
 
+    _linkg_transport_peer_tx_locks_deinit();
+
+fail_lock:
     pthread_mutex_destroy(&g_transport.lock);
     memset(&g_transport, 0, sizeof(g_transport));
 
@@ -220,10 +412,11 @@ int linkg_transport_deinit(void)
 
     g_transport.initialized = false;
 
+    _linkg_transport_peer_tx_locks_deinit();
+
     ret = pthread_mutex_destroy(&g_transport.lock);
     if (ret != 0)
     {
-        g_transport.initialized = true;
         return -ret;
     }
 
@@ -266,6 +459,10 @@ int linkg_transport_register_peer(uint8_t peer_node_id)
         return 0;
     }
 
+    /**
+     * STA在当前主从拓扑中只允许存在一个直接Peer。
+     * WiFi和5G只是同一Peer的不同Path，不会增加Peer数量。
+     */
     if (g_transport.local_role == LINKG_DEVICE_ROLE_STA &&
         g_transport.peer_count != 0U)
     {
@@ -280,13 +477,14 @@ int linkg_transport_register_peer(uint8_t peer_node_id)
         return -ENOSPC;
     }
 
-    memset(peer, 0, sizeof(*peer));
+    /**
+     * 未使用槽位不存在并发TX，可以直接复位协议状态。
+     * tx_order_lock已经在Transport初始化阶段完成初始化。
+     */
+    _linkg_transport_reset_peer_classes(peer, true);
 
-    peer->peer_node_id       = peer_node_id;
-    peer->stats.peer_node_id = peer_node_id;
-    peer->valid              = true;
-
-    linkg_transport_window_reset(&peer->rx_window);
+    peer->peer_node_id = peer_node_id;
+    peer->valid        = true;
 
     g_transport.peer_count++;
 
@@ -326,15 +524,20 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
         return -ENOENT;
     }
 
-    peer->tx_sequence = 0U;
-
-    linkg_transport_window_reset(&peer->rx_window);
-
-    if (clear_stats)
+    /**
+     * 等待该Peer三个Class当前同步发送全部完成，
+     * 避免发送过程中重置sequence和TX统计。
+     */
+    ret = _linkg_transport_peer_tx_order_lock_all(peer);
+    if (ret != 0)
     {
-        memset(&peer->stats, 0, sizeof(peer->stats));
-        peer->stats.peer_node_id = peer->peer_node_id;
+        pthread_mutex_unlock(&g_transport.lock);
+        return ret;
     }
+
+    _linkg_transport_reset_peer_classes(peer, clear_stats);
+
+    _linkg_transport_peer_tx_order_unlock_all(peer);
 
     ret = pthread_mutex_unlock(&g_transport.lock);
 
@@ -342,7 +545,7 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
 }
 
 /**
- * @brief 注销直接Peer并释放Transport状态。
+ * @brief 注销直接Peer并释放Transport协议状态。
  */
 int linkg_transport_unregister_peer(uint8_t peer_node_id)
 {
@@ -372,19 +575,35 @@ int linkg_transport_unregister_peer(uint8_t peer_node_id)
         return -ENOENT;
     }
 
-    memset(peer, 0, sizeof(*peer));
+    /**
+     * Peer失效前等待三个Class当前同步发送全部结束。
+     * 持有g_transport.lock期间不会再有新的发送获取该Peer状态。
+     */
+    ret = _linkg_transport_peer_tx_order_lock_all(peer);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return ret;
+    }
+
+    _linkg_transport_reset_peer_classes(peer, true);
+
+    peer->peer_node_id = 0U;
+    peer->valid        = false;
 
     if (g_transport.peer_count > 0U)
     {
         g_transport.peer_count--;
     }
 
+    _linkg_transport_peer_tx_order_unlock_all(peer);
+
     ret = pthread_mutex_unlock(&g_transport.lock);
 
     return ret == 0 ? 0 : -ret;
 }
 
-/****************************** 类型交付 ******************************/
+/****************************** 本机交付 ******************************/
 
 /**
  * @brief 注册指定Transport类型的本机交付函数。
@@ -459,14 +678,88 @@ int linkg_transport_unregister_handler(linkg_transport_type_t type)
     return ret == 0 ? 0 : -ret;
 }
 
+/****************************** 中继调度 ******************************/
+
+/**
+ * @brief 注册Transport中继调度处理函数。
+ */
+int linkg_transport_register_forward_handler(linkg_transport_forward_handler_func_t handler, void *user_data)
+{
+    int ret;
+
+    if (!g_transport.initialized)
+    {
+        return -ENODEV;
+    }
+
+    if (handler == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = pthread_mutex_lock(&g_transport.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    if (g_transport.forward_handler.handler != NULL)
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return -EALREADY;
+    }
+
+    g_transport.forward_handler.handler   = handler;
+    g_transport.forward_handler.user_data = user_data;
+
+    ret = pthread_mutex_unlock(&g_transport.lock);
+
+    return ret == 0 ? 0 : -ret;
+}
+
+/**
+ * @brief 注销Transport中继调度处理函数。
+ */
+int linkg_transport_unregister_forward_handler(void)
+{
+    int ret;
+
+    if (!g_transport.initialized)
+    {
+        return -ENODEV;
+    }
+
+    ret = pthread_mutex_lock(&g_transport.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    if (g_transport.forward_handler.handler == NULL)
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return -ENOENT;
+    }
+
+    memset(&g_transport.forward_handler, 0, sizeof(g_transport.forward_handler));
+
+    ret = pthread_mutex_unlock(&g_transport.lock);
+
+    return ret == 0 ? 0 : -ret;
+}
+
 /****************************** 统计查询 ******************************/
 
 /**
  * @brief 获取指定直接Peer的Transport累计统计。
+ *
+ * @note g_transport.lock保护RX统计和Peer生命周期，
+ *       三个tx_order_lock保护对应Class的TX统计。
  */
 int linkg_transport_get_peer_stats(uint8_t peer_node_id, linkg_transport_peer_stats_t *stats)
 {
     linkg_transport_peer_t *peer;
+    uint32_t                class_index;
     int                     ret;
 
     if (!g_transport.initialized)
@@ -492,7 +785,23 @@ int linkg_transport_get_peer_stats(uint8_t peer_node_id, linkg_transport_peer_st
         return -ENOENT;
     }
 
-    *stats = peer->stats;
+    ret = _linkg_transport_peer_tx_order_lock_all(peer);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return ret;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+
+    stats->peer_node_id = peer->peer_node_id;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        stats->classes[class_index] = peer->classes[class_index].stats;
+    }
+
+    _linkg_transport_peer_tx_order_unlock_all(peer);
 
     ret = pthread_mutex_unlock(&g_transport.lock);
 
