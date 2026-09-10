@@ -1,5 +1,5 @@
 /**
- * @file rg255_tx_queue.h
+ * @file cellular_tx_queue.h
  * @brief LinkG蜂窝发送等待队列接口
  */
 
@@ -11,7 +11,8 @@
 #include "linkg_path.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /****************************** 前置声明 ******************************/
@@ -33,11 +34,13 @@ typedef struct
 
 linkg_cellular_tx_queue_t *linkg_cellular_tx_queue_create(uint32_t capacity);
 void                       linkg_cellular_tx_queue_destroy(linkg_cellular_tx_queue_t *queue);
+void                       linkg_cellular_tx_queue_clear(linkg_cellular_tx_queue_t *queue);
 
 /****************************** 状态查询 ******************************/
 
 uint32_t linkg_cellular_tx_queue_count(const linkg_cellular_tx_queue_t *queue);
 uint32_t linkg_cellular_tx_queue_capacity(const linkg_cellular_tx_queue_t *queue);
+uint32_t linkg_cellular_tx_queue_available(const linkg_cellular_tx_queue_t *queue);
 
 /****************************** 队列操作 ******************************/
 

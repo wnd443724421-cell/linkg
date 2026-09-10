@@ -1,5 +1,5 @@
 /**
- * @file rg255_tx.h
+ * @file cellular_tx.h
  * @brief LinkG蜂窝链路发送模块接口
  */
 
@@ -11,7 +11,8 @@
 #include "linkg_link.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /****************************** 前置声明 ******************************/
