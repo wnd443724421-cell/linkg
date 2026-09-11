@@ -8,7 +8,6 @@
 
 #include <pthread.h>
 #include <stdbool.h>
-#include <stdatomic.h>
 #include <stdint.h>
 
 #include "linkg_device_config.h"
@@ -31,7 +30,7 @@ extern "C"
 #define LINKG_TRANSPORT_REASSEMBLY_WAYS             2U                                                                 // 本机重组缓存组相联路数
 #define LINKG_TRANSPORT_REASSEMBLY_TTL_US           20000ULL                                                           // 不完整数据包最大保留时间
 #define LINKG_TRANSPORT_REASSEMBLY_GC_INTERVAL_US   5000ULL                                                            // 本机重组缓存清理周期
-#define LINKG_TRANSPORT_RX_WINDOW_WORDS             (LINKG_TRANSPORT_RX_WINDOW_BITS / 64U)                             // 接收窗口位图字数量
+#define LINKG_TRANSPORT_RX_WINDOW_WORDS             (LINKG_TRANSPORT_RX_WINDOW_BITS / 64U)                            // 接收窗口位图字数量
 #define LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT      32U                                                                // 中继分片配对缓存组数
 #define LINKG_TRANSPORT_FORWARD_PAIR_WAYS           2U                                                                 // 中继分片配对组相联路数
 #define LINKG_TRANSPORT_FORWARD_PAIR_TTL_US         20000ULL                                                           // 中继不完整分片组最大保留时间
@@ -68,7 +67,6 @@ typedef struct
 typedef struct
 {
     linkg_transport_peer_class_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三个Class独立协议状态
-    _Atomic uint32_t             lifecycle_epoch;                      // Peer生命周期代际，偶数可用，奇数正在清理
     uint8_t                      peer_node_id;                         // 直接Peer节点编号
     bool                         valid;                                // Peer状态是否有效
 } linkg_transport_peer_t;
@@ -97,7 +95,6 @@ typedef struct
     linkg_packet_t         *tail_packet;         // 尾片先到时临时缓存，持有一个引用
     uint64_t                expires_at_us;       // 重组项过期时间
     uint32_t                packet_id;           // 原始完整数据包编号
-    uint32_t                peer_epoch;          // 分片进入缓存时的Peer生命周期代际
     linkg_transport_type_t  type;                // Transport数据类型
     linkg_transport_class_t traffic_class;       // 当前业务类别
     uint16_t                packet_length;       // 原始完整数据包长度
@@ -122,8 +119,6 @@ typedef struct
     const linkg_transport_fragment_header_t *fragment_header;  // Transport分片扩展头
     linkg_packet_t                          *packet;           // 当前Transport分片帧
     linkg_packet_t                          *completed_packet; // 完整重组Packet，result为1时有效
-    linkg_transport_peer_t                  *peer;             // 当前直接Peer固定槽位，仅借用
-    uint32_t                                 peer_epoch;       // RX Window接受时捕获的Peer生命周期代际
     linkg_transport_class_t                  traffic_class;    // 当前业务类别
     int                                      result;           // 1完成，0等待，<0非法
     uint8_t                                  peer_node_id;     // 当前物理上一跳直接Peer节点编号
@@ -136,7 +131,6 @@ typedef struct
     linkg_packet_t         *packet;              // 当前缓存的完整Transport分片帧，Pair持有一个引用
     uint64_t                expires_at_us;       // 当前配对项固定过期时间
     uint32_t                packet_id;           // 原始完整数据包编号
-    uint32_t                peer_epoch;          // 分片进入缓存时的Peer生命周期代际
     uint32_t                payload_length;      // 当前分片Transport载荷长度
     linkg_transport_type_t  type;                // Transport数据类型
     linkg_transport_class_t traffic_class;       // 当前业务类别
@@ -150,10 +144,10 @@ typedef struct
 
 typedef struct
 {
-    pthread_mutex_t                      lock;                                                                               // 中继分片配对缓存保护锁
+    pthread_mutex_t                      lock;                                                                            // 中继分片配对缓存保护锁
     linkg_transport_forward_pair_entry_t entries[LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT][LINKG_TRANSPORT_FORWARD_PAIR_WAYS]; // 固定分片配对缓存
-    uint64_t                             last_gc_us;                                                                         // 最近一次全局清理时间
-    bool                                 initialized;                                                                        // 配对资源是否已初始化
+    uint64_t                             last_gc_us;                                                                      // 最近一次全局清理时间
+    bool                                 initialized;                                                                     // 配对资源是否已初始化
 } linkg_transport_forward_pair_runtime_t;
 
 /****************************** 模块上下文 ******************************/
@@ -195,6 +189,7 @@ linkg_transport_window_result_t linkg_transport_window_accept_ex(linkg_transport
 int linkg_transport_reassembly_runtime_init(void);
 int linkg_transport_reassembly_runtime_deinit(void);
 int linkg_transport_reassembly_reset_peer(uint8_t peer_node_id);
+int linkg_transport_reassembly_submit(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, linkg_packet_t **completed_packet);
 int linkg_transport_reassembly_submit_batch(linkg_transport_reassembly_submit_item_t *items, uint32_t count);
 
 /****************************** 中继分片配对 ******************************/
@@ -202,7 +197,7 @@ int linkg_transport_reassembly_submit_batch(linkg_transport_reassembly_submit_it
 int linkg_transport_forward_pair_runtime_init(void);
 int linkg_transport_forward_pair_runtime_deinit(void);
 int linkg_transport_forward_pair_reset_peer(uint8_t peer_node_id);
-int linkg_transport_forward_pair_submit(linkg_transport_peer_t *peer, uint32_t peer_epoch, linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, linkg_transport_forward_item_t *output_items, uint32_t *output_count);
+int linkg_transport_forward_pair_submit(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, linkg_transport_forward_item_t *output_items, uint32_t *output_count);
 
 /****************************** 链路接收 ******************************/
 
@@ -210,11 +205,10 @@ void linkg_transport_receive_batch(linkg_link_t *link, linkg_link_rx_item_t *ite
 
 /****************************** 内部辅助 ******************************/
 
-linkg_transport_peer_t *linkg_transport_find_peer_locked(uint8_t peer_node_id);
-bool                    linkg_transport_peer_epoch_read_active(const linkg_transport_peer_t *peer, uint32_t *peer_epoch);
-bool                    linkg_transport_peer_epoch_matches(const linkg_transport_peer_t *peer, uint32_t peer_epoch);
-bool                    linkg_transport_type_valid(linkg_transport_type_t type);
-bool                    linkg_transport_class_valid(linkg_transport_class_t traffic_class);
+linkg_transport_peer_t       *linkg_transport_find_peer_locked(uint8_t peer_node_id);
+linkg_transport_peer_class_t *linkg_transport_find_peer_class_locked(uint8_t peer_node_id, linkg_transport_class_t traffic_class);
+bool                          linkg_transport_type_valid(linkg_transport_type_t type);
+bool                          linkg_transport_class_valid(linkg_transport_class_t traffic_class);
 
 #ifdef __cplusplus
 }

@@ -306,6 +306,7 @@ static uint32_t _linkg_transport_tx_next_packet_id_locked(void)
 static int _linkg_transport_tx_acquire_state(const linkg_transport_tx_context_t *context, linkg_transport_tx_state_t *states, uint32_t count, linkg_transport_peer_class_t **peer_class)
 {
     linkg_transport_peer_class_t *current;
+    linkg_transport_peer_t       *peer;
     uint32_t                      index;
     int                           ret;
 
@@ -321,12 +322,20 @@ static int _linkg_transport_tx_acquire_state(const linkg_transport_tx_context_t 
         return -ENODEV;
     }
 
-    current = linkg_transport_find_peer_class_locked(context->peer_node_id, context->traffic_class);
-    if (current == NULL)
+    peer = linkg_transport_find_peer_locked(context->peer_node_id);
+    if (peer == NULL)
     {
         pthread_mutex_unlock(&g_transport.lock);
         return -ENOENT;
     }
+
+    if (!linkg_transport_peer_epoch_read_active(peer, NULL))
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return -EAGAIN;
+    }
+
+    current = &peer->classes[context->traffic_class];
 
     ret = pthread_mutex_lock(&current->tx_order_lock);
     if (ret != 0)
@@ -691,6 +700,7 @@ static void _linkg_transport_tx_record_stats(linkg_transport_peer_class_t *peer_
 static int _linkg_transport_tx_acquire_forward_state(const linkg_transport_tx_context_t *context, linkg_transport_peer_class_t **peer_class)
 {
     linkg_transport_peer_class_t *current;
+    linkg_transport_peer_t       *peer;
     int                           ret;
 
     ret = pthread_mutex_lock(&g_transport.lock);
@@ -705,12 +715,20 @@ static int _linkg_transport_tx_acquire_forward_state(const linkg_transport_tx_co
         return -ENODEV;
     }
 
-    current = linkg_transport_find_peer_class_locked(context->peer_node_id, context->traffic_class);
-    if (current == NULL)
+    peer = linkg_transport_find_peer_locked(context->peer_node_id);
+    if (peer == NULL)
     {
         pthread_mutex_unlock(&g_transport.lock);
         return -ENOENT;
     }
+
+    if (!linkg_transport_peer_epoch_read_active(peer, NULL))
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return -EAGAIN;
+    }
+
+    current = &peer->classes[context->traffic_class];
 
     ret = pthread_mutex_lock(&current->tx_order_lock);
     if (ret != 0)

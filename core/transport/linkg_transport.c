@@ -2,8 +2,8 @@
  * @file linkg_transport.c
  * @brief LinkG逻辑传输层实现
  * @author Dawn
- * @version 1.2.0
- * @date 2026-09-10
+ * @version 1.3.0
+ * @date 2026-09-11
  */
 
 #include "transport_internal.h"
@@ -86,6 +86,19 @@ static void _linkg_transport_peer_tx_locks_deinit(void)
         {
             (void)pthread_mutex_destroy(&g_transport.peers[peer_index].classes[class_index].tx_order_lock);
         }
+    }
+}
+
+/**
+ * @brief 初始化全部固定Peer槽位的生命周期代际。
+ */
+static void _linkg_transport_peer_epochs_init(void)
+{
+    uint32_t peer_index;
+
+    for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
+    {
+        atomic_init(&g_transport.peers[peer_index].lifecycle_epoch, 0U);
     }
 }
 
@@ -178,6 +191,88 @@ static void _linkg_transport_reset_peer_classes(linkg_transport_peer_t *peer, bo
 }
 
 /**
+ * @brief 计算固定Peer槽位的下一个可用偶数代际。
+ */
+static uint32_t _linkg_transport_peer_next_active_epoch(uint32_t current_epoch)
+{
+    uint32_t next_epoch;
+
+    next_epoch = current_epoch + 1U;
+
+    if ((next_epoch & 1U) != 0U)
+    {
+        next_epoch++;
+    }
+
+    return next_epoch;
+}
+
+/**
+ * @brief 将Peer切换到清理中的奇数代际并等待当前同步发送完成。
+ *
+ * @note 调用方必须持有g_transport.lock。
+ */
+static int _linkg_transport_peer_quiesce_locked(linkg_transport_peer_t *peer, bool clear_stats, uint32_t *quiescing_epoch)
+{
+    uint32_t active_epoch;
+    int      ret;
+
+    if (peer == NULL || quiescing_epoch == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (!linkg_transport_peer_epoch_read_active(peer, &active_epoch))
+    {
+        return -EBUSY;
+    }
+
+    *quiescing_epoch = active_epoch + 1U;
+
+    atomic_store_explicit(&peer->lifecycle_epoch, *quiescing_epoch, memory_order_release);
+
+    ret = _linkg_transport_peer_tx_order_lock_all(peer);
+    if (ret != 0)
+    {
+        atomic_store_explicit(&peer->lifecycle_epoch, active_epoch, memory_order_release);
+        return ret;
+    }
+
+    _linkg_transport_reset_peer_classes(peer, clear_stats);
+
+    _linkg_transport_peer_tx_order_unlock_all(peer);
+
+    return 0;
+}
+
+/**
+ * @brief 在Peer已经停止接收新分片后同步清理两类分片缓存。
+ *
+ * @note 调用期间不得持有g_transport.lock。
+ */
+static int _linkg_transport_reset_peer_caches(uint8_t peer_node_id)
+{
+    int first_error;
+    int ret;
+
+    first_error = 0;
+
+    ret = linkg_transport_reassembly_reset_peer(peer_node_id);
+    if (ret != 0)
+    {
+        first_error = ret;
+    }
+
+    ret = linkg_transport_forward_pair_reset_peer(peer_node_id);
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    return first_error;
+}
+
+/**
  * @brief 查找空闲Peer槽位。
  *
  * @note 调用方必须持有g_transport.lock。
@@ -200,7 +295,9 @@ static linkg_transport_peer_t *_linkg_transport_find_unused_locked(void)
 /**
  * @brief 查找指定直接Peer。
  *
- * @note 调用方必须持有g_transport.lock，返回指针不得在解锁后无保护继续使用。
+ * @note 调用方必须持有g_transport.lock。
+ *       返回指针的普通成员不得在解锁后无保护访问，
+ *       lifecycle_epoch只能通过原子辅助函数读取。
  */
 linkg_transport_peer_t *linkg_transport_find_peer_locked(uint8_t peer_node_id)
 {
@@ -224,26 +321,44 @@ linkg_transport_peer_t *linkg_transport_find_peer_locked(uint8_t peer_node_id)
 }
 
 /**
- * @brief 查找指定直接Peer的业务类别协议状态。
+ * @brief 读取Peer当前生命周期代际并判断是否允许数据面进入。
  *
- * @note 调用方必须持有g_transport.lock，返回指针不得在解锁后无保护继续使用。
+ * @note Peer槽位地址在Transport生命周期内保持稳定。
  */
-linkg_transport_peer_class_t *linkg_transport_find_peer_class_locked(uint8_t peer_node_id, linkg_transport_class_t traffic_class)
+bool linkg_transport_peer_epoch_read_active(const linkg_transport_peer_t *peer, uint32_t *peer_epoch)
 {
-    linkg_transport_peer_t *peer;
+    uint32_t current_epoch;
 
-    if (!linkg_transport_class_valid(traffic_class))
-    {
-        return NULL;
-    }
-
-    peer = linkg_transport_find_peer_locked(peer_node_id);
     if (peer == NULL)
     {
-        return NULL;
+        return false;
     }
 
-    return &peer->classes[traffic_class];
+    current_epoch = atomic_load_explicit(&peer->lifecycle_epoch, memory_order_acquire);
+
+    if (peer_epoch != NULL)
+    {
+        *peer_epoch = current_epoch;
+    }
+
+    return (current_epoch & 1U) == 0U;
+}
+
+/**
+ * @brief 判断RX捕获的Peer代际是否仍为当前可用代际。
+ */
+bool linkg_transport_peer_epoch_matches(const linkg_transport_peer_t *peer, uint32_t peer_epoch)
+{
+    uint32_t current_epoch;
+
+    if (peer == NULL || (peer_epoch & 1U) != 0U)
+    {
+        return false;
+    }
+
+    current_epoch = atomic_load_explicit(&peer->lifecycle_epoch, memory_order_acquire);
+
+    return current_epoch == peer_epoch;
 }
 
 /**
@@ -297,6 +412,7 @@ int linkg_transport_init(void)
     }
 
     memset(&g_transport, 0, sizeof(g_transport));
+    _linkg_transport_peer_epochs_init();
 
     ret = pthread_mutex_init(&g_transport.lock, NULL);
     if (ret != 0)
@@ -433,6 +549,7 @@ int linkg_transport_deinit(void)
 int linkg_transport_register_peer(uint8_t peer_node_id)
 {
     linkg_transport_peer_t *peer;
+    uint32_t                current_epoch;
     int                     ret;
 
     if (!g_transport.initialized)
@@ -455,6 +572,12 @@ int linkg_transport_register_peer(uint8_t peer_node_id)
     peer = linkg_transport_find_peer_locked(peer_node_id);
     if (peer != NULL)
     {
+        if (!linkg_transport_peer_epoch_read_active(peer, NULL))
+        {
+            pthread_mutex_unlock(&g_transport.lock);
+            return -EBUSY;
+        }
+
         pthread_mutex_unlock(&g_transport.lock);
         return 0;
     }
@@ -483,8 +606,13 @@ int linkg_transport_register_peer(uint8_t peer_node_id)
      */
     _linkg_transport_reset_peer_classes(peer, true);
 
+    current_epoch      = atomic_load_explicit(&peer->lifecycle_epoch, memory_order_relaxed);
     peer->peer_node_id = peer_node_id;
     peer->valid        = true;
+
+    atomic_store_explicit(&peer->lifecycle_epoch,
+                          _linkg_transport_peer_next_active_epoch(current_epoch),
+                          memory_order_release);
 
     g_transport.peer_count++;
 
@@ -499,6 +627,9 @@ int linkg_transport_register_peer(uint8_t peer_node_id)
 int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
 {
     linkg_transport_peer_t *peer;
+    uint32_t                current_epoch;
+    uint32_t                quiescing_epoch;
+    int                     cache_ret;
     int                     ret;
 
     if (!g_transport.initialized)
@@ -524,22 +655,44 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
         return -ENOENT;
     }
 
-    /**
-     * 等待该Peer三个Class当前同步发送全部完成，
-     * 避免发送过程中重置sequence和TX统计。
-     */
-    ret = _linkg_transport_peer_tx_order_lock_all(peer);
+    ret = _linkg_transport_peer_quiesce_locked(peer, clear_stats, &quiescing_epoch);
     if (ret != 0)
     {
         pthread_mutex_unlock(&g_transport.lock);
         return ret;
     }
 
-    _linkg_transport_reset_peer_classes(peer, clear_stats);
+    ret = pthread_mutex_unlock(&g_transport.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
 
-    _linkg_transport_peer_tx_order_unlock_all(peer);
+    cache_ret = _linkg_transport_reset_peer_caches(peer_node_id);
+
+    ret = pthread_mutex_lock(&g_transport.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    current_epoch = atomic_load_explicit(&peer->lifecycle_epoch, memory_order_acquire);
+
+    if (!peer->valid ||
+        peer->peer_node_id != peer_node_id ||
+        current_epoch != quiescing_epoch)
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return -ESTALE;
+    }
+
+    atomic_store_explicit(&peer->lifecycle_epoch, quiescing_epoch + 1U, memory_order_release);
 
     ret = pthread_mutex_unlock(&g_transport.lock);
+    if (cache_ret != 0)
+    {
+        return cache_ret;
+    }
 
     return ret == 0 ? 0 : -ret;
 }
@@ -550,6 +703,9 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
 int linkg_transport_unregister_peer(uint8_t peer_node_id)
 {
     linkg_transport_peer_t *peer;
+    uint32_t                current_epoch;
+    uint32_t                quiescing_epoch;
+    int                     cache_ret;
     int                     ret;
 
     if (!g_transport.initialized)
@@ -575,18 +731,36 @@ int linkg_transport_unregister_peer(uint8_t peer_node_id)
         return -ENOENT;
     }
 
-    /**
-     * Peer失效前等待三个Class当前同步发送全部结束。
-     * 持有g_transport.lock期间不会再有新的发送获取该Peer状态。
-     */
-    ret = _linkg_transport_peer_tx_order_lock_all(peer);
+    ret = _linkg_transport_peer_quiesce_locked(peer, true, &quiescing_epoch);
     if (ret != 0)
     {
         pthread_mutex_unlock(&g_transport.lock);
         return ret;
     }
 
-    _linkg_transport_reset_peer_classes(peer, true);
+    ret = pthread_mutex_unlock(&g_transport.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    cache_ret = _linkg_transport_reset_peer_caches(peer_node_id);
+
+    ret = pthread_mutex_lock(&g_transport.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    current_epoch = atomic_load_explicit(&peer->lifecycle_epoch, memory_order_acquire);
+
+    if (!peer->valid ||
+        peer->peer_node_id != peer_node_id ||
+        current_epoch != quiescing_epoch)
+    {
+        pthread_mutex_unlock(&g_transport.lock);
+        return -ESTALE;
+    }
 
     peer->peer_node_id = 0U;
     peer->valid        = false;
@@ -596,9 +770,11 @@ int linkg_transport_unregister_peer(uint8_t peer_node_id)
         g_transport.peer_count--;
     }
 
-    _linkg_transport_peer_tx_order_unlock_all(peer);
-
     ret = pthread_mutex_unlock(&g_transport.lock);
+    if (cache_ret != 0)
+    {
+        return cache_ret;
+    }
 
     return ret == 0 ? 0 : -ret;
 }

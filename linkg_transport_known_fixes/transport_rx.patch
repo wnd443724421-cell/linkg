@@ -2,15 +2,14 @@
  * @file transport_rx.c
  * @brief LinkG逻辑传输层批量接收实现
  * @author Dawn
- * @version 1.4.0
- * @date 2026-09-11
+ * @version 1.3.0
+ * @date 2026-09-10
  */
 
 #include "transport_internal.h"
 
 #include <errno.h>
 #include <netinet/in.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -21,10 +20,9 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE              32U        // 单次Transport内部处理最大物理帧数量
-#define LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX            32U        // 单个Transport类型最大本机交付数量
-#define LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID          UINT32_MAX // 无效物理来源分组索引
-#define LINKG_TRANSPORT_RX_SOURCE_GROUP_LOG_INTERVAL_MS  1000ULL    // 物理来源分组溢出日志最小间隔
+#define LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE      32U        // 单次Transport内部处理最大物理帧数量
+#define LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX    32U        // 单个Transport类型最大本机交付数量
+#define LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID  UINT32_MAX // 无效物理来源分组索引
 
 /****************************** 本机交付 ******************************/
 
@@ -72,9 +70,7 @@ typedef struct
     linkg_transport_header_t          header;             // Transport基础头
     linkg_transport_fragment_header_t fragment_header;    // Transport分片扩展头
     linkg_packet_t                   *completed_packet;   // 已完成重组的完整Payload Packet
-    linkg_transport_peer_t           *peer;               // RX Window接受时的直接Peer固定槽位，仅借用
     uint32_t                          source_group_index; // 当前物理来源分组索引
-    uint32_t                          peer_epoch;         // RX Window接受时捕获的Peer生命周期代际
     uint32_t                          payload_length;     // 当前Wire Frame实际Transport载荷长度
     linkg_transport_class_t           traffic_class;      // 当前Wire Frame业务类别
     linkg_transport_window_result_t   window_result;      // Peer/Class接收窗口结果
@@ -91,7 +87,6 @@ typedef struct
 {
     uint64_t invalid_frames;      // 非法Transport帧数量
     uint64_t unattributed_frames; // 无法归属直接Peer帧数量
-    uint64_t stale_epoch_frames;  // Peer重置期间拒绝的Transport帧数量
 } linkg_transport_rx_batch_stats_t;
 
 /****************************** 内部辅助 ******************************/
@@ -164,14 +159,11 @@ static bool _linkg_transport_rx_sequence_before(uint32_t sequence, uint32_t high
 /**
  * @brief 批量归并Transport全局异常统计。
  *
- * @note 正常高速路径三个计数均为0时不获取g_transport.lock。
+ * @note 正常高速路径两个计数均为0时不获取g_transport.lock。
  */
 static void _linkg_transport_rx_record_batch_stats(const linkg_transport_rx_batch_stats_t *stats)
 {
-    if (stats == NULL ||
-        (stats->invalid_frames == 0U &&
-         stats->unattributed_frames == 0U &&
-         stats->stale_epoch_frames == 0U))
+    if (stats == NULL || (stats->invalid_frames == 0U && stats->unattributed_frames == 0U))
     {
         return;
     }
@@ -180,7 +172,6 @@ static void _linkg_transport_rx_record_batch_stats(const linkg_transport_rx_batc
 
     g_transport.stats.rx_invalid_frames      += stats->invalid_frames;
     g_transport.stats.rx_unattributed_frames += stats->unattributed_frames;
-    g_transport.stats.rx_stale_epoch_frames  += stats->stale_epoch_frames;
 
     pthread_mutex_unlock(&g_transport.lock);
 }
@@ -450,44 +441,6 @@ static void _linkg_transport_rx_flush_forwards(linkg_transport_forward_batch_t *
 /****************************** Path归属 ******************************/
 
 /**
- * @brief 累计并限频输出物理来源分组溢出诊断。
- */
-static void _linkg_transport_rx_record_source_group_overflow(uint32_t group_count)
-{
-    static _Atomic uint64_t next_log_ms;
-    static _Atomic uint64_t overflow_count;
-    uint64_t                expected_log_ms;
-    uint64_t                now_ms;
-    uint64_t                count;
-
-    atomic_fetch_add_explicit(&overflow_count, 1U, memory_order_relaxed);
-
-    now_ms          = linkg_time_elapsed_ms();
-    expected_log_ms = atomic_load_explicit(&next_log_ms, memory_order_relaxed);
-
-    if (now_ms < expected_log_ms)
-    {
-        return;
-    }
-
-    if (!atomic_compare_exchange_strong_explicit(&next_log_ms,
-                                                 &expected_log_ms,
-                                                 now_ms + LINKG_TRANSPORT_RX_SOURCE_GROUP_LOG_INTERVAL_MS,
-                                                 memory_order_relaxed,
-                                                 memory_order_relaxed))
-    {
-        return;
-    }
-
-    count = atomic_exchange_explicit(&overflow_count, 0U, memory_order_relaxed);
-
-    LINKG_LOG_DEBUG("transport RX source group overflow, frames=%llu, group_count=%u, max=%u",
-                    (unsigned long long)count,
-                    group_count,
-                    LINKG_RESOURCE_NETWORK_STA_MAX);
-}
-
-/**
  * @brief 根据当前Link RX批次建立物理来源分组。
  *
  * @note 同一Link下相同来源端点只建立一个Group，后续Path查询和物理RX统计按Group聚合。
@@ -523,7 +476,7 @@ static void _linkg_transport_rx_build_source_groups(const linkg_link_rx_item_t *
         {
             if (current_group_count >= LINKG_RESOURCE_NETWORK_STA_MAX)
             {
-                _linkg_transport_rx_record_source_group_overflow(current_group_count);
+                LINKG_LOG_DEBUG("transport RX source group overflow, index=%u, group_count=%u, max=%u", index, current_group_count, LINKG_RESOURCE_NETWORK_STA_MAX);
                 stats->unattributed_frames++;
                 continue;
             }
@@ -654,14 +607,12 @@ static void _linkg_transport_rx_decode_batch(const linkg_link_rx_item_t *items, 
 static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, uint32_t count, const linkg_transport_rx_source_group_t *groups, uint32_t group_count, linkg_transport_rx_batch_stats_t *stats)
 {
     linkg_transport_peer_t       *group_peers[LINKG_RESOURCE_NETWORK_STA_MAX];
-    uint32_t                      group_peer_epochs[LINKG_RESOURCE_NETWORK_STA_MAX];
     linkg_transport_peer_class_t *peer_class;
     linkg_transport_peer_t       *peer;
     uint64_t                      now_ms;
     uint32_t                      confirmed_lost;
     uint32_t                      group_index;
     uint32_t                      index;
-    bool                          group_quiescing[LINKG_RESOURCE_NETWORK_STA_MAX];
     bool                          out_of_order;
     int                           ret;
 
@@ -679,8 +630,6 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
     }
 
     memset(group_peers, 0, sizeof(group_peers));
-    memset(group_peer_epochs, 0, sizeof(group_peer_epochs));
-    memset(group_quiescing, 0, sizeof(group_quiescing));
 
     ret = pthread_mutex_lock(&g_transport.lock);
     if (ret != 0)
@@ -693,13 +642,6 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
         if (groups[group_index].resolved)
         {
             group_peers[group_index] = linkg_transport_find_peer_locked(groups[group_index].peer_node_id);
-
-            if (group_peers[group_index] != NULL &&
-                !linkg_transport_peer_epoch_read_active(group_peers[group_index], &group_peer_epochs[group_index]))
-            {
-                group_peers[group_index]     = NULL;
-                group_quiescing[group_index] = true;
-            }
         }
     }
 
@@ -717,20 +659,9 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
 
         if (peer == NULL)
         {
-            if (group_quiescing[group_index])
-            {
-                stats->stale_epoch_frames++;
-            }
-            else
-            {
-                stats->unattributed_frames++;
-            }
-
+            stats->unattributed_frames++;
             continue;
         }
-
-        states[index].peer       = peer;
-        states[index].peer_epoch = group_peer_epochs[group_index];
 
         peer_class   = &peer->classes[states[index].traffic_class];
         out_of_order = peer_class->rx_window.initialized && _linkg_transport_rx_sequence_before(states[index].header.sequence, peer_class->rx_window.highest_sequence);
@@ -790,8 +721,6 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
         reassembly_items[reassembly_count].fragment_header  = &states[index].fragment_header;
         reassembly_items[reassembly_count].packet           = items[index].packet;
         reassembly_items[reassembly_count].completed_packet = NULL;
-        reassembly_items[reassembly_count].peer             = states[index].peer;
-        reassembly_items[reassembly_count].peer_epoch       = states[index].peer_epoch;
         reassembly_items[reassembly_count].traffic_class    = states[index].traffic_class;
         reassembly_items[reassembly_count].result           = -EINPROGRESS;
         reassembly_items[reassembly_count].peer_node_id     = states[index].peer_node_id;
@@ -838,14 +767,7 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
                 states[state_index].completed_packet = NULL;
             }
 
-            if (states[state_index].reassembly_result == -ESTALE)
-            {
-                stats->stale_epoch_frames++;
-            }
-            else
-            {
-                stats->invalid_frames++;
-            }
+            stats->invalid_frames++;
         }
         else if (states[state_index].reassembly_result == 1 && states[state_index].completed_packet == NULL)
         {
@@ -915,7 +837,7 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
         memset(pair_items, 0, sizeof(pair_items));
         pair_count = 0U;
 
-        ret = linkg_transport_forward_pair_submit(states[index].peer, states[index].peer_epoch, states[index].traffic_class, states[index].peer_node_id, &states[index].header, &states[index].fragment_header, items[index].packet, states[index].payload_length, pair_items, &pair_count);
+        ret = linkg_transport_forward_pair_submit(states[index].traffic_class, states[index].peer_node_id, &states[index].header, &states[index].fragment_header, items[index].packet, states[index].payload_length, pair_items, &pair_count);
         if (ret != 0)
         {
             for (pair_index = 0U; pair_index < pair_count; pair_index++)
@@ -926,11 +848,7 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
                 }
             }
 
-            if (ret == -ESTALE)
-            {
-                stats->stale_epoch_frames++;
-            }
-            else if (ret == -EPROTO || ret == -EINVAL)
+            if (ret == -EPROTO || ret == -EINVAL)
             {
                 stats->invalid_frames++;
             }

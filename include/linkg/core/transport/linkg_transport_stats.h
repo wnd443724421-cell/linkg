@@ -46,10 +46,13 @@ typedef struct
 
 typedef struct
 {
-    uint64_t rx_invalid_frames;         // 格式、长度或协议字段非法的Transport帧数量
-    uint64_t rx_unattributed_frames;    // 无法归属到直接Peer的Transport帧数量
-    uint64_t forward_incomplete_bytes;  // 中继不完整分片组丢弃的Transport载荷字节数
-    uint64_t forward_incomplete_frames; // 中继不完整分片组丢弃的Transport帧数量
+    uint64_t rx_invalid_frames;          // 格式、长度或协议字段非法的Transport帧数量
+    uint64_t rx_unattributed_frames;     // 无法归属到直接Peer的Transport帧数量
+    uint64_t rx_stale_epoch_frames;      // Peer重置期间拒绝的Transport帧数量
+    uint64_t reassembly_reset_frames;    // Peer重置或注销时主动释放的本机重组分片数量
+    uint64_t forward_incomplete_bytes;   // 中继不完整分片组丢弃的Transport载荷字节数
+    uint64_t forward_incomplete_frames;  // 中继不完整分片组丢弃的Transport帧数量
+    uint64_t forward_reset_frames;       // Peer重置或注销时主动释放的中继分片数量
 } linkg_transport_global_stats_t;
 
 #ifdef __cplusplus

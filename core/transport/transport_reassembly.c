@@ -2,8 +2,8 @@
  * @file transport_reassembly.c
  * @brief LinkG传输层本机分片重组实现
  * @author Dawn
- * @version 1.4.0
- * @date 2026-09-10
+ * @version 1.5.0
+ * @date 2026-09-11
  */
 
 #include "transport_internal.h"
@@ -35,7 +35,7 @@ static bool _linkg_transport_reassembly_peer_valid(uint8_t peer_node_id)
 /**
  * @brief 计算本机重组缓存组索引。
  */
-static uint32_t _linkg_transport_reassembly_set(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, uint32_t packet_id)
+static uint32_t _linkg_transport_reassembly_set(linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, uint32_t packet_id)
 {
     uint32_t hash;
 
@@ -45,6 +45,7 @@ static uint32_t _linkg_transport_reassembly_set(linkg_transport_class_t traffic_
     hash ^= (uint32_t)header->type * 0x27D4EB2FU;
     hash ^= (uint32_t)peer_node_id * 0x165667B1U;
     hash ^= (uint32_t)traffic_class * 0xD3A2646CU;
+    hash ^= peer_epoch * 0xA24BAED5U;
     hash ^= hash >> 16U;
 
     return hash & (LINKG_TRANSPORT_REASSEMBLY_SET_COUNT - 1U);
@@ -53,7 +54,7 @@ static uint32_t _linkg_transport_reassembly_set(linkg_transport_class_t traffic_
 /**
  * @brief 判断重组项是否匹配当前Peer/Class原始数据包。
  */
-static bool _linkg_transport_reassembly_match(const linkg_transport_reassembly_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header)
+static bool _linkg_transport_reassembly_match(const linkg_transport_reassembly_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header)
 {
     if (entry == NULL || header == NULL || fragment_header == NULL || !entry->valid)
     {
@@ -62,6 +63,7 @@ static bool _linkg_transport_reassembly_match(const linkg_transport_reassembly_e
 
     return entry->traffic_class == traffic_class &&
            entry->peer_node_id == peer_node_id &&
+           entry->peer_epoch == peer_epoch &&
            entry->source_node_id == header->source_node_id &&
            entry->destination_node_id == header->destination_node_id &&
            entry->type == (linkg_transport_type_t)header->type &&
@@ -97,6 +99,25 @@ static void _linkg_transport_reassembly_entry_clear(linkg_transport_reassembly_e
     }
 
     memset(entry, 0, sizeof(*entry));
+}
+
+/**
+ * @brief 记录Peer重置或注销时主动释放的本机重组分片数量。
+ *
+ * @note 调用前不得持有g_transport.reassembly.lock。
+ */
+static void _linkg_transport_reassembly_record_reset(uint64_t frames)
+{
+    if (frames == 0U)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&g_transport.lock);
+
+    g_transport.stats.reassembly_reset_frames += frames;
+
+    pthread_mutex_unlock(&g_transport.lock);
 }
 
 /**
@@ -313,7 +334,7 @@ static int _linkg_transport_reassembly_append_tail(linkg_transport_reassembly_en
  * @note TTL从当前原始Packet首个到达分片开始固定计算。
  *       调用方必须持有g_transport.reassembly.lock。
  */
-static int _linkg_transport_reassembly_create_entry_locked(linkg_transport_reassembly_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint64_t now_us)
+static int _linkg_transport_reassembly_create_entry_locked(linkg_transport_reassembly_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint64_t now_us)
 {
     uint32_t fragment_length;
     int      ret;
@@ -335,6 +356,7 @@ static int _linkg_transport_reassembly_create_entry_locked(linkg_transport_reass
 
     entry->expires_at_us       = now_us + LINKG_TRANSPORT_REASSEMBLY_TTL_US;
     entry->packet_id           = fragment_header->packet_id;
+    entry->peer_epoch          = peer_epoch;
     entry->type                = (linkg_transport_type_t)header->type;
     entry->traffic_class       = traffic_class;
     entry->packet_length       = fragment_header->packet_length;
@@ -395,7 +417,7 @@ static int _linkg_transport_reassembly_complete(linkg_transport_reassembly_entry
  *
  * @return 1表示完成重组，0表示继续等待，负值表示处理失败。
  */
-static int _linkg_transport_reassembly_submit_locked(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint64_t now_us, linkg_packet_t **completed_packet)
+static int _linkg_transport_reassembly_submit_locked(linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint64_t now_us, linkg_packet_t **completed_packet)
 {
     linkg_transport_reassembly_entry_t *candidate;
     linkg_transport_reassembly_entry_t *entry;
@@ -430,7 +452,7 @@ static int _linkg_transport_reassembly_submit_locked(linkg_transport_class_t tra
     (void)fragment_length;
 
     fragment_bit = _linkg_transport_reassembly_fragment_bit(fragment_header->fragment_offset);
-    set          = _linkg_transport_reassembly_set(traffic_class, peer_node_id, header, fragment_header->packet_id);
+    set          = _linkg_transport_reassembly_set(traffic_class, peer_node_id, peer_epoch, header, fragment_header->packet_id);
     entry        = NULL;
     free_entry   = NULL;
     oldest_entry = NULL;
@@ -444,7 +466,7 @@ static int _linkg_transport_reassembly_submit_locked(linkg_transport_class_t tra
             _linkg_transport_reassembly_entry_clear(candidate);
         }
 
-        if (_linkg_transport_reassembly_match(candidate, traffic_class, peer_node_id, header, fragment_header))
+        if (_linkg_transport_reassembly_match(candidate, traffic_class, peer_node_id, peer_epoch, header, fragment_header))
         {
             entry = candidate;
             break;
@@ -480,7 +502,7 @@ static int _linkg_transport_reassembly_submit_locked(linkg_transport_class_t tra
             _linkg_transport_reassembly_entry_clear(new_entry);
         }
 
-        return _linkg_transport_reassembly_create_entry_locked(new_entry, traffic_class, peer_node_id, header, fragment_header, packet, now_us);
+        return _linkg_transport_reassembly_create_entry_locked(new_entry, traffic_class, peer_node_id, peer_epoch, header, fragment_header, packet, now_us);
     }
 
     if (entry->packet_length != fragment_header->packet_length)
@@ -623,6 +645,7 @@ int linkg_transport_reassembly_runtime_deinit(void)
 int linkg_transport_reassembly_reset_peer(uint8_t peer_node_id)
 {
     linkg_transport_reassembly_entry_t *entry;
+    uint64_t                            reset_frames;
     uint32_t                            set;
     uint32_t                            way;
     int                                 ret;
@@ -636,6 +659,8 @@ int linkg_transport_reassembly_reset_peer(uint8_t peer_node_id)
     {
         return 0;
     }
+
+    reset_frames = 0U;
 
     ret = pthread_mutex_lock(&g_transport.reassembly.lock);
     if (ret != 0)
@@ -651,14 +676,30 @@ int linkg_transport_reassembly_reset_peer(uint8_t peer_node_id)
 
             if (entry->valid && entry->peer_node_id == peer_node_id)
             {
+                if (entry->first_packet != NULL)
+                {
+                    reset_frames++;
+                }
+
+                if (entry->tail_packet != NULL)
+                {
+                    reset_frames++;
+                }
+
                 _linkg_transport_reassembly_entry_clear(entry);
             }
         }
     }
 
     ret = pthread_mutex_unlock(&g_transport.reassembly.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
 
-    return ret == 0 ? 0 : -ret;
+    _linkg_transport_reassembly_record_reset(reset_frames);
+
+    return 0;
 }
 
 /****************************** 分片重组 ******************************/
@@ -702,7 +743,19 @@ int linkg_transport_reassembly_submit_batch(linkg_transport_reassembly_submit_it
 
     for (index = 0U; index < count; index++)
     {
-        items[index].result = _linkg_transport_reassembly_submit_locked(items[index].traffic_class, items[index].peer_node_id, items[index].header, items[index].fragment_header, items[index].packet, now_us, &items[index].completed_packet);
+        if (items[index].peer == NULL)
+        {
+            items[index].result = -EINVAL;
+            continue;
+        }
+
+        if (!linkg_transport_peer_epoch_matches(items[index].peer, items[index].peer_epoch))
+        {
+            items[index].result = -ESTALE;
+            continue;
+        }
+
+        items[index].result = _linkg_transport_reassembly_submit_locked(items[index].traffic_class, items[index].peer_node_id, items[index].peer_epoch, items[index].header, items[index].fragment_header, items[index].packet, now_us, &items[index].completed_packet);
     }
 
     ret = pthread_mutex_unlock(&g_transport.reassembly.lock);

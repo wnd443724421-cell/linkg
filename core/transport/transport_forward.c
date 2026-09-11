@@ -2,8 +2,8 @@
  * @file transport_forward.c
  * @brief LinkG传输层中继分片配对实现
  * @author Dawn
- * @version 1.2.0
- * @date 2026-09-10
+ * @version 1.3.0
+ * @date 2026-09-11
  */
 
 #include "transport_internal.h"
@@ -29,7 +29,7 @@ static bool _linkg_transport_forward_peer_valid(uint8_t peer_node_id)
 /**
  * @brief 计算中继分片配对缓存组索引。
  */
-static uint32_t _linkg_transport_forward_pair_set(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, uint32_t packet_id)
+static uint32_t _linkg_transport_forward_pair_set(linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, uint32_t packet_id)
 {
     uint32_t hash;
 
@@ -39,6 +39,7 @@ static uint32_t _linkg_transport_forward_pair_set(linkg_transport_class_t traffi
     hash ^= (uint32_t)header->type * 0x27D4EB2FU;
     hash ^= (uint32_t)peer_node_id * 0x165667B1U;
     hash ^= (uint32_t)traffic_class * 0xD3A2646CU;
+    hash ^= peer_epoch * 0xA24BAED5U;
     hash ^= hash >> 16U;
 
     return hash & (LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT - 1U);
@@ -47,7 +48,7 @@ static uint32_t _linkg_transport_forward_pair_set(linkg_transport_class_t traffi
 /**
  * @brief 判断中继分片配对项是否匹配当前Peer/Class原始数据包。
  */
-static bool _linkg_transport_forward_pair_match(const linkg_transport_forward_pair_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header)
+static bool _linkg_transport_forward_pair_match(const linkg_transport_forward_pair_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header)
 {
     if (entry == NULL || header == NULL || fragment_header == NULL || !entry->valid)
     {
@@ -56,6 +57,7 @@ static bool _linkg_transport_forward_pair_match(const linkg_transport_forward_pa
 
     return entry->traffic_class == traffic_class &&
            entry->peer_node_id == peer_node_id &&
+           entry->peer_epoch == peer_epoch &&
            entry->source_node_id == header->source_node_id &&
            entry->destination_node_id == header->destination_node_id &&
            entry->type == (linkg_transport_type_t)header->type &&
@@ -133,6 +135,27 @@ static void _linkg_transport_forward_record_incomplete(uint64_t bytes, uint64_t 
 }
 
 /**
+ * @brief 记录Peer重置或注销时主动释放的中继分片数量。
+ *
+ * @note 调用前不得持有g_transport.forward_pairs.lock。
+ */
+static void _linkg_transport_forward_record_reset(uint64_t bytes, uint64_t frames)
+{
+    if (bytes == 0U && frames == 0U)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&g_transport.lock);
+
+    g_transport.stats.forward_incomplete_bytes  += bytes;
+    g_transport.stats.forward_incomplete_frames += frames;
+    g_transport.stats.forward_reset_frames      += frames;
+
+    pthread_mutex_unlock(&g_transport.lock);
+}
+
+/**
  * @brief 清理已经过期的中继分片配对项。
  *
  * @note 调用方必须持有g_transport.forward_pairs.lock。
@@ -169,7 +192,7 @@ static void _linkg_transport_forward_pair_gc_locked(uint64_t now_us, uint64_t *d
  *
  * @note Pair缓存额外持有当前Packet一个引用，Link RX原始引用保持不变。
  */
-static int _linkg_transport_forward_pair_create_locked(linkg_transport_forward_pair_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, uint64_t now_us)
+static int _linkg_transport_forward_pair_create_locked(linkg_transport_forward_pair_entry_t *entry, linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, uint64_t now_us)
 {
     if (entry == NULL || header == NULL || fragment_header == NULL || packet == NULL)
     {
@@ -183,6 +206,7 @@ static int _linkg_transport_forward_pair_create_locked(linkg_transport_forward_p
     entry->packet              = packet;
     entry->expires_at_us       = now_us + LINKG_TRANSPORT_FORWARD_PAIR_TTL_US;
     entry->packet_id           = fragment_header->packet_id;
+    entry->peer_epoch          = peer_epoch;
     entry->payload_length      = payload_length;
     entry->type                = (linkg_transport_type_t)header->type;
     entry->traffic_class       = traffic_class;
@@ -256,7 +280,7 @@ static int _linkg_transport_forward_pair_complete_locked(linkg_transport_forward
  *
  * @return 返回0且output_count为0表示继续等待，返回0且output_count为2表示已经完成FIRST/LAST配对。
  */
-static int _linkg_transport_forward_pair_submit_locked(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, uint64_t now_us, linkg_transport_forward_item_t *output_items, uint32_t *output_count, uint64_t *dropped_bytes, uint64_t *dropped_frames)
+static int _linkg_transport_forward_pair_submit_locked(linkg_transport_class_t traffic_class, uint8_t peer_node_id, uint32_t peer_epoch, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, uint64_t now_us, linkg_transport_forward_item_t *output_items, uint32_t *output_count, uint64_t *dropped_bytes, uint64_t *dropped_frames)
 {
     linkg_transport_forward_pair_entry_t *candidate;
     linkg_transport_forward_pair_entry_t *entry;
@@ -273,7 +297,7 @@ static int _linkg_transport_forward_pair_submit_locked(linkg_transport_class_t t
 
     *output_count = 0U;
 
-    set          = _linkg_transport_forward_pair_set(traffic_class, peer_node_id, header, fragment_header->packet_id);
+    set          = _linkg_transport_forward_pair_set(traffic_class, peer_node_id, peer_epoch, header, fragment_header->packet_id);
     entry        = NULL;
     free_entry   = NULL;
     oldest_entry = NULL;
@@ -287,7 +311,7 @@ static int _linkg_transport_forward_pair_submit_locked(linkg_transport_class_t t
             _linkg_transport_forward_pair_entry_drop(candidate, dropped_bytes, dropped_frames);
         }
 
-        if (_linkg_transport_forward_pair_match(candidate, traffic_class, peer_node_id, header, fragment_header))
+        if (_linkg_transport_forward_pair_match(candidate, traffic_class, peer_node_id, peer_epoch, header, fragment_header))
         {
             entry = candidate;
             break;
@@ -323,7 +347,7 @@ static int _linkg_transport_forward_pair_submit_locked(linkg_transport_class_t t
             _linkg_transport_forward_pair_entry_drop(new_entry, dropped_bytes, dropped_frames);
         }
 
-        return _linkg_transport_forward_pair_create_locked(new_entry, traffic_class, peer_node_id, header, fragment_header, packet, payload_length, now_us);
+        return _linkg_transport_forward_pair_create_locked(new_entry, traffic_class, peer_node_id, peer_epoch, header, fragment_header, packet, payload_length, now_us);
     }
 
     if (entry->packet_length != fragment_header->packet_length)
@@ -478,7 +502,7 @@ int linkg_transport_forward_pair_reset_peer(uint8_t peer_node_id)
         return -ret;
     }
 
-    _linkg_transport_forward_record_incomplete(dropped_bytes, dropped_frames);
+    _linkg_transport_forward_record_reset(dropped_bytes, dropped_frames);
 
     return 0;
 }
@@ -490,7 +514,7 @@ int linkg_transport_forward_pair_reset_peer(uint8_t peer_node_id)
  *
  * @note 当前Packet进入Pair Cache时由缓存额外retain；output_count为2时两个输出Packet引用均移交给调用方负责最终release。
  */
-int linkg_transport_forward_pair_submit(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, linkg_transport_forward_item_t *output_items, uint32_t *output_count)
+int linkg_transport_forward_pair_submit(linkg_transport_peer_t *peer, uint32_t peer_epoch, linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, uint32_t payload_length, linkg_transport_forward_item_t *output_items, uint32_t *output_count)
 {
     uint64_t dropped_bytes;
     uint64_t dropped_frames;
@@ -508,7 +532,7 @@ int linkg_transport_forward_pair_submit(linkg_transport_class_t traffic_class, u
         return -EPERM;
     }
 
-    if (!linkg_transport_class_valid(traffic_class) || !_linkg_transport_forward_peer_valid(peer_node_id) || header == NULL || fragment_header == NULL || packet == NULL || output_items == NULL || output_count == NULL || payload_length == 0U)
+    if (peer == NULL || !linkg_transport_class_valid(traffic_class) || !_linkg_transport_forward_peer_valid(peer_node_id) || header == NULL || fragment_header == NULL || packet == NULL || output_items == NULL || output_count == NULL || payload_length == 0U)
     {
         return -EINVAL;
     }
@@ -529,9 +553,15 @@ int linkg_transport_forward_pair_submit(linkg_transport_class_t traffic_class, u
         return -ret;
     }
 
+    if (!linkg_transport_peer_epoch_matches(peer, peer_epoch))
+    {
+        ret = pthread_mutex_unlock(&g_transport.forward_pairs.lock);
+        return ret == 0 ? -ESTALE : -ret;
+    }
+
     _linkg_transport_forward_pair_gc_locked(now_us, &dropped_bytes, &dropped_frames);
 
-    ret = _linkg_transport_forward_pair_submit_locked(traffic_class, peer_node_id, header, fragment_header, packet, payload_length, now_us, output_items, output_count, &dropped_bytes, &dropped_frames);
+    ret = _linkg_transport_forward_pair_submit_locked(traffic_class, peer_node_id, peer_epoch, header, fragment_header, packet, payload_length, now_us, output_items, output_count, &dropped_bytes, &dropped_frames);
 
     unlock_ret = pthread_mutex_unlock(&g_transport.forward_pairs.lock);
 
