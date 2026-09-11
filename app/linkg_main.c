@@ -2,8 +2,8 @@
  * @file linkg_main.c
  * @brief LinkG应用程序入口
  * @author Dawn
- * @version 1.2.0
- * @date 2026-09-09
+ * @version 1.2.1
+ * @date 2026-09-11
  */
 
 #include <errno.h>
@@ -233,16 +233,7 @@ static int _linkg_app_init(void)
 
     g_app.switch_initialized = true;
 
-    ret = linkg_scheduler_init();
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("initialize scheduler module failed, error=%d", ret);
-        return ret;
-    }
-
-    g_app.scheduler_initialized = true;
-
-    // Transport在Link启动前注册Link Manager统一接收回调。
+    // Transport先初始化并在Link启动前注册Link Manager统一接收回调。
     ret = linkg_transport_init();
     if (ret != 0)
     {
@@ -252,7 +243,17 @@ static int _linkg_app_init(void)
 
     g_app.transport_initialized = true;
 
-    // TUN初始化时向Transport注册USER_DATA本机交付回调。
+    // Scheduler依赖Transport注册中继回调，因此必须在Transport初始化完成后初始化。
+    ret = linkg_scheduler_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize scheduler module failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.scheduler_initialized = true;
+
+    // TUN初始化时向Transport注册USER_DATA本机交付回调，并通过Scheduler提交发送数据。
     ret = linkg_tun_init(&g_app.packet_pool);
     if (ret != 0)
     {
@@ -624,18 +625,10 @@ static int _linkg_app_deinit(void)
         g_app.tun_initialized = false;
     }
 
-    if (g_app.transport_initialized)
-    {
-        ret = linkg_transport_deinit();
-        if (ret != 0)
-        {
-            LINKG_LOG_ERROR("deinitialize transport module failed, error=%d", ret);
-            return ret;
-        }
-
-        g_app.transport_initialized = false;
-    }
-
+    /**
+     * TUN已经注销本机USER_DATA交付回调，业务Link线程也已经停止。
+     * Scheduler必须先注销Transport中继回调，随后才能反初始化Transport。
+     */
     if (g_app.scheduler_initialized)
     {
         ret = linkg_scheduler_deinit();
@@ -646,6 +639,18 @@ static int _linkg_app_deinit(void)
         }
 
         g_app.scheduler_initialized = false;
+    }
+
+    if (g_app.transport_initialized)
+    {
+        ret = linkg_transport_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize transport module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.transport_initialized = false;
     }
 
     if (g_app.switch_initialized)

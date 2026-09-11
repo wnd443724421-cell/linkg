@@ -14,7 +14,7 @@
 #include <string.h>
 
 #include "linkg_log.h"
-
+#include "linkg_packet_pool.h"
 #include "link_internal.h"
 
 /****************************** 模块常量 ******************************/

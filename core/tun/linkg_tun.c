@@ -2,8 +2,8 @@
  * @file linkg_tun.c
  * @brief LinkG TUN数据面实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-08-15
+ * @version 1.1.0
+ * @date 2026-09-11
  */
 
 #include "linkg_tun.h"
@@ -27,6 +27,7 @@
 #include "linkg_config.h"
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
+#include "linkg_scheduler.h"
 #include "linkg_system_resources.h"
 #include "linkg_thread.h"
 #include "linkg_time.h"
@@ -36,12 +37,10 @@
 
 // 兼容尚未安装私有UAPI头的用户态构建环境。
 #ifndef LQ_TUN_IOC_READ_BATCH
-
 #define LQ_TUN_BATCH_MAX                          1024U                                                    // 内核批量接口最大包数
 #define LQ_TUN_BATCH_TIMEOUT_MAX_US               1000U                                                    // 内核批量读取最大等待时间
 #define LQ_TUN_IOC_READ_BATCH                     _IOWR('T', 240, struct lq_tun_batch_read)                // TUN批量读取ioctl
 #define LQ_TUN_IOC_WRITE_BATCH                    _IOWR('T', 241, struct lq_tun_batch_write)               // TUN批量写入ioctl
-
 struct lq_tun_batch_entry
 {
     __aligned_u64 data;     // 用户态数据缓冲区地址
@@ -68,7 +67,6 @@ struct lq_tun_batch_write
     __u32         written_bytes; // 实际写入字节数
     __s32         status;        // 内核批量写入状态
 };
-
 #endif
 
 /****************************** 模块常量 ******************************/
@@ -79,11 +77,9 @@ struct lq_tun_batch_write
 #ifndef LINKG_TUN_THREAD_CPU_CORE
 #define LINKG_TUN_THREAD_CPU_CORE                 1                                                       // TUN读取线程绑定CPU1
 #endif
-
 #ifndef LINKG_TUN_THREAD_SCHED_PRIORITY
 #define LINKG_TUN_THREAD_SCHED_PRIORITY           0                                                       // 0表示保持SCHED_OTHER
 #endif
-
 #define LINKG_TUN_BATCH_SIZE                      16U                                                     // 单次批量读写最大包数
 #define LINKG_TUN_BATCH_MIN_PKTS                  5U                                                      // 批量读取最小聚合目标
 #define LINKG_TUN_BATCH_TIMEOUT_US                60U                                                     // 批量读取最大聚合等待时间
@@ -108,7 +104,7 @@ _Static_assert(sizeof(struct lq_tun_batch_write) == 24U, "invalid TUN batch writ
 
 /****************************** 日志定义 ******************************/
 
-#define LINKG_TUN_LOG_TAG                         "TUN"                                                   		// TUN模块日志标签
+#define LINKG_TUN_LOG_TAG                         "TUN"                                                    // TUN模块日志标签
 #define LINKG_TUN_DEBUG(fmt, ...)                 LINKG_LOG_DEBUG("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__) // TUN调试日志
 #define LINKG_TUN_INFO(fmt, ...)                  LINKG_LOG_INFO("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)  // TUN信息日志
 #define LINKG_TUN_WARN(fmt, ...)                  LINKG_LOG_WARN("%s: " fmt, LINKG_TUN_LOG_TAG, ##__VA_ARGS__)  // TUN警告日志
@@ -126,29 +122,28 @@ typedef struct
     bool           ports_valid;      // TCP/UDP端口是否有效
 } linkg_tun_ipv4_info_t;
 
-typedef enum
+typedef struct
 {
-    LINKG_TUN_TRAFFIC_CLASS_DATA     = 0, // 普通数据，映射DATA
-    LINKG_TUN_TRAFFIC_CLASS_VIDEO,        // 视频业务，映射VIDEO
-    LINKG_TUN_TRAFFIC_CLASS_REALTIME      // 实时业务，映射REALTIME
-} linkg_tun_traffic_class_t;
+    linkg_scheduler_tx_item_t items[LINKG_TUN_BATCH_SIZE]; // 当前业务类别Scheduler发送元素
+    uint32_t                  count;                       // 当前业务类别元素数量
+} linkg_tun_tx_batch_t;
 
 typedef struct
 {
-    pthread_mutex_t                lock;                                       // TUN生命周期和写入路径保护锁
-    linkg_thread_t                 read_thread;                                // TUN读取线程
-    linkg_packet_pool_t           *packet_pool;                                // 外部Packet Pool，不拥有生命周期
-    linkg_network_ipv4_config_t    tun_ipv4;                                   // linkg0自身IPv4配置
-    linkg_network_ipv4_config_t    virtual_network;                            // LinkG用户虚拟聚合网络
-    linkg_network_traffic_config_t traffic;                                    // 用户业务分类配置
-    linkg_packet_t                *read_packets[LINKG_TUN_BATCH_SIZE];         // 批量读取Packet
-    struct lq_tun_batch_entry      read_entries[LINKG_TUN_BATCH_SIZE];         // 内核批量读取ABI条目
-    linkg_transport_tx_item_t      tx_items[LINKG_TUN_BATCH_SIZE];             // Transport逻辑发送批次
-    int                            fd;                                         // TUN设备描述符
-    uint8_t                        local_node_id;                              // 本机逻辑节点编号
-    bool                           initialized;                                // 模块是否初始化
-    bool                           started;                                    // TUN数据面是否启动
-    bool                           write_failed;                               // TUN写入路径故障状态
+    pthread_mutex_t                lock;                                             // TUN生命周期和写入路径保护锁
+    linkg_thread_t                 read_thread;                                      // TUN读取线程
+    linkg_packet_pool_t           *packet_pool;                                      // 外部Packet Pool，不拥有生命周期
+    linkg_network_ipv4_config_t    tun_ipv4;                                         // linkg0自身IPv4配置
+    linkg_network_ipv4_config_t    virtual_network;                                  // LinkG用户虚拟聚合网络
+    linkg_network_traffic_config_t traffic;                                          // 用户业务分类配置
+    linkg_packet_t                *read_packets[LINKG_TUN_BATCH_SIZE];               // 批量读取Packet
+    struct lq_tun_batch_entry      read_entries[LINKG_TUN_BATCH_SIZE];               // 内核批量读取ABI条目
+    linkg_tun_tx_batch_t           tx_batches[LINKG_TRANSPORT_CLASS_COUNT];          // 按Transport业务类别拆分的Scheduler发送批次
+    int                            fd;                                               // TUN设备描述符
+    uint8_t                        local_node_id;                                    // 本机逻辑节点编号
+    bool                           initialized;                                      // 模块是否初始化
+    bool                           started;                                          // TUN数据面是否启动
+    bool                           write_failed;                                     // TUN写入路径故障状态
 } linkg_tun_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -206,7 +201,6 @@ static int _linkg_tun_parse_ipv4(const linkg_packet_t *packet, linkg_tun_ipv4_in
     memset(info, 0, sizeof(*info));
 
     info->protocol = data[9U];
-
     memcpy(&info->source.s_addr, data + 12U, sizeof(info->source.s_addr));
     memcpy(&info->destination.s_addr, data + 16U, sizeof(info->destination.s_addr));
 
@@ -220,7 +214,6 @@ static int _linkg_tun_parse_ipv4(const linkg_packet_t *packet, linkg_tun_ipv4_in
      * 首片即使设置MF仍然包含L4头，可以继续读取端口。
      */
     memcpy(&value, data + 6U, sizeof(value));
-
     fragment = ntohs(value);
     if ((fragment & LINKG_TUN_IPV4_FRAGMENT_OFFSET_MASK) != 0U)
     {
@@ -246,9 +239,9 @@ static int _linkg_tun_parse_ipv4(const linkg_packet_t *packet, linkg_tun_ipv4_in
 /****************************** 业务分类 ******************************/
 
 /**
- * @brief 将网络配置业务类型转换为TUN内部业务类型。
+ * @brief 将网络配置业务类型转换为Transport业务类型。
  */
-static bool _linkg_tun_traffic_class_from_network(linkg_network_traffic_class_t network_class, linkg_tun_traffic_class_t *traffic_class)
+static bool _linkg_tun_traffic_class_from_network(linkg_network_traffic_class_t network_class, linkg_transport_class_t *traffic_class)
 {
     if (traffic_class == NULL)
     {
@@ -258,11 +251,11 @@ static bool _linkg_tun_traffic_class_from_network(linkg_network_traffic_class_t 
     switch (network_class)
     {
         case LINKG_NETWORK_TRAFFIC_CLASS_REALTIME:
-            *traffic_class = LINKG_TUN_TRAFFIC_CLASS_REALTIME;
+            *traffic_class = LINKG_TRANSPORT_CLASS_REALTIME;
             return true;
 
         case LINKG_NETWORK_TRAFFIC_CLASS_VIDEO:
-            *traffic_class = LINKG_TUN_TRAFFIC_CLASS_VIDEO;
+            *traffic_class = LINKG_TRANSPORT_CLASS_VIDEO;
             return true;
 
         default:
@@ -298,7 +291,7 @@ static bool _linkg_tun_port_protocol_from_ipv4(uint8_t ipv4_protocol, linkg_netw
 /**
  * @brief 判断端口是否命中用户业务分类规则。
  */
-static bool _linkg_tun_traffic_rule_match(const linkg_tun_ipv4_info_t *info, linkg_tun_traffic_class_t *traffic_class)
+static bool _linkg_tun_traffic_rule_match(const linkg_tun_ipv4_info_t *info, linkg_transport_class_t *traffic_class)
 {
     const linkg_network_traffic_rule_t *rule;
     linkg_network_port_protocol_t       protocol;
@@ -336,32 +329,32 @@ static bool _linkg_tun_traffic_rule_match(const linkg_tun_ipv4_info_t *info, lin
 }
 
 /**
- * @brief 获取IPv4业务包的LinkG业务分类。
+ * @brief 获取IPv4业务包的Transport业务分类。
  *
  * 分类优先级为ICMP、SSH、用户traffic_rules、默认DATA。
  */
-static linkg_tun_traffic_class_t _linkg_tun_packet_traffic_class(const linkg_tun_ipv4_info_t *info)
+static linkg_transport_class_t _linkg_tun_packet_traffic_class(const linkg_tun_ipv4_info_t *info)
 {
-    linkg_tun_traffic_class_t traffic_class;
+    linkg_transport_class_t traffic_class;
 
     if (info == NULL)
     {
-        return LINKG_TUN_TRAFFIC_CLASS_DATA;
+        return LINKG_TRANSPORT_CLASS_DATA;
     }
 
     if (info->protocol == IPPROTO_ICMP)
     {
-        return LINKG_TUN_TRAFFIC_CLASS_REALTIME;
+        return LINKG_TRANSPORT_CLASS_REALTIME;
     }
 
-    traffic_class = LINKG_TUN_TRAFFIC_CLASS_DATA;
+    traffic_class = LINKG_TRANSPORT_CLASS_DATA;
 
     if (info->protocol == IPPROTO_TCP &&
         info->ports_valid &&
         (info->source_port == LINKG_TUN_SSH_PORT ||
          info->destination_port == LINKG_TUN_SSH_PORT))
     {
-        return LINKG_TUN_TRAFFIC_CLASS_REALTIME;
+        return LINKG_TRANSPORT_CLASS_REALTIME;
     }
 
     (void)_linkg_tun_traffic_rule_match(info, &traffic_class);
@@ -370,9 +363,9 @@ static linkg_tun_traffic_class_t _linkg_tun_packet_traffic_class(const linkg_tun
 }
 
 /**
- * @brief 将TUN业务分类写入Packet元数据。
+ * @brief 将Transport业务分类写入Packet元数据。
  */
-static void _linkg_tun_packet_set_traffic_class(linkg_packet_t *packet, linkg_tun_traffic_class_t traffic_class)
+static void _linkg_tun_packet_set_traffic_class(linkg_packet_t *packet, linkg_transport_class_t traffic_class)
 {
     if (packet == NULL)
     {
@@ -381,15 +374,15 @@ static void _linkg_tun_packet_set_traffic_class(linkg_packet_t *packet, linkg_tu
 
     switch (traffic_class)
     {
-        case LINKG_TUN_TRAFFIC_CLASS_REALTIME:
+        case LINKG_TRANSPORT_CLASS_REALTIME:
             linkg_packet_set_realtime(packet, true);
             break;
 
-        case LINKG_TUN_TRAFFIC_CLASS_VIDEO:
+        case LINKG_TRANSPORT_CLASS_VIDEO:
             linkg_packet_set_video(packet, true);
             break;
 
-        case LINKG_TUN_TRAFFIC_CLASS_DATA:
+        case LINKG_TRANSPORT_CLASS_DATA:
         default:
             linkg_packet_set_data(packet);
             break;
@@ -446,7 +439,6 @@ static int _linkg_tun_resolve_destination_node_id(const struct in_addr *destinat
         }
 
         resolved_node_id = (uint8_t)host_part;
-
         if (resolved_node_id < LINKG_RESOURCE_NODE_ID_MIN ||
             resolved_node_id > LINKG_RESOURCE_NODE_ID_MAX)
         {
@@ -519,7 +511,6 @@ static int _linkg_tun_open(void)
     memset(&ifr, 0, sizeof(ifr));
 
     ifr.ifr_flags = (short)(IFF_TUN | IFF_NO_PI | IFF_TUN_EXCL);
-
     if (snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", LINKG_RESOURCE_INTERFACE_TUN) >= (int)sizeof(ifr.ifr_name))
     {
         close(fd);
@@ -673,19 +664,54 @@ static int _linkg_tun_read_batch(uint32_t packet_count, uint32_t *read_count)
 }
 
 /**
- * @brief 处理当前TUN读取批次并提交Transport。
+ * @brief 向Scheduler提交一个已经完成业务分类的TUN发送批次。
+ */
+static int _linkg_tun_submit_tx_batch(linkg_transport_class_t traffic_class, linkg_tun_tx_batch_t *batch)
+{
+    linkg_scheduler_tx_context_t context;
+
+    if (batch == NULL || batch->count == 0U)
+    {
+        return -EINVAL;
+    }
+
+    if (traffic_class < LINKG_TRANSPORT_CLASS_REALTIME ||
+        traffic_class >= LINKG_TRANSPORT_CLASS_COUNT)
+    {
+        return -EINVAL;
+    }
+
+    memset(&context, 0, sizeof(context));
+
+    context.traffic_class     = traffic_class;
+    context.policy            = LINKG_SCHEDULER_POLICY_DEFAULT;
+    context.specified_link_id = LINKG_LINK_ID_INVALID;
+
+    return linkg_scheduler_submit_batch(&context, batch->items, batch->count);
+}
+
+/**
+ * @brief 处理当前TUN读取批次并按业务类别提交Scheduler。
+ *
+ * @note 当前内核TUN仍为单队列，因此同一次读取可能包含多个业务类别。
+ *       TUN在用户态完成分类后按REALTIME、VIDEO、DATA拆分为独立Scheduler批次，
+ *       每个Scheduler调用只携带一个已经确定的traffic_class。
  */
 static void _linkg_tun_process_read_batch(uint32_t packet_count)
 {
-    linkg_tun_ipv4_info_t     info;
-    linkg_packet_t           *packet;
-    linkg_tun_traffic_class_t traffic_class;
-    uint32_t                  tx_count;
-    uint32_t                  index;
-    uint8_t                   destination_node_id;
-    int                       ret;
+    linkg_tun_ipv4_info_t    info;
+    linkg_tun_tx_batch_t    *tx_batch;
+    linkg_packet_t          *packet;
+    linkg_transport_class_t  traffic_class;
+    uint32_t                 class_index;
+    uint32_t                 index;
+    uint8_t                  destination_node_id;
+    int                      ret;
 
-    tx_count = 0U;
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        g_tun.tx_batches[class_index].count = 0U;
+    }
 
     for (index = 0U; index < packet_count; index++)
     {
@@ -709,24 +735,42 @@ static void _linkg_tun_process_read_batch(uint32_t packet_count)
         }
 
         traffic_class = _linkg_tun_packet_traffic_class(&info);
+        if (traffic_class < LINKG_TRANSPORT_CLASS_REALTIME ||
+            traffic_class >= LINKG_TRANSPORT_CLASS_COUNT)
+        {
+            continue;
+        }
 
         _linkg_tun_packet_set_traffic_class(packet, traffic_class);
 
-        g_tun.tx_items[tx_count].packet              = packet;
-        g_tun.tx_items[tx_count].destination_node_id = destination_node_id;
+        tx_batch = &g_tun.tx_batches[(uint32_t)traffic_class];
+        if (tx_batch->count >= LINKG_TUN_BATCH_SIZE)
+        {
+            continue;
+        }
 
-        tx_count++;
+        tx_batch->items[tx_batch->count].packet              = packet;
+        tx_batch->items[tx_batch->count].type                = LINKG_TRANSPORT_TYPE_USER_DATA;
+        tx_batch->items[tx_batch->count].destination_node_id = destination_node_id;
+        tx_batch->items[tx_batch->count].result              = -EINPROGRESS;
+        tx_batch->count++;
     }
 
-    if (tx_count == 0U)
+    // Transport Class枚举顺序即发送优先级：REALTIME -> VIDEO -> DATA。
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
-        return;
-    }
+        tx_batch = &g_tun.tx_batches[class_index];
+        if (tx_batch->count == 0U)
+        {
+            continue;
+        }
 
-    ret = linkg_transport_send_batch(g_tun.tx_items, tx_count, LINKG_TRANSPORT_TYPE_USER_DATA, LINKG_SCHEDULER_POLICY_DEFAULT, LINKG_LINK_ID_INVALID);
-    if (ret != 0)
-    {
-        //LINKG_TUN_DEBUG("transport send batch completed with error, count=%u, error=%d", tx_count, ret);
+        ret = _linkg_tun_submit_tx_batch((linkg_transport_class_t)class_index, tx_batch);
+        if (ret < 0)
+        {
+            // 热路径不增加逐批日志，错误由上层性能测试和Scheduler结果统计观察。
+            continue;
+        }
     }
 }
 
@@ -768,7 +812,6 @@ static int _linkg_tun_write_batch(const linkg_transport_delivery_t *items, uint3
         for (index = 0U; index < chunk_count; index++)
         {
             packet = items[offset + index].packet;
-
             if (packet == NULL || packet->data_length == 0U)
             {
                 return -EINVAL;
@@ -857,7 +900,6 @@ static int _linkg_tun_transport_receive(const linkg_transport_delivery_t *items,
     }
 
     ret = _linkg_tun_write_batch(items, count);
-
     if (ret != 0)
     {
         if (!g_tun.write_failed)
@@ -983,7 +1025,6 @@ static void _linkg_tun_read_thread(linkg_thread_t *thread, void *user_data)
             read_count = 0U;
 
             ret = _linkg_tun_read_batch(allocated_count, &read_count);
-
             if (read_count > 0U)
             {
                 _linkg_tun_process_read_batch(read_count);
@@ -1018,8 +1059,9 @@ exit:
 /**
  * @brief 初始化TUN数据面。
  *
- * Transport必须已经初始化并允许注册USER_DATA交付回调。
- * packet_pool由上层持有，整个TUN生命周期内必须保持有效。
+ * @note Scheduler必须已经初始化用于TUN发送调度；
+ *       Transport必须已经初始化并允许注册USER_DATA本机交付回调。
+ *       packet_pool由上层持有，整个TUN生命周期内必须保持有效。
  */
 int linkg_tun_init(linkg_packet_pool_t *packet_pool)
 {
@@ -1066,7 +1108,6 @@ int linkg_tun_init(linkg_packet_pool_t *packet_pool)
 
     thread_config.cpu_core         = LINKG_TUN_THREAD_CPU_CORE;
     thread_config.affinity_enabled = true;
-
 #if LINKG_TUN_THREAD_SCHED_PRIORITY > 0
     thread_config.sched_policy       = SCHED_RR;
     thread_config.sched_priority     = LINKG_TUN_THREAD_SCHED_PRIORITY;
@@ -1205,7 +1246,6 @@ int linkg_tun_start(void)
     if (ret != 0)
     {
         ret = -ret;
-
         stop_ret = linkg_thread_stop(&g_tun.read_thread);
         if (stop_ret != 0)
         {
@@ -1267,7 +1307,6 @@ int linkg_tun_stop(void)
     }
 
     thread_started = linkg_thread_is_started(&g_tun.read_thread);
-
     if (!g_tun.started && !thread_started)
     {
         pthread_mutex_unlock(&g_tun.lock);

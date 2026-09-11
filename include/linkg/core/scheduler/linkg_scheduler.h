@@ -14,10 +14,6 @@
 extern "C" {
 #endif
 
-/****************************** 模块常量 ******************************/
-
-#define LINKG_SCHEDULER_TX_BATCH_MAX 32U // 单次Scheduler调用最大Packet数量
-
 /****************************** 前置声明 ******************************/
 
 typedef struct linkg_packet linkg_packet_t;
