@@ -17,6 +17,7 @@
 #include "linkg_config.h"
 #include "linkg_link.h"
 #include "linkg_link_manager.h"
+#include "linkg_log.h"
 #include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
@@ -299,6 +300,7 @@ static int _linkg_discovery_start_core(void)
  * @brief 停止当前Discovery Core运行会话。
  *
  * 停止前通过所有已注册Channel发送当前Session主动离开状态。
+ * 主动离开基于无确认数据报，只作为尽力通知，不阻断本地生命周期清理。
  * Channel在全部send_leave同步返回以前必须保持运行和注册状态。
  */
 static int _linkg_discovery_stop_core(void)
@@ -309,7 +311,6 @@ static int _linkg_discovery_stop_core(void)
     uint32_t                       sender_count;
     uint32_t                       index;
     int                            cleanup_error;
-    int                            first_error;
     int                            ret;
     bool                           leave_ready;
 
@@ -323,7 +324,6 @@ static int _linkg_discovery_stop_core(void)
 
     sender_count = 0U;
     leave_ready  = false;
-    first_error  = 0;
 
     pthread_mutex_lock(&g_discovery.lock);
 
@@ -353,7 +353,7 @@ static int _linkg_discovery_stop_core(void)
     }
     else
     {
-        _linkg_discovery_record_first_error(&first_error, ret);
+        LINKG_LOG_WARN("build local PEER_LEAVE failed during stop, error=%d", ret);
     }
 
     for (index = 0U; index < LINKG_NODE_PATH_MAX; index++)
@@ -382,7 +382,7 @@ static int _linkg_discovery_stop_core(void)
             ret = senders[index].send_leave(&leave, senders[index].user_data);
             if (ret != 0)
             {
-                _linkg_discovery_record_first_error(&first_error, ret);
+                LINKG_LOG_WARN("send PEER_LEAVE failed during stop, error=%d", ret);
             }
         }
     }
@@ -404,9 +404,7 @@ static int _linkg_discovery_stop_core(void)
 
     pthread_mutex_unlock(&g_discovery.lock);
 
-    _linkg_discovery_record_first_error(&first_error, cleanup_error);
-
-    return first_error;
+    return cleanup_error;
 }
 
 /**

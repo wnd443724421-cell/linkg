@@ -94,18 +94,22 @@ static int _linkg_discovery_register_report_paths(const linkg_discovery_report_t
 /****************************** Switch辅助 ******************************/
 
 /**
- * @brief 根据本地已配置业务Link构造Peer默认发送计划。
+ * @brief 根据Peer当前已经有效的业务Path构造首次默认发送计划。
  *
- * 默认主备角色不随Report中Endpoint的暂态有效性变化。
- * Wi-Fi优先作为主链路，Cellular始终作为备用链路。
- * SINGLE模式保留secondary，使REDUNDANT调度策略可以同时使用主备链路。
+ * 首次Peer注册时，仅使用同时满足本地Link存在且对端Report声明有效的Path。
+ * Wi-Fi和Cellular同时有效时优先使用Wi-Fi，并保留Cellular作为备用链路；
+ * 仅存在一个有效Path时立即使用当前唯一Path，保证Peer注册完成后可以直接通信。
+ *
+ * @note 本接口只用于Peer首次注册时构造Bootstrap发送计划。
+ *       后续Report新增或更新Path时，Discovery只维护Path状态，
+ *       不再覆盖Switch模块维护的当前发送计划。
  */
-static void _linkg_discovery_build_default_send_plan(linkg_send_plan_t *plan)
+static void _linkg_discovery_build_default_send_plan(const linkg_discovery_report_t *report, linkg_send_plan_t *plan)
 {
     uint32_t wifi_link_id;
     uint32_t cellular_link_id;
 
-    if (plan == NULL)
+    if (report == NULL || plan == NULL)
     {
         return;
     }
@@ -116,9 +120,20 @@ static void _linkg_discovery_build_default_send_plan(linkg_send_plan_t *plan)
     plan->primary_link_id   = LINKG_LINK_ID_INVALID;
     plan->secondary_link_id = LINKG_LINK_ID_INVALID;
 
-    wifi_link_id     = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
-    cellular_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
+    /**
+     * 这里必须根据当前Peer Report决定有效Link，
+     * 不能仅根据本地Link Manager是否创建了对应业务Link判断。
+     *
+     * _linkg_discovery_register_report_paths()已经在本函数调用前成功完成，
+     * 因此这里返回的有效Link ID与当前Peer已经建立的Path保持一致。
+     */
+    wifi_link_id     = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_WIFI);
+    cellular_link_id = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_CELLULAR);
 
+    /**
+     * Wi-Fi和Cellular同时存在时，产品策略固定优先使用Wi-Fi，
+     * Cellular仅作为后续Switch主备算法使用的备用链路。
+     */
     if (wifi_link_id != LINKG_LINK_ID_INVALID)
     {
         plan->mode            = LINKG_SEND_MODE_SINGLE;
@@ -133,6 +148,11 @@ static void _linkg_discovery_build_default_send_plan(linkg_send_plan_t *plan)
         return;
     }
 
+    /**
+     * 当前Peer只有Cellular Path时立即使用Cellular通信。
+     * 此处primary_link_id仅表示当前发送计划的执行链路，
+     * 不改变Wi-Fi作为产品首选Primary的主备策略定义。
+     */
     if (cellular_link_id != LINKG_LINK_ID_INVALID)
     {
         plan->mode            = LINKG_SEND_MODE_SINGLE;
@@ -273,7 +293,7 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, const li
         return ret;
     }
 
-    _linkg_discovery_build_default_send_plan(&plan);
+    _linkg_discovery_build_default_send_plan(report, &plan);
 
     ret = linkg_switch_set_plan(report->node.node_id, &plan);
     if (ret != 0)

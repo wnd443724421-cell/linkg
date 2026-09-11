@@ -63,10 +63,10 @@
 #define DMA_DESC_TX                     256                                       // 默认TX DMA描述符数量
 #define BUDGET                          (dma_desc_rx / 4)                         // NAPI默认轮询预算
 #define TX_THRESH                       (dma_desc_tx / 4)                         // TX环队列唤醒阈值
-#define TX_COAL_FRAMES_DEFAULT          25                                        // 默认TX完成中断聚合帧数
+#define TX_COAL_FRAMES_DEFAULT          8                                         // 默认TX完成中断聚合帧数
 #define TX_COAL_TIMER_MS                10                                        // TX回收兜底定时器周期，单位毫秒
 #define RX_COAL_FRAMES_LOW              1                                         // RX低流量模式每次中断帧数
-#define RX_COAL_FRAMES_HIGH             16                                        // RX高流量模式中断聚合帧数
+#define RX_COAL_FRAMES_HIGH             8                                         // RX高流量模式中断聚合帧数
 #define RX_COAL_PPS_HIGH                3200                                      // RX切换HIGH模式PPS阈值
 #define RX_COAL_PPS_LOW                 2400                                      // RX切换LOW模式PPS阈值
 #define RX_COAL_TIMER_MS                10                                        // RX HIGH模式兜底定时器周期，单位毫秒
