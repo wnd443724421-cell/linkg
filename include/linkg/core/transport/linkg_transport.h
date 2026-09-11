@@ -22,7 +22,6 @@ extern "C"
 /****************************** 模块常量 ******************************/
 
 #define LINKG_TRANSPORT_TX_TARGET_MAX    2U  // 主备模型单次最大发送Target数量
-#define LINKG_TRANSPORT_FRAME_BATCH_MAX  32U // 单次Transport发送最大Wire Frame数量
 
 /****************************** 前置声明 ******************************/
 

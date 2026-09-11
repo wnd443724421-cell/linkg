@@ -547,6 +547,11 @@ static int _linkg_transport_tx_submit_wire_batch(const linkg_transport_tx_contex
 
     for (target_index = 0U; target_index < context->target_count; target_index++)
     {
+        for (index = 0U; index < count; index++)
+        {
+            target_results[index] = -EINPROGRESS;
+        }
+
         ret = linkg_link_submit_batch(context->targets[target_index].link, context->targets[target_index].path, tx_class, &context->targets[target_index].destination, packets, count, target_results);
 
         if (ret < 0)
@@ -847,6 +852,12 @@ int linkg_transport_send_batch(const linkg_transport_tx_context_t *context, cons
     if (context == NULL || items == NULL || results == NULL || count == 0U)
     {
         return -EINVAL;
+    }
+
+    ret = _linkg_transport_tx_validate_batch(context, items, count);
+    if (ret != 0)
+    {
+        return ret;
     }
 
     success_count = 0U;

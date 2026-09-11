@@ -610,6 +610,7 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
     linkg_transport_peer_class_t *peer_class;
     linkg_transport_peer_t       *peer;
     uint64_t                      now_ms;
+    uint32_t                      confirmed_lost;
     uint32_t                      group_index;
     uint32_t                      index;
     bool                          out_of_order;
@@ -662,10 +663,12 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
             continue;
         }
 
-        peer_class  = &peer->classes[states[index].traffic_class];
+        peer_class   = &peer->classes[states[index].traffic_class];
         out_of_order = peer_class->rx_window.initialized && _linkg_transport_rx_sequence_before(states[index].header.sequence, peer_class->rx_window.highest_sequence);
+        confirmed_lost = 0U;
 
-        states[index].window_result = linkg_transport_window_accept(&peer_class->rx_window, states[index].header.sequence);
+        states[index].window_result = linkg_transport_window_accept_ex(&peer_class->rx_window, states[index].header.sequence, &confirmed_lost);
+        peer_class->stats.rx_lost_packets += confirmed_lost;
 
         if (states[index].window_result == LINKG_TRANSPORT_WINDOW_ACCEPT)
         {
