@@ -189,7 +189,6 @@ linkg_transport_window_result_t linkg_transport_window_accept_ex(linkg_transport
 int linkg_transport_reassembly_runtime_init(void);
 int linkg_transport_reassembly_runtime_deinit(void);
 int linkg_transport_reassembly_reset_peer(uint8_t peer_node_id);
-int linkg_transport_reassembly_submit(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, linkg_packet_t **completed_packet);
 int linkg_transport_reassembly_submit_batch(linkg_transport_reassembly_submit_item_t *items, uint32_t count);
 
 /****************************** 中继分片配对 ******************************/

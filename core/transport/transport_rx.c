@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <netinet/in.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -20,9 +21,10 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE      32U        // 单次Transport内部处理最大物理帧数量
-#define LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX    32U        // 单个Transport类型最大本机交付数量
-#define LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID  UINT32_MAX // 无效物理来源分组索引
+#define LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE              32U        // 单次Transport内部处理最大物理帧数量
+#define LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX            32U        // 单个Transport类型最大本机交付数量
+#define LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID          UINT32_MAX // 无效物理来源分组索引
+#define LINKG_TRANSPORT_RX_SOURCE_GROUP_LOG_INTERVAL_MS  1000ULL    // 物理来源分组溢出日志最小间隔
 
 /****************************** 本机交付 ******************************/
 
@@ -441,6 +443,44 @@ static void _linkg_transport_rx_flush_forwards(linkg_transport_forward_batch_t *
 /****************************** Path归属 ******************************/
 
 /**
+ * @brief 累计并限频输出物理来源分组溢出诊断。
+ */
+static void _linkg_transport_rx_record_source_group_overflow(uint32_t group_count)
+{
+    static _Atomic uint64_t next_log_ms;
+    static _Atomic uint64_t overflow_count;
+    uint64_t                expected_log_ms;
+    uint64_t                now_ms;
+    uint64_t                count;
+
+    atomic_fetch_add_explicit(&overflow_count, 1U, memory_order_relaxed);
+
+    now_ms          = linkg_time_elapsed_ms();
+    expected_log_ms = atomic_load_explicit(&next_log_ms, memory_order_relaxed);
+
+    if (now_ms < expected_log_ms)
+    {
+        return;
+    }
+
+    if (!atomic_compare_exchange_strong_explicit(&next_log_ms,
+                                                 &expected_log_ms,
+                                                 now_ms + LINKG_TRANSPORT_RX_SOURCE_GROUP_LOG_INTERVAL_MS,
+                                                 memory_order_relaxed,
+                                                 memory_order_relaxed))
+    {
+        return;
+    }
+
+    count = atomic_exchange_explicit(&overflow_count, 0U, memory_order_relaxed);
+
+    LINKG_LOG_DEBUG("transport RX source group overflow, frames=%llu, group_count=%u, max=%u",
+                    (unsigned long long)count,
+                    group_count,
+                    LINKG_RESOURCE_NETWORK_STA_MAX);
+}
+
+/**
  * @brief 根据当前Link RX批次建立物理来源分组。
  *
  * @note 同一Link下相同来源端点只建立一个Group，后续Path查询和物理RX统计按Group聚合。
@@ -476,7 +516,7 @@ static void _linkg_transport_rx_build_source_groups(const linkg_link_rx_item_t *
         {
             if (current_group_count >= LINKG_RESOURCE_NETWORK_STA_MAX)
             {
-                LINKG_LOG_DEBUG("transport RX source group overflow, index=%u, group_count=%u, max=%u", index, current_group_count, LINKG_RESOURCE_NETWORK_STA_MAX);
+                _linkg_transport_rx_record_source_group_overflow(current_group_count);
                 stats->unattributed_frames++;
                 continue;
             }

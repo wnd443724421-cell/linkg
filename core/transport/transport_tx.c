@@ -60,6 +60,8 @@ static bool _linkg_transport_tx_node_id_valid(uint8_t node_id)
  */
 static int _linkg_transport_tx_validate_context(const linkg_transport_tx_context_t *context)
 {
+    uint32_t index;
+
     if (context == NULL || context->targets == NULL)
     {
         return -EINVAL;
@@ -73,6 +75,19 @@ static int _linkg_transport_tx_validate_context(const linkg_transport_tx_context
     if (!linkg_transport_class_valid(context->traffic_class))
     {
         return -EINVAL;
+    }
+
+    if (!_linkg_transport_tx_node_id_valid(context->peer_node_id))
+    {
+        return -EINVAL;
+    }
+
+    for (index = 0U; index < context->target_count; index++)
+    {
+        if (context->targets[index].link == NULL || context->targets[index].path == NULL)
+        {
+            return -EINVAL;
+        }
     }
 
     return 0;
@@ -123,11 +138,6 @@ static int _linkg_transport_tx_validate_batch(const linkg_transport_tx_context_t
     if (items == NULL || count == 0U)
     {
         return -EINVAL;
-    }
-
-    if (count > LINKG_TRANSPORT_TX_BATCH_MAX)
-    {
-        return -EOVERFLOW;
     }
 
     ret = _linkg_transport_tx_validate_context(context);
@@ -768,10 +778,16 @@ static int _linkg_transport_tx_send_chunk(const linkg_transport_tx_context_t *co
     int                              accepted_frames;
     int                              ret;
 
-    ret = _linkg_transport_tx_validate_batch(context, items, count);
-    if (ret != 0)
+    peer_class = NULL;
+
+    if (count == 0U)
     {
-        return ret;
+        return -EINVAL;
+    }
+
+    if (count > LINKG_TRANSPORT_TX_BATCH_MAX)
+    {
+        return -EOVERFLOW;
     }
 
     ret = _linkg_transport_tx_prepare_states(items, states, count);
@@ -949,6 +965,8 @@ int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, c
     uint32_t                      index;
     int                           accepted_count;
     int                           ret;
+
+    peer_class = NULL;
 
     if (!g_transport.initialized)
     {

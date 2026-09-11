@@ -709,37 +709,3 @@ int linkg_transport_reassembly_submit_batch(linkg_transport_reassembly_submit_it
 
     return ret == 0 ? 0 : -ret;
 }
-
-/**
- * @brief 提交单个本机目标分片并尝试完成重组。
- */
-int linkg_transport_reassembly_submit(linkg_transport_class_t traffic_class, uint8_t peer_node_id, const linkg_transport_header_t *header, const linkg_transport_fragment_header_t *fragment_header, linkg_packet_t *packet, linkg_packet_t **completed_packet)
-{
-    linkg_transport_reassembly_submit_item_t item;
-    int                                      ret;
-
-    if (completed_packet == NULL)
-    {
-        return -EINVAL;
-    }
-
-    *completed_packet = NULL;
-
-    memset(&item, 0, sizeof(item));
-
-    item.header          = header;
-    item.fragment_header = fragment_header;
-    item.packet          = packet;
-    item.traffic_class   = traffic_class;
-    item.peer_node_id    = peer_node_id;
-
-    ret = linkg_transport_reassembly_submit_batch(&item, 1U);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    *completed_packet = item.completed_packet;
-
-    return item.result;
-}

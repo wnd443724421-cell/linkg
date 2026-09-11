@@ -2,8 +2,8 @@
  * @file linkg_scheduler.c
  * @brief LinkG发送调度实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-08-28
+ * @version 1.2.0
+ * @date 2026-09-11
  */
 
 #include "linkg_scheduler.h"
@@ -19,26 +19,28 @@
 #include "linkg_path.h"
 #include "linkg_switch.h"
 #include "linkg_system_resources.h"
+#include "linkg_transport.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_SCHEDULER_BATCH_CHUNK_SIZE 32U                 // 单次调度批处理最大包数
-#define LINKG_SCHEDULER_PEER_GROUP_MAX   LINKG_NODE_PEER_MAX // 单批最大直接Peer分组数
+#define LINKG_SCHEDULER_PEER_GROUP_MAX LINKG_NODE_PEER_MAX // 单批最大直接Peer分组数量
 
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
-    uint32_t item_indices[LINKG_SCHEDULER_BATCH_CHUNK_SIZE]; // 属于该下一跳Peer的批次索引
-    uint32_t count;                                          // 当前Peer数据包数量
-    uint8_t  next_hop_node_id;                               // 当前物理下一跳节点编号
+    uint32_t item_indices[LINKG_SCHEDULER_TX_BATCH_MAX]; // 属于当前直接Peer的原批次索引
+    uint32_t count;                                      // 当前Peer数据包数量
+    uint8_t  peer_node_id;                               // 当前物理下一跳直接Peer节点编号
 } linkg_scheduler_peer_group_t;
 
 /****************************** 模块状态 ******************************/
 
-static _Atomic bool g_scheduler_initialized = false;
+static _Atomic bool    g_scheduler_initialized      = false;
+static _Atomic bool    g_scheduler_sta_peer_cached  = false;
+static _Atomic uint8_t g_scheduler_sta_peer_node_id = 0U;
 
-/****************************** 内部辅助 ******************************/
+/****************************** 参数校验 ******************************/
 
 /**
  * @brief 校验节点编号。
@@ -58,9 +60,164 @@ static bool _linkg_scheduler_link_id_valid(uint32_t link_id)
 }
 
 /**
- * @brief 设置Peer分组中全部数据包的调度结果。
+ * @brief 校验Transport业务类别。
  */
-static void _linkg_scheduler_set_group_result(linkg_scheduler_tx_item_t *items, const linkg_scheduler_peer_group_t *group, int result)
+static bool _linkg_scheduler_class_valid(linkg_transport_class_t traffic_class)
+{
+    return traffic_class >= LINKG_TRANSPORT_CLASS_REALTIME &&
+           traffic_class < LINKG_TRANSPORT_CLASS_COUNT;
+}
+
+/**
+ * @brief 校验Transport帧类型。
+ */
+static bool _linkg_scheduler_type_valid(linkg_transport_type_t type)
+{
+    return type > LINKG_TRANSPORT_TYPE_NONE &&
+           type < LINKG_TRANSPORT_TYPE_COUNT;
+}
+
+/**
+ * @brief 校验Scheduler调度策略。
+ */
+static bool _linkg_scheduler_policy_valid(linkg_scheduler_policy_t policy)
+{
+    return policy == LINKG_SCHEDULER_POLICY_DEFAULT ||
+           policy == LINKG_SCHEDULER_POLICY_REDUNDANT ||
+           policy == LINKG_SCHEDULER_POLICY_SPECIFIED;
+}
+
+/**
+ * @brief 校验Scheduler发送上下文。
+ */
+static int _linkg_scheduler_validate_context(const linkg_scheduler_tx_context_t *context)
+{
+    if (context == NULL)
+    {
+        return -EINVAL;
+    }
+    if (!_linkg_scheduler_class_valid(context->traffic_class) ||
+        !_linkg_scheduler_policy_valid(context->policy))
+    {
+        return -EINVAL;
+    }
+    if (context->policy == LINKG_SCHEDULER_POLICY_SPECIFIED &&
+        !_linkg_scheduler_link_id_valid(context->specified_link_id))
+    {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+/****************************** 路由解析 ******************************/
+
+/**
+ * @brief 查找STA当前唯一注册的AP直接Peer。
+ *
+ * @note Node层已经保证STA最多只能存在一个直接Peer，Scheduler只通过公开快照接口读取当前结果。
+ */
+static int _linkg_scheduler_find_sta_peer(uint8_t *peer_node_id)
+{
+    linkg_node_peer_snapshot_t snapshot;
+    uint32_t                   node_id;
+    uint8_t                    cached_node_id;
+    int                        ret;
+
+    if (peer_node_id == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (atomic_load(&g_scheduler_sta_peer_cached))
+    {
+        cached_node_id = atomic_load(&g_scheduler_sta_peer_node_id);
+        ret = linkg_node_get_peer_snapshot(cached_node_id, &snapshot);
+        if (ret == 0)
+        {
+            if (snapshot.info.role != LINKG_DEVICE_ROLE_AP)
+            {
+                return -EINVAL;
+            }
+
+            *peer_node_id = snapshot.info.node_id;
+            return 0;
+        }
+        if (ret != -ENOENT)
+        {
+            return ret;
+        }
+
+        atomic_store(&g_scheduler_sta_peer_cached, false);
+    }
+
+    for (node_id = LINKG_RESOURCE_NODE_ID_MIN; node_id <= LINKG_RESOURCE_NODE_ID_MAX; node_id++)
+    {
+        ret = linkg_node_get_peer_snapshot((uint8_t)node_id, &snapshot);
+        if (ret == -ENOENT)
+        {
+            continue;
+        }
+        if (ret != 0)
+        {
+            return ret;
+        }
+        if (snapshot.info.role != LINKG_DEVICE_ROLE_AP)
+        {
+            return -EINVAL;
+        }
+
+        atomic_store(&g_scheduler_sta_peer_node_id, snapshot.info.node_id);
+        atomic_store(&g_scheduler_sta_peer_cached, true);
+
+        *peer_node_id = snapshot.info.node_id;
+        return 0;
+    }
+
+    return -ENOENT;
+}
+
+/**
+ * @brief 根据本机角色和最终目标解析当前物理下一跳直接Peer。
+ *
+ * @note 当前拓扑为AP-STA星型：AP直接发送目标STA；STA发送任意远端节点均先交给唯一AP Peer。
+ */
+static int _linkg_scheduler_resolve_peer(const linkg_node_info_t *local, uint8_t destination_node_id, uint8_t sta_peer_node_id, uint8_t *peer_node_id)
+{
+    if (local == NULL || peer_node_id == NULL || !_linkg_scheduler_node_id_valid(destination_node_id))
+    {
+        return -EINVAL;
+    }
+    if (destination_node_id == local->node_id)
+    {
+        return -EHOSTUNREACH;
+    }
+
+    if (local->role == LINKG_DEVICE_ROLE_AP)
+    {
+        *peer_node_id = destination_node_id;
+        return 0;
+    }
+    if (local->role == LINKG_DEVICE_ROLE_STA)
+    {
+        if (!_linkg_scheduler_node_id_valid(sta_peer_node_id))
+        {
+            return -ENOENT;
+        }
+
+        *peer_node_id = sta_peer_node_id;
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
+/****************************** 结果处理 ******************************/
+
+/**
+ * @brief 设置Peer分组中全部普通发送元素的调度结果。
+ */
+static void _linkg_scheduler_set_tx_group_result(linkg_scheduler_tx_item_t *items, const linkg_scheduler_peer_group_t *group, int result)
 {
     uint32_t index;
 
@@ -76,203 +233,163 @@ static void _linkg_scheduler_set_group_result(linkg_scheduler_tx_item_t *items, 
 }
 
 /**
- * @brief 统计Peer分组中的成功数据包数量。
+ * @brief 设置Forward分组中全部元素的调度结果。
  */
-static uint32_t _linkg_scheduler_group_success_count(const linkg_scheduler_tx_item_t *items, const linkg_scheduler_peer_group_t *group)
+static void _linkg_scheduler_set_forward_group_result(int *results, const linkg_scheduler_peer_group_t *group, int result)
 {
-    uint32_t success_count;
     uint32_t index;
 
-    if (items == NULL || group == NULL)
+    if (results == NULL || group == NULL)
     {
-        return 0U;
+        return;
     }
-
-    success_count = 0U;
 
     for (index = 0U; index < group->count; index++)
     {
-        if (items[group->item_indices[index]].result == 0)
-        {
-            success_count++;
-        }
+        results[group->item_indices[index]] = result;
     }
-
-    return success_count;
 }
 
+/****************************** Target管理 ******************************/
+
 /**
- * @brief 向指定链路批量提交同一直接Peer的数据包。
+ * @brief 获取一个Transport发送Target并持有对应Path引用。
  *
- * @note 整个同步batch只获取一个Path引用和一份Endpoint快照。
- *       Packet仅借用，不转移调用方原始引用所有权。
- *
- * @return <0表示本函数参数或内部调用异常，>=0表示成功提交的数据包数量。
+ * @note Link仅借用Link Manager生命周期内稳定对象；Path成功获取后由调用方负责释放一次引用。
  */
-static int _linkg_scheduler_submit_link_batch(linkg_scheduler_tx_item_t *items, const linkg_scheduler_peer_group_t *group, uint32_t link_id, int *results)
+static int _linkg_scheduler_acquire_target(uint8_t peer_node_id, uint32_t link_id, linkg_transport_tx_target_t *target)
 {
-    linkg_packet_t        *packets[LINKG_SCHEDULER_BATCH_CHUNK_SIZE];
-    linkg_path_endpoint_t  destination;
+    linkg_path_endpoint_t destination;
     linkg_path_t          *path;
     linkg_link_t          *link;
-    uint32_t               item_index;
-    uint32_t               index;
     int                    ret;
 
-    if (items == NULL ||
-        group == NULL ||
-        results == NULL ||
-        group->count == 0U ||
-        group->count > LINKG_SCHEDULER_BATCH_CHUNK_SIZE ||
-        !_linkg_scheduler_node_id_valid(group->next_hop_node_id) ||
-        !_linkg_scheduler_link_id_valid(link_id))
+    if (!_linkg_scheduler_node_id_valid(peer_node_id) ||
+        !_linkg_scheduler_link_id_valid(link_id) ||
+        target == NULL)
     {
         return -EINVAL;
     }
 
-    for (index = 0U; index < group->count; index++)
-    {
-        results[index] = -EINPROGRESS;
-    }
+    memset(target, 0, sizeof(*target));
 
     link = linkg_link_manager_get(link_id);
     if (link == NULL)
     {
-        for (index = 0U; index < group->count; index++)
-        {
-            results[index] = -ENOENT;
-        }
-
-        return 0;
+        return -ENOENT;
     }
-
     if (!linkg_link_is_running(link))
     {
-        for (index = 0U; index < group->count; index++)
-        {
-            results[index] = -ENETDOWN;
-        }
-
-        return 0;
+        return -ENETDOWN;
     }
 
     path = NULL;
     memset(&destination, 0, sizeof(destination));
 
-    ret = linkg_node_acquire_path(group->next_hop_node_id, link_id, &path, &destination);
+    ret = linkg_node_acquire_path(peer_node_id, link_id, &path, &destination);
     if (ret != 0)
     {
-        for (index = 0U; index < group->count; index++)
-        {
-            results[index] = ret;
-        }
-
-        return 0;
+        return ret;
     }
 
-    for (index = 0U; index < group->count; index++)
-    {
-        item_index     = group->item_indices[index];
-        packets[index] = items[item_index].packet;
-    }
+    target->link        = link;
+    target->path        = path;
+    target->destination = destination;
 
-    ret = linkg_link_submit_batch(link,
-                              path,
-                              LINKG_LINK_TX_CLASS_DATA,
-                              &destination,
-                              packets,
-                              group->count,
-                              results);
-
-    // Link同步提交返回后释放Scheduler持有的Path引用。
-    linkg_path_release(path);
-
-    return ret;
+    return 0;
 }
 
 /**
- * @brief 调度同一直接Peer的一批数据包。
- *
- * @return <0表示本函数参数或内部调用异常，>=0表示当前Peer成功提交的数据包数量。
+ * @brief 释放Scheduler为Transport Target持有的全部Path引用。
  */
-static int _linkg_scheduler_submit_group(linkg_scheduler_tx_item_t *items, const linkg_scheduler_peer_group_t *group, linkg_scheduler_policy_t policy, uint32_t specified_link_id)
+static void _linkg_scheduler_release_targets(linkg_transport_tx_target_t *targets, uint32_t target_count)
 {
-    int               primary_results[LINKG_SCHEDULER_BATCH_CHUNK_SIZE];
-    int               secondary_results[LINKG_SCHEDULER_BATCH_CHUNK_SIZE];
-    linkg_send_plan_t plan;
-    uint32_t          success_count;
-    uint32_t          item_index;
-    uint32_t          index;
-    bool              redundant;
-    int               primary_ret;
-    int               secondary_ret;
+    uint32_t index;
 
-    if (items == NULL ||
-        group == NULL ||
-        group->count == 0U ||
-        group->count > LINKG_SCHEDULER_BATCH_CHUNK_SIZE)
+    if (targets == NULL)
+    {
+        return;
+    }
+
+    for (index = 0U; index < target_count; index++)
+    {
+        if (targets[index].path != NULL)
+        {
+            linkg_path_release(targets[index].path);
+            targets[index].path = NULL;
+        }
+    }
+}
+
+/**
+ * @brief 根据当前策略和Switch计划构造同一直接Peer的Transport Target数组。
+ *
+ * @note REDUNDANT模式仍只调用一次Transport；可用主备链路作为同一Context中的多个Target。
+ *       主链路暂时不可用时允许备用链路单独承担当前发送。
+ */
+static int _linkg_scheduler_build_targets(uint8_t peer_node_id, linkg_scheduler_policy_t policy, uint32_t specified_link_id, linkg_transport_tx_target_t *targets, uint32_t *target_count)
+{
+    linkg_send_plan_t plan;
+    uint32_t          count;
+    bool              redundant;
+    int               primary_error;
+    int               secondary_error;
+    int               ret;
+
+    if (!_linkg_scheduler_node_id_valid(peer_node_id) ||
+        !_linkg_scheduler_policy_valid(policy) ||
+        targets == NULL ||
+        target_count == NULL)
     {
         return -EINVAL;
     }
 
-    // SPECIFIED策略不读取Switch发送计划。
+    memset(targets, 0, sizeof(*targets) * LINKG_TRANSPORT_TX_TARGET_MAX);
+    *target_count = 0U;
+
     if (policy == LINKG_SCHEDULER_POLICY_SPECIFIED)
     {
-        primary_ret = _linkg_scheduler_submit_link_batch(items, group, specified_link_id, primary_results);
-        if (primary_ret < 0)
+        if (!_linkg_scheduler_link_id_valid(specified_link_id))
         {
-            _linkg_scheduler_set_group_result(items, group, primary_ret);
-            return primary_ret;
+            return -EINVAL;
         }
 
-        for (index = 0U; index < group->count; index++)
+        ret = _linkg_scheduler_acquire_target(peer_node_id, specified_link_id, &targets[0]);
+        if (ret != 0)
         {
-            items[group->item_indices[index]].result = primary_results[index];
+            return ret;
         }
 
-        return primary_ret;
+        *target_count = 1U;
+        return 0;
     }
 
     memset(&plan, 0, sizeof(plan));
 
-    // 同一个直接下一跳Peer的整个batch只读取一次发送计划。
-    primary_ret = linkg_switch_get_plan(group->next_hop_node_id, &plan);
-    if (primary_ret != 0)
+    ret = linkg_switch_get_plan(peer_node_id, &plan);
+    if (ret != 0)
     {
-        _linkg_scheduler_set_group_result(items, group, primary_ret);
-        return 0;
+        return ret;
     }
-
     if (plan.mode == LINKG_SEND_MODE_NONE)
     {
-        _linkg_scheduler_set_group_result(items, group, -ENETDOWN);
-        return 0;
+        return -ENETDOWN;
     }
-
     if (plan.mode != LINKG_SEND_MODE_SINGLE &&
         plan.mode != LINKG_SEND_MODE_REDUNDANT)
     {
-        _linkg_scheduler_set_group_result(items, group, -EINVAL);
-        return 0;
+        return -EINVAL;
     }
-
     if (!_linkg_scheduler_link_id_valid(plan.primary_link_id))
     {
-        _linkg_scheduler_set_group_result(items, group, -ENODEV);
-        return 0;
+        return -ENODEV;
     }
 
-    primary_ret = _linkg_scheduler_submit_link_batch(items, group, plan.primary_link_id, primary_results);
-    if (primary_ret < 0)
+    count         = 0U;
+    primary_error = _linkg_scheduler_acquire_target(peer_node_id, plan.primary_link_id, &targets[count]);
+    if (primary_error == 0)
     {
-        _linkg_scheduler_set_group_result(items, group, primary_ret);
-        return primary_ret;
-    }
-
-    for (index = 0U; index < group->count; index++)
-    {
-        item_index               = group->item_indices[index];
-        items[item_index].result = primary_results[index];
+        count++;
     }
 
     redundant = policy == LINKG_SCHEDULER_POLICY_REDUNDANT ||
@@ -280,82 +397,205 @@ static int _linkg_scheduler_submit_group(linkg_scheduler_tx_item_t *items, const
 
     if (!redundant)
     {
-        return primary_ret;
-    }
-
-    if (!_linkg_scheduler_link_id_valid(plan.secondary_link_id) ||
-        plan.secondary_link_id == plan.primary_link_id)
-    {
-        return primary_ret;
-    }
-
-    secondary_ret = _linkg_scheduler_submit_link_batch(items, group, plan.secondary_link_id, secondary_results);
-    if (secondary_ret < 0)
-    {
-        for (index = 0U; index < group->count; index++)
+        if (count == 0U)
         {
-            secondary_results[index] = secondary_ret;
+            return primary_error;
+        }
+
+        *target_count = count;
+        return 0;
+    }
+
+    secondary_error = 0;
+
+    if (_linkg_scheduler_link_id_valid(plan.secondary_link_id) &&
+        plan.secondary_link_id != plan.primary_link_id &&
+        count < LINKG_TRANSPORT_TX_TARGET_MAX)
+    {
+        secondary_error = _linkg_scheduler_acquire_target(peer_node_id, plan.secondary_link_id, &targets[count]);
+        if (secondary_error == 0)
+        {
+            count++;
         }
     }
 
-    /**
-     * REDUNDANT策略下任意一条目标链路成功则当前Packet整体成功。
-     * 两条链路全部失败时保留主链路返回的具体错误。
-     */
+    if (count == 0U)
+    {
+        if (primary_error != 0)
+        {
+            return primary_error;
+        }
+        if (secondary_error != 0)
+        {
+            return secondary_error;
+        }
+
+        return -ENETDOWN;
+    }
+
+    *target_count = count;
+    return 0;
+}
+
+/****************************** 普通发送 ******************************/
+
+/**
+ * @brief 调度同一直接Peer的一批普通Transport逻辑Packet。
+ */
+static int _linkg_scheduler_submit_tx_group(const linkg_scheduler_tx_context_t *scheduler_context, linkg_scheduler_tx_item_t *items, const linkg_scheduler_peer_group_t *group)
+{
+    int                              transport_results[LINKG_SCHEDULER_TX_BATCH_MAX];
+    linkg_transport_tx_target_t      targets[LINKG_TRANSPORT_TX_TARGET_MAX];
+    linkg_transport_tx_context_t     transport_context;
+    linkg_transport_tx_item_t        transport_items[LINKG_SCHEDULER_TX_BATCH_MAX];
+    uint32_t                         target_count;
+    uint32_t                         success_count;
+    uint32_t                         item_index;
+    uint32_t                         index;
+    int                              ret;
+
+    if (scheduler_context == NULL ||
+        items == NULL ||
+        group == NULL ||
+        group->count == 0U ||
+        group->count > LINKG_SCHEDULER_TX_BATCH_MAX)
+    {
+        return -EINVAL;
+    }
+
+    ret = _linkg_scheduler_build_targets(group->peer_node_id,
+                                         scheduler_context->policy,
+                                         scheduler_context->specified_link_id,
+                                         targets,
+                                         &target_count);
+    if (ret != 0)
+    {
+        _linkg_scheduler_set_tx_group_result(items, group, ret);
+        return 0;
+    }
+
+    memset(&transport_context, 0, sizeof(transport_context));
+    memset(transport_items, 0, sizeof(transport_items));
+
+    transport_context.targets       = targets;
+    transport_context.target_count  = target_count;
+    transport_context.traffic_class = scheduler_context->traffic_class;
+    transport_context.peer_node_id  = group->peer_node_id;
+
     for (index = 0U; index < group->count; index++)
     {
         item_index = group->item_indices[index];
 
-        if (primary_results[index] == 0 || secondary_results[index] == 0)
-        {
-            items[item_index].result = 0;
-            continue;
-        }
-
-        items[item_index].result = primary_results[index];
+        transport_items[index].packet              = items[item_index].packet;
+        transport_items[index].type                = items[item_index].type;
+        transport_items[index].destination_node_id = items[item_index].destination_node_id;
+        transport_results[index]                   = -EINPROGRESS;
     }
 
-    success_count = _linkg_scheduler_group_success_count(items, group);
+    ret = linkg_transport_send_batch(&transport_context, transport_items, group->count, transport_results);
+
+    // Transport同步返回后释放Scheduler持有的全部Path引用。
+    _linkg_scheduler_release_targets(targets, target_count);
+
+    if (ret < 0)
+    {
+        _linkg_scheduler_set_tx_group_result(items, group, ret);
+        return ret;
+    }
+
+    success_count = 0U;
+
+    for (index = 0U; index < group->count; index++)
+    {
+        item_index               = group->item_indices[index];
+        items[item_index].result = transport_results[index];
+
+        if (transport_results[index] == 0)
+        {
+            success_count++;
+        }
+    }
 
     return (int)success_count;
 }
 
 /**
- * @brief 将一个内部批次按照直接下一跳Peer分组并完成调度。
- *
- * @return <0表示本函数参数异常，>=0表示当前chunk成功提交的数据包数量。
+ * @brief 将一个普通发送Batch按照当前直接Peer分组并完成调度。
  */
-static int _linkg_scheduler_submit_chunk(linkg_scheduler_tx_item_t *items, uint32_t count, linkg_scheduler_policy_t policy, uint32_t specified_link_id)
+static int _linkg_scheduler_submit_tx_batch(const linkg_scheduler_tx_context_t *context, linkg_scheduler_tx_item_t *items, uint32_t count)
 {
     linkg_scheduler_peer_group_t groups[LINKG_SCHEDULER_PEER_GROUP_MAX];
+    const linkg_node_info_t     *local;
     uint32_t                     success_count;
     uint32_t                     group_count;
     uint32_t                     group_index;
     uint32_t                     index;
+    uint8_t                      sta_peer_node_id;
+    uint8_t                      peer_node_id;
+    int                          sta_peer_result;
     int                          ret;
 
-    if (items == NULL || count == 0U || count > LINKG_SCHEDULER_BATCH_CHUNK_SIZE)
+    if (context == NULL ||
+        items == NULL ||
+        count == 0U ||
+        count > LINKG_SCHEDULER_TX_BATCH_MAX)
     {
         return -EINVAL;
     }
 
+    local = linkg_node_get_local();
+    if (local == NULL)
+    {
+        return -ENODEV;
+    }
+    if (local->role != LINKG_DEVICE_ROLE_AP &&
+        local->role != LINKG_DEVICE_ROLE_STA)
+    {
+        return -EINVAL;
+    }
+
+    memset(groups, 0, sizeof(groups));
+
+    sta_peer_node_id = 0U;
+    sta_peer_result  = 0;
+
+    if (local->role == LINKG_DEVICE_ROLE_STA)
+    {
+        sta_peer_result = _linkg_scheduler_find_sta_peer(&sta_peer_node_id);
+    }
+
     group_count = 0U;
 
-    // 按当前物理下一跳节点建立批次内分组。
     for (index = 0U; index < count; index++)
     {
         items[index].result = -EINPROGRESS;
 
-        if (!_linkg_scheduler_node_id_valid(items[index].next_hop_node_id) ||
-            items[index].packet == NULL)
+        if (items[index].packet == NULL ||
+            !_linkg_scheduler_type_valid(items[index].type) ||
+            !_linkg_scheduler_node_id_valid(items[index].destination_node_id))
         {
             items[index].result = -EINVAL;
+            continue;
+        }
+        if (local->role == LINKG_DEVICE_ROLE_STA && sta_peer_result != 0)
+        {
+            items[index].result = sta_peer_result;
+            continue;
+        }
+
+        ret = _linkg_scheduler_resolve_peer(local,
+                                            items[index].destination_node_id,
+                                            sta_peer_node_id,
+                                            &peer_node_id);
+        if (ret != 0)
+        {
+            items[index].result = ret;
             continue;
         }
 
         for (group_index = 0U; group_index < group_count; group_index++)
         {
-            if (groups[group_index].next_hop_node_id == items[index].next_hop_node_id)
+            if (groups[group_index].peer_node_id == peer_node_id)
             {
                 break;
             }
@@ -369,8 +609,8 @@ static int _linkg_scheduler_submit_chunk(linkg_scheduler_tx_item_t *items, uint3
                 continue;
             }
 
-            groups[group_index].next_hop_node_id = items[index].next_hop_node_id;
-            groups[group_index].count            = 0U;
+            groups[group_index].peer_node_id = peer_node_id;
+            groups[group_index].count        = 0U;
             group_count++;
         }
 
@@ -382,10 +622,229 @@ static int _linkg_scheduler_submit_chunk(linkg_scheduler_tx_item_t *items, uint3
 
     for (group_index = 0U; group_index < group_count; group_index++)
     {
-        ret = _linkg_scheduler_submit_group(items, &groups[group_index], policy, specified_link_id);
+        ret = _linkg_scheduler_submit_tx_group(context, items, &groups[group_index]);
         if (ret < 0)
         {
-            _linkg_scheduler_set_group_result(items, &groups[group_index], ret);
+            _linkg_scheduler_set_tx_group_result(items, &groups[group_index], ret);
+            continue;
+        }
+
+        success_count += (uint32_t)ret;
+    }
+
+    return (int)success_count;
+}
+
+/****************************** 中继发送 ******************************/
+
+/**
+ * @brief 调度同一直接Peer的一批Transport中继Wire Frame。
+ */
+static int _linkg_scheduler_submit_forward_group(linkg_transport_class_t traffic_class, const linkg_transport_forward_item_t *items, int *results, const linkg_scheduler_peer_group_t *group)
+{
+    int                              transport_results[LINKG_SCHEDULER_TX_BATCH_MAX];
+    linkg_transport_tx_target_t      targets[LINKG_TRANSPORT_TX_TARGET_MAX];
+    linkg_transport_tx_context_t     transport_context;
+    linkg_transport_forward_item_t   transport_items[LINKG_SCHEDULER_TX_BATCH_MAX];
+    uint32_t                         target_count;
+    uint32_t                         success_count;
+    uint32_t                         item_index;
+    uint32_t                         index;
+    int                              ret;
+
+    if (!_linkg_scheduler_class_valid(traffic_class) ||
+        items == NULL ||
+        results == NULL ||
+        group == NULL ||
+        group->count == 0U ||
+        group->count > LINKG_SCHEDULER_TX_BATCH_MAX)
+    {
+        return -EINVAL;
+    }
+
+    ret = _linkg_scheduler_build_targets(group->peer_node_id,
+                                         LINKG_SCHEDULER_POLICY_DEFAULT,
+                                         LINKG_LINK_ID_INVALID,
+                                         targets,
+                                         &target_count);
+    if (ret != 0)
+    {
+        _linkg_scheduler_set_forward_group_result(results, group, ret);
+        return 0;
+    }
+
+    memset(&transport_context, 0, sizeof(transport_context));
+    memset(transport_items, 0, sizeof(transport_items));
+
+    transport_context.targets       = targets;
+    transport_context.target_count  = target_count;
+    transport_context.traffic_class = traffic_class;
+    transport_context.peer_node_id  = group->peer_node_id;
+
+    for (index = 0U; index < group->count; index++)
+    {
+        item_index = group->item_indices[index];
+
+        transport_items[index]   = items[item_index];
+        transport_results[index] = -EINPROGRESS;
+    }
+
+    ret = linkg_transport_forward_batch(&transport_context, transport_items, group->count, transport_results);
+
+    // Transport同步返回后释放Scheduler持有的全部Path引用。
+    _linkg_scheduler_release_targets(targets, target_count);
+
+    if (ret < 0)
+    {
+        _linkg_scheduler_set_forward_group_result(results, group, ret);
+        return ret;
+    }
+
+    success_count = 0U;
+
+    for (index = 0U; index < group->count; index++)
+    {
+        item_index          = group->item_indices[index];
+        results[item_index] = transport_results[index];
+
+        if (transport_results[index] == 0)
+        {
+            success_count++;
+        }
+    }
+
+    return (int)success_count;
+}
+
+/**
+ * @brief 处理Transport提交的中继批次并按照最终目的重新确定下一跳发送计划。
+ *
+ * @note Transport仅在当前同步回调期间借用items中的Packet引用，Scheduler不得异步保存这些指针。
+ */
+static int _linkg_scheduler_transport_forward(linkg_transport_class_t traffic_class, const linkg_transport_forward_item_t *items, uint32_t count, int *results, void *user_data)
+{
+    linkg_scheduler_peer_group_t groups[LINKG_SCHEDULER_PEER_GROUP_MAX];
+    const linkg_node_info_t     *local;
+    uint32_t                     success_count;
+    uint32_t                     group_count;
+    uint32_t                     group_index;
+    uint32_t                     index;
+    uint8_t                      peer_node_id;
+    int                          ret;
+
+    (void)user_data;
+
+    if (!atomic_load(&g_scheduler_initialized))
+    {
+        return -ESHUTDOWN;
+    }
+    if (!_linkg_scheduler_class_valid(traffic_class) ||
+        items == NULL ||
+        results == NULL ||
+        count == 0U)
+    {
+        return -EINVAL;
+    }
+    if (count > LINKG_SCHEDULER_TX_BATCH_MAX)
+    {
+        for (index = 0U; index < count; index++)
+        {
+            results[index] = -EOVERFLOW;
+        }
+
+        return -EOVERFLOW;
+    }
+
+    local = linkg_node_get_local();
+    if (local == NULL)
+    {
+        for (index = 0U; index < count; index++)
+        {
+            results[index] = -ENODEV;
+        }
+
+        return -ENODEV;
+    }
+    if (local->role != LINKG_DEVICE_ROLE_AP)
+    {
+        for (index = 0U; index < count; index++)
+        {
+            results[index] = -EOPNOTSUPP;
+        }
+
+        return -EOPNOTSUPP;
+    }
+
+    memset(groups, 0, sizeof(groups));
+
+    group_count = 0U;
+
+    for (index = 0U; index < count; index++)
+    {
+        results[index] = -EINPROGRESS;
+
+        if (items[index].packet == NULL ||
+            items[index].payload_length == 0U ||
+            !_linkg_scheduler_node_id_valid(items[index].destination_node_id) ||
+            !_linkg_scheduler_node_id_valid(items[index].peer_node_id))
+        {
+            results[index] = -EINVAL;
+            continue;
+        }
+
+        ret = _linkg_scheduler_resolve_peer(local,
+                                            items[index].destination_node_id,
+                                            0U,
+                                            &peer_node_id);
+        if (ret != 0)
+        {
+            results[index] = ret;
+            continue;
+        }
+
+        // 禁止中继Packet原路回送到当前物理上一跳，避免异常目的地址形成U-turn。
+        if (peer_node_id == items[index].peer_node_id)
+        {
+            results[index] = -ELOOP;
+            continue;
+        }
+
+        for (group_index = 0U; group_index < group_count; group_index++)
+        {
+            if (groups[group_index].peer_node_id == peer_node_id)
+            {
+                break;
+            }
+        }
+
+        if (group_index == group_count)
+        {
+            if (group_count >= LINKG_SCHEDULER_PEER_GROUP_MAX)
+            {
+                results[index] = -ENOSPC;
+                continue;
+            }
+
+            groups[group_index].peer_node_id = peer_node_id;
+            groups[group_index].count        = 0U;
+            group_count++;
+        }
+
+        groups[group_index].item_indices[groups[group_index].count] = index;
+        groups[group_index].count++;
+    }
+
+    success_count = 0U;
+
+    for (group_index = 0U; group_index < group_count; group_index++)
+    {
+        ret = _linkg_scheduler_submit_forward_group(traffic_class,
+                                                    items,
+                                                    results,
+                                                    &groups[group_index]);
+        if (ret < 0)
+        {
+            _linkg_scheduler_set_forward_group_result(results, &groups[group_index], ret);
             continue;
         }
 
@@ -398,11 +857,14 @@ static int _linkg_scheduler_submit_chunk(linkg_scheduler_tx_item_t *items, uint3
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 初始化发送调度模块。
+ * @brief 初始化发送调度模块并注册Transport中继回调。
+ *
+ * @note Transport必须已经完成初始化。
  */
 int linkg_scheduler_init(void)
 {
     bool expected;
+    int  ret;
 
     expected = false;
 
@@ -411,17 +873,44 @@ int linkg_scheduler_init(void)
         return -EALREADY;
     }
 
+    atomic_store(&g_scheduler_sta_peer_cached, false);
+    atomic_store(&g_scheduler_sta_peer_node_id, 0U);
+
+    ret = linkg_transport_register_forward_handler(_linkg_scheduler_transport_forward, NULL);
+    if (ret != 0)
+    {
+        atomic_store(&g_scheduler_initialized, false);
+        return ret;
+    }
+
     return 0;
 }
 
 /**
- * @brief 反初始化发送调度模块。
+ * @brief 反初始化发送调度模块并注销Transport中继回调。
  *
- * @note 调用前必须停止所有可能进入调度发送路径的数据面线程。
+ * @note 调用前必须停止所有可能进入Scheduler和Transport RX中继路径的数据面线程。
  */
 int linkg_scheduler_deinit(void)
 {
+    int ret;
+
+    if (!atomic_load(&g_scheduler_initialized))
+    {
+        return 0;
+    }
+
     atomic_store(&g_scheduler_initialized, false);
+
+    ret = linkg_transport_unregister_forward_handler();
+    if (ret != 0 && ret != -ENOENT)
+    {
+        atomic_store(&g_scheduler_initialized, true);
+        return ret;
+    }
+
+    atomic_store(&g_scheduler_sta_peer_cached, false);
+    atomic_store(&g_scheduler_sta_peer_node_id, 0U);
 
     return 0;
 }
@@ -429,117 +918,63 @@ int linkg_scheduler_deinit(void)
 /****************************** 数据发送 ******************************/
 
 /**
- * @brief 批量调度数据包。
+ * @brief 批量调度上层已经确定业务类别的Transport逻辑Packet。
  *
- * @note Scheduler不接管调用方持有的Packet原始引用。
- *       每条实际发送链路独立获取Path引用；具体Link需要异步保存Packet或Path时，
- *       由对应Link实现自行增加引用。
+ * @note Scheduler不接管调用方持有的Packet原始引用；一个调用只对应一个traffic_class。
+ *       单次调用最多接收32个Packet，不在Scheduler内部继续执行第二轮32包调度。
+ *       Scheduler根据最终destination_node_id解析当前直接Peer，再按Peer分组并同步调用Transport。
  *
- * @return <0表示整个batch未进入正常调度流程，>=0表示成功提交的数据包数量。
+ * @return 小于0表示整个batch未进入正常调度流程；大于等于0表示成功提交的数据包数量。
  */
-int linkg_scheduler_submit_batch(linkg_scheduler_tx_item_t *items, uint32_t count, linkg_scheduler_policy_t policy, uint32_t specified_link_id)
+int linkg_scheduler_submit_batch(const linkg_scheduler_tx_context_t *context, linkg_scheduler_tx_item_t *items, uint32_t count)
 {
-    uint32_t success_count;
-    uint32_t chunk_count;
-    uint32_t offset;
     uint32_t index;
-    int      first_error;
     int      ret;
-    bool     processed;
 
     if (!atomic_load(&g_scheduler_initialized))
     {
         return -ENODEV;
     }
 
+    ret = _linkg_scheduler_validate_context(context);
+    if (ret != 0)
+    {
+        return ret;
+    }
     if (items == NULL || count == 0U)
     {
         return -EINVAL;
     }
-
-    if (policy != LINKG_SCHEDULER_POLICY_DEFAULT &&
-        policy != LINKG_SCHEDULER_POLICY_REDUNDANT &&
-        policy != LINKG_SCHEDULER_POLICY_SPECIFIED)
+    if (count > LINKG_SCHEDULER_TX_BATCH_MAX)
     {
-        return -EINVAL;
-    }
-
-    if (policy == LINKG_SCHEDULER_POLICY_SPECIFIED &&
-        !_linkg_scheduler_link_id_valid(specified_link_id))
-    {
-        return -EINVAL;
-    }
-
-    success_count = 0U;
-    first_error   = 0;
-    processed     = false;
-    offset        = 0U;
-
-    while (offset < count)
-    {
-        chunk_count = count - offset;
-
-        if (chunk_count > LINKG_SCHEDULER_BATCH_CHUNK_SIZE)
+        for (index = 0U; index < count; index++)
         {
-            chunk_count = LINKG_SCHEDULER_BATCH_CHUNK_SIZE;
+            items[index].result = -EOVERFLOW;
         }
 
-        ret = _linkg_scheduler_submit_chunk(&items[offset], chunk_count, policy, specified_link_id);
-        if (ret < 0)
-        {
-            for (index = 0U; index < chunk_count; index++)
-            {
-                items[offset + index].result = ret;
-            }
-
-            if (first_error == 0)
-            {
-                first_error = ret;
-            }
-        }
-        else
-        {
-            processed = true;
-            success_count += (uint32_t)ret;
-        }
-
-        offset += chunk_count;
+        return -EOVERFLOW;
     }
 
-    // 所有chunk都发生系统级错误时，整个batch视为未正常执行。
-    if (!processed)
-    {
-        return first_error;
-    }
-
-    return (int)success_count;
+    return _linkg_scheduler_submit_tx_batch(context, items, count);
 }
 
 /**
- * @brief 向当前物理下一跳节点调度单个数据包。
- *
- * @note next_hop_node_id表示当前这一跳的直接Peer，而不是Packet最终目的节点。
- *       SPECIFIED策略不读取Switch计划，但仍使用该节点编号获取指定链路Path。
+ * @brief 调度单个上层已经确定业务类别的Transport逻辑Packet。
  */
-int linkg_scheduler_submit(uint8_t next_hop_node_id, linkg_packet_t *packet, linkg_scheduler_policy_t policy, uint32_t specified_link_id)
+int linkg_scheduler_submit(const linkg_scheduler_tx_context_t *context, linkg_scheduler_tx_item_t *item)
 {
-    linkg_scheduler_tx_item_t item;
-    int                       ret;
+    int ret;
 
-    if (!_linkg_scheduler_node_id_valid(next_hop_node_id) || packet == NULL)
+    if (item == NULL)
     {
         return -EINVAL;
     }
 
-    item.packet           = packet;
-    item.next_hop_node_id = next_hop_node_id;
-    item.result           = -EINPROGRESS;
-
-    ret = linkg_scheduler_submit_batch(&item, 1U, policy, specified_link_id);
+    ret = linkg_scheduler_submit_batch(context, item, 1U);
     if (ret < 0)
     {
         return ret;
     }
 
-    return item.result;
+    return item->result;
 }
