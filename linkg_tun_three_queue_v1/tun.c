@@ -1038,19 +1038,6 @@ static unsigned int lq_tun_class_queue_size(u32 traffic_class)
 	}
 }
 
-static bool lq_tun_any_ring_ready(struct tun_file *tfile)
-{
-	u32 traffic_class;
-
-	for (traffic_class = 0; traffic_class < LQ_TUN_TRAFFIC_CLASS_COUNT;
-	     traffic_class++) {
-		if (!ptr_ring_empty(&tfile->tx_rings[traffic_class]))
-			return true;
-	}
-
-	return false;
-}
-
 static bool lq_tun_higher_priority_ready(struct tun_file *tfile,
 					 u32 traffic_class)
 {
@@ -1934,7 +1921,18 @@ static __poll_t tun_chr_poll(struct file *file, poll_table *wait)
 
 	poll_wait(file, sk_sleep(sk), wait);
 
-	if (lq_tun_any_ring_ready(tfile))
+	/*
+	 * Keep POLLIN as the generic compatibility notification while exposing
+	 * class-specific readiness to LinkG userspace.  Userspace always handles
+	 * the highest-priority ready class first and then polls again.
+	 */
+	if (!ptr_ring_empty(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_REALTIME]))
+		mask |= EPOLLIN | EPOLLRDNORM | EPOLLPRI;
+
+	if (!ptr_ring_empty(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_VIDEO]))
+		mask |= EPOLLIN | EPOLLRDNORM | EPOLLRDBAND;
+
+	if (!ptr_ring_empty(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_DATA]))
 		mask |= EPOLLIN | EPOLLRDNORM;
 
 	/* Make sure SOCKWQ_ASYNC_NOSPACE is set if not writable to
