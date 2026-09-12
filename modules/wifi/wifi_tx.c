@@ -2,8 +2,8 @@
  * @file wifi_tx.c
  * @brief LinkG Wi-Fi发送模块实现
  * @author Dawn
- * @version 1.5.0
- * @date 2026-09-10
+ * @version 1.8.0
+ * @date 2026-09-12
  */
 
 #define _GNU_SOURCE
@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 
@@ -27,23 +28,44 @@
 #include "wifi_internal.h"
 #include "wifi_traffic.h"
 #include "wifi_tx_queue.h"
+#include "wifi_wire.h"
 
 /****************************** 发送参数 ******************************/
 
-#define LINKG_WIFI_TX_BATCH_SIZE_MAX       32U                                                                                  // 单次发送调度最大Packet数量
-#define LINKG_WIFI_TX_QUEUE_BATCH_COUNT    5U                                                                                   // 单业务等待队列最多缓存批次数
+#define LINKG_WIFI_TX_BATCH_SIZE_MAX        32U                                                                                  // 单次发送调度最大Packet数量
+#define LINKG_WIFI_TX_QUEUE_BATCH_COUNT     5U                                                                                   // 单业务等待队列最多缓存批次数
+#define LINKG_WIFI_TX_IPV4_HEADER_SIZE      20U                                                                                  // IPv4最小头部长度
+#define LINKG_WIFI_TX_UDP_HEADER_SIZE       8U                                                                                   // UDP头部长度
+#define LINKG_WIFI_TX_MTU                   1500U                                                                                // Wi-Fi接口MTU
+#define LINKG_WIFI_TX_UDP_PAYLOAD_MAX       (LINKG_WIFI_TX_MTU - LINKG_WIFI_TX_IPV4_HEADER_SIZE - LINKG_WIFI_TX_UDP_HEADER_SIZE) // 单个UDP报文最大负载
+#define LINKG_WIFI_TX_TRANSPORT_PAYLOAD_MAX (LINKG_WIFI_TX_UDP_PAYLOAD_MAX - LINKG_WIFI_WIRE_HEADER_SIZE)                        // Wi-Fi私有头之后的最大Transport报文长度
+#define LINKG_WIFI_NODE_SLOT_COUNT          256U                                                                                 // uint8_t Node ID直接索引空间
+
 
 /****************************** 内部类型 ******************************/
+
+/**
+ * @brief 单个对端节点的Wi-Fi发送序列状态。
+ *
+ * Node ID直接作为peer_sequences数组索引，同一Node的REALTIME/VIDEO/DATA业务共享
+ * 同一个32位Wi-Fi链路Sequence。状态仅随Wi-Fi TX对象生命周期重置。
+ */
+typedef struct
+{
+    uint32_t next_sequence; // 下一个真正Socket提交使用的Wi-Fi链路Sequence
+} linkg_wifi_tx_peer_sequence_t;
 
 /**
  * @brief 单个Wi-Fi业务类别的预分配发送Scratch。
  */
 typedef struct
 {
-    linkg_wifi_tx_queue_item_t items[LINKG_WIFI_TX_BATCH_SIZE_MAX];        // 当前发送Queue元素快照
-    struct mmsghdr             messages[LINKG_WIFI_TX_BATCH_SIZE_MAX];     // sendmmsg消息数组
-    struct iovec               iovecs[LINKG_WIFI_TX_BATCH_SIZE_MAX];       // iovec数组
-    struct sockaddr_in         destinations[LINKG_WIFI_TX_BATCH_SIZE_MAX]; // UDP目标地址数组
+    linkg_wifi_tx_queue_item_t     items[LINKG_WIFI_TX_BATCH_SIZE_MAX];          // 当前发送Queue元素快照
+    linkg_wifi_wire_header_t       headers[LINKG_WIFI_TX_BATCH_SIZE_MAX];        // 当前批次临时Wi-Fi Wire头
+    linkg_wifi_tx_peer_sequence_t *peer_states[LINKG_WIFI_TX_BATCH_SIZE_MAX];    // 当前消息对应对端Sequence状态
+    struct mmsghdr                 messages[LINKG_WIFI_TX_BATCH_SIZE_MAX];       // sendmmsg消息数组
+    struct iovec                   iovecs[LINKG_WIFI_TX_BATCH_SIZE_MAX][2];      // Wi-Fi头+Transport Packet双iovec
+    struct sockaddr_in             destinations[LINKG_WIFI_TX_BATCH_SIZE_MAX];   // UDP目标地址数组
 } linkg_wifi_tx_scratch_t;
 
 /**
@@ -59,19 +81,75 @@ typedef struct
  */
 struct linkg_wifi_tx
 {
-    pthread_mutex_t          lock;                               // 三业务队列、流控检查和发送调度串行锁
-    linkg_wifi_tx_scratch_t  scratch[LINKG_WIFI_TRAFFIC_COUNT];  // 三业务预分配Scratch
-    linkg_wifi_tx_queue_t   *queues[LINKG_WIFI_TRAFFIC_COUNT];   // 三业务等待FIFO
-    linkg_wifi_flowctrl_t   *flowctrl;                           // Wi-Fi设备发送流控Gate
+    pthread_mutex_t               lock;                                          // 三业务队列、流控检查、Sequence和发送调度串行锁
+    linkg_wifi_tx_scratch_t       scratch[LINKG_WIFI_TRAFFIC_COUNT];             // 三业务预分配Scratch
+    linkg_wifi_tx_queue_t        *queues[LINKG_WIFI_TRAFFIC_COUNT];              // 三业务等待FIFO
+    linkg_wifi_flowctrl_t        *flowctrl;                                      // Wi-Fi设备发送流控Gate
+    linkg_wifi_tx_peer_sequence_t peer_sequences[LINKG_WIFI_NODE_SLOT_COUNT];    // 每个对端独立Wi-Fi Sequence
+    uint32_t                      session_id;                                    // 当前Wi-Fi TX实例全局会话ID
+    int                          *socket_fds;                                    // 借用Wi-Fi Link业务Socket数组
+    const uint16_t               *service_ports;                                 // 借用Wi-Fi Link业务端口数组
 
-    int                     *socket_fds;                         // 借用Wi-Fi Link业务Socket数组
-    const uint16_t          *service_ports;                      // 借用Wi-Fi Link业务端口数组
+    uint32_t                      capacity;                                      // 单次发送调度最大提交Packet数量
+    uint32_t                      queue_capacity;                                // 单个业务等待队列最大Packet数量
 
-    uint32_t                 capacity;                           // 单次发送调度最大提交Packet数量
-    uint32_t                 queue_capacity;                     // 单个业务等待队列最大Packet数量
-
-    _Atomic bool             started;                            // 发送模块运行状态
+    _Atomic bool                  started;                                       // 发送模块运行状态
 };
+
+/****************************** 会话标识 ******************************/
+
+/**
+ * @brief 生成当前Wi-Fi TX实例使用的全局会话ID。
+ *
+ * session_id在整个TX对象生命周期内保持不变，所有对端Node和全部业务类别共享。
+ * TX对象重新创建时重新生成，用于接收端明确识别发送端Wi-Fi会话重建。
+ */
+static int _linkg_wifi_tx_generate_session_id(uint32_t *session_id)
+{
+    uint8_t  *cursor;
+    size_t    remaining;
+    ssize_t   result;
+    uint32_t  value;
+
+    if (session_id == NULL)
+    {
+        return -EINVAL;
+    }
+
+    do
+    {
+        value     = 0U;
+        cursor    = (uint8_t *)&value;
+        remaining = sizeof(value);
+
+        while (remaining > 0U)
+        {
+            do
+            {
+                result = getrandom(cursor, remaining, 0U);
+            }
+            while (result < 0 && errno == EINTR);
+
+            if (result < 0)
+            {
+                return -errno;
+            }
+
+            if (result == 0)
+            {
+                return -EIO;
+            }
+
+            cursor    += (size_t)result;
+            remaining -= (size_t)result;
+        }
+    }
+    while (value == 0U);
+
+    *session_id = value;
+
+    return 0;
+}
 
 /****************************** 业务映射 ******************************/
 
@@ -102,6 +180,41 @@ static int _linkg_wifi_tx_class_to_traffic(linkg_link_tx_class_t tx_class, linkg
         default:
             return -EINVAL;
     }
+}
+
+/****************************** 节点映射 ******************************/
+
+/**
+ * @brief 从对端Wi-Fi IPv4地址提取Node ID。
+ *
+ * Wi-Fi网络约定IPv4地址最后一个字节与Node ID一致，Node ID有效范围为1~254。
+ */
+static int _linkg_wifi_tx_ipv4_to_node_id(const struct sockaddr_in *address, uint8_t *peer_node_id)
+{
+    uint32_t host_address;
+    uint8_t  node_id;
+
+    if (address == NULL || peer_node_id == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (address->sin_family != AF_INET)
+    {
+        return -EAFNOSUPPORT;
+    }
+
+    host_address = ntohl(address->sin_addr.s_addr);
+    node_id      = (uint8_t)(host_address & 0xFFU);
+
+    if (node_id == 0U || node_id == UINT8_MAX)
+    {
+        return -EINVAL;
+    }
+
+    *peer_node_id = node_id;
+
+    return 0;
 }
 
 /****************************** Path统计 ******************************/
@@ -243,7 +356,17 @@ static int _linkg_wifi_tx_make_room_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
 static int _linkg_wifi_tx_enqueue_locked(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class, linkg_path_t *path, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count)
 {
     uint32_t pushed_count;
+    uint32_t index;
     int      ret;
+
+    // Wi-Fi私有头加入后，Transport报文必须保持在IPv4/UDP单报文MTU以内。
+    for (index = 0U; index < count; index++)
+    {
+        if (packets[index] == NULL || packets[index]->data_length > LINKG_WIFI_TX_TRANSPORT_PAYLOAD_MAX)
+        {
+            return -EMSGSIZE;
+        }
+    }
 
     ret = _linkg_wifi_tx_make_room_locked(tx, traffic_class, count);
     if (ret != 0)
@@ -328,10 +451,14 @@ static bool _linkg_wifi_tx_error_transient(int error)
  */
 static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class, linkg_wifi_tx_queue_item_t *items, uint32_t count)
 {
-    linkg_wifi_tx_scratch_t  *scratch;
-    const struct sockaddr_in *target;
-    uint32_t                  index;
-    int                       ret;
+    linkg_wifi_tx_scratch_t        *scratch;
+    linkg_wifi_tx_peer_sequence_t  *peer_state;
+    const struct sockaddr_in       *target;
+    uint8_t                         reserved_counts[LINKG_WIFI_NODE_SLOT_COUNT] = {0};
+    uint8_t                         peer_node_id;
+    uint32_t                        sequence;
+    uint32_t                        index;
+    int                             ret;
 
     scratch = &tx->scratch[traffic_class];
 
@@ -341,16 +468,33 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
     {
         target = (const struct sockaddr_in *)&items[index].destination.address;
 
-        scratch->destinations[index] = *target;
+        ret = _linkg_wifi_tx_ipv4_to_node_id(target, &peer_node_id);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        peer_state = &tx->peer_sequences[peer_node_id];
+        sequence   = peer_state->next_sequence + (uint32_t)reserved_counts[peer_node_id];
+
+        reserved_counts[peer_node_id]++;
+
+        scratch->peer_states[index]         = peer_state;
+        scratch->headers[index].session_id = htonl(tx->session_id);
+        scratch->headers[index].sequence   = htonl(sequence);
+
+        scratch->destinations[index]          = *target;
         scratch->destinations[index].sin_port = htons(tx->service_ports[traffic_class]);
 
-        scratch->iovecs[index].iov_base = (void *)linkg_packet_const_data(items[index].packet);
-        scratch->iovecs[index].iov_len  = items[index].packet->data_length;
+        scratch->iovecs[index][0].iov_base = &scratch->headers[index];
+        scratch->iovecs[index][0].iov_len  = LINKG_WIFI_WIRE_HEADER_SIZE;
+        scratch->iovecs[index][1].iov_base = (void *)linkg_packet_const_data(items[index].packet);
+        scratch->iovecs[index][1].iov_len  = items[index].packet->data_length;
 
-        scratch->messages[index].msg_hdr.msg_name       = &scratch->destinations[index];
-        scratch->messages[index].msg_hdr.msg_namelen    = sizeof(scratch->destinations[index]);
-        scratch->messages[index].msg_hdr.msg_iov        = &scratch->iovecs[index];
-        scratch->messages[index].msg_hdr.msg_iovlen     = 1U;
+        scratch->messages[index].msg_hdr.msg_name    = &scratch->destinations[index];
+        scratch->messages[index].msg_hdr.msg_namelen = sizeof(scratch->destinations[index]);
+        scratch->messages[index].msg_hdr.msg_iov     = scratch->iovecs[index];
+        scratch->messages[index].msg_hdr.msg_iovlen  = 2U;
     }
 
     do
@@ -367,6 +511,15 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
     if ((uint32_t)ret > count)
     {
         return -EIO;
+    }
+
+    /**
+     * sendmmsg返回值表示已经成功提交Socket的连续消息前缀。
+     * 只为该前缀提交对应Peer的Sequence，未提交尾部下次发送时重新分配。
+     */
+    for (index = 0U; index < (uint32_t)ret; index++)
+    {
+        scratch->peer_states[index]->next_sequence++;
     }
 
     return ret;
@@ -600,6 +753,7 @@ static int _linkg_wifi_tx_dispatch_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_t
  * @brief 创建Wi-Fi发送模块。
  *
  * socket_fds和service_ports仅借用，生命周期由Wi-Fi Link保证。
+ * 创建时生成一次全局session_id，整个TX对象生命周期内全部Node和业务类别共享。
  * 每个业务类别创建独立固定容量等待队列，发送Scratch随Wi-Fi TX对象一次性分配，
  * Flowctrl由Wi-Fi TX模块独占管理。
  */
@@ -627,6 +781,12 @@ linkg_wifi_tx_t *linkg_wifi_tx_create(uint32_t capacity, int *socket_fds, const 
     tx->service_ports  = service_ports;
     tx->capacity       = capacity;
     tx->queue_capacity = capacity * LINKG_WIFI_TX_QUEUE_BATCH_COUNT;
+
+    ret = _linkg_wifi_tx_generate_session_id(&tx->session_id);
+    if (ret != 0)
+    {
+        goto fail_tx;
+    }
 
     atomic_store(&tx->started, false);
 

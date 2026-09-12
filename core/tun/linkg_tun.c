@@ -2,7 +2,7 @@
  * @file linkg_tun.c
  * @brief LinkG TUN数据面实现
  * @author Dawn
- * @version 1.2.0
+ * @version 1.2.1
  * @date 2026-09-11
  */
 
@@ -109,9 +109,9 @@ struct lq_tun_batch_write
 #ifndef LINKG_TUN_THREAD_SCHED_PRIORITY
 #define LINKG_TUN_THREAD_SCHED_PRIORITY           0                                                       // 0表示保持SCHED_OTHER
 #endif
-#define LINKG_TUN_BATCH_SIZE                      16U                                                     // 单次批量读写最大包数
-#define LINKG_TUN_BATCH_MIN_PKTS                  5U                                                      // VIDEO/DATA批量读取最小聚合目标
-#define LINKG_TUN_BATCH_TIMEOUT_US                60U                                                     // VIDEO/DATA批量读取最大聚合等待时间
+#define LINKG_TUN_BATCH_SIZE                      24U                                                     // 单次批量读写最大包数
+#define LINKG_TUN_BATCH_MIN_PKTS                  1U                                                      // VIDEO/DATA批量读取最小聚合目标
+#define LINKG_TUN_BATCH_TIMEOUT_US                0U                                                      // VIDEO/DATA批量读取最大聚合等待时间
 #define LINKG_TUN_REALTIME_BATCH_MIN_PKTS         1U                                                      // REALTIME有包立即读取
 #define LINKG_TUN_REALTIME_BATCH_TIMEOUT_US       0U                                                      // REALTIME禁止聚合等待
 #define LINKG_TUN_TX_QUEUE_LENGTH                 512U                                                    // linkg0网络设备发送队列长度
@@ -962,17 +962,55 @@ static int _linkg_tun_transport_receive(const linkg_transport_delivery_t *items,
 /****************************** 读取线程 ******************************/
 
 /**
+ * @brief 根据TUN poll事件选择当前最高优先级可读业务类别。
+ *
+ * @note 内核保持POLLIN作为任意Class可读的兼容通知，同时：
+ *       POLLPRI表示REALTIME可读，POLLRDBAND表示VIDEO可读；
+ *       当两个专用标志均不存在但POLLIN存在时选择DATA。
+ */
+static int _linkg_tun_poll_traffic_class(short revents, linkg_transport_class_t *traffic_class)
+{
+    if (traffic_class == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if ((revents & POLLPRI) != 0)
+    {
+        *traffic_class = LINKG_TRANSPORT_CLASS_REALTIME;
+        return 0;
+    }
+
+    if ((revents & POLLRDBAND) != 0)
+    {
+        *traffic_class = LINKG_TRANSPORT_CLASS_VIDEO;
+        return 0;
+    }
+
+    if ((revents & POLLIN) != 0)
+    {
+        *traffic_class = LINKG_TRANSPORT_CLASS_DATA;
+        return 0;
+    }
+
+    return -EAGAIN;
+}
+
+/**
  * @brief TUN读取线程。
+ *
+ * @note poll直接指示当前可读的最高优先级Class，因此每轮只为一个Class
+ *       申请一次Packet Batch并执行一次READ_BATCH，避免空RT/VIDEO队列
+ *       导致无意义的Packet Pool分配释放和ioctl系统调用。
  */
 static void _linkg_tun_read_thread(linkg_thread_t *thread, void *user_data)
 {
-    struct pollfd descriptors[LINKG_TUN_POLL_FD_COUNT];
-    uint32_t      allocated_count;
-    uint32_t      class_index;
-    uint32_t      read_count;
-    bool          handled;
-    int           wakeup_fd;
-    int           ret;
+    struct pollfd           descriptors[LINKG_TUN_POLL_FD_COUNT];
+    linkg_transport_class_t traffic_class;
+    uint32_t                allocated_count;
+    uint32_t                read_count;
+    int                     wakeup_fd;
+    int                     ret;
 
     (void)user_data;
 
@@ -993,7 +1031,7 @@ static void _linkg_tun_read_thread(linkg_thread_t *thread, void *user_data)
     descriptors[0].fd     = wakeup_fd;
     descriptors[0].events = POLLIN;
     descriptors[1].fd     = g_tun.fd;
-    descriptors[1].events = POLLIN;
+    descriptors[1].events = POLLIN | POLLPRI | POLLRDBAND;
 
     LINKG_TUN_DEBUG("read thread entered");
 
@@ -1049,56 +1087,46 @@ static void _linkg_tun_read_thread(linkg_thread_t *thread, void *user_data)
             break;
         }
 
-        if ((descriptors[1].revents & POLLIN) == 0)
+        ret = _linkg_tun_poll_traffic_class(descriptors[1].revents, &traffic_class);
+        if (ret != 0)
         {
             continue;
         }
 
-        do
+        allocated_count = linkg_packet_pool_alloc_batch(g_tun.packet_pool, g_tun.read_packets, LINKG_TUN_BATCH_SIZE);
+        if (allocated_count == 0U)
         {
-            handled = false;
-
-            // Transport Class枚举顺序即读取优先级：REALTIME -> VIDEO -> DATA。
-            for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
-            {
-                allocated_count = linkg_packet_pool_alloc_batch(g_tun.packet_pool, g_tun.read_packets, LINKG_TUN_BATCH_SIZE);
-                if (allocated_count == 0U)
-                {
-                    (void)linkg_time_sleep_ms(LINKG_TUN_POOL_RETRY_MS);
-                    break;
-                }
-
-                read_count = 0U;
-                ret = _linkg_tun_read_batch((linkg_transport_class_t)class_index, allocated_count, &read_count);
-
-                if (read_count > 0U)
-                {
-                    handled = true;
-                    _linkg_tun_process_read_batch((linkg_transport_class_t)class_index, read_count);
-                }
-
-                linkg_packet_pool_release_batch(g_tun.packet_pool, g_tun.read_packets, allocated_count);
-
-                if (ret == -EAGAIN || ret == -EWOULDBLOCK)
-                {
-                    continue;
-                }
-
-                if (ret != 0)
-                {
-                    LINKG_TUN_ERROR("read class batch failed, class=%u, capacity=%u, received=%u, error=%d",
-                                    class_index,
-                                    allocated_count,
-                                    read_count,
-                                    ret);
-                    goto exit;
-                }
-            }
+            (void)linkg_time_sleep_ms(LINKG_TUN_POOL_RETRY_MS);
+            continue;
         }
-        while (handled && linkg_thread_is_running(thread));
+
+        read_count = 0U;
+        ret = _linkg_tun_read_batch(traffic_class, allocated_count, &read_count);
+
+        if (read_count > 0U)
+        {
+            _linkg_tun_process_read_batch(traffic_class, read_count);
+        }
+
+        linkg_packet_pool_release_batch(g_tun.packet_pool, g_tun.read_packets, allocated_count);
+
+        // poll结果只是就绪快照；Class被抢占或暂时变空属于正常竞争，重新poll即可。
+        if (ret == -EAGAIN || ret == -EWOULDBLOCK)
+        {
+            continue;
+        }
+
+        if (ret != 0)
+        {
+            LINKG_TUN_ERROR("read class batch failed, class=%u, capacity=%u, received=%u, error=%d",
+                            (uint32_t)traffic_class,
+                            allocated_count,
+                            read_count,
+                            ret);
+            break;
+        }
     }
 
-exit:
     LINKG_TUN_DEBUG("read thread exited");
 }
 

@@ -27,10 +27,12 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#define DRV_NAME	"tun"
-#define DRV_VERSION	"1.6"
-#define DRV_DESCRIPTION	"Universal TUN/TAP device driver"
-#define DRV_COPYRIGHT	"(C) 1999-2004 Max Krasnyansky <maxk@qualcomm.com>"
+/****************************** 驱动信息 ******************************/
+
+#define DRV_NAME                         "tun"                                      // TUN/TAP驱动名称
+#define DRV_VERSION                      "1.6"                                      // TUN/TAP驱动版本
+#define DRV_DESCRIPTION                  "Universal TUN/TAP device driver"           // TUN/TAP驱动说明
+#define DRV_COPYRIGHT                    "(C) 1999-2004 Max Krasnyansky <maxk@qualcomm.com>" // TUN/TAP版权信息
 
 #include <linux/module.h>
 #include <linux/errno.h>
@@ -58,284 +60,389 @@
 #include <linux/nsproxy.h>
 #include <linux/virtio_net.h>
 #include <linux/rcupdate.h>
-#include <net/net_namespace.h>
-#include <net/netns/generic.h>
-#include <net/rtnetlink.h>
-#include <net/sock.h>
-#include <net/xdp.h>
 #include <linux/seq_file.h>
 #include <linux/uio.h>
 #include <linux/skb_array.h>
 #include <linux/bpf.h>
 #include <linux/bpf_trace.h>
 #include <linux/mutex.h>
-
+#include <linux/ip.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
 #include <linux/uaccess.h>
 #include <linux/proc_fs.h>
 
-static void tun_default_link_ksettings(struct net_device *dev,
-				       struct ethtool_link_ksettings *cmd);
+#include <net/net_namespace.h>
+#include <net/netns/generic.h>
+#include <net/rtnetlink.h>
+#include <net/sock.h>
+#include <net/ip.h>
+#include <net/xdp.h>
 
-/* Uncomment to enable debugging */
-/* #define TUN_DEBUG 1 */
+/****************************** 前置声明 ******************************/
+
+static void tun_default_link_ksettings(struct net_device *dev, struct ethtool_link_ksettings *cmd);
+
+/****************************** 调试支持 ******************************/
+
+// Uncomment to enable debugging.
+// #define TUN_DEBUG 1
 
 #ifdef TUN_DEBUG
+
 static int debug;
 
-#define tun_debug(level, tun, fmt, args...)			\
-do {								\
-	if (tun->debug)						\
-		netdev_printk(level, tun->dev, fmt, ##args);	\
+#define tun_debug(level, tun, fmt, args...)                         \
+do                                                                  \
+{                                                                   \
+    if ((tun)->debug)                                               \
+    {                                                               \
+        netdev_printk(level, (tun)->dev, fmt, ##args);              \
+    }                                                               \
 } while (0)
-#define DBG1(level, fmt, args...)				\
-do {								\
-	if (debug == 2)						\
-		printk(level fmt, ##args);			\
+
+#define DBG1(level, fmt, args...)                                   \
+do                                                                  \
+{                                                                   \
+    if (debug == 2)                                                 \
+    {                                                               \
+        printk(level fmt, ##args);                                  \
+    }                                                               \
 } while (0)
+
 #else
-#define tun_debug(level, tun, fmt, args...)			\
-do {								\
-	if (0)							\
-		netdev_printk(level, tun->dev, fmt, ##args);	\
+
+#define tun_debug(level, tun, fmt, args...)                         \
+do                                                                  \
+{                                                                   \
+    if (0)                                                          \
+    {                                                               \
+        netdev_printk(level, (tun)->dev, fmt, ##args);              \
+    }                                                               \
 } while (0)
-#define DBG1(level, fmt, args...)				\
-do {								\
-	if (0)							\
-		printk(level fmt, ##args);			\
+
+#define DBG1(level, fmt, args...)                                   \
+do                                                                  \
+{                                                                   \
+    if (0)                                                          \
+    {                                                               \
+        printk(level fmt, ##args);                                  \
+    }                                                               \
 } while (0)
+
 #endif
 
-#define TUN_RX_PAD (NET_IP_ALIGN + NET_SKB_PAD)
+/****************************** TUN 基础常量 ******************************/
 
-/* TUN device flags */
+#define TUN_RX_PAD                       (NET_IP_ALIGN + NET_SKB_PAD)                // TUN接收缓冲区前置填充长度
+#define TUN_FASYNC                       IFF_ATTACH_QUEUE                            // flags中复用IFF_ATTACH_QUEUE表示异步通知
+#define TUN_VNET_LE                      0x80000000                                  // Virtio Net Header小端标志
+#define TUN_VNET_BE                      0x40000000                                  // Virtio Net Header大端标志
+#define GOODCOPY_LEN                     128                                         // 小报文快速复制长度
+#define MAX_TAP_QUEUES                   256                                         // TAP最大队列数量
+#define MAX_TAP_FLOWS                    4096                                        // TAP最大Flow数量
+#define TUN_FLOW_EXPIRE                  (3 * HZ)                                    // TUN Flow过期时间
 
-/* IFF_ATTACH_QUEUE is never stored in device flags,
- * overload it to mean fasync when stored there.
- */
-#define TUN_FASYNC	IFF_ATTACH_QUEUE
-/* High bits in flags field are unused. */
-#define TUN_VNET_LE     0x80000000
-#define TUN_VNET_BE     0x40000000
+#define TUN_FEATURES                     (IFF_NO_PI | IFF_ONE_QUEUE | IFF_VNET_HDR | \
+                                          IFF_MULTI_QUEUE | IFF_NAPI | IFF_NAPI_FRAGS)
 
-#define TUN_FEATURES (IFF_NO_PI | IFF_ONE_QUEUE | IFF_VNET_HDR | \
-		      IFF_MULTI_QUEUE | IFF_NAPI | IFF_NAPI_FRAGS)
+/****************************** TAP 过滤配置 ******************************/
 
-#define GOODCOPY_LEN 128
+#define FLT_EXACT_COUNT                  8                                           // 精确MAC地址过滤数量
 
-#define FLT_EXACT_COUNT 8
-struct tap_filter {
-	unsigned int    count;    /* Number of addrs. Zero means disabled */
-	u32             mask[2];  /* Mask of the hashed addrs */
-	unsigned char	addr[FLT_EXACT_COUNT][ETH_ALEN];
-};
-
-#define LQ_TUN_QSTAT 0
-#define LQ_TUN_QSTAT_INTERVAL (1 * HZ)
-#define lq_tun_qstat_print pr_err
-
-#if LQ_TUN_QSTAT
-struct lq_tun_qstat {
-	atomic_t qlen_cur;
-
-	u64 sample_cnt;
-	u64 qlen_sum;
-	u32 qlen_min;
-	u32 qlen_max;
-
-	unsigned long last_print;
-};
-#endif
-
-
-/* MAX_TAP_QUEUES 256 is chosen to allow rx/tx queues to be equal
- * to max number of VCPUs in guest. */
-#define MAX_TAP_QUEUES 256
-#define MAX_TAP_FLOWS  4096
-
-#define TUN_FLOW_EXPIRE (3 * HZ)
-
-struct tun_pcpu_stats {
-	u64 rx_packets;
-	u64 rx_bytes;
-	u64 tx_packets;
-	u64 tx_bytes;
-	struct u64_stats_sync syncp;
-	u32 rx_dropped;
-	u32 tx_dropped;
-	u32 rx_frame_errors;
-};
-
-/* A tun_file connects an open character device to a tuntap netdevice. It
- * also contains all socket related structures (except sock_fprog and tap_filter)
- * to serve as one transmit queue for tuntap device. The sock_fprog and
- * tap_filter were kept in tun_struct since they were used for filtering for the
- * netdevice not for a specific queue (at least I didn't see the requirement for
- * this).
- *
- * RCU usage:
- * The tun_file and tun_struct are loosely coupled, the pointer from one to the
- * other can only be read while rcu_read_lock or rtnl_lock is held.
- */
-struct tun_file {
-	struct sock sk;
-	struct socket socket;
-	struct tun_struct __rcu *tun;
-	struct fasync_struct *fasync;
-	/* only used for fasnyc */
-	unsigned int flags;
-	union {
-		u16 queue_index;
-		unsigned int ifindex;
-	};
-	struct napi_struct napi;
-	bool napi_enabled;
-	bool napi_frags_enabled;
-	struct mutex napi_mutex;	/* Protects access to the above napi */
-	struct list_head next;
-	struct tun_struct *detached;
-	struct ptr_ring tx_ring;
-#if LQ_TUN_QSTAT
-	struct lq_tun_qstat lq_qstat;
-#endif
-	struct xdp_rxq_info xdp_rxq;
-};
-
-
-#if LQ_TUN_QSTAT
-static void lq_tun_qstat_init(struct lq_tun_qstat *s)
+struct tap_filter
 {
-	atomic_set(&s->qlen_cur, 0);
-	s->sample_cnt = 0;
-	s->qlen_sum = 0;
-	s->qlen_min = ~0U;
-	s->qlen_max = 0;
-	s->last_print = jiffies;
+    unsigned int  count;                              // 精确地址数量，0表示关闭过滤
+    u32           mask[2];                            // Hash地址过滤掩码
+    unsigned char addr[FLT_EXACT_COUNT][ETH_ALEN];   // 精确MAC地址列表
+};
+
+/****************************** LQ 队列调试统计 ******************************/
+
+#define LQ_TUN_QSTAT                     0                                           // 是否启用LQ TUN队列统计
+#define LQ_TUN_QSTAT_INTERVAL            (1 * HZ)                                    // 队列统计打印周期
+#define lq_tun_qstat_print               pr_err                                      // 队列统计日志输出接口
+
+#if LQ_TUN_QSTAT
+
+struct lq_tun_qstat
+{
+    atomic_t      qlen_cur;   // 当前队列长度
+    u64           sample_cnt; // 队列长度采样次数
+    u64           qlen_sum;   // 队列长度累计值
+    u32           qlen_min;   // 最小队列长度
+    u32           qlen_max;   // 最大队列长度
+    unsigned long last_print; // 最近一次统计打印时间
+};
+
+#endif
+
+/****************************** LQ 分片分类缓存 ******************************/
+
+#define LQ_TUN_FRAGMENT_CLASS_CACHE_SIZE 16U                                         // IPv4分片分类缓存容量
+#define LQ_TUN_FRAGMENT_CLASS_TTL_MS     20U                                         // IPv4分片分类缓存有效时间，单位毫秒
+
+struct lq_tun_fragment_class_entry
+{
+    bool          valid;            // 当前缓存项是否有效
+    u8            protocol;         // IPv4上层协议号
+    u8            traffic_class;    // 当前IPv4 Datagram所属业务分类
+    __be16        identification;   // IPv4 Identification字段
+    __be32        source_addr;      // IPv4源地址
+    __be32        destination_addr; // IPv4目的地址
+    unsigned long expires;          // 缓存项过期Jiffies
+};
+
+/****************************** TUN 内部统计 ******************************/
+
+struct tun_pcpu_stats
+{
+    u64                   rx_packets;      // 接收报文数量
+    u64                   rx_bytes;        // 接收字节数量
+    u64                   tx_packets;      // 发送报文数量
+    u64                   tx_bytes;        // 发送字节数量
+    struct u64_stats_sync syncp;           // 64位统计同步对象
+    u32                   rx_dropped;      // 接收丢弃报文数量
+    u32                   tx_dropped;      // 发送丢弃报文数量
+    u32                   rx_frame_errors; // 接收帧错误数量
+};
+
+/****************************** TUN 文件上下文 ******************************/
+
+/**
+ * @brief 描述一个打开的TUN/TAP字符设备队列。
+ *
+ * tun_file与tun_struct通过RCU松耦合，
+ * 访问tun指针时必须持有rcu_read_lock或rtnl_lock。
+ */
+struct tun_file
+{
+    struct sock              sk;                                           // TUN字符设备Socket状态
+    struct socket            socket;                                       // TUN字符设备Socket
+    struct tun_struct __rcu *tun;                                          // 所属TUN/TAP设备，受RCU保护
+    struct fasync_struct    *fasync;                                       // 异步通知上下文
+    unsigned int             flags;                                        // tun_file运行标志
+    union
+    {
+        u16          queue_index;                                          // 当前TUN多队列索引
+        unsigned int ifindex;                                              // Detached状态保存的接口索引
+    };
+    struct napi_struct        napi;                                         // NAPI上下文
+    bool                      napi_enabled;                                 // 是否启用NAPI
+    bool                      napi_frags_enabled;                           // 是否启用NAPI Fragment模式
+    struct mutex              napi_mutex;                                   // NAPI状态锁
+    struct list_head          next;                                         // tun_file链表节点
+    struct tun_struct        *detached;                                     // Detached状态对应的TUN设备
+    struct ptr_ring           tx_rings[LQ_TUN_TRAFFIC_CLASS_COUNT];         // REALTIME/VIDEO/DATA三个用户读取队列
+#if LQ_TUN_QSTAT
+    struct lq_tun_qstat       lq_qstat;                                     // LQ队列调试统计
+#endif
+    struct xdp_rxq_info       xdp_rxq;                                      // XDP接收队列信息
+};
+
+/****************************** 前置声明 ******************************/
+
+/**
+ * @brief 调整TUN文件的三个业务发送队列容量。
+ */
+static int lq_tun_resize_tx_rings(struct tun_file *tfile);
+
+/****************************** LQ队列调试统计 ******************************/
+
+#if LQ_TUN_QSTAT
+
+/**
+ * @brief 初始化LQ TUN队列调试统计。
+ */
+static void lq_tun_qstat_init(struct lq_tun_qstat *stats)
+{
+    atomic_set(&stats->qlen_cur, 0);
+
+    stats->sample_cnt = 0U;
+    stats->qlen_sum   = 0U;
+    stats->qlen_min   = ~0U;
+    stats->qlen_max   = 0U;
+    stats->last_print = jiffies;
 }
 
+/**
+ * @brief 记录一个报文进入LQ TUN发送队列。
+ */
 static void lq_tun_qstat_enqueue(struct tun_file *tfile)
 {
-	atomic_inc(&tfile->lq_qstat.qlen_cur);
+    atomic_inc(&tfile->lq_qstat.qlen_cur);
 }
 
+/**
+ * @brief 记录一个报文离开LQ TUN发送队列。
+ */
 static void lq_tun_qstat_dequeue(struct tun_file *tfile)
 {
-	atomic_dec(&tfile->lq_qstat.qlen_cur);
+    atomic_dec(&tfile->lq_qstat.qlen_cur);
 }
 
+/**
+ * @brief 采样并周期输出LQ TUN发送队列长度统计。
+ */
 static void lq_tun_qstat_sample(struct tun_file *tfile)
 {
-	struct lq_tun_qstat *s = &tfile->lq_qstat;
-	u32 qlen = atomic_read(&s->qlen_cur);
+    struct lq_tun_qstat *stats;
+    unsigned long        delta;
+    u64                  average;
+    u64                  pps;
+    u32                  queue_length;
 
-	s->sample_cnt++;
-	s->qlen_sum += qlen;
+    stats        = &tfile->lq_qstat;
+    queue_length = atomic_read(&stats->qlen_cur);
 
-	if (qlen < s->qlen_min)
-		s->qlen_min = qlen;
+    stats->sample_cnt++;
+    stats->qlen_sum += queue_length;
 
-	if (qlen > s->qlen_max)
-		s->qlen_max = qlen;
+    if (queue_length < stats->qlen_min)
+    {
+        stats->qlen_min = queue_length;
+    }
 
-	if (time_after(jiffies, s->last_print + LQ_TUN_QSTAT_INTERVAL)) {
-		u64 avg = 0;
-		u64 pps = 0;
-		unsigned long delta = jiffies - s->last_print;
+    if (queue_length > stats->qlen_max)
+    {
+        stats->qlen_max = queue_length;
+    }
 
-		if (s->sample_cnt)
-			avg = div64_u64(s->qlen_sum, s->sample_cnt);
+    if (!time_after(jiffies, stats->last_print + LQ_TUN_QSTAT_INTERVAL))
+    {
+        return;
+    }
 
-		if (delta)
-			pps = div64_u64((u64)s->sample_cnt * HZ, delta);
+    average = 0U;
+    pps     = 0U;
+    delta   = jiffies - stats->last_print;
 
-		lq_tun_qstat_print("lq_tun_qstat: qidx=%u cur=%d min=%u max=%u avg=%llu samples=%llu pps=%llu\n",
-			tfile->queue_index,
-			atomic_read(&s->qlen_cur),
-			s->qlen_min == ~0U ? 0 : s->qlen_min,
-			s->qlen_max,
-			(unsigned long long)avg,
-			(unsigned long long)s->sample_cnt,
-			(unsigned long long)pps);
+    if (stats->sample_cnt != 0U)
+    {
+        average = div64_u64(stats->qlen_sum, stats->sample_cnt);
+    }
 
-		s->sample_cnt = 0;
-		s->qlen_sum = 0;
-		s->qlen_min = ~0U;
-		s->qlen_max = 0;
-		s->last_print = jiffies;
-	}
+    if (delta != 0U)
+    {
+        pps = div64_u64((u64)stats->sample_cnt * HZ, delta);
+    }
+
+    lq_tun_qstat_print(
+        "lq_tun_qstat: qidx=%u cur=%d min=%u max=%u avg=%llu samples=%llu pps=%llu\n",
+        tfile->queue_index,
+        atomic_read(&stats->qlen_cur),
+        stats->qlen_min == ~0U ? 0U : stats->qlen_min,
+        stats->qlen_max,
+        (unsigned long long)average,
+        (unsigned long long)stats->sample_cnt,
+        (unsigned long long)pps);
+
+    stats->sample_cnt = 0U;
+    stats->qlen_sum   = 0U;
+    stats->qlen_min   = ~0U;
+    stats->qlen_max   = 0U;
+    stats->last_print = jiffies;
 }
+
 #endif
 
+/****************************** TUN内部类型 ******************************/
 
-struct tun_page {
-	struct page *page;
-	int count;
+struct tun_page
+{
+    struct page *page;  // 内核Page
+    int          count; // 当前Page引用数量
 };
 
-struct tun_flow_entry {
-	struct hlist_node hash_link;
-	struct rcu_head rcu;
-	struct tun_struct *tun;
-
-	u32 rxhash;
-	u32 rps_rxhash;
-	int queue_index;
-	unsigned long updated ____cacheline_aligned_in_smp;
+struct tun_flow_entry
+{
+    struct hlist_node  hash_link;                              // Flow Hash链表节点
+    struct rcu_head    rcu;                                    // RCU释放节点
+    struct tun_struct *tun;                                    // 所属TUN设备
+    u32                rxhash;                                 // 接收Flow Hash
+    u32                rps_rxhash;                             // RPS接收Hash
+    int                queue_index;                            // 当前Flow绑定队列索引
+    unsigned long      updated ____cacheline_aligned_in_smp;   // 最近更新时间
 };
 
-#define TUN_NUM_FLOW_ENTRIES 1024
-#define TUN_MASK_FLOW_ENTRIES (TUN_NUM_FLOW_ENTRIES - 1)
+/****************************** TUN Flow配置 ******************************/
 
-struct tun_prog {
-	struct rcu_head rcu;
-	struct bpf_prog *prog;
+#define TUN_NUM_FLOW_ENTRIES  1024                         // TUN Flow Hash表项数量
+#define TUN_MASK_FLOW_ENTRIES (TUN_NUM_FLOW_ENTRIES - 1)  // TUN Flow Hash掩码
+
+struct tun_prog
+{
+    struct rcu_head rcu;  // RCU释放节点
+    struct bpf_prog *prog; // BPF程序
 };
 
-/* Since the socket were moved to tun_file, to preserve the behavior of persist
- * device, socket filter, sndbuf and vnet header size were restore when the
- * file were attached to a persist device.
+/****************************** TUN设备上下文 ******************************/
+
+/**
+ * @brief 描述一个TUN/TAP网络设备实例。
+ *
+ * Socket相关状态主要保存在tun_file中。
+ * 持久化设备重新Attach时需要恢复Socket Filter、sndbuf和Virtio Net Header大小。
  */
-struct tun_struct {
-	struct tun_file __rcu	*tfiles[MAX_TAP_QUEUES];
-	unsigned int            numqueues;
-	unsigned int 		flags;
-	kuid_t			owner;
-	kgid_t			group;
+struct tun_struct
+{
+    struct tun_file __rcu           *tfiles[MAX_TAP_QUEUES]; // 当前Attached的TUN文件队列
+    unsigned int                     numqueues;               // 当前Attached队列数量
+    unsigned int                     flags;                   // TUN设备运行标志
+    kuid_t                           owner;                   // 设备Owner UID
+    kgid_t                           group;                   // 设备Owner GID
 
-	struct net_device	*dev;
-	netdev_features_t	set_features;
-#define TUN_USER_FEATURES (NETIF_F_HW_CSUM|NETIF_F_TSO_ECN|NETIF_F_TSO| \
-			  NETIF_F_TSO6)
+    struct net_device               *dev;                     // Linux网络设备
+    netdev_features_t                set_features;            // 用户配置的Netdev Features
 
-	int			align;
-	int			vnet_hdr_sz;
-	int			sndbuf;
-	struct tap_filter	txflt;
-	struct sock_fprog	fprog;
-	/* protected by rtnl lock */
-	bool			filter_attached;
+#define TUN_USER_FEATURES (NETIF_F_HW_CSUM | NETIF_F_TSO_ECN | NETIF_F_TSO | NETIF_F_TSO6)
+
+    int                              align;                    // 用户数据对齐长度
+    int                              vnet_hdr_sz;              // Virtio Net Header大小
+    int                              sndbuf;                   // Socket发送缓冲区大小
+    struct tap_filter                txflt;                    // TAP发送过滤器
+    struct sock_fprog                fprog;                    // Socket Filter程序
+    bool                             filter_attached;          // 是否已经挂载Filter，受RTNL锁保护
+
 #ifdef TUN_DEBUG
-	int debug;
+    int                              debug;                    // TUN调试等级
 #endif
-	spinlock_t lock;
-	struct hlist_head flows[TUN_NUM_FLOW_ENTRIES];
-	struct timer_list flow_gc_timer;
-	unsigned long ageing_time;
-	unsigned int numdisabled;
-	struct list_head disabled;
-	void *security;
-	u32 flow_count;
-	u32 rx_batched;
-	struct tun_pcpu_stats __percpu *pcpu_stats;
-	struct bpf_prog __rcu *xdp_prog;
-	struct tun_prog __rcu *steering_prog;
-	struct tun_prog __rcu *filter_prog;
-	struct ethtool_link_ksettings link_ksettings;
+
+    spinlock_t                       lock;                     // TUN设备状态锁
+    struct hlist_head                flows[TUN_NUM_FLOW_ENTRIES]; // Flow Hash表
+    struct timer_list                flow_gc_timer;            // Flow回收定时器
+    unsigned long                    ageing_time;              // Flow老化时间
+    unsigned int                     numdisabled;              // Disabled队列数量
+    struct list_head                 disabled;                 // Disabled队列链表
+    void                            *security;                 // Security模块私有状态
+    u32                              flow_count;               // 当前Flow数量
+    u32                              rx_batched;               // 接收Batch累计数量
+    struct tun_pcpu_stats __percpu  *pcpu_stats;              // Per-CPU TUN统计
+    struct bpf_prog __rcu           *xdp_prog;                 // XDP程序
+    struct tun_prog __rcu           *steering_prog;            // Steering BPF程序
+    struct tun_prog __rcu           *filter_prog;              // Filter BPF程序
+    struct ethtool_link_ksettings    link_ksettings;           // EtHTool链路配置
+
+    /****************************** LQ业务分类状态 ******************************/
+
+    spinlock_t                       lq_traffic_lock;           // 业务分类规则快照锁
+    struct lq_tun_traffic_config     lq_traffic_config;         // 当前生效的业务分类规则快照
+
+    /****************************** LQ分片分类状态 ******************************/
+
+    spinlock_t                         lq_fragment_lock;          // IPv4分片分类缓存锁
+    struct lq_tun_fragment_class_entry lq_fragment_classes[LQ_TUN_FRAGMENT_CLASS_CACHE_SIZE]; // IPv4分片分类缓存
+    u32                                lq_fragment_next;          // 下一候选缓存替换位置
 };
 
-struct veth {
-	__be16 h_vlan_proto;
-	__be16 h_vlan_TCI;
+/****************************** TAP Virtio头 ******************************/
+
+struct veth
+{
+    __be16 h_vlan_proto; // VLAN协议
+    __be16 h_vlan_TCI;   // VLAN Tag Control Information
 };
+
 
 bool tun_is_xdp_frame(void *ptr)
 {
@@ -753,10 +860,14 @@ EXPORT_SYMBOL_GPL(tun_ptr_free);
 
 static void tun_queue_purge(struct tun_file *tfile)
 {
+	u32 traffic_class;
 	void *ptr;
 
-	while ((ptr = ptr_ring_consume(&tfile->tx_ring)) != NULL)
-		tun_ptr_free(ptr);
+	for (traffic_class = 0; traffic_class < LQ_TUN_TRAFFIC_CLASS_COUNT;
+	     traffic_class++) {
+		while ((ptr = ptr_ring_consume(&tfile->tx_rings[traffic_class])) != NULL)
+			tun_ptr_free(ptr);
+	}
 
 #if LQ_TUN_QSTAT
 	atomic_set(&tfile->lq_qstat.qlen_cur, 0);
@@ -816,7 +927,15 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 		}
 		if (tun)
 			xdp_rxq_info_unreg(&tfile->xdp_rxq);
-		ptr_ring_cleanup(&tfile->tx_ring, tun_ptr_free);
+		{
+			u32 traffic_class;
+
+			for (traffic_class = 0;
+			     traffic_class < LQ_TUN_TRAFFIC_CLASS_COUNT;
+			     traffic_class++)
+				ptr_ring_cleanup(&tfile->tx_rings[traffic_class],
+						 tun_ptr_free);
+		}
 		sock_put(&tfile->sk);
 	}
 }
@@ -883,7 +1002,6 @@ static int tun_attach(struct tun_struct *tun, struct file *file,
 		      bool publish_tun)
 {
 	struct tun_file *tfile = file->private_data;
-	struct net_device *dev = tun->dev;
 	int err;
 
 	err = security_tun_dev_attach(tfile->socket.sk, tun->security);
@@ -914,9 +1032,7 @@ static int tun_attach(struct tun_struct *tun, struct file *file,
 			goto out;
 	}
 
-	if (!tfile->detached &&
-	    ptr_ring_resize(&tfile->tx_ring, dev->tx_queue_len,
-			    GFP_KERNEL, tun_ptr_free)) {
+	if (!tfile->detached && lq_tun_resize_tx_rings(tfile)) {
 		err = -ENOMEM;
 		goto out;
 	}
@@ -988,6 +1104,444 @@ static struct tun_struct *tun_get(struct tun_file *tfile)
 static void tun_put(struct tun_struct *tun)
 {
 	dev_put(tun->dev);
+}
+
+/****************************** LinkG 三队列 ******************************/
+
+/**
+ * @brief 获取指定业务分类对应的TUN发送队列容量。
+ */
+static unsigned int lq_tun_class_queue_size(u32 traffic_class)
+{
+    switch (traffic_class)
+    {
+        case LQ_TUN_TRAFFIC_CLASS_REALTIME:
+            return LQ_TUN_REALTIME_QUEUE_SIZE;
+
+        case LQ_TUN_TRAFFIC_CLASS_VIDEO:
+            return LQ_TUN_VIDEO_QUEUE_SIZE;
+
+        case LQ_TUN_TRAFFIC_CLASS_DATA:
+        default:
+            return LQ_TUN_DATA_QUEUE_SIZE;
+    }
+}
+
+/**
+ * @brief 检查指定业务分类之前是否存在更高优先级的待处理报文。
+ */
+static bool lq_tun_higher_priority_ready(struct tun_file *tfile, u32 traffic_class)
+{
+    u32 higher_class;
+
+    for (higher_class = 0; higher_class < traffic_class; higher_class++)
+    {
+        if (!ptr_ring_empty(&tfile->tx_rings[higher_class]))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @brief 从指定业务分类队列中取出一个待处理报文。
+ */
+static void *lq_tun_ring_consume_class(struct tun_file *tfile, u32 traffic_class)
+{
+    void *ptr;
+
+    ptr = ptr_ring_consume(&tfile->tx_rings[traffic_class]);
+
+    if (ptr == NULL)
+    {
+        return NULL;
+    }
+
+#if LQ_TUN_QSTAT
+    lq_tun_qstat_sample(tfile);
+    lq_tun_qstat_dequeue(tfile);
+#endif
+
+    return ptr;
+}
+
+/**
+ * @brief 按业务优先级顺序从TUN发送队列中取出一个待处理报文。
+ */
+static void *lq_tun_ring_consume_priority(struct tun_file *tfile)
+{
+    u32 traffic_class;
+    void *ptr;
+
+    for (traffic_class = 0; traffic_class < LQ_TUN_TRAFFIC_CLASS_COUNT; traffic_class++)
+    {
+        ptr = lq_tun_ring_consume_class(tfile, traffic_class);
+
+        if (ptr != NULL)
+        {
+            return ptr;
+        }
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief 按各业务分类配置重新设置TUN发送队列容量。
+ */
+static int lq_tun_resize_tx_rings(struct tun_file *tfile)
+{
+    u32 traffic_class;
+    int ret;
+
+    for (traffic_class = 0; traffic_class < LQ_TUN_TRAFFIC_CLASS_COUNT; traffic_class++)
+    {
+        ret = ptr_ring_resize(&tfile->tx_rings[traffic_class], lq_tun_class_queue_size(traffic_class), GFP_KERNEL, tun_ptr_free);
+
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
+/****************************** LinkG 分类配置 ******************************/
+
+/**
+ * @brief 检查动态业务分类配置是否合法。
+ */
+static bool lq_tun_traffic_config_valid(const struct lq_tun_traffic_config *config)
+{
+    const struct lq_tun_traffic_rule *rule;
+    u32 index;
+
+    if (config == NULL || config->count > LQ_TUN_TRAFFIC_RULE_MAX)
+    {
+        return false;
+    }
+
+    for (index = 0; index < config->count; index++)
+    {
+        rule = &config->rules[index];
+
+        if (rule->traffic_class >= LQ_TUN_TRAFFIC_CLASS_COUNT)
+        {
+            return false;
+        }
+
+        if (rule->protocol != LQ_TUN_PORT_PROTOCOL_TCP && rule->protocol != LQ_TUN_PORT_PROTOCOL_UDP)
+        {
+            return false;
+        }
+
+        if (rule->start_port > rule->end_port)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/****************************** LinkG 分片分类缓存 ******************************/
+
+/**
+ * @brief 判断IPv4分片分类缓存项是否与指定分片标识一致。
+ */
+static bool lq_tun_fragment_key_equal(const struct lq_tun_fragment_class_entry *entry, __be32 source_addr, __be32 destination_addr, __be16 identification, u8 protocol)
+{
+    return entry->valid &&
+           entry->source_addr == source_addr &&
+           entry->destination_addr == destination_addr &&
+           entry->identification == identification &&
+           entry->protocol == protocol;
+}
+
+/**
+ * @brief 保存IPv4首分片对应的业务分类。
+ */
+static void lq_tun_fragment_class_store(struct tun_struct *tun, __be32 source_addr, __be32 destination_addr, __be16 identification, u8 protocol, u32 traffic_class)
+{
+    struct lq_tun_fragment_class_entry *entry;
+    struct lq_tun_fragment_class_entry *candidate = NULL;
+    unsigned long now;
+    u32 index;
+
+    if (tun == NULL || traffic_class >= LQ_TUN_TRAFFIC_CLASS_COUNT)
+    {
+        return;
+    }
+
+    now = jiffies;
+
+    // 分片分类缓存由lq_fragment_lock统一保护。
+    spin_lock_bh(&tun->lq_fragment_lock);
+
+    for (index = 0; index < LQ_TUN_FRAGMENT_CLASS_CACHE_SIZE; index++)
+    {
+        entry = &tun->lq_fragment_classes[index];
+
+        if (entry->valid && time_after_eq(now, entry->expires))
+        {
+            entry->valid = false;
+        }
+
+        if (lq_tun_fragment_key_equal(entry, source_addr, destination_addr, identification, protocol))
+        {
+            candidate = entry;
+            break;
+        }
+
+        if (candidate == NULL && !entry->valid)
+        {
+            candidate = entry;
+        }
+    }
+
+    // 缓存已满时按照lq_fragment_next循环覆盖已有缓存项。
+    if (candidate == NULL)
+    {
+        candidate = &tun->lq_fragment_classes[tun->lq_fragment_next % LQ_TUN_FRAGMENT_CLASS_CACHE_SIZE];
+        tun->lq_fragment_next++;
+    }
+
+    candidate->source_addr   	= source_addr;
+    candidate->destination_addr = destination_addr;
+    candidate->identification   = identification;
+    candidate->protocol         = protocol;
+    candidate->traffic_class    = (u8)traffic_class;
+    candidate->expires          = now + msecs_to_jiffies(LQ_TUN_FRAGMENT_CLASS_TTL_MS);
+    candidate->valid            = true;
+
+    spin_unlock_bh(&tun->lq_fragment_lock);
+}
+
+/**
+ * @brief 查询IPv4非首分片对应的业务分类。
+ */
+static bool lq_tun_fragment_class_lookup(struct tun_struct *tun, __be32 source_addr, __be32 destination_addr, __be16 identification, u8 protocol, bool remove, u32 *traffic_class)
+{
+    struct lq_tun_fragment_class_entry *entry;
+    unsigned long now;
+    u32 index;
+    bool found = false;
+
+    if (tun == NULL || traffic_class == NULL)
+    {
+        return false;
+    }
+
+    now = jiffies;
+
+    // 查询和失效处理均在lq_fragment_lock保护范围内完成。
+    spin_lock_bh(&tun->lq_fragment_lock);
+
+    for (index = 0; index < LQ_TUN_FRAGMENT_CLASS_CACHE_SIZE; index++)
+    {
+        entry = &tun->lq_fragment_classes[index];
+
+        if (!entry->valid)
+        {
+            continue;
+        }
+
+        if (time_after_eq(now, entry->expires))
+        {
+            entry->valid = false;
+            continue;
+        }
+
+        if (!lq_tun_fragment_key_equal(entry, source_addr, destination_addr, identification, protocol))
+        {
+            continue;
+        }
+
+        *traffic_class = entry->traffic_class;
+
+        if (remove)
+        {
+            entry->valid = false;
+        }
+
+        found = true;
+        break;
+    }
+
+    spin_unlock_bh(&tun->lq_fragment_lock);
+
+    return found;
+}
+
+/****************************** LinkG 报文分类 ******************************/
+
+/**
+ * @brief 根据传输层协议和端口确定报文业务分类。
+ */
+static u32 lq_tun_classify_ports(struct tun_struct *tun, u8 protocol, u16 source_port, u16 destination_port)
+{
+    struct lq_tun_traffic_config config;
+    const struct lq_tun_traffic_rule *rule;
+    u32 index;
+
+    // SSH流量固定划分为实时业务。
+    if (protocol == IPPROTO_TCP && (source_port == 22U || destination_port == 22U))
+    {
+        return LQ_TUN_TRAFFIC_CLASS_REALTIME;
+    }
+
+    // 在锁内复制配置快照，后续规则匹配不长期持有配置锁。
+    spin_lock_bh(&tun->lq_traffic_lock);
+    config = tun->lq_traffic_config;
+    spin_unlock_bh(&tun->lq_traffic_lock);
+
+    for (index = 0; index < config.count; index++)
+    {
+        rule = &config.rules[index];
+
+        if (rule->protocol != protocol)
+        {
+            continue;
+        }
+
+        if ((source_port < rule->start_port || source_port > rule->end_port) &&
+            (destination_port < rule->start_port || destination_port > rule->end_port))
+        {
+            continue;
+        }
+
+        return rule->traffic_class;
+    }
+
+    return LQ_TUN_TRAFFIC_CLASS_DATA;
+}
+
+/**
+ * @brief 根据IPv4协议、端口和分片信息确定TUN报文业务分类。
+ */
+static u32 lq_tun_classify_skb(struct tun_struct *tun, struct sk_buff *skb)
+{
+    struct iphdr ip_header_buffer;
+    const struct iphdr *ip_header;
+    __be16 ports_buffer[2];
+    const __be16 *ports;
+    unsigned int network_offset;
+    unsigned int transport_offset;
+    u16 source_port;
+    u16 destination_port;
+    u16 fragment;
+    u16 fragment_offset;
+    u32 traffic_class;
+    bool more_fragments;
+
+    if (tun == NULL || skb == NULL || skb->protocol != htons(ETH_P_IP))
+    {
+        return LQ_TUN_TRAFFIC_CLASS_DATA;
+    }
+
+    network_offset = skb_network_offset(skb);
+    ip_header = skb_header_pointer(skb, network_offset, sizeof(ip_header_buffer), &ip_header_buffer);
+
+    if (ip_header == NULL || ip_header->version != 4 || ip_header->ihl < 5)
+    {
+        return LQ_TUN_TRAFFIC_CLASS_DATA;
+    }
+
+    // ICMP流量固定划分为实时业务。
+    if (ip_header->protocol == IPPROTO_ICMP)
+    {
+        return LQ_TUN_TRAFFIC_CLASS_REALTIME;
+    }
+
+    if (ip_header->protocol != IPPROTO_TCP && ip_header->protocol != IPPROTO_UDP)
+    {
+        return LQ_TUN_TRAFFIC_CLASS_DATA;
+    }
+
+    fragment = ntohs(ip_header->frag_off);
+    fragment_offset = fragment & IP_OFFSET;
+    more_fragments = (fragment & IP_MF) != 0U;
+
+    // 非首分片没有TCP/UDP端口，继承首分片已经记录的业务分类。
+    if (fragment_offset != 0U)
+    {
+        if (lq_tun_fragment_class_lookup(tun, ip_header->saddr, ip_header->daddr,
+                                         ip_header->id, ip_header->protocol,
+                                         !more_fragments, &traffic_class))
+        {
+            return traffic_class;
+        }
+
+        return LQ_TUN_TRAFFIC_CLASS_DATA;
+    }
+
+    traffic_class = LQ_TUN_TRAFFIC_CLASS_DATA;
+    transport_offset = network_offset + (ip_header->ihl * 4U);
+    ports = skb_header_pointer(skb, transport_offset, sizeof(ports_buffer), ports_buffer);
+
+    if (ports != NULL)
+    {
+        source_port = ntohs(ports[0]);
+        destination_port = ntohs(ports[1]);
+        traffic_class = lq_tun_classify_ports(tun, ip_header->protocol, source_port, destination_port);
+    }
+
+    // 首分片缓存业务分类，后续分片无需再次解析传输层头部。
+    if (more_fragments)
+    {
+        lq_tun_fragment_class_store(tun, ip_header->saddr, ip_header->daddr,
+                                    ip_header->id, ip_header->protocol,
+                                    traffic_class);
+    }
+
+    return traffic_class;
+}
+
+/****************************** LinkG 配置接口 ******************************/
+
+/**
+ * @brief 更新TUN设备的动态业务分类规则。
+ */
+static long lq_tun_chr_set_traffic_config(struct file *file, unsigned long arg)
+{
+    struct tun_file *tfile = file->private_data;
+    struct lq_tun_traffic_config config;
+    struct tun_struct *tun;
+    void __user *argp = (void __user *)arg;
+
+    if (copy_from_user(&config, argp, sizeof(config)))
+    {
+        return -EFAULT;
+    }
+
+    if (!lq_tun_traffic_config_valid(&config))
+    {
+        return -EINVAL;
+    }
+
+    tun = tun_get(tfile);
+
+    if (tun == NULL)
+    {
+        return -EBADFD;
+    }
+
+    if ((tun->flags & TUN_TYPE_MASK) != IFF_TUN)
+    {
+        tun_put(tun);
+        return -EOPNOTSUPP;
+    }
+
+    // 动态分类配置由lq_traffic_lock保护，只影响后续新进入TUN的报文。
+    spin_lock_bh(&tun->lq_traffic_lock);
+    tun->lq_traffic_config = config;
+    spin_unlock_bh(&tun->lq_traffic_lock);
+
+    tun_put(tun);
+    return 0;
 }
 
 /* TAP filtering */
@@ -1150,75 +1704,101 @@ static unsigned int run_ebpf_filter(struct tun_struct *tun,
 	return len;
 }
 
-/* Net device start xmit */
+/**
+ * @brief 将内核协议栈发送的报文写入对应业务分类的TUN发送队列。
+ */
 static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct tun_struct *tun = netdev_priv(dev);
-	int txq = skb->queue_mapping;
-	struct tun_file *tfile;
-	int len = skb->len;
+    struct tun_struct *tun = netdev_priv(dev);
+    int txq = skb->queue_mapping;
+    struct tun_file *tfile;
+    u32 traffic_class;
+    int len = skb->len;
 
-	rcu_read_lock();
-	tfile = rcu_dereference(tun->tfiles[txq]);
+    rcu_read_lock();
+    tfile = rcu_dereference(tun->tfiles[txq]);
 
-	/* Drop packet if interface is not attached */
-	if (!tfile)
-		goto drop;
+    // 接口未绑定Tun File时直接丢弃报文。
+    if (tfile == NULL)
+    {
+        goto drop;
+    }
 
-	if (!rcu_dereference(tun->steering_prog))
-		tun_automq_xmit(tun, skb);
+    if (rcu_dereference(tun->steering_prog) == NULL)
+    {
+        tun_automq_xmit(tun, skb);
+    }
 
-	tun_debug(KERN_INFO, tun, "tun_net_xmit %d\n", skb->len);
+    tun_debug(KERN_INFO, tun, "tun_net_xmit %d\n", skb->len);
 
-	BUG_ON(!tfile);
+    BUG_ON(tfile == NULL);
 
-	/* Drop if the filter does not like it.
-	 * This is a noop if the filter is disabled.
-	 * Filter can be enabled only for the TAP devices. */
-	if (!check_filter(&tun->txflt, skb))
-		goto drop;
+    /**
+     * TAP设备启用发送过滤器时执行地址过滤。
+     * 未启用过滤器时check_filter直接允许报文通过。
+     */
+    if (!check_filter(&tun->txflt, skb))
+    {
+        goto drop;
+    }
 
-	if (tfile->socket.sk->sk_filter &&
-	    sk_filter(tfile->socket.sk, skb))
-		goto drop;
+    if (tfile->socket.sk->sk_filter && sk_filter(tfile->socket.sk, skb))
+    {
+        goto drop;
+    }
 
-	len = run_ebpf_filter(tun, skb, len);
-	if (len == 0 || pskb_trim(skb, len))
-		goto drop;
+    len = run_ebpf_filter(tun, skb, len);
 
-	if (unlikely(skb_orphan_frags_rx(skb, GFP_ATOMIC)))
-		goto drop;
+    if (len == 0 || pskb_trim(skb, len))
+    {
+        goto drop;
+    }
 
-	skb_tx_timestamp(skb);
+    if (unlikely(skb_orphan_frags_rx(skb, GFP_ATOMIC)))
+    {
+        goto drop;
+    }
 
-	/* Orphan the skb - required as we might hang on to it
-	 * for indefinite time.
-	 */
-	skb_orphan(skb);
+    skb_tx_timestamp(skb);
 
-	nf_reset_ct(skb);
+    /**
+     * 解除SKB与原Socket的所有权关系。
+     * 报文进入TUN队列后可能被长时间持有，不能继续占用原Socket资源。
+     */
+    skb_orphan(skb);
 
-	if (ptr_ring_produce(&tfile->tx_ring, skb))
-		goto drop;
+    nf_reset_ct(skb);
+
+    // 根据当前动态业务分类规则选择对应的TUN发送队列。
+    traffic_class = lq_tun_classify_skb(tun, skb);
+
+    if (ptr_ring_produce(&tfile->tx_rings[traffic_class], skb))
+    {
+        goto drop;
+    }
 
 #if LQ_TUN_QSTAT
-	lq_tun_qstat_enqueue(tfile);
+    lq_tun_qstat_enqueue(tfile);
 #endif
 
-	/* Notify and wake up reader process */
-	if (tfile->flags & TUN_FASYNC)
-		kill_fasync(&tfile->fasync, SIGIO, POLL_IN);
-	tfile->socket.sk->sk_data_ready(tfile->socket.sk);
+    // 通知并唤醒等待读取TUN报文的用户空间进程。
+    if (tfile->flags & TUN_FASYNC)
+    {
+        kill_fasync(&tfile->fasync, SIGIO, POLL_IN);
+    }
 
-	rcu_read_unlock();
-	return NETDEV_TX_OK;
+    tfile->socket.sk->sk_data_ready(tfile->socket.sk);
+
+    rcu_read_unlock();
+    return NETDEV_TX_OK;
 
 drop:
-	this_cpu_inc(tun->pcpu_stats->tx_dropped);
-	skb_tx_error(skb);
-	kfree_skb(skb);
-	rcu_read_unlock();
-	return NET_XMIT_DROP;
+    this_cpu_inc(tun->pcpu_stats->tx_dropped);
+    skb_tx_error(skb);
+    kfree_skb(skb);
+    rcu_read_unlock();
+
+    return NET_XMIT_DROP;
 }
 
 static void tun_net_mclist(struct net_device *dev)
@@ -1248,8 +1828,7 @@ static void tun_set_headroom(struct net_device *dev, int new_hr)
 	tun->align = new_hr;
 }
 
-static void
-tun_net_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
+static void tun_net_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 {
 	u32 rx_dropped = 0, tx_dropped = 0, rx_frame_errors = 0;
 	struct tun_struct *tun = netdev_priv(dev);
@@ -1354,16 +1933,17 @@ static int tun_net_change_carrier(struct net_device *dev, bool new_carrier)
 	return 0;
 }
 
-static const struct net_device_ops tun_netdev_ops = {
-	.ndo_uninit		= tun_net_uninit,
-	.ndo_open		= tun_net_open,
-	.ndo_stop		= tun_net_close,
-	.ndo_start_xmit		= tun_net_xmit,
-	.ndo_fix_features	= tun_net_fix_features,
-	.ndo_select_queue	= tun_select_queue,
-	.ndo_set_rx_headroom	= tun_set_headroom,
-	.ndo_get_stats64	= tun_net_get_stats64,
-	.ndo_change_carrier	= tun_net_change_carrier,
+static const struct net_device_ops tun_netdev_ops =
+{
+    .ndo_uninit          = tun_net_uninit,          // 注销网络设备
+    .ndo_open            = tun_net_open,            // 打开网络设备
+    .ndo_stop            = tun_net_close,           // 关闭网络设备
+    .ndo_start_xmit      = tun_net_xmit,            // 发送网络数据包
+    .ndo_fix_features    = tun_net_fix_features,    // 修正设备特性配置
+    .ndo_select_queue    = tun_select_queue,        // 选择发送队列
+    .ndo_set_rx_headroom = tun_set_headroom,        // 设置接收数据预留头部空间
+    .ndo_get_stats64     = tun_net_get_stats64,     // 获取64位网络设备统计信息
+    .ndo_change_carrier  = tun_net_change_carrier,  // 修改设备Carrier状态
 };
 
 static void __tun_xdp_flush_tfile(struct tun_file *tfile)
@@ -1401,7 +1981,7 @@ resample:
 	if (unlikely(!tfile))
 		goto resample;
 
-	spin_lock(&tfile->tx_ring.producer_lock);
+	spin_lock(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_DATA].producer_lock);
 	for (i = 0; i < n; i++) {
 		struct xdp_frame *xdp = frames[i];
 		/* Encode the XDP flag into lowest bit for consumer to differ
@@ -1409,13 +1989,13 @@ resample:
 		 */
 		void *frame = tun_xdp_to_ptr(xdp);
 
-		if (__ptr_ring_produce(&tfile->tx_ring, frame)) {
+		if (__ptr_ring_produce(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_DATA], frame)) {
 			this_cpu_inc(tun->pcpu_stats->tx_dropped);
 			xdp_return_frame_rx_napi(xdp);
 			drops++;
 		}
 	}
-	spin_unlock(&tfile->tx_ring.producer_lock);
+	spin_unlock(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_DATA].producer_lock);
 
 	if (flags & XDP_XMIT_FLUSH)
 		__tun_xdp_flush_tfile(tfile);
@@ -1518,41 +2098,66 @@ static bool tun_sock_writeable(struct tun_struct *tun, struct tun_file *tfile)
 
 /* Character device part */
 
-/* Poll */
+/**
+ * @brief 查询TUN字符设备当前可读、可写和异常事件状态。
+ */
 static __poll_t tun_chr_poll(struct file *file, poll_table *wait)
 {
-	struct tun_file *tfile = file->private_data;
-	struct tun_struct *tun = tun_get(tfile);
-	struct sock *sk;
-	__poll_t mask = 0;
+    struct tun_file *tfile = file->private_data;
+    struct tun_struct *tun = tun_get(tfile);
+    struct sock *sk;
+    __poll_t mask = 0;
 
-	if (!tun)
-		return EPOLLERR;
+    if (tun == NULL)
+    {
+        return EPOLLERR;
+    }
 
-	sk = tfile->socket.sk;
+    sk = tfile->socket.sk;
 
-	tun_debug(KERN_INFO, tun, "tun_chr_poll\n");
+    tun_debug(KERN_INFO, tun, "tun_chr_poll\n");
 
-	poll_wait(file, sk_sleep(sk), wait);
+    // 将当前调用线程注册到Tun File对应的Socket等待队列。
+    poll_wait(file, sk_sleep(sk), wait);
 
-	if (!ptr_ring_empty(&tfile->tx_ring))
-		mask |= EPOLLIN | EPOLLRDNORM;
+    /**
+     * 保留EPOLLIN作为通用可读通知，同时使用额外事件标志暴露业务分类状态。
+     * 用户空间始终优先处理最高优先级的就绪队列，完成后重新执行poll。
+     */
+    if (!ptr_ring_empty(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_REALTIME]))
+    {
+        mask |= EPOLLIN | EPOLLRDNORM | EPOLLPRI;
+    }
 
-	/* Make sure SOCKWQ_ASYNC_NOSPACE is set if not writable to
-	 * guarantee EPOLLOUT to be raised by either here or
-	 * tun_sock_write_space(). Then process could get notification
-	 * after it writes to a down device and meets -EIO.
-	 */
-	if (tun_sock_writeable(tun, tfile) ||
-	    (!test_and_set_bit(SOCKWQ_ASYNC_NOSPACE, &sk->sk_socket->flags) &&
-	     tun_sock_writeable(tun, tfile)))
-		mask |= EPOLLOUT | EPOLLWRNORM;
+    if (!ptr_ring_empty(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_VIDEO]))
+    {
+        mask |= EPOLLIN | EPOLLRDNORM | EPOLLRDBAND;
+    }
 
-	if (tun->dev->reg_state != NETREG_REGISTERED)
-		mask = EPOLLERR;
+    if (!ptr_ring_empty(&tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_DATA]))
+    {
+        mask |= EPOLLIN | EPOLLRDNORM;
+    }
 
-	tun_put(tun);
-	return mask;
+    /**
+     * 设备暂时不可写时设置SOCKWQ_ASYNC_NOSPACE。
+     * 后续由当前路径或tun_sock_write_space()重新产生EPOLLOUT通知，
+     * 确保用户空间在设备恢复可写后能够收到事件。
+     */
+    if (tun_sock_writeable(tun, tfile) ||
+        (!test_and_set_bit(SOCKWQ_ASYNC_NOSPACE, &sk->sk_socket->flags) &&
+         tun_sock_writeable(tun, tfile)))
+    {
+        mask |= EPOLLOUT | EPOLLWRNORM;
+    }
+
+    if (tun->dev->reg_state != NETREG_REGISTERED)
+    {
+        mask = EPOLLERR;
+    }
+
+    tun_put(tun);
+    return mask;
 }
 
 static struct sk_buff *tun_napi_alloc_frags(struct tun_file *tfile,
@@ -2135,113 +2740,152 @@ static ssize_t tun_chr_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	return result;
 }
 
+/**
+ * @brief 批量将用户空间报文写入TUN设备。
+ *
+ * 每个报文独立调用TUN原有写入路径，避免批次中途失败时留下
+ * 尚未提交的内部接收批次。函数允许部分成功，并通过请求结构
+ * 返回实际成功写入的报文数量和总字节数。
+ */
 static long lq_tun_chr_write_batch(struct file *file, unsigned long arg)
 {
-	struct tun_file *tfile = file->private_data;
-	struct tun_struct *tun;
-	struct lq_tun_batch_write req;
-	struct lq_tun_batch_entry entry;
-	struct lq_tun_batch_entry __user *entries;
-	void __user *argp = (void __user *)arg;
-	u32 written_pkts = 0;
-	u32 written_bytes = 0;
-	u32 i;
-	s32 status = 0;
-	int noblock;
-	long ret = 0;
+    struct tun_file *tfile = file->private_data;
+    struct lq_tun_batch_write req;
+    struct lq_tun_batch_entry entry;
+    struct lq_tun_batch_entry __user *entries;
+    struct tun_struct *tun;
+    void __user *argp = (void __user *)arg;
+    u32 written_pkts = 0U;
+    u32 written_bytes = 0U;
+    u32 index;
+    s32 status = 0;
+    int noblock;
+    long ret = 0;
 
-	if (copy_from_user(&req, argp, sizeof(req)))
-		return -EFAULT;
+    if (copy_from_user(&req, argp, sizeof(req)))
+    {
+        return -EFAULT;
+    }
 
-	req.written_pkts = 0;
-	req.written_bytes = 0;
-	req.status = 0;
+    req.written_pkts  = 0U;
+    req.written_bytes = 0U;
+    req.status        = 0;
 
-	if (req.pkt_count == 0 || req.pkt_count > LQ_TUN_BATCH_MAX) {
-		status = -EINVAL;
-		ret = -EINVAL;
-		goto out_copy_req;
-	}
+    if (req.pkt_count == 0U || req.pkt_count > LQ_TUN_BATCH_MAX)
+    {
+        status = -EINVAL;
+        ret    = -EINVAL;
+        goto out_copy_req;
+    }
 
-	if (!req.entries) {
-		status = -EINVAL;
-		ret = -EINVAL;
-		goto out_copy_req;
-	}
+    if (req.entries == 0U)
+    {
+        status = -EINVAL;
+        ret    = -EINVAL;
+        goto out_copy_req;
+    }
 
-	entries = u64_to_user_ptr(req.entries);
+    entries = u64_to_user_ptr(req.entries);
 
-	tun = tun_get(tfile);
-	if (!tun) {
-		status = -EBADFD;
-		ret = -EBADFD;
-		goto out_copy_req;
-	}
+    tun = tun_get(tfile);
 
-	noblock = file->f_flags & O_NONBLOCK;
+    if (tun == NULL)
+    {
+        status = -EBADFD;
+        ret    = -EBADFD;
+        goto out_copy_req;
+    }
 
-	for (i = 0; i < req.pkt_count; i++) {
-		struct iovec iov;
-		struct iov_iter iter;
-		ssize_t n;
+    noblock = file->f_flags & O_NONBLOCK;
 
-		if (copy_from_user(&entry, &entries[i], sizeof(entry))) {
-			status = -EFAULT;
-			ret = -EFAULT;
-			break;
-		}
+    for (index = 0U; index < req.pkt_count; index++)
+    {
+        struct iovec iov;
+        struct iov_iter iter;
+        ssize_t length;
 
-		if (!entry.data || entry.length == 0 || entry.capacity == 0 ||
-		    entry.length > entry.capacity || entry.capacity > 65535U) {
-			status = -EINVAL;
-			ret = -EINVAL;
-			break;
-		}
+        if (copy_from_user(&entry, &entries[index], sizeof(entry)))
+        {
+            status = -EFAULT;
+            ret    = -EFAULT;
+            break;
+        }
 
-		iov.iov_base = u64_to_user_ptr(entry.data);
-		iov.iov_len = entry.length;
+        if (entry.data == 0U ||
+            entry.length == 0U ||
+            entry.capacity == 0U)
+        {
+            status = -EINVAL;
+            ret    = -EINVAL;
+            break;
+        }
 
-		iov_iter_init(&iter, WRITE, &iov, 1, entry.length);
+        if (entry.length > entry.capacity ||
+            entry.capacity > 65535U)
+        {
+            status = -EINVAL;
+            ret    = -EINVAL;
+            break;
+        }
 
-		/*
-		 * ioctl已经完成系统调用批处理。
-		 * 每个包仍独立提交给TUN，避免批次中途失败时留下
-		 * 未flush的TUN内部接收批次。
-		 */
-		n = tun_get_user(tun, tfile, NULL, &iter, noblock, false);
-		if (n < 0) {
-			status = (s32)n;
-			ret = n;
-			break;
-		}
+        iov.iov_base = u64_to_user_ptr(entry.data);
+        iov.iov_len  = entry.length;
 
-		if (n == 0)
-			break;
+        iov_iter_init(&iter, WRITE, &iov, 1, entry.length);
 
-		written_pkts++;
-		written_bytes += (u32)n;
-	}
+        /**
+         * ioctl已经完成系统调用层面的批量提交。
+         * 每个报文仍独立进入TUN原有写入路径，避免批次中途失败时
+         * 留下尚未flush的TUN内部接收批次。
+         */
+        length = tun_get_user(tun, tfile, NULL, &iter, noblock, false);
 
-	if (written_pkts > 0 && status == -EAGAIN)
-		status = 0;
+        if (length < 0)
+        {
+            status = (s32)length;
+            ret    = length;
+            break;
+        }
 
-	tun_put(tun);
+        if (length == 0)
+        {
+            break;
+        }
+
+        written_pkts++;
+        written_bytes += (u32)length;
+    }
+
+    // 已经成功写入部分报文时，EAGAIN仅表示当前批次无法继续写入。
+    if (written_pkts > 0U && status == -EAGAIN)
+    {
+        status = 0;
+    }
+
+    tun_put(tun);
 
 out_copy_req:
-	req.written_pkts = written_pkts;
-	req.written_bytes = written_bytes;
-	req.status = status;
+    req.written_pkts  = written_pkts;
+    req.written_bytes = written_bytes;
+    req.status        = status;
 
-	if (copy_to_user(argp, &req, sizeof(req)))
-		return -EFAULT;
+    if (copy_to_user(argp, &req, sizeof(req)))
+    {
+        return -EFAULT;
+    }
 
-	if (written_pkts > 0)
-		return written_pkts;
+    // 存在成功写入的报文时优先返回实际成功数量。
+    if (written_pkts > 0U)
+    {
+        return written_pkts;
+    }
 
-	if (ret < 0)
-		return ret;
+    if (ret < 0)
+    {
+        return ret;
+    }
 
-	return 0;
+    return 0;
 }
 
 static ssize_t tun_put_user_xdp(struct tun_struct *tun,
@@ -2373,20 +3017,16 @@ done:
 	return total;
 }
 
-static void *tun_ring_recv(struct tun_file *tfile, int noblock, int *err)
+static void *tun_ring_recv_class(struct tun_file *tfile, u32 traffic_class,
+				 int noblock, int *err)
 {
 	DECLARE_WAITQUEUE(wait, current);
 	void *ptr = NULL;
 	int error = 0;
 
-	ptr = ptr_ring_consume(&tfile->tx_ring);
-	if (ptr) {
-#if LQ_TUN_QSTAT
-		lq_tun_qstat_sample(tfile);
-		lq_tun_qstat_dequeue(tfile);
-#endif
+	ptr = lq_tun_ring_consume_class(tfile, traffic_class);
+	if (ptr)
 		goto out;
-	}
 
 	if (noblock) {
 		error = -EAGAIN;
@@ -2397,14 +3037,9 @@ static void *tun_ring_recv(struct tun_file *tfile, int noblock, int *err)
 
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		ptr = ptr_ring_consume(&tfile->tx_ring);
-		if (ptr) {
-		#if LQ_TUN_QSTAT
-			lq_tun_qstat_sample(tfile);
-			lq_tun_qstat_dequeue(tfile);
-		#endif
+		ptr = lq_tun_ring_consume_class(tfile, traffic_class);
+		if (ptr)
 			break;
-		}
 		if (signal_pending(current)) {
 			error = -ERESTARTSYS;
 			break;
@@ -2413,7 +3048,47 @@ static void *tun_ring_recv(struct tun_file *tfile, int noblock, int *err)
 			error = -EFAULT;
 			break;
 		}
+		schedule();
+	}
 
+	__set_current_state(TASK_RUNNING);
+	remove_wait_queue(&tfile->socket.wq.wait, &wait);
+
+out:
+	*err = error;
+	return ptr;
+}
+
+static void *tun_ring_recv(struct tun_file *tfile, int noblock, int *err)
+{
+	DECLARE_WAITQUEUE(wait, current);
+	void *ptr = NULL;
+	int error = 0;
+
+	ptr = lq_tun_ring_consume_priority(tfile);
+	if (ptr)
+		goto out;
+
+	if (noblock) {
+		error = -EAGAIN;
+		goto out;
+	}
+
+	add_wait_queue(&tfile->socket.wq.wait, &wait);
+
+	while (1) {
+		set_current_state(TASK_INTERRUPTIBLE);
+		ptr = lq_tun_ring_consume_priority(tfile);
+		if (ptr)
+			break;
+		if (signal_pending(current)) {
+			error = -ERESTARTSYS;
+			break;
+		}
+		if (tfile->socket.sk->sk_shutdown & RCV_SHUTDOWN) {
+			error = -EFAULT;
+			break;
+		}
 		schedule();
 	}
 
@@ -2481,188 +3156,259 @@ static ssize_t tun_chr_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	return ret;
 }
 
-static int lq_tun_batch_wait(struct tun_file *tfile, ktime_t deadline)
+/**
+ * @brief 等待指定业务分类队列、新到达的高优先级报文或接收方向关闭事件。
+ */
+static int lq_tun_batch_wait(struct tun_file *tfile, u32 traffic_class, ktime_t deadline)
 {
-	ktime_t remaining;
-	ktime_t now;
+    ktime_t remaining;
+    ktime_t now;
 
-	now = ktime_get();
-	if (ktime_compare(now, deadline) >= 0)
-		return -ETIME;
+    now = ktime_get();
 
-	remaining = ktime_sub(deadline, now);
+    if (ktime_compare(now, deadline) >= 0)
+    {
+        return -ETIME;
+    }
 
-	return wait_event_interruptible_hrtimeout(
-		tfile->socket.wq.wait,
-		!ptr_ring_empty(&tfile->tx_ring) ||
-		(READ_ONCE(tfile->socket.sk->sk_shutdown) & RCV_SHUTDOWN),
-		remaining);
+    remaining = ktime_sub(deadline, now);
+
+    return wait_event_interruptible_hrtimeout(
+        tfile->socket.wq.wait,
+        !ptr_ring_empty(&tfile->tx_rings[traffic_class]) ||
+        lq_tun_higher_priority_ready(tfile, traffic_class) ||
+        (READ_ONCE(tfile->socket.sk->sk_shutdown) & RCV_SHUTDOWN),
+        remaining);
 }
 
+/**
+ * @brief 批量读取指定业务分类的TUN报文。
+ */
 static long lq_tun_chr_read_batch(struct file *file, unsigned long arg)
 {
-	struct tun_file *tfile = file->private_data;
-	struct tun_struct *tun;
-	struct lq_tun_batch_read req;
-	struct lq_tun_batch_entry entry;
-	struct lq_tun_batch_entry __user *entries;
-	void __user *argp = (void __user *)arg;
-	ktime_t deadline = 0;
-	u32 read_pkts = 0;
-	u32 read_bytes = 0;
-	s32 status = 0;
-	int noblock;
-	long ret = 0;
+    struct tun_file *tfile = file->private_data;
+    struct tun_struct *tun;
+    struct lq_tun_batch_read req;
+    struct lq_tun_batch_entry entry;
+    struct lq_tun_batch_entry __user *entries;
+    void __user *argp = (void __user *)arg;
+    ktime_t deadline = 0;
+    u32 read_pkts = 0;
+    u32 read_bytes = 0;
+    s32 status = 0;
+    int noblock;
+    long ret = 0;
 
-	if (copy_from_user(&req, argp, sizeof(req)))
-		return -EFAULT;
+    if (copy_from_user(&req, argp, sizeof(req)))
+    {
+        return -EFAULT;
+    }
 
-	req.read_pkts = 0;
-	req.read_bytes = 0;
-	req.status = 0;
+    req.read_pkts  = 0U;
+    req.read_bytes = 0U;
+    req.status     = 0;
 
-	if (req.max_pkts == 0 || req.max_pkts > LQ_TUN_BATCH_MAX) {
-		status = -EINVAL;
-		ret = -EINVAL;
-		goto out_copy_req;
-	}
+    if (req.traffic_class >= LQ_TUN_TRAFFIC_CLASS_COUNT)
+    {
+        status = -EINVAL;
+        ret = -EINVAL;
+        goto out_copy_req;
+    }
 
-	if (req.min_pkts == 0 || req.min_pkts > req.max_pkts) {
-		status = -EINVAL;
-		ret = -EINVAL;
-		goto out_copy_req;
-	}
+    if (req.max_pkts == 0U || req.max_pkts > LQ_TUN_BATCH_MAX)
+    {
+        status = -EINVAL;
+        ret = -EINVAL;
+        goto out_copy_req;
+    }
 
-	if (req.timeout_us > LQ_TUN_BATCH_TIMEOUT_MAX_US) {
-		status = -EINVAL;
-		ret = -EINVAL;
-		goto out_copy_req;
-	}
+    if (req.min_pkts == 0U || req.min_pkts > req.max_pkts)
+    {
+        status = -EINVAL;
+        ret = -EINVAL;
+        goto out_copy_req;
+    }
 
-	if (!req.entries) {
-		status = -EINVAL;
-		ret = -EINVAL;
-		goto out_copy_req;
-	}
+    if (req.timeout_us > LQ_TUN_BATCH_TIMEOUT_MAX_US)
+    {
+        status = -EINVAL;
+        ret = -EINVAL;
+        goto out_copy_req;
+    }
 
-	entries = u64_to_user_ptr(req.entries);
+    if (req.entries == 0U)
+    {
+        status = -EINVAL;
+        ret = -EINVAL;
+        goto out_copy_req;
+    }
 
-	tun = tun_get(tfile);
-	if (!tun) {
-		status = -EBADFD;
-		ret = -EBADFD;
-		goto out_copy_req;
-	}
+    entries = u64_to_user_ptr(req.entries);
 
-	noblock = file->f_flags & O_NONBLOCK;
+    tun = tun_get(tfile);
 
-	while (read_pkts < req.max_pkts) {
-		struct iovec iov;
-		struct iov_iter iter;
-		ssize_t n;
-		int wait_ret;
+    if (tun == NULL)
+    {
+        status = -EBADFD;
+        ret = -EBADFD;
+        goto out_copy_req;
+    }
 
-		/*
-		 * 已经读到至少一个包后，如果当前ring暂时为空：
-		 * 达到最小批量则直接返回；
-		 * 未达到则在deadline内等待后续包。
-		 */
-		if (read_pkts > 0 && ptr_ring_empty(&tfile->tx_ring)) {
-			if (read_pkts >= req.min_pkts || req.timeout_us == 0)
-				break;
+    noblock = file->f_flags & O_NONBLOCK;
 
-			wait_ret = lq_tun_batch_wait(tfile, deadline);
-			if (wait_ret == -ETIME)
-				break;
+    while (read_pkts < req.max_pkts)
+    {
+        struct iovec iov;
+        struct iov_iter iter;
+        void *ptr;
+        ssize_t n;
+        int ring_error;
+        int wait_ret;
 
-			/*
-			 * 已经成功读取部分数据后收到信号时，
-			 * 直接返回当前batch，不丢弃已读结果。
-			 */
-			if (wait_ret < 0)
-				break;
+        /**
+         * 当前分类队列已经暂时为空时，才进入批量聚合判断。
+         * 已经达到min_pkts或者当前分类不需要聚合等待时直接返回。
+         * 只有准备等待后续低优先级报文时，才允许更高优先级队列打断等待。
+         */
+        if (read_pkts > 0U && ptr_ring_empty(&tfile->tx_rings[req.traffic_class]))
+        {
+            if (read_pkts >= req.min_pkts || req.timeout_us == 0U)
+            {
+                break;
+            }
 
-			if ((READ_ONCE(tfile->socket.sk->sk_shutdown) & RCV_SHUTDOWN) &&
-			    ptr_ring_empty(&tfile->tx_ring))
-				break;
+            // 低优先级仅在准备等待聚合时向已经就绪的高优先级队列让路。
+            if (lq_tun_higher_priority_ready(tfile, req.traffic_class))
+            {
+                break;
+            }
 
-			continue;
-		}
+            wait_ret = lq_tun_batch_wait(tfile, req.traffic_class, deadline);
 
-		if (copy_from_user(&entry, &entries[read_pkts], sizeof(entry))) {
-			status = -EFAULT;
-			ret = -EFAULT;
-			break;
-		}
+            if (wait_ret == -ETIME)
+            {
+                break;
+            }
 
-		if (!entry.data || entry.capacity == 0 || entry.capacity > 65535U) {
-			status = -EINVAL;
-			ret = -EINVAL;
-			break;
-		}
+            if (wait_ret < 0)
+            {
+                break;
+            }
 
-		iov.iov_base = u64_to_user_ptr(entry.data);
-		iov.iov_len = entry.capacity;
+            // 聚合等待被唤醒后，高优先级已经就绪则立即结束当前低优先级Batch。
+            if (lq_tun_higher_priority_ready(tfile, req.traffic_class))
+            {
+                break;
+            }
 
-		iov_iter_init(&iter, READ, &iov, 1, entry.capacity);
+            if ((READ_ONCE(tfile->socket.sk->sk_shutdown) & RCV_SHUTDOWN) && ptr_ring_empty(&tfile->tx_rings[req.traffic_class]))
+            {
+                break;
+            }
 
-		/*
-		 * 第一个包遵守fd的阻塞属性。
-		 * 后续读取均为非阻塞，只负责排空当前ring。
-		 * ring为空后的等待由batch聚合逻辑统一处理。
-		 */
-		n = tun_do_read(tun, tfile, &iter, read_pkts == 0 ? noblock : 1, NULL);
-		if (n < 0) {
-			if (n == -EAGAIN && read_pkts > 0)
-				continue;
+            continue;
+        }
 
-			status = (s32)n;
-			ret = n;
-			break;
-		}
+        if (copy_from_user(&entry, &entries[read_pkts], sizeof(entry)))
+        {
+            status = -EFAULT;
+            ret = -EFAULT;
+            break;
+        }
 
-		if (n == 0)
-			break;
+        if (entry.data == 0U ||
+            entry.capacity == 0U ||
+            entry.capacity > 65535U)
+        {
+            status = -EINVAL;
+            ret = -EINVAL;
+            break;
+        }
 
-		if (n > entry.capacity) {
-			status = -EMSGSIZE;
-			ret = -EMSGSIZE;
-			break;
-		}
+        iov.iov_base = u64_to_user_ptr(entry.data);
+        iov.iov_len  = entry.capacity;
 
-		if (put_user((u32)n, &entries[read_pkts].length)) {
-			status = -EFAULT;
-			ret = -EFAULT;
-			break;
-		}
+        iov_iter_init(&iter, READ, &iov, 1, entry.capacity);
 
-		read_pkts++;
-		read_bytes += (u32)n;
+        ptr = tun_ring_recv_class(tfile,
+                                  req.traffic_class,
+                                  read_pkts == 0U ? noblock : 1,
+                                  &ring_error);
 
-		/*
-		 * 聚合窗口从第一个包成功读取后开始计算。
-		 */
-		if (read_pkts == 1 && req.timeout_us > 0)
-			deadline = ktime_add_us(ktime_get(), req.timeout_us);
-	}
+        if (ptr == NULL)
+        {
+            n = ring_error;
+        }
+        else
+        {
+            n = tun_do_read(tun, tfile, &iter, 1, ptr);
+        }
 
-	tun_put(tun);
+        if (n < 0)
+        {
+            if (n == -EAGAIN && read_pkts > 0U)
+            {
+                continue;
+            }
+
+            status = (s32)n;
+            ret = n;
+            break;
+        }
+
+        if (n == 0)
+        {
+            break;
+        }
+
+        if ((size_t)n > entry.capacity)
+        {
+            status = -EMSGSIZE;
+            ret = -EMSGSIZE;
+            break;
+        }
+
+        if (put_user((u32)n, &entries[read_pkts].length))
+        {
+            status = -EFAULT;
+            ret = -EFAULT;
+            break;
+        }
+
+        read_pkts++;
+        read_bytes += (u32)n;
+
+        // 首包读取成功后开始计算本次批量聚合的绝对截止时间。
+        if (read_pkts == 1U && req.timeout_us > 0U)
+        {
+            deadline = ktime_add_us(ktime_get(), req.timeout_us);
+        }
+    }
+
+    tun_put(tun);
 
 out_copy_req:
-	req.read_pkts = read_pkts;
-	req.read_bytes = read_bytes;
-	req.status = status;
+    req.read_pkts  = read_pkts;
+    req.read_bytes = read_bytes;
+    req.status     = status;
 
-	if (copy_to_user(argp, &req, sizeof(req)))
-		return -EFAULT;
+    if (copy_to_user(argp, &req, sizeof(req)))
+    {
+        return -EFAULT;
+    }
 
-	if (read_pkts > 0)
-		return read_pkts;
+    // 已成功读取报文时优先返回实际读取数量。
+    if (read_pkts > 0U)
+    {
+        return read_pkts;
+    }
 
-	if (ret < 0)
-		return ret;
+    if (ret < 0)
+    {
+        return ret;
+    }
 
-	return 0;
+    return 0;
 }
 
 static void tun_prog_free(struct rcu_head *rcu)
@@ -3037,7 +3783,18 @@ static int tun_peek_len(struct socket *sock)
 	if (!tun)
 		return 0;
 
-	ret = PTR_RING_PEEK_CALL(&tfile->tx_ring, tun_ptr_peek_len);
+	{
+		u32 traffic_class;
+
+		for (traffic_class = 0;
+		     traffic_class < LQ_TUN_TRAFFIC_CLASS_COUNT;
+		     traffic_class++) {
+			ret = PTR_RING_PEEK_CALL(&tfile->tx_rings[traffic_class],
+					 tun_ptr_peek_len);
+			if (ret > 0)
+				break;
+		}
+	}
 	tun_put(tun);
 
 	return ret;
@@ -3223,6 +3980,13 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		}
 
 		spin_lock_init(&tun->lock);
+		spin_lock_init(&tun->lq_traffic_lock);
+		memset(&tun->lq_traffic_config, 0,
+		       sizeof(tun->lq_traffic_config));
+		spin_lock_init(&tun->lq_fragment_lock);
+		memset(tun->lq_fragment_classes, 0,
+		       sizeof(tun->lq_fragment_classes));
+		tun->lq_fragment_next = 0U;
 
 		err = security_tun_dev_alloc_security(&tun->security);
 		if (err < 0)
@@ -3762,46 +4526,69 @@ unlock:
 	return ret;
 }
 
-static long tun_chr_ioctl(struct file *file,
-			  unsigned int cmd, unsigned long arg)
+/**
+ * @brief 处理TUN字符设备ioctl请求。
+ */
+static long tun_chr_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	if (cmd == LQ_TUN_IOC_READ_BATCH)
-		return lq_tun_chr_read_batch(file, arg);
+    if (cmd == LQ_TUN_IOC_READ_BATCH)
+    {
+        return lq_tun_chr_read_batch(file, arg);
+    }
 
-	if (cmd == LQ_TUN_IOC_WRITE_BATCH)
-		return lq_tun_chr_write_batch(file, arg);
+    if (cmd == LQ_TUN_IOC_WRITE_BATCH)
+    {
+        return lq_tun_chr_write_batch(file, arg);
+    }
 
-	return __tun_chr_ioctl(file, cmd, arg, sizeof(struct ifreq));
+    if (cmd == LQ_TUN_IOC_SET_TRAFFIC_CONFIG)
+    {
+        return lq_tun_chr_set_traffic_config(file, arg);
+    }
+
+    return __tun_chr_ioctl(file, cmd, arg, sizeof(struct ifreq));
 }
 
 #ifdef CONFIG_COMPAT
-static long tun_chr_compat_ioctl(struct file *file,
-			 unsigned int cmd, unsigned long arg)
+
+/**
+ * @brief 处理32位兼容模式下的TUN字符设备ioctl请求。
+ */
+static long tun_chr_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	if (cmd == LQ_TUN_IOC_READ_BATCH)
-		return lq_tun_chr_read_batch(file,
-					     (unsigned long)compat_ptr(arg));
+    if (cmd == LQ_TUN_IOC_READ_BATCH)
+    {
+        return lq_tun_chr_read_batch(file, (unsigned long)compat_ptr(arg));
+    }
 
-	if (cmd == LQ_TUN_IOC_WRITE_BATCH)
-		return lq_tun_chr_write_batch(file,
-					      (unsigned long)compat_ptr(arg));
+    if (cmd == LQ_TUN_IOC_WRITE_BATCH)
+    {
+        return lq_tun_chr_write_batch(file, (unsigned long)compat_ptr(arg));
+    }
 
-	switch (cmd) {
-	case TUNSETIFF:
-	case TUNGETIFF:
-	case TUNSETTXFILTER:
-	case TUNGETSNDBUF:
-	case TUNSETSNDBUF:
-	case SIOCGIFHWADDR:
-	case SIOCSIFHWADDR:
-		arg = (unsigned long)compat_ptr(arg);
-		break;
-	default:
-		arg = (compat_ulong_t)arg;
-		break;
-	}
+    if (cmd == LQ_TUN_IOC_SET_TRAFFIC_CONFIG)
+    {
+        return lq_tun_chr_set_traffic_config(file, (unsigned long)compat_ptr(arg));
+    }
 
-	return __tun_chr_ioctl(file, cmd, arg, sizeof(struct compat_ifreq));
+    switch (cmd)
+    {
+        case TUNSETIFF:
+        case TUNGETIFF:
+        case TUNSETTXFILTER:
+        case TUNGETSNDBUF:
+        case TUNSETSNDBUF:
+        case SIOCGIFHWADDR:
+        case SIOCSIFHWADDR:
+            arg = (unsigned long)compat_ptr(arg);
+            break;
+
+        default:
+            arg = (compat_ulong_t)arg;
+            break;
+    }
+
+    return __tun_chr_ioctl(file, cmd, arg, sizeof(struct compat_ifreq));
 }
 #endif
 
@@ -3823,51 +4610,72 @@ out:
 	return ret;
 }
 
-static int tun_chr_open(struct inode *inode, struct file * file)
+/**
+ * @brief 打开TUN字符设备并初始化Tun File运行资源。
+ */
+static int tun_chr_open(struct inode *inode, struct file *file)
 {
-	struct net *net = current->nsproxy->net_ns;
-	struct tun_file *tfile;
+    struct net *net = current->nsproxy->net_ns;
+    struct tun_file *tfile;
 
+    DBG1(KERN_INFO, "tunX: tun_chr_open\n");
 
-	DBG1(KERN_INFO, "tunX: tun_chr_open\n");
+    tfile = (struct tun_file *)sk_alloc(net, AF_UNSPEC, GFP_KERNEL, &tun_proto, 0);
 
-	tfile = (struct tun_file *)sk_alloc(net, AF_UNSPEC, GFP_KERNEL,
-					    &tun_proto, 0);
-	if (!tfile)
-		return -ENOMEM;
+    if (tfile == NULL)
+    {
+        return -ENOMEM;
+    }
 
+    // 初始化各业务分类对应的TUN发送队列。
+    {
+        u32 traffic_class;
 
-	if (ptr_ring_init(&tfile->tx_ring, 0, GFP_KERNEL)) {
-		sk_free(&tfile->sk);
-		return -ENOMEM;
-	}
+        for (traffic_class = 0; traffic_class < LQ_TUN_TRAFFIC_CLASS_COUNT; traffic_class++)
+        {
+            if (ptr_ring_init(&tfile->tx_rings[traffic_class], lq_tun_class_queue_size(traffic_class), GFP_KERNEL) != 0)
+            {
+                // 初始化失败时清理此前已经成功创建的业务队列。
+                while (traffic_class > 0)
+                {
+                    traffic_class--;
+                    ptr_ring_cleanup(&tfile->tx_rings[traffic_class], tun_ptr_free);
+                }
+
+                sk_free(&tfile->sk);
+                return -ENOMEM;
+            }
+        }
+    }
 
 #if LQ_TUN_QSTAT
-	lq_tun_qstat_init(&tfile->lq_qstat);
+    lq_tun_qstat_init(&tfile->lq_qstat);
 #endif
 
-	mutex_init(&tfile->napi_mutex);
-	RCU_INIT_POINTER(tfile->tun, NULL);
-	tfile->flags = 0;
-	tfile->ifindex = 0;
+    mutex_init(&tfile->napi_mutex);
 
-	init_waitqueue_head(&tfile->socket.wq.wait);
+    RCU_INIT_POINTER(tfile->tun, NULL);
 
-	tfile->socket.file = file;
-	tfile->socket.ops = &tun_socket_ops;
+    tfile->flags = 0;
+    tfile->ifindex = 0;
 
-	sock_init_data(&tfile->socket, &tfile->sk);
+    init_waitqueue_head(&tfile->socket.wq.wait);
 
-	tfile->sk.sk_write_space = tun_sock_write_space;
-	tfile->sk.sk_sndbuf = INT_MAX;
+    tfile->socket.file = file;
+    tfile->socket.ops = &tun_socket_ops;
 
-	file->private_data = tfile;
-	INIT_LIST_HEAD(&tfile->next);
+    sock_init_data(&tfile->socket, &tfile->sk);
 
-	sock_set_flag(&tfile->sk, SOCK_ZEROCOPY);
+    tfile->sk.sk_write_space = tun_sock_write_space;
+    tfile->sk.sk_sndbuf = INT_MAX;
 
+    file->private_data = tfile;
 
-	return 0;
+    INIT_LIST_HEAD(&tfile->next);
+
+    sock_set_flag(&tfile->sk, SOCK_ZEROCOPY);
+
+    return 0;
 }
 
 static int tun_chr_close(struct inode *inode, struct file *file)
@@ -3895,25 +4703,29 @@ static void tun_chr_show_fdinfo(struct seq_file *m, struct file *file)
 	if (tun)
 		tun_put(tun);
 
-	seq_printf(m, "iff:\t%s\n", ifr.ifr_name);
+	seq_printf(m, "iff:	%s\n", ifr.ifr_name);
 }
 #endif
 
-static const struct file_operations tun_fops = {
-	.owner		= THIS_MODULE,          /* 模块引用，防止使用中被卸载 */
-	.llseek		= no_llseek,            /* 字符设备不支持文件偏移 */
-	.read_iter	= tun_chr_read_iter,    /* 用户态从 tun fd 读取数据包 */
-	.write_iter	= tun_chr_write_iter,   /* 用户态向 tun fd 写入数据包 */
-	.poll		= tun_chr_poll,         /* 支持 poll/select/epoll 事件等待 */
-	.unlocked_ioctl	= tun_chr_ioctl,        /* ioctl 控制入口，核心是 TUNSETIFF */
+static const struct file_operations tun_fops =
+{
+    .owner          = THIS_MODULE,          // 模块引用，防止设备使用期间模块被卸载
+    .llseek         = no_llseek,            // 字符设备不支持文件偏移
+    .read_iter      = tun_chr_read_iter,    // 用户空间通过Tun FD读取数据包
+    .write_iter     = tun_chr_write_iter,   // 用户空间通过Tun FD写入数据包
+    .poll           = tun_chr_poll,         // 支持poll/select/epoll事件等待
+    .unlocked_ioctl = tun_chr_ioctl,        // TUN字符设备ioctl控制入口
+
 #ifdef CONFIG_COMPAT
-	.compat_ioctl	= tun_chr_compat_ioctl, /* 32 位用户态兼容 ioctl */
+    .compat_ioctl   = tun_chr_compat_ioctl, // 32位用户空间兼容ioctl入口
 #endif
-	.open		= tun_chr_open,         /* open /dev/net/tun 时创建 tun_file */
-	.release	= tun_chr_close,        /* close fd 时释放/解绑 tun_file */
-	.fasync		= tun_chr_fasync,       /* 支持异步 SIGIO 通知 */
+
+    .open           = tun_chr_open,         // 打开/dev/net/tun时创建Tun File
+    .release        = tun_chr_close,        // 关闭Tun FD时释放并解绑Tun File
+    .fasync         = tun_chr_fasync,       // 支持异步SIGIO通知
+
 #ifdef CONFIG_PROC_FS
-	.show_fdinfo	= tun_chr_show_fdinfo,  /* /proc/pid/fdinfo 显示 tun fd 信息 */
+    .show_fdinfo    = tun_chr_show_fdinfo,  // 在/proc/<pid>/fdinfo中输出Tun FD信息
 #endif
 };
 
@@ -4028,29 +4840,24 @@ static const struct ethtool_ops tun_ethtool_ops = {
 
 static int tun_queue_resize(struct tun_struct *tun)
 {
-	struct net_device *dev = tun->dev;
 	struct tun_file *tfile;
-	struct ptr_ring **rings;
-	int n = tun->numqueues + tun->numdisabled;
-	int ret, i;
-
-	rings = kmalloc_array(n, sizeof(*rings), GFP_KERNEL);
-	if (!rings)
-		return -ENOMEM;
+	int i;
+	int ret;
 
 	for (i = 0; i < tun->numqueues; i++) {
 		tfile = rtnl_dereference(tun->tfiles[i]);
-		rings[i] = &tfile->tx_ring;
+		ret = lq_tun_resize_tx_rings(tfile);
+		if (ret)
+			return ret;
 	}
-	list_for_each_entry(tfile, &tun->disabled, next)
-		rings[i++] = &tfile->tx_ring;
 
-	ret = ptr_ring_resize_multiple(rings, n,
-				       dev->tx_queue_len, GFP_KERNEL,
-				       tun_ptr_free);
+	list_for_each_entry(tfile, &tun->disabled, next) {
+		ret = lq_tun_resize_tx_rings(tfile);
+		if (ret)
+			return ret;
+	}
 
-	kfree(rings);
-	return ret;
+	return 0;
 }
 
 static int tun_device_event(struct notifier_block *unused,
@@ -4153,7 +4960,7 @@ struct ptr_ring *tun_get_tx_ring(struct file *file)
 	tfile = file->private_data;
 	if (!tfile)
 		return ERR_PTR(-EBADFD);
-	return &tfile->tx_ring;
+	return &tfile->tx_rings[LQ_TUN_TRAFFIC_CLASS_DATA];
 }
 EXPORT_SYMBOL_GPL(tun_get_tx_ring);
 

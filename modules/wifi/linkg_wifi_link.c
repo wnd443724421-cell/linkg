@@ -642,3 +642,43 @@ int linkg_wifi_link_create(const linkg_link_config_t *link_config, const linkg_w
 
     return linkg_link_create(link_config, &g_wifi_link_ops, wifi_config, out);
 }
+
+/****************************** 统计查询 ******************************/
+
+/**
+ * @brief 获取指定对端节点的Wi-Fi链路累计接收和确认丢包统计。
+ *
+ * @note link必须为通过linkg_wifi_link_create创建的Wi-Fi具体Link。
+ *       peer_node_id有效范围为1~254。
+ *       接口只返回Wi-Fi RX累计Counter，不计算时间窗口和Loss Rate。
+ */
+int linkg_wifi_link_get_rx_stats(linkg_link_t *link, uint8_t peer_node_id, linkg_wifi_rx_stats_t *stats)
+{
+    linkg_wifi_link_t *wifi_link;
+
+    if (link == NULL || stats == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+
+    if (peer_node_id == 0U || peer_node_id == UINT8_MAX)
+    {
+        return -EINVAL;
+    }
+
+    if (linkg_link_get_access(link) != LINKG_LINK_ACCESS_WIFI)
+    {
+        return -EINVAL;
+    }
+
+    wifi_link = (linkg_wifi_link_t *)link;
+
+    if (wifi_link->rx == NULL)
+    {
+        return -ENODEV;
+    }
+
+    return linkg_wifi_rx_get_peer_stats(wifi_link->rx, peer_node_id, stats);
+}
