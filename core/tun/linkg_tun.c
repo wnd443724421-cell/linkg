@@ -109,7 +109,7 @@ struct lq_tun_batch_write
 #ifndef LINKG_TUN_THREAD_SCHED_PRIORITY
 #define LINKG_TUN_THREAD_SCHED_PRIORITY           0                                                       // 0表示保持SCHED_OTHER
 #endif
-#define LINKG_TUN_BATCH_SIZE                      24U                                                     // 单次批量读写最大包数
+#define LINKG_TUN_BATCH_SIZE                      32U                                                     // 单次批量读写最大包数
 #define LINKG_TUN_BATCH_MIN_PKTS                  1U                                                      // VIDEO/DATA批量读取最小聚合目标
 #define LINKG_TUN_BATCH_TIMEOUT_US                0U                                                      // VIDEO/DATA批量读取最大聚合等待时间
 #define LINKG_TUN_REALTIME_BATCH_MIN_PKTS         1U                                                      // REALTIME有包立即读取

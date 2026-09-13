@@ -19,6 +19,9 @@
 
 #include "wifi_driver_ops.h"
 #include "wifi_nb_report.h"
+#include "linkg_link_manager.h"
+#include "linkg_node.h"
+#include "linkg_wifi_link.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -50,6 +53,139 @@ typedef struct
     bool                         nb_initialized; // 窄带附加状态模块是否初始化
     bool                         nb_started;     // 窄带附加状态模块是否启动
 } wifi_status_context_t;
+
+
+//测试
+#define WIFI_STATUS_LINK_LOSS_INTERVAL_MS 1000U
+#define WIFI_STATUS_NODE_SLOT_COUNT       256U
+
+typedef struct
+{
+    linkg_wifi_rx_stats_t previous;
+    bool                  initialized;
+} wifi_status_link_loss_sample_t;
+
+static wifi_status_link_loss_sample_t g_wifi_status_link_loss_samples[WIFI_STATUS_NODE_SLOT_COUNT];
+static uint64_t                       g_wifi_status_link_loss_updated_ms;
+
+/**
+ * @brief 打印指定Peer最近采样周期的Wi-Fi链路接收丢包统计。
+ */
+static void _wifi_status_log_peer_link_loss(linkg_link_t *wifi_link, uint8_t peer_node_id)
+{
+    wifi_status_link_loss_sample_t *sample;
+    linkg_wifi_rx_stats_t           current;
+    uint64_t                        received_delta;
+    uint64_t                        lost_delta;
+    uint64_t                        total_delta;
+    uint64_t                        loss_ppm;
+    int                             ret;
+
+    if (wifi_link == NULL || peer_node_id == 0U || peer_node_id == UINT8_MAX)
+    {
+        return;
+    }
+
+    ret = linkg_wifi_link_get_rx_stats(wifi_link, peer_node_id, &current);
+    if (ret == -ENOENT)
+    {
+        return;
+    }
+
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("WIFI-STATUS: read RX loss stats failed, peer=%u error=%d",
+                       (unsigned int)peer_node_id,
+                       ret);
+        return;
+    }
+
+    sample = &g_wifi_status_link_loss_samples[peer_node_id];
+
+    if (!sample->initialized)
+    {
+        sample->previous    = current;
+        sample->initialized = true;
+        return;
+    }
+
+    received_delta = current.received_packets -
+                     sample->previous.received_packets;
+
+    lost_delta = current.confirmed_lost_packets -
+                 sample->previous.confirmed_lost_packets;
+
+    total_delta = received_delta + lost_delta;
+
+    if (total_delta == 0U)
+    {
+        loss_ppm = 0U;
+    }
+    else
+    {
+        loss_ppm = lost_delta * UINT64_C(1000000) / total_delta;
+    }
+
+    LINKG_LOG_INFO("WIFI-PATH-RX: peer=%u received=%llu lost=%llu total=%llu loss=%llu.%04llu%% cumulative_rx=%llu cumulative_lost=%llu",
+                   (unsigned int)peer_node_id,
+                   (unsigned long long)received_delta,
+                   (unsigned long long)lost_delta,
+                   (unsigned long long)total_delta,
+                   (unsigned long long)(loss_ppm / UINT64_C(10000)),
+                   (unsigned long long)(loss_ppm % UINT64_C(10000)),
+                   (unsigned long long)current.received_packets,
+                   (unsigned long long)current.confirmed_lost_packets);
+
+    sample->previous = current;
+}
+
+/**
+ * @brief 打印当前全部已注册Peer的Wi-Fi链路接收丢包统计。
+ */
+static void _wifi_status_log_link_loss(void)
+{
+    linkg_node_peer_snapshot_t peer_snapshot;
+    linkg_link_t              *wifi_link;
+    uint32_t                   wifi_link_id;
+    uint32_t                   node_id;
+    int                        ret;
+
+    wifi_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    if (wifi_link_id == LINKG_LINK_ID_INVALID)
+    {
+        return;
+    }
+
+    wifi_link = linkg_link_manager_get(wifi_link_id);
+    if (wifi_link == NULL)
+    {
+        return;
+    }
+
+    if (linkg_link_get_state(wifi_link) != LINKG_LINK_STATE_RUNNING)
+    {
+        return;
+    }
+
+    for (node_id = LINKG_RESOURCE_NODE_ID_MIN;
+         node_id <= LINKG_RESOURCE_NODE_ID_MAX;
+         node_id++)
+    {
+        ret = linkg_node_get_peer_snapshot((uint8_t)node_id, &peer_snapshot);
+        if (ret == -ENOENT)
+        {
+            continue;
+        }
+
+        if (ret != 0)
+        {
+            continue;
+        }
+
+        _wifi_status_log_peer_link_loss(wifi_link,
+                                        peer_snapshot.info.node_id);
+    }
+}
 
 /****************************** 全局上下文 ******************************/
 
@@ -883,8 +1019,8 @@ static int _wifi_status_wait(linkg_thread_t *thread)
  */
 static void _wifi_status_thread(linkg_thread_t *thread, void *user_data)
 {
-    int ret;
-
+    uint64_t now_ms;
+    int      ret;
     (void)user_data;
 
     WIFI_STATUS_DEBUG("status collection thread entered");
@@ -892,6 +1028,16 @@ static void _wifi_status_thread(linkg_thread_t *thread, void *user_data)
     while (linkg_thread_is_running(thread))
     {
         (void)_wifi_status_refresh();
+
+        //测试
+        now_ms = linkg_time_elapsed_ms();
+        if (g_wifi_status_link_loss_updated_ms == 0U ||
+            now_ms - g_wifi_status_link_loss_updated_ms >= WIFI_STATUS_LINK_LOSS_INTERVAL_MS)
+        {
+            g_wifi_status_link_loss_updated_ms = now_ms;
+
+            _wifi_status_log_link_loss();
+        }
 
         if (!linkg_thread_is_running(thread))
         {

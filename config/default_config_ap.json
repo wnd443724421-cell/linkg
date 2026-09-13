@@ -58,7 +58,7 @@
             }
         },
         "cellular": {
-            "enabled": true,
+            "enabled": false,
             "network_mode": "auto",
             "apn": "",
             "pin": ""
@@ -71,7 +71,7 @@
             "priority": 1
         },
         "cellular": {
-            "enabled": true,
+            "enabled": false,
             "mode": "direct",
             "priority": 2
         }

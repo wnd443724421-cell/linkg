@@ -56,58 +56,50 @@ static uint32_t _linkg_discovery_report_link_id(const linkg_discovery_report_t *
 }
 
 /**
- * @brief 注册或更新Report当前全部可用数据Path。
+ * @brief 注册或更新Report当前Access对应的业务Path。
+ *
+ * 调用方必须持有Discovery状态锁。
  */
-static int _linkg_discovery_register_report_paths(const linkg_discovery_report_t *report)
+int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t *report, linkg_link_access_t access)
 {
-    uint32_t link_id;
-    int      ret;
+    const linkg_path_endpoint_t *endpoint;
+    uint32_t                     link_id;
 
     if (report == NULL)
     {
         return -EINVAL;
     }
 
-    link_id = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_WIFI);
-    if (link_id != LINKG_LINK_ID_INVALID)
+    link_id = _linkg_discovery_report_link_id(report, access);
+    if (link_id == LINKG_LINK_ID_INVALID)
     {
-        ret = linkg_node_register_path(report->node.node_id, link_id, &report->wifi_endpoint);
-        if (ret != 0)
-        {
-            return ret;
-        }
+        return -EINVAL;
     }
 
-    link_id = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_CELLULAR);
-    if (link_id != LINKG_LINK_ID_INVALID)
+    if (access == LINKG_LINK_ACCESS_WIFI)
     {
-        ret = linkg_node_register_path(report->node.node_id, link_id, &report->cellular_endpoint);
-        if (ret != 0)
-        {
-            return ret;
-        }
+        endpoint = &report->wifi_endpoint;
+    }
+    else if (access == LINKG_LINK_ACCESS_CELLULAR)
+    {
+        endpoint = &report->cellular_endpoint;
+    }
+    else
+    {
+        return -EINVAL;
     }
 
-    return 0;
+    return linkg_node_register_path(report->node.node_id, link_id, endpoint);
 }
 
 /****************************** Switch辅助 ******************************/
 
 /**
- * @brief 根据Peer当前已经有效的业务Path构造首次默认发送计划。
- *
- * 首次Peer注册时，仅使用同时满足本地Link存在且对端Report声明有效的Path。
- * Wi-Fi和Cellular同时有效时优先使用Wi-Fi，并保留Cellular作为备用链路；
- * 仅存在一个有效Path时立即使用当前唯一Path，保证Peer注册完成后可以直接通信。
- *
- * @note 本接口只用于Peer首次注册时构造Bootstrap发送计划。
- *       后续Report新增或更新Path时，Discovery只维护Path状态，
- *       不再覆盖Switch模块维护的当前发送计划。
+ * @brief 根据首次有效Discovery Access构造Bootstrap发送计划。
  */
-static void _linkg_discovery_build_default_send_plan(const linkg_discovery_report_t *report, linkg_send_plan_t *plan)
+static void _linkg_discovery_build_default_send_plan(const linkg_discovery_report_t *report, linkg_link_access_t access, linkg_send_plan_t *plan)
 {
-    uint32_t wifi_link_id;
-    uint32_t cellular_link_id;
+    uint32_t link_id;
 
     if (report == NULL || plan == NULL)
     {
@@ -120,44 +112,14 @@ static void _linkg_discovery_build_default_send_plan(const linkg_discovery_repor
     plan->primary_link_id   = LINKG_LINK_ID_INVALID;
     plan->secondary_link_id = LINKG_LINK_ID_INVALID;
 
-    /**
-     * 这里必须根据当前Peer Report决定有效Link，
-     * 不能仅根据本地Link Manager是否创建了对应业务Link判断。
-     *
-     * _linkg_discovery_register_report_paths()已经在本函数调用前成功完成，
-     * 因此这里返回的有效Link ID与当前Peer已经建立的Path保持一致。
-     */
-    wifi_link_id     = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_WIFI);
-    cellular_link_id = _linkg_discovery_report_link_id(report, LINKG_LINK_ACCESS_CELLULAR);
-
-    /**
-     * Wi-Fi和Cellular同时存在时，产品策略固定优先使用Wi-Fi，
-     * Cellular仅作为后续Switch主备算法使用的备用链路。
-     */
-    if (wifi_link_id != LINKG_LINK_ID_INVALID)
+    link_id = _linkg_discovery_report_link_id(report, access);
+    if (link_id == LINKG_LINK_ID_INVALID)
     {
-        plan->mode            = LINKG_SEND_MODE_SINGLE;
-        plan->primary_link_id = wifi_link_id;
-
-        if (cellular_link_id != LINKG_LINK_ID_INVALID &&
-            cellular_link_id != wifi_link_id)
-        {
-            plan->secondary_link_id = cellular_link_id;
-        }
-
         return;
     }
 
-    /**
-     * 当前Peer只有Cellular Path时立即使用Cellular通信。
-     * 此处primary_link_id仅表示当前发送计划的执行链路，
-     * 不改变Wi-Fi作为产品首选Primary的主备策略定义。
-     */
-    if (cellular_link_id != LINKG_LINK_ID_INVALID)
-    {
-        plan->mode            = LINKG_SEND_MODE_SINGLE;
-        plan->primary_link_id = cellular_link_id;
-    }
+    plan->mode            = LINKG_SEND_MODE_SINGLE;
+    plan->primary_link_id = link_id;
 }
 
 /****************************** 注册回滚 ******************************/
@@ -228,7 +190,7 @@ int _linkg_discovery_cleanup_peer_route_locked(linkg_discovery_peer_t *peer)
  * 外部运行资源全部建立成功后才提交Discovery在线状态。
  * 调用方必须持有Discovery状态锁。
  */
-int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
+int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
 {
     linkg_send_plan_t plan;
     bool              node_registered;
@@ -286,14 +248,14 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, const li
 
     transport_registered = true;
 
-    ret = _linkg_discovery_register_report_paths(report);
+    ret = _linkg_discovery_register_access_path_locked(report, access);
     if (ret != 0)
     {
         _linkg_discovery_rollback_peer_registration(report->node.node_id, false, transport_registered, node_registered);
         return ret;
     }
 
-    _linkg_discovery_build_default_send_plan(report, &plan);
+    _linkg_discovery_build_default_send_plan(report, access, &plan);
 
     ret = linkg_switch_set_plan(report->node.node_id, &plan);
     if (ret != 0)
@@ -337,7 +299,7 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, const li
  * Discovery Session变化时额外重置Transport序列和接收窗口。
  * 调用方必须持有Discovery状态锁。
  */
-int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
+int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
 {
     bool session_changed;
     int  ret;
@@ -369,7 +331,7 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, const link
         }
     }
 
-    ret = _linkg_discovery_register_report_paths(report);
+    ret = _linkg_discovery_register_access_path_locked(report, access);
     if (ret != 0)
     {
         return ret;
@@ -378,6 +340,55 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, const link
     peer->report = *report;
 
     return 0;
+}
+
+/****************************** Path注销 ******************************/
+
+/**
+ * @brief 注销直接Peer指定Access对应的业务Path并刷新发送计划。
+ *
+ * 调用方必须持有Discovery状态锁。
+ * Path不存在视为目标状态已经满足；Path注销后无论Queue清理是否返回错误，
+ * 都继续刷新Switch发送计划，避免计划继续引用已经退役的Path。
+ */
+int _linkg_discovery_unregister_access_path_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access)
+{
+    uint32_t link_id;
+    int      first_error;
+    int      ret;
+
+    if (peer == NULL || !peer->used || !peer->online)
+    {
+        return -EINVAL;
+    }
+
+    if (access != LINKG_LINK_ACCESS_WIFI &&
+        access != LINKG_LINK_ACCESS_CELLULAR)
+    {
+        return -EINVAL;
+    }
+
+    first_error = 0;
+    link_id = linkg_link_manager_get_id(access);
+
+    if (link_id != LINKG_LINK_ID_INVALID)
+    {
+        ret = linkg_node_unregister_path(peer->report.node.node_id, link_id);
+        if (ret != 0 && ret != -ENOENT)
+        {
+            first_error = ret;
+        }
+    }
+
+    /*
+    ret = linkg_switch_refresh_peer(peer->report.node.node_id);
+    if (ret != 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+    */
+
+    return first_error;
 }
 
 /****************************** Peer注销 ******************************/

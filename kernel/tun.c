@@ -29,9 +29,9 @@
 
 /****************************** 驱动信息 ******************************/
 
-#define DRV_NAME                         "tun"                                      // TUN/TAP驱动名称
-#define DRV_VERSION                      "1.6"                                      // TUN/TAP驱动版本
-#define DRV_DESCRIPTION                  "Universal TUN/TAP device driver"           // TUN/TAP驱动说明
+#define DRV_NAME                         "tun"                                      		 // TUN/TAP驱动名称
+#define DRV_VERSION                      "1.6"                                      		 // TUN/TAP驱动版本
+#define DRV_DESCRIPTION                  "Universal TUN/TAP device driver"           		 // TUN/TAP驱动说明
 #define DRV_COPYRIGHT                    "(C) 1999-2004 Max Krasnyansky <maxk@qualcomm.com>" // TUN/TAP版权信息
 
 #include <linux/module.h>

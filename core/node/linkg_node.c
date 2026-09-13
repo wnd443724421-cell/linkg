@@ -1090,7 +1090,7 @@ out:
 int linkg_node_unregister_path(uint8_t node_id, uint32_t link_id)
 {
     linkg_node_peer_slot_t *slot;
-    linkg_path_state_t state;
+    linkg_path_state_t     state;
     linkg_path_t          *retired_path;
     linkg_path_t          *path;
     int                    path_index;

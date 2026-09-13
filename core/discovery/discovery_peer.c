@@ -13,6 +13,63 @@
 #include <stdint.h>
 #include <string.h>
 
+/****************************** 模块常量 ******************************/
+
+#define LINKG_DISCOVERY_ACCESS_INDEX_WIFI      0U // Wi-Fi存活状态索引
+#define LINKG_DISCOVERY_ACCESS_INDEX_CELLULAR  1U // Cellular存活状态索引
+
+/****************************** Access映射 ******************************/
+
+/**
+ * @brief 将Discovery Access转换为内部数组索引。
+ */
+int _linkg_discovery_access_index(linkg_link_access_t access, uint32_t *index)
+{
+    if (index == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (access == LINKG_LINK_ACCESS_WIFI)
+    {
+        *index = LINKG_DISCOVERY_ACCESS_INDEX_WIFI;
+        return 0;
+    }
+
+    if (access == LINKG_LINK_ACCESS_CELLULAR)
+    {
+        *index = LINKG_DISCOVERY_ACCESS_INDEX_CELLULAR;
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
+/**
+ * @brief 将内部数组索引转换为Discovery Access。
+ */
+static int _linkg_discovery_index_access(uint32_t index, linkg_link_access_t *access)
+{
+    if (access == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (index == LINKG_DISCOVERY_ACCESS_INDEX_WIFI)
+    {
+        *access = LINKG_LINK_ACCESS_WIFI;
+        return 0;
+    }
+
+    if (index == LINKG_DISCOVERY_ACCESS_INDEX_CELLULAR)
+    {
+        *access = LINKG_LINK_ACCESS_CELLULAR;
+        return 0;
+    }
+
+    return -EINVAL;
+}
+
 /****************************** Peer查找 ******************************/
 
 /**
@@ -163,19 +220,23 @@ static void _linkg_discovery_mark_liveness_seen_locked(linkg_discovery_peer_t *p
 }
 
 /**
- * @brief 老化Peer各Discovery Access存活状态。
+ * @brief 老化Peer各Discovery Access存活状态并返回本轮失效Access集合。
  *
+ * 返回值按Discovery内部Access索引置位，仅表示本轮从active变为inactive的Access。
  * 调用方必须持有Discovery状态锁。
  */
-static void _linkg_discovery_age_liveness_locked(linkg_discovery_peer_t *peer, uint64_t now_us)
+static uint32_t _linkg_discovery_age_liveness_locked(linkg_discovery_peer_t *peer, uint64_t now_us)
 {
     linkg_discovery_liveness_t *liveness;
+    uint32_t                    expired_mask;
     uint32_t                    index;
 
     if (peer == NULL || !peer->online)
     {
-        return;
+        return 0U;
     }
+
+    expired_mask = 0U;
 
     for (index = 0U; index < LINKG_NODE_PATH_MAX; index++)
     {
@@ -197,7 +258,125 @@ static void _linkg_discovery_age_liveness_locked(linkg_discovery_peer_t *peer, u
         }
 
         liveness->active = false;
+        expired_mask |= (1U << index);
     }
+
+    return expired_mask;
+}
+
+/****************************** Access失效 ******************************/
+
+/**
+ * @brief 注销Peer本轮刚失效的业务Path。
+ *
+ * 调用方必须持有Discovery状态锁。
+ */
+static int _linkg_discovery_unregister_expired_paths_locked(linkg_discovery_peer_t *peer, uint32_t expired_mask)
+{
+    linkg_link_access_t access;
+    uint32_t            index;
+    int                 first_error;
+    int                 ret;
+
+    if (peer == NULL)
+    {
+        return -EINVAL;
+    }
+
+    first_error = 0;
+
+    for (index = 0U; index < LINKG_NODE_PATH_MAX; index++)
+    {
+        if ((expired_mask & (1U << index)) == 0U)
+        {
+            continue;
+        }
+
+        ret = _linkg_discovery_index_access(index, &access);
+        if (ret != 0)
+        {
+            if (first_error == 0)
+            {
+                first_error = ret;
+            }
+
+            continue;
+        }
+
+        ret = _linkg_discovery_unregister_access_path_locked(peer, access);
+        if (ret != 0 && first_error == 0)
+        {
+            first_error = ret;
+        }
+    }
+
+    return first_error;
+}
+
+/**
+ * @brief 将指定Discovery Access从所有直接Peer中停用。
+ *
+ * 仅关闭指定Access的存活状态；Peer仍存在其他活动Access时继续在线，
+ * 所有Access均失效后才注销整个直接Peer。
+ *
+ * 调用方必须持有Discovery状态锁。
+ */
+int _linkg_discovery_deactivate_access_locked(linkg_link_access_t access, uint64_t now_us)
+{
+    linkg_discovery_peer_t *peer;
+    uint32_t                access_index;
+    uint32_t                peer_index;
+    int                     first_error;
+    int                     ret;
+
+    ret = _linkg_discovery_access_index(access, &access_index);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    first_error = 0;
+
+    for (peer_index = 0U; peer_index < LINKG_NODE_PEER_MAX; peer_index++)
+    {
+        peer = &g_discovery.peers[peer_index];
+
+        if (!peer->used)
+        {
+            continue;
+        }
+
+        memset(&peer->liveness[access_index], 0, sizeof(peer->liveness[access_index]));
+
+        if (!peer->online)
+        {
+            continue;
+        }
+
+        if (_linkg_discovery_peer_has_active_liveness_locked(peer))
+        {
+            ret = _linkg_discovery_unregister_access_path_locked(peer, access);
+            if (ret != 0 && first_error == 0)
+            {
+                first_error = ret;
+            }
+
+            continue;
+        }
+
+        ret = _linkg_discovery_unregister_peer_locked(peer, now_us);
+        if (ret != 0 && first_error == 0)
+        {
+            first_error = ret;
+        }
+
+        if (!peer->online)
+        {
+            _linkg_discovery_clear_peer_liveness_locked(peer);
+        }
+    }
+
+    return first_error;
 }
 
 /****************************** Peer关系 ******************************/
@@ -269,7 +448,7 @@ static linkg_discovery_peer_event_t _linkg_discovery_classify_peer_report(const 
  *
  * 调用方必须持有Discovery状态锁。
  */
-static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
+static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
 {
     int ret;
 
@@ -290,7 +469,7 @@ static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, co
 
     peer->session_closed = true;
 
-    ret = _linkg_discovery_update_peer_locked(peer, report);
+    ret = _linkg_discovery_update_peer_locked(peer, access, report);
     if (ret != 0)
     {
         return ret;
@@ -299,95 +478,6 @@ static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, co
     peer->session_closed = false;
 
     return 0;
-}
-
-/****************************** Access映射 ******************************/
-
-/**
- * @brief 将Discovery Access转换为内部数组索引。
- */
-int _linkg_discovery_access_index(linkg_link_access_t access, uint32_t *index)
-{
-    if (index == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (access == LINKG_LINK_ACCESS_WIFI)
-    {
-        *index = 0U;
-        return 0;
-    }
-
-    if (access == LINKG_LINK_ACCESS_CELLULAR)
-    {
-        *index = 1U;
-        return 0;
-    }
-
-    return -EINVAL;
-}
-
-/****************************** Access失效 ******************************/
-
-/**
- * @brief 将指定Discovery Access从所有直接Peer中停用。
- *
- * 仅关闭指定Access的存活状态；Peer仍存在其他活动Access时继续在线，
- * 所有Access均失效后才注销整个直接Peer。
- *
- * 调用方必须持有Discovery状态锁。
- */
-int _linkg_discovery_deactivate_access_locked(linkg_link_access_t access, uint64_t now_us)
-{
-    linkg_discovery_peer_t *peer;
-    uint32_t                access_index;
-    uint32_t                peer_index;
-    int                     first_error;
-    int                     ret;
-
-    ret = _linkg_discovery_access_index(access, &access_index);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    first_error = 0;
-
-    for (peer_index = 0U; peer_index < LINKG_NODE_PEER_MAX; peer_index++)
-    {
-        peer = &g_discovery.peers[peer_index];
-
-        if (!peer->used)
-        {
-            continue;
-        }
-
-        memset(&peer->liveness[access_index], 0, sizeof(peer->liveness[access_index]));
-
-        if (!peer->online)
-        {
-            continue;
-        }
-
-        if (_linkg_discovery_peer_has_active_liveness_locked(peer))
-        {
-            continue;
-        }
-
-        ret = _linkg_discovery_unregister_peer_locked(peer, now_us);
-        if (ret != 0 && first_error == 0)
-        {
-            first_error = ret;
-        }
-
-        if (!peer->online)
-        {
-            _linkg_discovery_clear_peer_liveness_locked(peer);
-        }
-    }
-
-    return first_error;
 }
 
 /****************************** Report处理 ******************************/
@@ -445,7 +535,7 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
                 }
             }
 
-            ret = _linkg_discovery_register_peer_locked(peer, report);
+            ret = _linkg_discovery_register_peer_locked(peer, access, report);
             if (ret != 0)
             {
                 return ret;
@@ -459,39 +549,45 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
             return 0;
 
         case LINKG_DISCOVERY_PEER_EVENT_REFRESH:
-			_linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
+            ret = _linkg_discovery_register_access_path_locked(report, access);
+            if (ret != 0)
+            {
+                return ret;
+            }
 
-			return 0;
+            _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
 
-		case LINKG_DISCOVERY_PEER_EVENT_UPDATE:
-			ret = _linkg_discovery_update_peer_locked(peer, report);
-			if (ret != 0)
-			{
-				return ret;
-			}
+            return 0;
 
-			_linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
+        case LINKG_DISCOVERY_PEER_EVENT_UPDATE:
+            ret = _linkg_discovery_update_peer_locked(peer, access, report);
+            if (ret != 0)
+            {
+                return ret;
+            }
 
-			return 0;
+            _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
 
-		case LINKG_DISCOVERY_PEER_EVENT_RESTART:
-			ret = _linkg_discovery_restart_peer_locked(peer, report);
-			if (ret != 0)
-			{
-				return ret;
-			}
+            return 0;
 
-			_linkg_discovery_clear_peer_liveness_locked(peer);
-			_linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
+        case LINKG_DISCOVERY_PEER_EVENT_RESTART:
+            ret = _linkg_discovery_restart_peer_locked(peer, access, report);
+            if (ret != 0)
+            {
+                return ret;
+            }
 
-			return 0;
+            _linkg_discovery_clear_peer_liveness_locked(peer);
+            _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
 
-		case LINKG_DISCOVERY_PEER_EVENT_STALE:
-			return 0;
+            return 0;
 
-		case LINKG_DISCOVERY_PEER_EVENT_INVALID:
-		default:
-			return -EINVAL;
+        case LINKG_DISCOVERY_PEER_EVENT_STALE:
+            return 0;
+
+        case LINKG_DISCOVERY_PEER_EVENT_INVALID:
+        default:
+            return -EINVAL;
     }
 }
 
@@ -569,7 +665,8 @@ int _linkg_discovery_handle_peer_leave_locked(const linkg_discovery_leave_t *lea
 /**
  * @brief 老化直接Peer存活状态并回收过期Tombstone。
  *
- * 单个Access超时仅关闭对应存活状态；全部Access均失效后Peer离线。
+ * 单个Access超时仅关闭对应存活状态并注销对应Path；
+ * 全部Access均失效后Peer离线。
  * 离线Peer保留Tombstone用于过滤迟到旧状态，过期后再释放槽位。
  *
  * 调用方必须持有Discovery状态锁。
@@ -577,6 +674,7 @@ int _linkg_discovery_handle_peer_leave_locked(const linkg_discovery_leave_t *lea
 int _linkg_discovery_age_peers_locked(uint64_t now_us)
 {
     linkg_discovery_peer_t *peer;
+    uint32_t                expired_mask;
     uint32_t                index;
     int                     first_error;
     int                     ret;
@@ -594,10 +692,19 @@ int _linkg_discovery_age_peers_locked(uint64_t now_us)
 
         if (peer->online)
         {
-            _linkg_discovery_age_liveness_locked(peer, now_us);
+            expired_mask = _linkg_discovery_age_liveness_locked(peer, now_us);
 
             if (_linkg_discovery_peer_has_active_liveness_locked(peer))
             {
+                if (expired_mask != 0U)
+                {
+                    ret = _linkg_discovery_unregister_expired_paths_locked(peer, expired_mask);
+                    if (ret != 0 && first_error == 0)
+                    {
+                        first_error = ret;
+                    }
+                }
+
                 continue;
             }
 

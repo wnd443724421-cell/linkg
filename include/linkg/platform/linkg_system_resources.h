@@ -31,14 +31,25 @@ extern "C" {
 
 /****************************** 网络端口 ******************************/
 
-#define LINKG_RESOURCE_UDP_PORT_WIFI_DATA          5000U // Wi-Fi普通数据UDP端口
-#define LINKG_RESOURCE_UDP_PORT_WIFI_REALTIME      5001U // Wi-Fi实时数据UDP端口
-#define LINKG_RESOURCE_UDP_PORT_WIFI_VIDEO         5002U // Wi-Fi视频数据UDP端口
-#define LINKG_RESOURCE_UDP_PORT_CELLULAR_DATA      5003U // 蜂窝普通数据UDP端口
-#define LINKG_RESOURCE_UDP_PORT_CELLULAR_REALTIME  5004U // 蜂窝实时数据UDP端口
-#define LINKG_RESOURCE_UDP_PORT_CELLULAR_VIDEO     5005U // 蜂窝视频数据UDP端口
-#define LINKG_RESOURCE_UDP_PORT_WIFI_DISCOVERY     5006U // Wi-Fi设备发现UDP端口
-#define LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY 5007U // 蜂窝设备发现UDP端口
+#define LINKG_RESOURCE_PORT_RESERVED_START             29600U // LinkG系统保留端口起始值
+#define LINKG_RESOURCE_PORT_RESERVED_END               29615U // LinkG系统保留端口结束值
+
+#define LINKG_RESOURCE_UDP_PORT_WIFI_DATA              29600U // Wi-Fi普通数据UDP端口
+#define LINKG_RESOURCE_UDP_PORT_WIFI_REALTIME          29601U // Wi-Fi实时数据UDP端口
+#define LINKG_RESOURCE_UDP_PORT_WIFI_VIDEO             29602U // Wi-Fi视频数据UDP端口
+#define LINKG_RESOURCE_UDP_PORT_CELLULAR_DATA          29603U // 蜂窝普通数据UDP端口
+#define LINKG_RESOURCE_UDP_PORT_CELLULAR_REALTIME      29604U // 蜂窝实时数据UDP端口
+#define LINKG_RESOURCE_UDP_PORT_CELLULAR_VIDEO         29605U // 蜂窝视频数据UDP端口
+#define LINKG_RESOURCE_UDP_PORT_WIFI_DISCOVERY         29606U // Wi-Fi设备发现UDP端口
+#define LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY     29607U // 蜂窝设备发现UDP端口
+#define LINKG_RESOURCE_TCP_PORT_WEB_CONTROL            29608U // Web CGI本机控制TCP端口
+#define LINKG_RESOURCE_TCP_PORT_WEBSOCKET              29609U // WebSocket服务预留端口
+
+/****************************** NAT资源 ******************************/
+
+#define LINKG_RESOURCE_NAT_SNAT_PORT_START             61000U // Fast NAT SNAT端口池起始值
+#define LINKG_RESOURCE_NAT_SNAT_PORT_COUNT             4096U  // Fast NAT SNAT端口池大小
+#define LINKG_RESOURCE_NAT_SNAT_PORT_END               65095U // Fast NAT SNAT端口池结束值
 
 /****************************** 网络接口 ******************************/
 

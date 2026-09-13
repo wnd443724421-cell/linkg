@@ -25,7 +25,6 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_NAT_SNAT_PORT_START                  40000U                                                             // Fast SNAT转换端口池起始端口
 #define LINKG_NAT_DRIVER_MODULE_NAME               "linkg_fast_nat"                                                   // Fast NAT内核模块名称
 #define LINKG_NAT_DRIVER_MODULE_DIRECTORY          "/app/current/drivers"                                             // Fast NAT内核模块目录
 #define LINKG_NAT_DRIVER_MODULE_FILE               "linkg_fast_nat.ko"                                                // Fast NAT内核模块文件名
@@ -205,7 +204,7 @@ static int _linkg_nat_build_driver_config(linkg_fast_nat_config_t *config)
         }
     }
 
-    config->snat_port_start = LINKG_NAT_SNAT_PORT_START;
+    config->snat_port_start = LINKG_RESOURCE_NAT_SNAT_PORT_START;
 
     return 0;
 }

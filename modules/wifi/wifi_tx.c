@@ -33,7 +33,7 @@
 /****************************** 发送参数 ******************************/
 
 #define LINKG_WIFI_TX_BATCH_SIZE_MAX        32U                                                                                  // 单次发送调度最大Packet数量
-#define LINKG_WIFI_TX_QUEUE_BATCH_COUNT     5U                                                                                   // 单业务等待队列最多缓存批次数
+#define LINKG_WIFI_TX_QUEUE_BATCH_COUNT     16U                                                                                  // 单业务等待队列最多缓存批次数
 #define LINKG_WIFI_TX_IPV4_HEADER_SIZE      20U                                                                                  // IPv4最小头部长度
 #define LINKG_WIFI_TX_UDP_HEADER_SIZE       8U                                                                                   // UDP头部长度
 #define LINKG_WIFI_TX_MTU                   1500U                                                                                // Wi-Fi接口MTU
