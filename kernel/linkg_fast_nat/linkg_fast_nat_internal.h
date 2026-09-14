@@ -42,4 +42,19 @@ int  linkg_fast_nat_tcp_mss_clamp(struct sk_buff *skb, __u16 max_mss);
 int linkg_fast_nat_destination_netmap(struct sk_buff *skb, const linkg_fast_nat_ipv4_subnet_t *from, const linkg_fast_nat_ipv4_subnet_t *to);
 int linkg_fast_nat_source_netmap(struct sk_buff *skb, const linkg_fast_nat_ipv4_subnet_t *from, const linkg_fast_nat_ipv4_subnet_t *to);
 
+/****************************** Related流 ******************************/
+
+void linkg_fast_nat_related_init(void);
+void linkg_fast_nat_related_deinit(void);
+void linkg_fast_nat_related_start(void);
+void linkg_fast_nat_related_stop(void);
+int  linkg_fast_nat_related_add(__be32 local_real_ip, __be16 local_real_id, __be16 gateway_id, __be32 remote_virtual_ip, __be16 remote_virtual_id, __u8 protocol);
+int  linkg_fast_nat_related_translate_ethernet_rx(struct sk_buff *skb, __be32 gateway_ip);
+int  linkg_fast_nat_related_flow_create(__be32 server_virtual_ip, __be16 server_virtual_id, __be32 client_virtual_ip, __be16 client_virtual_id, __u8 protocol);
+
+/****************************** RTSP协议扩展 ******************************/
+
+void linkg_fast_nat_rtsp_observe_ethernet_rx(struct sk_buff *skb);
+void linkg_fast_nat_rtsp_observe_tun_rx(struct sk_buff *skb);
+
 #endif

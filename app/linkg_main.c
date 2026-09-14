@@ -31,6 +31,7 @@
 #include "linkg_transport.h"
 #include "linkg_tun.h"
 #include "linkg_udhcp.h"
+#include "linkg_web.h"
 
 /****************************** 应用资源 ******************************/
 
@@ -60,6 +61,7 @@ typedef struct
     bool                nat_initialized;             // NAT模块是否已经初始化
     bool                discovery_initialized;       // Discovery模块是否已经初始化
     bool                udhcp_initialized;           // UDHCP模块是否已经初始化
+    bool                web_initialized;             // Web模块是否已经初始化
     bool                network_started;             // Network Service是否进入过start生命周期
     bool                link_manager_started;        // Link Manager是否进入过start生命周期
     bool                tun_started;                 // TUN模块是否进入过start生命周期
@@ -67,6 +69,7 @@ typedef struct
     bool                nat_started;                 // NAT模块是否进入过start生命周期
     bool                discovery_started;           // Discovery模块是否进入过start生命周期
     bool                udhcp_started;               // UDHCP模块是否进入过start生命周期
+    bool                web_started;                 // Web模块是否进入过start生命周期
 } linkg_app_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -92,7 +95,8 @@ static bool _linkg_app_has_initialized_modules(void)
            g_app.route_initialized ||
            g_app.nat_initialized ||
            g_app.discovery_initialized ||
-           g_app.udhcp_initialized;
+           g_app.udhcp_initialized ||
+           g_app.web_initialized;
 }
 
 /**
@@ -106,7 +110,8 @@ static bool _linkg_app_has_started_modules(void)
            g_app.route_started ||
            g_app.nat_started ||
            g_app.discovery_started ||
-           g_app.udhcp_started;
+           g_app.udhcp_started ||
+           g_app.web_started;
 }
 
 /**
@@ -300,6 +305,16 @@ static int _linkg_app_init(void)
 
     g_app.udhcp_initialized = true;
 
+    ret = linkg_web_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize Web module failed, error=%d", ret);
+        return ret;
+    }
+
+
+    g_app.web_initialized = true;
+
     LINKG_LOG_INFO("application modules initialized");
 
     return 0;
@@ -311,7 +326,7 @@ static int _linkg_app_init(void)
  * @brief 启动全部具有运行态的应用模块。
  *
  * 启动顺序严格按照运行依赖建立：
- * Network -> Link Manager -> TUN -> Route -> NAT -> Discovery -> UDHCP。
+ * Network -> Link Manager -> TUN -> Route -> NAT -> Discovery -> UDHCP -> Web。
  */
 static int _linkg_app_start(void)
 {
@@ -329,7 +344,8 @@ static int _linkg_app_start(void)
         !g_app.route_initialized ||
         !g_app.nat_initialized ||
         !g_app.discovery_initialized ||
-        !g_app.udhcp_initialized)
+        !g_app.udhcp_initialized ||
+        !g_app.web_initialized)
     {
         return -ENODEV;
     }
@@ -415,7 +431,7 @@ static int _linkg_app_start(void)
     }
 
     /**
-     * UDHCP最后启动。
+     * UDHCP启动。
      * 此时Ethernet、TUN、Route、NAT和Discovery均已经进入运行态，
      * DHCP Client一旦获取地址和虚拟网络路由即可直接使用完整LinkG数据面。
      */
@@ -425,6 +441,19 @@ static int _linkg_app_start(void)
     if (ret != 0)
     {
         LINKG_LOG_ERROR("start UDHCP module failed, error=%d", ret);
+        return ret;
+    }
+
+    /**
+     * Web最后启动。
+     * 此时所有业务模块已经进入运行态，Web请求可以安全查询和修改运行状态。
+     */
+    g_app.web_started = true;
+
+    ret = linkg_web_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start Web module failed, error=%d", ret);
         return ret;
     }
 
@@ -444,6 +473,21 @@ static int _linkg_app_start(void)
 static int _linkg_app_stop(void)
 {
     int ret;
+
+    /**
+     * Web必须最先停止，避免应用拆除过程中继续接受新的管理请求。
+     */
+    if (g_app.web_started)
+    {
+        ret = linkg_web_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop Web module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.web_started = false;
+    }
 
     /**
      * UDHCP必须最先停止，避免应用拆除期间继续向新接入设备分配地址和路由。
@@ -559,6 +603,18 @@ static int _linkg_app_deinit(void)
     if (_linkg_app_has_started_modules())
     {
         return -EBUSY;
+    }
+
+    if (g_app.web_initialized)
+    {
+        ret = linkg_web_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize Web module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.web_initialized = false;
     }
 
     if (g_app.udhcp_initialized)

@@ -1,6 +1,8 @@
 obj-m += linkg_fast_nat.o
 
 linkg_fast_nat-y := linkg_fast_nat_main.o \
-                    linkg_fast_nat_utils.o
+                    linkg_fast_nat_utils.o \
+                    linkg_fast_nat_related.o \
+                    linkg_fast_nat_rtsp.o
 
 ccflags-y += -I$(src)

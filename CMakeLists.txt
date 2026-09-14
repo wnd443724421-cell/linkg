@@ -141,6 +141,8 @@ if(ARCHITECTURE STREQUAL "arm")
     set(LINKG_FAST_NAT_FILES
         "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_main.c"
         "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_utils.c"
+        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_related.c"
+        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_rtsp.c"
         "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_internal.h"
         "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_uapi.h"
         "${LINKG_FAST_NAT_SOURCE_DIR}/Kbuild"
@@ -252,6 +254,15 @@ if(ARCHITECTURE STREQUAL "arm")
             "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_utils.c"
             "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_utils.c"
 
+        COMMAND
+            "${CMAKE_COMMAND}" -E copy_if_different
+            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_related.c"
+            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_related.c"
+
+        COMMAND
+            "${CMAKE_COMMAND}" -E copy_if_different
+            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_rtsp.c"
+            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_rtsp.c"
         COMMAND
             "${CMAKE_COMMAND}" -E copy_if_different
             "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_internal.h"

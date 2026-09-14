@@ -1178,57 +1178,6 @@ static bool _linkg_fast_nat_local_virtual_endpoint(__be32 address)
 }
 
 /**
- * @brief 为协议派生数据流预建客户端侧Ethernet主动Flow。
- *
- * server_virtual_ip/server_virtual_id描述远端业务服务端Virtual Endpoint，
- * client_virtual_ip/client_virtual_id描述本节点客户端Virtual Endpoint。
- * 预建Flow后，派生数据到达本节点Ethernet出口时会保留远端Virtual源地址。
- */
-int linkg_fast_nat_related_flow_create(__be32 server_virtual_ip, __be16 server_virtual_id, __be32 client_virtual_ip, __be16 client_virtual_id, __u8 protocol)
-{
-    linkg_fast_nat_flow_key_t key;
-    __be32 client_real_ip;
-
-    if (server_virtual_ip == 0 || client_virtual_ip == 0 || server_virtual_id == 0 || client_virtual_id == 0)
-    {
-        return -EINVAL;
-    }
-
-    if (protocol != IPPROTO_TCP && protocol != IPPROTO_UDP)
-    {
-        return -EPROTONOSUPPORT;
-    }
-
-    if (!linkg_fast_nat_ipv4_in_subnet(server_virtual_ip, &g_fast_nat.config.virtual_network))
-    {
-        return -EINVAL;
-    }
-
-    if (!_linkg_fast_nat_local_virtual_endpoint(client_virtual_ip))
-    {
-        return -ENOENT;
-    }
-
-    client_real_ip = linkg_fast_nat_ipv4_prefix_map(client_virtual_ip,
-                                                      &g_fast_nat.config.local_virtual_subnet,
-                                                      &g_fast_nat.config.ethernet_network);
-    if (!_linkg_fast_nat_ipv4_host_usable(client_real_ip, &g_fast_nat.config.ethernet_network))
-    {
-        return -EINVAL;
-    }
-
-    memset(&key, 0, sizeof(key));
-
-    key.ethernet_ip = client_real_ip;
-    key.virtual_ip  = server_virtual_ip;
-    key.ethernet_id = client_virtual_id;
-    key.virtual_id  = server_virtual_id;
-    key.protocol    = protocol;
-
-    return _linkg_fast_nat_flow_get_or_create(&key);
-}
-
-/**
  * @brief 获取指定网络接口当前可用的IPv4地址。
  */
 static int _linkg_fast_nat_interface_ipv4_get(const struct net_device *device, __be32 *address)
@@ -1497,41 +1446,6 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_reverse_snat(str
         return LINKG_FAST_NAT_RULE_DROP;
     }
 
-    // Virtual客户端的RTSP响应已经恢复原始目的地址，此时可解析SETUP协商出的RTP/RTCP端口。
-    if (snat_type == LINKG_FAST_NAT_SNAT_VIRTUAL)
-    {
-        linkg_fast_nat_rtsp_observe_ethernet_rx(skb);
-    }
-
-    return LINKG_FAST_NAT_RULE_STOP;
-}
-
-/**
- * @brief 匹配Ethernet入口的协议派生数据流并恢复远端Virtual目标。
- */
-static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_related(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
-{
-    int ret;
-
-    (void)state;
-    (void)iph;
-
-    ret = linkg_fast_nat_related_translate_ethernet_rx(skb, g_fast_nat.config.ethernet_ip);
-    if (ret == -ENOENT || ret == -EOPNOTSUPP)
-    {
-        return LINKG_FAST_NAT_RULE_NEXT;
-    }
-
-    if (ret != 0)
-    {
-        return LINKG_FAST_NAT_RULE_DROP;
-    }
-
-    /**
-     * Related命中后Destination已经恢复为远端Virtual地址。
-     * PRE_ROUTING后继续正常路由到TUN，TUN TX Source NETMAP负责将本地真实Source映射为本节点Virtual地址。
-     * 不继续执行record_flow，避免把服务器主动派生流错误登记为普通Ethernet主动Flow。
-     */
     return LINKG_FAST_NAT_RULE_STOP;
 }
 
@@ -1641,19 +1555,6 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_hairpin(struct s
 }
 
 /****************************** TUN RX规则 ******************************/
-
-/**
- * @brief 观察TUN入口控制协议并预建协议派生数据流状态。
- */
-static linkg_fast_nat_rule_result_t _linkg_fast_nat_tun_rx_protocol_helper(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
-{
-    (void)state;
-    (void)iph;
-
-    linkg_fast_nat_rtsp_observe_tun_rx(skb);
-
-    return LINKG_FAST_NAT_RULE_NEXT;
-}
 
 /**
  * @brief 处理TUN入口访问本地Ethernet网络的Destination NETMAP。
@@ -2135,14 +2036,12 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_uplink_tx_source_snat(struct
 static const linkg_fast_nat_rule_func_t g_ethernet_rx_rules[] =
 {
     _linkg_fast_nat_ethernet_rx_reverse_snat,
-    _linkg_fast_nat_ethernet_rx_related,
     _linkg_fast_nat_ethernet_rx_record_flow,
     _linkg_fast_nat_ethernet_rx_hairpin,
 };
 
 static const linkg_fast_nat_rule_func_t g_tun_rx_rules[] =
 {
-    _linkg_fast_nat_tun_rx_protocol_helper,
     _linkg_fast_nat_tun_rx_destination_netmap,
 };
 
@@ -2366,8 +2265,6 @@ static int _linkg_fast_nat_start(void)
 
     WRITE_ONCE(g_fast_nat.state, LINKG_FAST_NAT_STATE_RUNNING);
 
-    linkg_fast_nat_related_start();
-
     mod_timer(&g_fast_nat.flow_gc_timer, jiffies + LINKG_FAST_NAT_FLOW_GC_INTERVAL);
     mod_timer(&g_fast_nat.mapping_gc_timer, jiffies + LINKG_FAST_NAT_MAPPING_GC_INTERVAL);
 
@@ -2391,7 +2288,6 @@ static int _linkg_fast_nat_stop(void)
 
     nf_unregister_net_hooks(&init_net, g_fast_nat_hooks, ARRAY_SIZE(g_fast_nat_hooks));
 
-    linkg_fast_nat_related_stop();
     _linkg_fast_nat_mapping_reset();
     _linkg_fast_nat_flow_reset();
 
@@ -2492,12 +2388,10 @@ static int __init _linkg_fast_nat_module_init(void)
 
     timer_setup(&g_fast_nat.flow_gc_timer, _linkg_fast_nat_flow_gc_timer, 0);
     timer_setup(&g_fast_nat.mapping_gc_timer, _linkg_fast_nat_mapping_gc_timer, 0);
-    linkg_fast_nat_related_init();
 
     ret = misc_register(&g_fast_nat_misc_device);
     if (ret != 0)
     {
-        linkg_fast_nat_related_deinit();
         return ret;
     }
 
@@ -2523,7 +2417,6 @@ static void __exit _linkg_fast_nat_module_exit(void)
     mutex_unlock(&g_fast_nat.control_lock);
 
     misc_deregister(&g_fast_nat_misc_device);
-    linkg_fast_nat_related_deinit();
 
     pr_info("LinkG Fast NAT: module unloaded\n");
 }
