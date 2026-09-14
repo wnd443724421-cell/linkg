@@ -1500,7 +1500,12 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_reverse_snat(str
     // Virtual客户端的RTSP响应已经恢复原始目的地址，此时可解析SETUP协商出的RTP/RTCP端口。
     if (snat_type == LINKG_FAST_NAT_SNAT_VIRTUAL)
     {
-        linkg_fast_nat_rtsp_observe_ethernet_rx(skb);
+        iph = ip_hdr(skb);
+
+        if (iph->protocol == IPPROTO_TCP)
+        {
+            linkg_fast_nat_rtsp_observe_ethernet_rx(skb);
+        }
     }
 
     return LINKG_FAST_NAT_RULE_STOP;
@@ -1648,7 +1653,11 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_hairpin(struct s
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_tun_rx_protocol_helper(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
 {
     (void)state;
-    (void)iph;
+
+    if (iph->protocol != IPPROTO_TCP)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
 
     linkg_fast_nat_rtsp_observe_tun_rx(skb);
 

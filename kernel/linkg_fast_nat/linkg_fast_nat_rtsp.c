@@ -158,6 +158,7 @@ static int _linkg_fast_nat_rtsp_copy_header(struct sk_buff *skb, char *buffer, s
     unsigned int tcp_header_length;
     unsigned int payload_offset;
     unsigned int payload_length;
+    unsigned int prefix_length;
     unsigned int copy_length;
     unsigned int network_offset;
     const char *header_end;
@@ -180,6 +181,7 @@ static int _linkg_fast_nat_rtsp_copy_header(struct sk_buff *skb, char *buffer, s
     }
 
     network_offset = skb_network_offset(skb);
+
     tcph = skb_header_pointer(skb,
                               network_offset + transport_offset,
                               sizeof(tcp_header_buffer),
@@ -198,20 +200,39 @@ static int _linkg_fast_nat_rtsp_copy_header(struct sk_buff *skb, char *buffer, s
     }
 
     payload_length = (unsigned int)ntohs(iph->tot_len) - payload_offset;
-    copy_length    = min_t(unsigned int, payload_length, (unsigned int)capacity - 1U);
+    prefix_length  = (unsigned int)strlen(LINKG_FAST_NAT_RTSP_STATUS_PREFIX);
 
-    if (skb_copy_bits(skb, network_offset + payload_offset, buffer, copy_length) != 0)
+    if (payload_length < prefix_length)
+    {
+        return -ENOENT;
+    }
+
+    if (skb_copy_bits(skb,
+                      network_offset + payload_offset,
+                      buffer,
+                      prefix_length) != 0)
+    {
+        return -EINVAL;
+    }
+
+    if (strncasecmp(buffer, LINKG_FAST_NAT_RTSP_STATUS_PREFIX, prefix_length) != 0)
+    {
+        return -ENOENT;
+    }
+
+    copy_length = min_t(unsigned int,
+                        payload_length,
+                        (unsigned int)capacity - 1U);
+
+    if (skb_copy_bits(skb,
+                      network_offset + payload_offset,
+                      buffer,
+                      copy_length) != 0)
     {
         return -EINVAL;
     }
 
     buffer[copy_length] = '\0';
-
-    if (copy_length < strlen(LINKG_FAST_NAT_RTSP_STATUS_PREFIX) ||
-        strncasecmp(buffer, LINKG_FAST_NAT_RTSP_STATUS_PREFIX, strlen(LINKG_FAST_NAT_RTSP_STATUS_PREFIX)) != 0)
-    {
-        return -ENOENT;
-    }
 
     header_end = strnstr(buffer, "\r\n\r\n", copy_length);
     if (header_end == NULL)
@@ -220,6 +241,7 @@ static int _linkg_fast_nat_rtsp_copy_header(struct sk_buff *skb, char *buffer, s
     }
 
     *header_length = (size_t)(header_end - buffer) + 4U;
+
     return 0;
 }
 
@@ -313,7 +335,7 @@ static void _linkg_fast_nat_rtsp_create_ethernet_related(struct sk_buff *skb, co
         return;
     }
 
-    server_real_ip   = iph->saddr;
+    server_real_ip    = iph->saddr;
     client_virtual_ip = iph->daddr;
 
     ret = linkg_fast_nat_related_add(server_real_ip,

@@ -1,0 +1,96 @@
+{
+  "env": {
+    "KERNEL_SOURCE": "/home/dawn/t113_tina5.0_v1.2/kernel/linux-5.4",
+    "KERNEL_BUILD": "/home/dawn/t113_tina5.0_v1.2/out/t113_i/kernel/build"
+  },
+  "configurations": [
+    {
+      "name": "LinkG T113 ARM Application",
+      "includePath": [
+        "${workspaceFolder}/include/**",
+        "${workspaceFolder}/app/**",
+        "${workspaceFolder}/core/**",
+        "${workspaceFolder}/infra/**",
+        "${workspaceFolder}/modules/**",
+        "${workspaceFolder}/platform/**",
+        "${workspaceFolder}/service/**",
+        "${workspaceFolder}/third_party/cjson/**",
+        "${workspaceFolder}/kernel/linkg_fast_nat/**",
+        "${workspaceFolder}/test/**"
+      ],
+      "defines": [
+        "PRODUCT_RELEASE"
+      ],
+      "compilerPath": "${workspaceFolder}/.vscode/linkg-arm-gcc",
+      "compilerArgs": [
+        "-march=armv7-a",
+        "-mfloat-abi=hard",
+        "-mfpu=neon-vfpv4"
+      ],
+      "compileCommands": "${workspaceFolder}/build/arm/compile_commands.json",
+      "cStandard": "gnu17",
+      "cppStandard": "gnu++17",
+      "intelliSenseMode": "linux-gcc-arm",
+      "browse": {
+        "path": [
+          "${workspaceFolder}/include",
+          "${workspaceFolder}/app",
+          "${workspaceFolder}/core",
+          "${workspaceFolder}/infra",
+          "${workspaceFolder}/modules",
+          "${workspaceFolder}/platform",
+          "${workspaceFolder}/service",
+          "${workspaceFolder}/third_party/cjson",
+          "${workspaceFolder}/kernel/linkg_fast_nat",
+          "${workspaceFolder}/test"
+        ],
+        "limitSymbolsToIncludedHeaders": false,
+        "databaseFilename": "${workspaceFolder}/build/.vscode-cache/linkg-app.vc.db"
+      }
+    },
+    {
+      "name": "LinkG T113 Linux Kernel and Fast NAT",
+      "includePath": [
+        "${workspaceFolder}/kernel/linkg_fast_nat",
+        "${KERNEL_SOURCE}/arch/arm/include",
+        "${KERNEL_BUILD}/arch/arm/include/generated",
+        "${KERNEL_SOURCE}/include",
+        "${KERNEL_BUILD}/include",
+        "${KERNEL_SOURCE}/arch/arm/include/uapi",
+        "${KERNEL_BUILD}/arch/arm/include/generated/uapi",
+        "${KERNEL_SOURCE}/include/uapi",
+        "${KERNEL_BUILD}/include/generated/uapi"
+      ],
+      "defines": [
+        "__KERNEL__",
+        "MODULE",
+        "__LINUX_ARM_ARCH__=7",
+        "KBUILD_MODNAME=\"linkg_fast_nat\""
+      ],
+      "forcedInclude": [
+        "${KERNEL_SOURCE}/include/linux/kconfig.h",
+        "${KERNEL_SOURCE}/include/linux/compiler_types.h"
+      ],
+      "compilerPath": "${workspaceFolder}/.vscode/linkg-arm-gcc",
+      "compilerArgs": [
+        "-mlittle-endian",
+        "-mabi=aapcs-linux",
+        "-marm",
+        "-march=armv7-a",
+        "-msoft-float",
+        "-mfpu=vfp"
+      ],
+      "cStandard": "gnu89",
+      "cppStandard": "gnu++17",
+      "intelliSenseMode": "linux-gcc-arm",
+      "browse": {
+        "path": [
+          "${workspaceFolder}/kernel/linkg_fast_nat"
+        ],
+        "limitSymbolsToIncludedHeaders": true,
+        "databaseFilename": "${workspaceFolder}/build/.vscode-cache/linkg-kernel.vc.db"
+      }
+    }
+  ],
+  "version": 4
+}

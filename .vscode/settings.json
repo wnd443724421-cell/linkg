@@ -1,0 +1,32 @@
+{
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.workspaceParsingPriority": "highest",
+    "C_Cpp.errorSquiggles": "enabled",
+    "C_Cpp.autocomplete": "default",
+    "C_Cpp.default.configurationProvider": "",
+    "cmake.configureOnOpen": false,
+    "files.associations": {
+        "*.h": "c"
+    },
+    "files.exclude": {
+        "**/.git": true,
+        "**/build": true,
+        "**/output": true,
+        "**/out": true,
+        "**/tests/*/build": true,
+        "**/tools/build_tmp": true,
+        "**/tools/output": true
+    },
+    "search.exclude": {
+        "**/build": true,
+        "**/output": true,
+        "**/out": true,
+        "**/tests/*/build": true,
+        "**/tools/build_tmp": true,
+        "**/tools/output": true
+    },
+    "clangd.path": "/bin/false",
+    "clangd.restartAfterCrash": false,
+    "clangd.checkUpdates": false,
+    "clangd.detectExtensionConflicts": false
+}
