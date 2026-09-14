@@ -32,71 +32,7 @@
 #include "linkg_thread.h"
 #include "linkg_time.h"
 #include "linkg_transport.h"
-
-/****************************** 兼容定义 ******************************/
-
-// 兼容尚未安装私有UAPI头的用户态构建环境。
-#ifndef LQ_TUN_IOC_READ_BATCH
-#define LQ_TUN_BATCH_MAX                          1024U
-#define LQ_TUN_BATCH_TIMEOUT_MAX_US               1000U
-#define LQ_TUN_TRAFFIC_CLASS_REALTIME              0U
-#define LQ_TUN_TRAFFIC_CLASS_VIDEO                 1U
-#define LQ_TUN_TRAFFIC_CLASS_DATA                  2U
-#define LQ_TUN_TRAFFIC_CLASS_COUNT                 3U
-#define LQ_TUN_REALTIME_QUEUE_SIZE                 128U
-#define LQ_TUN_VIDEO_QUEUE_SIZE                    256U
-#define LQ_TUN_DATA_QUEUE_SIZE                     512U
-#define LQ_TUN_TRAFFIC_RULE_MAX                    16U
-#define LQ_TUN_PORT_PROTOCOL_TCP                   6U
-#define LQ_TUN_PORT_PROTOCOL_UDP                   17U
-#define LQ_TUN_IOC_READ_BATCH                     _IOWR('T', 240, struct lq_tun_batch_read)
-#define LQ_TUN_IOC_WRITE_BATCH                    _IOWR('T', 241, struct lq_tun_batch_write)
-#define LQ_TUN_IOC_SET_TRAFFIC_CONFIG             _IOW('T', 242, struct lq_tun_traffic_config)
-
-struct lq_tun_traffic_rule
-{
-    __u8  traffic_class;
-    __u8  protocol;
-    __u16 start_port;
-    __u16 end_port;
-    __u16 reserved;
-};
-
-struct lq_tun_traffic_config
-{
-    __u32                      count;
-    __u32                      reserved;
-    struct lq_tun_traffic_rule rules[LQ_TUN_TRAFFIC_RULE_MAX];
-};
-
-struct lq_tun_batch_entry
-{
-    __aligned_u64 data;
-    __u32         length;
-    __u32         capacity;
-};
-
-struct lq_tun_batch_read
-{
-    __aligned_u64 entries;
-    __u32         traffic_class;
-    __u32         max_pkts;
-    __u32         min_pkts;
-    __u32         timeout_us;
-    __u32         read_pkts;
-    __u32         read_bytes;
-    __s32         status;
-};
-
-struct lq_tun_batch_write
-{
-    __aligned_u64 entries;
-    __u32         pkt_count;
-    __u32         written_pkts;
-    __u32         written_bytes;
-    __s32         status;
-};
-#endif
+#include "linkg_tun_uapi.h"
 
 /****************************** 模块常量 ******************************/
 
