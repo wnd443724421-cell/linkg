@@ -1,10 +1,18 @@
 (function () {
     "use strict";
 
+    /****************************** 常量 ******************************/
+
     const LINKG_OVERVIEW_REFRESH_INTERVAL_MS = 1000;
+
+    /****************************** 运行状态 ******************************/
+
+    const nodeTrafficSamples = new Map();
 
     let refreshTimer = null;
     let mounted = false;
+
+    /****************************** 通用辅助 ******************************/
 
     /**
      * 将数字补齐为两位。
@@ -12,6 +20,19 @@
     function padNumber(value)
     {
         return String(value).padStart(2, "0");
+    }
+
+    /**
+     * 设置指定元素文本。
+     */
+    function setText(id, value)
+    {
+        const element = document.getElementById(id);
+
+        if (element != null)
+        {
+            element.textContent = value;
+        }
     }
 
     /**
@@ -70,6 +91,8 @@
         return "--";
     }
 
+    /****************************** Wi-Fi辅助 ******************************/
+
     /**
      * 格式化Wi-Fi工作模式。
      */
@@ -113,18 +136,217 @@
         return "--";
     }
 
-    /**
-     * 设置指定文本元素内容。
-     */
-    function setText(id, value)
-    {
-        const element = document.getElementById(id);
+    /****************************** 蜂窝网络辅助 ******************************/
 
-        if (element != null)
+    /**
+     * 根据PLMN格式化运营商。
+     */
+    function formatCellularOperator(plmn)
+    {
+        const operators = {
+            "46000": "中国移动",
+            "46002": "中国移动",
+            "46004": "中国移动",
+            "46007": "中国移动",
+            "46008": "中国移动",
+            "46013": "中国移动",
+
+            "46001": "中国联通",
+            "46006": "中国联通",
+            "46009": "中国联通",
+            "46010": "中国联通",
+
+            "46003": "中国电信",
+            "46005": "中国电信",
+            "46011": "中国电信",
+            "46012": "中国电信",
+
+            "46015": "中国广电"
+        };
+
+        if (typeof plmn !== "string" || plmn.length === 0)
         {
-            element.textContent = value;
+            return "--";
         }
+
+        return operators[plmn] || "PLMN " + plmn;
     }
+
+    /**
+     * 格式化蜂窝网络类型。
+     */
+    function formatCellularNetworkType(networkType)
+    {
+        if (networkType === "lte")
+        {
+            return "4G LTE";
+        }
+
+        if (networkType === "5g_sa")
+        {
+            return "5G SA";
+        }
+
+        return "未连接";
+    }
+
+    /****************************** 组网节点辅助 ******************************/
+
+    /**
+     * 格式化组网节点关系。
+     */
+    function formatNodeRelation(node)
+    {
+        if (node.relation === "local")
+        {
+            return "本机";
+        }
+
+        if (node.relation === "direct")
+        {
+            return node.role === "ap" ? "直连 AP" : "直连";
+        }
+
+        if (node.relation === "via_ap")
+        {
+            return "AP 转发";
+        }
+
+        return "--";
+    }
+
+    /**
+     * 格式化组网节点当前主链路。
+     */
+    function formatNodePrimaryLink(node)
+    {
+        if (node.relation !== "direct")
+        {
+            return "--";
+        }
+
+        if (node.send_mode === "redundant")
+        {
+            return "Wi-Fi + 蜂窝";
+        }
+
+        if (node.send_mode !== "single")
+        {
+            return "无";
+        }
+
+        if (node.primary_link === "wifi")
+        {
+            return "Wi-Fi";
+        }
+
+        if (node.primary_link === "cellular")
+        {
+            return "蜂窝";
+        }
+
+        return "无";
+    }
+
+    /**
+     * 格式化指定组网节点Path可用状态。
+     */
+    function formatPathAvailable(node, key)
+    {
+        if (node.relation !== "direct")
+        {
+            return "--";
+        }
+
+        return node[key] === true ? "可用" : "不可用";
+    }
+
+    /**
+     * 格式化当前用户业务流量速率。
+     */
+    function formatTrafficRate(bytesPerSecond)
+    {
+        if (!Number.isFinite(bytesPerSecond) || bytesPerSecond < 0)
+        {
+            return "--";
+        }
+
+        if (bytesPerSecond >= 1024 * 1024)
+        {
+            return (bytesPerSecond / (1024 * 1024)).toFixed(1) + " MB/s";
+        }
+
+        if (bytesPerSecond >= 1024)
+        {
+            return (bytesPerSecond / 1024).toFixed(1) + " KB/s";
+        }
+
+        return Math.round(bytesPerSecond) + " B/s";
+    }
+
+    /**
+     * 根据累计Transport字节统计计算指定节点当前TX/RX速率。
+     */
+    function getNodeTrafficRate(node, nowMs)
+    {
+        const previous = nodeTrafficSamples.get(node.node_id);
+        let txRate = null;
+        let rxRate = null;
+        let elapsedMs;
+
+        if (node.relation !== "direct" || node.traffic == null)
+        {
+            return {
+                tx: "--",
+                rx: "--"
+            };
+        }
+
+        if (previous != null &&
+            Number.isFinite(previous.txBytes) &&
+            Number.isFinite(previous.rxBytes) &&
+            node.traffic.tx_bytes >= previous.txBytes &&
+            node.traffic.rx_bytes >= previous.rxBytes)
+        {
+            elapsedMs = nowMs - previous.timeMs;
+
+            if (elapsedMs > 0)
+            {
+                txRate = (node.traffic.tx_bytes - previous.txBytes) * 1000 / elapsedMs;
+                rxRate = (node.traffic.rx_bytes - previous.rxBytes) * 1000 / elapsedMs;
+            }
+        }
+
+        nodeTrafficSamples.set(node.node_id, {
+            txBytes: node.traffic.tx_bytes,
+            rxBytes: node.traffic.rx_bytes,
+            timeMs: nowMs
+        });
+
+        return {
+            tx: txRate == null ? "--" : formatTrafficRate(txRate),
+            rx: rxRate == null ? "--" : formatTrafficRate(rxRate)
+        };
+    }
+
+    /**
+     * 向指定表格行追加一个文本单元格。
+     */
+    function appendTableCell(row, text, className)
+    {
+        const cell = document.createElement("td");
+
+        cell.textContent = text;
+
+        if (className)
+        {
+            cell.className = className;
+        }
+
+        row.appendChild(cell);
+    }
+
+    /****************************** 页面渲染 ******************************/
 
     /**
      * 渲染设备信息。
@@ -156,6 +378,88 @@
         setText("overviewWifiSsid", typeof wifi.ssid === "string" && wifi.ssid.length > 0 ? wifi.ssid : "--");
         setText("overviewWifiWorkMode", formatWifiWorkMode(wifi));
         setText("overviewWifiChannel", Number.isInteger(wifi.channel) && wifi.channel > 0 ? String(wifi.channel) : "--");
+        setText("overviewWifiNoise", Number.isFinite(wifi.noise_dbm) ? wifi.noise_dbm + " dBm" : "--");
+    }
+
+    /**
+     * 渲染蜂窝网络信息。
+     */
+    function renderCellularInfo(cellular)
+    {
+        const internetElement = document.getElementById("overviewCellularInternet");
+        const ipv6Element = document.getElementById("overviewCellularIpv6");
+        let ipv6;
+
+        if (cellular == null)
+        {
+            throw new Error("蜂窝网络概览数据不存在");
+        }
+
+        setText("overviewCellularRsrp", Number.isFinite(cellular.rsrp_dbm) ? cellular.rsrp_dbm + " dBm" : "--");
+        setText("overviewCellularOperator", formatCellularOperator(cellular.plmn));
+        setText("overviewCellularNetworkType", formatCellularNetworkType(cellular.network_type));
+
+        ipv6 = typeof cellular.ipv6 === "string" && cellular.ipv6.length > 0 ? cellular.ipv6 : "--";
+
+        setText("overviewCellularIpv6", ipv6);
+        setText("overviewCellularInternet", cellular.internet_available === true ? "可用" : "不可用");
+
+        if (ipv6Element != null)
+        {
+            ipv6Element.title = ipv6 === "--" ? "" : ipv6;
+        }
+
+        if (internetElement != null)
+        {
+            internetElement.classList.toggle("is-online", cellular.internet_available === true);
+            internetElement.classList.toggle("is-offline", cellular.internet_available !== true);
+        }
+    }
+
+    /**
+     * 渲染组网节点列表。
+     */
+    function renderNodes(nodes)
+    {
+        const body = document.getElementById("overviewNodesBody");
+        const activeNodeIds = new Set();
+        const nowMs = Date.now();
+
+        if (body == null || !Array.isArray(nodes))
+        {
+            return;
+        }
+
+        body.replaceChildren();
+
+        nodes.forEach(function (node) {
+            const row = document.createElement("tr");
+            const traffic = getNodeTrafficRate(node, nowMs);
+            const wifiAvailable = formatPathAvailable(node, "wifi_path");
+            const cellularAvailable = formatPathAvailable(node, "cellular_path");
+
+            activeNodeIds.add(node.node_id);
+
+            appendTableCell(row, String(node.node_id), "overview-node-id");
+            appendTableCell(row, node.virtual_ip || "--");
+            appendTableCell(row, formatNodeRelation(node));
+            appendTableCell(row, formatNodePrimaryLink(node));
+            appendTableCell(row, wifiAvailable, wifiAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
+            appendTableCell(row, cellularAvailable, cellularAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
+            appendTableCell(row, traffic.tx);
+            appendTableCell(row, traffic.rx);
+
+            body.appendChild(row);
+        });
+
+        nodeTrafficSamples.forEach(function (value, nodeId) {
+            if (!activeNodeIds.has(nodeId))
+            {
+                nodeTrafficSamples.delete(nodeId);
+            }
+        });
+
+        setText("overviewNodesCount", nodes.length + " 个节点");
     }
 
     /**
@@ -163,6 +467,10 @@
      */
     function renderError()
     {
+        const internetElement = document.getElementById("overviewCellularInternet");
+        const ipv6Element = document.getElementById("overviewCellularIpv6");
+        const nodesBody = document.getElementById("overviewNodesBody");
+
         setText("overviewDeviceRole", "--");
         setText("overviewDeviceNodeId", "--");
         setText("overviewDeviceNetworkNodeCount", "--");
@@ -172,7 +480,33 @@
         setText("overviewWifiSsid", "--");
         setText("overviewWifiWorkMode", "--");
         setText("overviewWifiChannel", "--");
+        setText("overviewWifiNoise", "--");
+
+        setText("overviewCellularRsrp", "--");
+        setText("overviewCellularOperator", "--");
+        setText("overviewCellularNetworkType", "--");
+        setText("overviewCellularIpv6", "--");
+        setText("overviewCellularInternet", "--");
+
+        setText("overviewNodesCount", "--");
+
+        if (ipv6Element != null)
+        {
+            ipv6Element.title = "";
+        }
+
+        if (internetElement != null)
+        {
+            internetElement.classList.remove("is-online", "is-offline");
+        }
+
+        if (nodesBody != null)
+        {
+            nodesBody.replaceChildren();
+        }
     }
+
+    /****************************** 页面刷新 ******************************/
 
     /**
      * 刷新概览页面。
@@ -195,13 +529,15 @@
                 return;
             }
 
-            if (response.data == null || response.data.device == null || response.data.wifi == null)
+            if (response.data == null || response.data.device == null || response.data.wifi == null || response.data.cellular == null || !Array.isArray(response.data.nodes))
             {
                 throw new Error("概览响应数据无效");
             }
 
             renderDeviceInfo(response.data.device);
             renderWifiInfo(response.data.wifi);
+            renderCellularInfo(response.data.cellular);
+            renderNodes(response.data.nodes);
         }
         catch (error)
         {
@@ -220,6 +556,8 @@
         }
     }
 
+    /****************************** 页面生命周期 ******************************/
+
     /**
      * 进入概览页面。
      */
@@ -231,6 +569,7 @@
         }
 
         mounted = true;
+
         refresh();
     }
 
@@ -246,7 +585,11 @@
             clearTimeout(refreshTimer);
             refreshTimer = null;
         }
+
+        nodeTrafficSamples.clear();
     }
+
+    /****************************** 模块导出 ******************************/
 
     window.LinkGPages = window.LinkGPages || {};
 

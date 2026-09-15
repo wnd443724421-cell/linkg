@@ -3,6 +3,7 @@
 .page {
     width: 100%;
     max-width: 1440px;
+
     margin: 0 auto;
 }
 
@@ -24,22 +25,26 @@
     margin: 5px 0 0;
 
     font-size: 13px;
+
     color: var(--linkg-color-text-secondary);
 }
 
 /****************************** 卡片 ******************************/
 
 .page-card {
+    overflow: hidden;
+
     background: var(--linkg-color-surface);
     border: 1px solid var(--linkg-color-border);
     border-radius: var(--linkg-radius-large);
 }
 
 .page-card-header {
+    min-height: 52px;
+
     display: flex;
     align-items: center;
 
-    min-height: 52px;
     padding: 0 20px;
 
     border-bottom: 1px solid var(--linkg-color-border-light);

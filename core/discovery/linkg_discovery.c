@@ -881,3 +881,62 @@ out:
 
     return ret;
 }
+
+/****************************** 状态查询 ******************************/
+
+/**
+ * @brief 获取STA当前应用的AP远端拓扑快照。
+ */
+int linkg_discovery_get_topology_snapshot(linkg_discovery_topology_snapshot_t *snapshot)
+{
+    int unlock_ret;
+    int ret;
+
+    if (snapshot == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+
+    if (!g_discovery.initialized)
+    {
+        return -ENODEV;
+    }
+
+    ret = pthread_mutex_lock(&g_discovery.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    ret = 0;
+
+    if (g_discovery.local_report.node.role != LINKG_DEVICE_ROLE_STA)
+    {
+        ret = -EPERM;
+        goto out;
+    }
+
+    if (!g_discovery.running || !_linkg_discovery_has_online_ap_locked())
+    {
+        goto out;
+    }
+
+    snapshot->revision   = g_discovery.topology.revision;
+    snapshot->node_count = g_discovery.topology.node_count;
+
+    if (snapshot->node_count != 0U)
+    {
+        memcpy(snapshot->node_ids, g_discovery.topology.node_ids, snapshot->node_count * sizeof(snapshot->node_ids[0]));
+    }
+
+out:
+    unlock_ret = pthread_mutex_unlock(&g_discovery.lock);
+    if (ret == 0 && unlock_ret != 0)
+    {
+        ret = -unlock_ret;
+    }
+
+    return ret;
+}

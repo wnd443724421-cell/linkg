@@ -1,4 +1,8 @@
-/****************************** 区块 ******************************/
+/****************************** 概览布局 ******************************/
+
+.overview-page {
+    padding-bottom: 8px;
+}
 
 .overview-section {
     margin-top: 16px;
@@ -17,6 +21,7 @@
 
 .overview-device-item {
     min-width: 0;
+
     padding: 22px 28px;
 }
 
@@ -30,6 +35,7 @@
     margin-bottom: 8px;
 
     font-size: 13px;
+
     color: var(--linkg-color-text-secondary);
 }
 
@@ -52,7 +58,7 @@
     color: var(--linkg-color-primary);
 }
 
-/****************************** 链路状态 ******************************/
+/****************************** 状态卡片 ******************************/
 
 .overview-status-grid {
     display: grid;
@@ -70,15 +76,23 @@
 }
 
 .overview-card-link {
+    flex: none;
+
+    margin-left: 16px;
+
     font-size: 13px;
     font-weight: 500;
 
     color: var(--linkg-color-primary);
 }
 
-.overview-card-link:hover {
-    color: var(--linkg-color-primary-hover);
+.overview-card-meta {
+    font-size: 13px;
+
+    color: var(--linkg-color-text-secondary);
 }
+
+/****************************** 状态字段 ******************************/
 
 .overview-status-list {
     padding: 6px 20px 14px 20px;
@@ -88,7 +102,7 @@
     min-height: 46px;
 
     display: grid;
-    grid-template-columns: 104px minmax(0, 1fr);
+    grid-template-columns: 108px minmax(0, 1fr);
     align-items: center;
 
     border-bottom: 1px solid var(--linkg-color-border-light);
@@ -105,6 +119,8 @@
 }
 
 .overview-status-value {
+    min-width: 0;
+
     overflow: hidden;
 
     font-size: 14px;
@@ -114,4 +130,100 @@
 
     white-space: nowrap;
     text-overflow: ellipsis;
+}
+
+.overview-status-value.is-address {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+/****************************** Internet状态 ******************************/
+
+.overview-internet-state {
+    display: inline-flex;
+    align-items: center;
+
+    width: fit-content;
+}
+
+.overview-internet-state::before {
+    content: "";
+
+    width: 7px;
+    height: 7px;
+
+    flex: none;
+
+    margin-right: 7px;
+
+    border-radius: 50%;
+
+    background: var(--linkg-color-text-muted);
+}
+
+.overview-internet-state.is-online {
+    color: var(--linkg-color-success);
+}
+
+.overview-internet-state.is-online::before {
+    background: var(--linkg-color-success);
+}
+
+.overview-internet-state.is-offline {
+    color: var(--linkg-color-text-secondary);
+}
+
+/****************************** 组网节点 ******************************/
+
+.overview-table-wrap {
+    width: 100%;
+
+    overflow-x: auto;
+}
+
+.overview-node-table {
+    width: 100%;
+
+    border-collapse: collapse;
+
+    font-size: 13px;
+}
+
+.overview-node-table th {
+    padding: 12px 16px;
+
+    text-align: left;
+    font-weight: 500;
+
+    color: var(--linkg-color-text-secondary);
+    background: var(--linkg-color-background);
+
+    border-bottom: 1px solid var(--linkg-color-border-light);
+}
+
+.overview-node-table td {
+    padding: 13px 16px;
+
+    color: var(--linkg-color-text);
+
+    border-bottom: 1px solid var(--linkg-color-border-light);
+
+    white-space: nowrap;
+}
+
+.overview-node-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.overview-node-id {
+    font-weight: 600;
+}
+
+.overview-path-available {
+    color: var(--linkg-color-success);
+}
+
+.overview-path-unavailable {
+    color: var(--linkg-color-text-secondary);
 }

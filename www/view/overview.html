@@ -34,7 +34,7 @@
         </div>
     </section>
 
-    <!-- 链路状态 -->
+    <!-- 本机链路状态 -->
     <div class="overview-status-grid overview-section">
 
         <section class="page-card overview-status-card">
@@ -63,9 +63,76 @@
                     <span class="overview-status-label">信道</span>
                     <span id="overviewWifiChannel" class="overview-status-value">--</span>
                 </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">噪声</span>
+                    <span id="overviewWifiNoise" class="overview-status-value">--</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="page-card overview-status-card">
+            <div class="page-card-header overview-card-header">
+                <h2 class="page-card-title">蜂窝网络</h2>
+                <a class="overview-card-link" href="#/link/cellular">查看详情</a>
+            </div>
+
+            <div class="overview-status-list">
+                <div class="overview-status-row">
+                    <span class="overview-status-label">信号强度</span>
+                    <span id="overviewCellularRsrp" class="overview-status-value">--</span>
+                </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">运营商</span>
+                    <span id="overviewCellularOperator" class="overview-status-value">--</span>
+                </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">网络类型</span>
+                    <span id="overviewCellularNetworkType" class="overview-status-value">--</span>
+                </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">IPv6</span>
+                    <span id="overviewCellularIpv6" class="overview-status-value is-address">--</span>
+                </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">互联网</span>
+                    <span id="overviewCellularInternet" class="overview-status-value overview-internet-state">--</span>
+                </div>
             </div>
         </section>
 
     </div>
+
+    <!-- 组网节点 -->
+    <section class="page-card overview-section">
+        <div class="page-card-header overview-card-header">
+            <h2 class="page-card-title">组网节点</h2>
+            <span id="overviewNodesCount" class="overview-card-meta">--</span>
+        </div>
+
+        <div class="overview-table-wrap">
+            <table class="overview-node-table">
+                <thead>
+                    <tr>
+                        <th>节点</th>
+                        <th>虚拟 IP</th>
+                        <th>关系</th>
+                        <th>主链路</th>
+                        <th>Wi-Fi</th>
+                        <th>蜂窝</th>
+                        <th>TX</th>
+                        <th>RX</th>
+                    </tr>
+                </thead>
+
+                <tbody id="overviewNodesBody">
+                </tbody>
+            </table>
+        </div>
+    </section>
 
 </div>
