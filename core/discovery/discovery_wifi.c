@@ -40,18 +40,18 @@
 
 typedef struct
 {
-    pthread_mutex_t    lock;              // Wi-Fi Discovery运行状态保护锁
-    linkg_thread_t     thread;            // Wi-Fi Discovery工作线程
-    struct sockaddr_in broadcast_address; // Wi-Fi Discovery广播目标
-    struct sockaddr_in ap_address;        // STA当前学习到的AP Discovery地址
-    uint64_t           next_report_us;    // 下一次周期完整状态发送时间
-    linkg_device_role_t role;             // 本机设备角色
-    int                socket_fd;         // Wi-Fi Discovery UDP套接字
-    int                run_error;         // 最近一次工作线程异常退出错误
-    bool               ap_address_valid;  // STA是否已经学习到AP Discovery地址
-    bool               channel_registered;// Core Wi-Fi Channel是否已经注册
-    bool               initialized;       // 模块是否已经初始化
-    bool               running;           // 模块是否正在运行
+    pthread_mutex_t     lock;              // Wi-Fi Discovery运行状态保护锁
+    linkg_thread_t      thread;            // Wi-Fi Discovery工作线程
+    struct sockaddr_in  broadcast_address; // Wi-Fi Discovery广播目标
+    struct sockaddr_in  ap_address;        // STA当前学习到的AP Discovery地址
+    uint64_t            next_report_us;    // 下一次周期完整状态发送时间
+    linkg_device_role_t role;              // 本机设备角色
+    int                 socket_fd;         // Wi-Fi Discovery UDP套接字
+    int                 run_error;         // 最近一次工作线程异常退出错误
+    bool                ap_address_valid;  // STA是否已经学习到AP Discovery地址
+    bool                channel_registered;// Core Wi-Fi Channel是否已经注册
+    bool                initialized;       // 模块是否已经初始化
+    bool                running;           // 模块是否正在运行
 } linkg_discovery_wifi_context_t;
 
 /****************************** 全局上下文 ******************************/

@@ -549,7 +549,7 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
             return 0;
 
         case LINKG_DISCOVERY_PEER_EVENT_REFRESH:
-            ret = _linkg_discovery_register_access_path_locked(report, access);
+            ret = _linkg_discovery_refresh_peer_locked(peer, access, report);
             if (ret != 0)
             {
                 return ret;

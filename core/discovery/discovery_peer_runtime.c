@@ -58,30 +58,39 @@ static uint32_t _linkg_discovery_report_link_id(const linkg_discovery_report_t *
 /**
  * @brief 注册或更新Report当前Access对应的业务Path。
  *
+ * @return 1  当前Access对应业务Path有效并已完成注册或更新。
+ * @return 0  当前Access没有可注册业务Path。
+ * @return <0 注册过程中发生错误。
+ *
  * 调用方必须持有Discovery状态锁。
  */
 int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t *report, linkg_link_access_t access)
 {
     const linkg_path_endpoint_t *endpoint;
     uint32_t                     link_id;
+    int                          ret;
 
     if (report == NULL)
     {
         return -EINVAL;
     }
 
-    link_id = _linkg_discovery_report_link_id(report, access);
-    if (link_id == LINKG_LINK_ID_INVALID)
-    {
-        return -EINVAL;
-    }
-
     if (access == LINKG_LINK_ACCESS_WIFI)
     {
+        if ((report->path_flags & LINKG_DISCOVERY_PATH_WIFI_VALID) == 0U)
+        {
+            return 0;
+        }
+
         endpoint = &report->wifi_endpoint;
     }
     else if (access == LINKG_LINK_ACCESS_CELLULAR)
     {
+        if ((report->path_flags & LINKG_DISCOVERY_PATH_CELLULAR_VALID) == 0U)
+        {
+            return 0;
+        }
+
         endpoint = &report->cellular_endpoint;
     }
     else
@@ -89,7 +98,19 @@ int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t 
         return -EINVAL;
     }
 
-    return linkg_node_register_path(report->node.node_id, link_id, endpoint);
+    link_id = linkg_link_manager_get_id(access);
+    if (link_id == LINKG_LINK_ID_INVALID)
+    {
+        return 0;
+    }
+
+    ret = linkg_node_register_path(report->node.node_id, link_id, endpoint);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return 1;
 }
 
 /****************************** Switch辅助 ******************************/
@@ -120,6 +141,46 @@ static void _linkg_discovery_build_default_send_plan(const linkg_discovery_repor
 
     plan->mode            = LINKG_SEND_MODE_SINGLE;
     plan->primary_link_id = link_id;
+}
+
+/**
+ * @brief 确保首次有效业务Path已经建立Bootstrap发送计划。
+ *
+ * 当前Peer已经存在发送计划时保持现有计划不变；
+ * 当前Peer尚无发送计划时，根据本次确认有效的Access建立初始计划。
+ *
+ * 调用方必须持有Discovery状态锁。
+ */
+static int _linkg_discovery_ensure_bootstrap_send_plan_locked(const linkg_discovery_report_t *report, linkg_link_access_t access)
+{
+    linkg_send_plan_t plan;
+    int               ret;
+
+    if (report == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = linkg_switch_get_plan(report->node.node_id, &plan);
+    if (ret == 0)
+    {
+        return 0;
+    }
+
+    if (ret != -ENOENT)
+    {
+        return ret;
+    }
+
+    _linkg_discovery_build_default_send_plan(report, access, &plan);
+
+    if (plan.mode == LINKG_SEND_MODE_NONE ||
+        plan.primary_link_id == LINKG_LINK_ID_INVALID)
+    {
+        return -EINVAL;
+    }
+
+    return linkg_switch_set_plan(report->node.node_id, &plan);
 }
 
 /****************************** 注册回滚 ******************************/
@@ -185,7 +246,10 @@ int _linkg_discovery_cleanup_peer_route_locked(linkg_discovery_peer_t *peer)
 /****************************** Peer注册 ******************************/
 
 /**
- * @brief 建立直接Peer全部运行资源并提交在线状态。
+ * @brief 建立直接Peer全部基础运行资源并提交在线状态。
+ *
+ * 当前Access存在有效业务Path时同步注册Path并建立初始发送计划；
+ * 当前Access没有可用业务Path属于合法状态，Peer仍正常注册并保存完整Report。
  *
  * 外部运行资源全部建立成功后才提交Discovery在线状态。
  * 调用方必须持有Discovery状态锁。
@@ -249,22 +313,25 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
     transport_registered = true;
 
     ret = _linkg_discovery_register_access_path_locked(report, access);
-    if (ret != 0)
+    if (ret < 0)
     {
         _linkg_discovery_rollback_peer_registration(report->node.node_id, false, transport_registered, node_registered);
         return ret;
     }
 
-    _linkg_discovery_build_default_send_plan(report, access, &plan);
-
-    ret = linkg_switch_set_plan(report->node.node_id, &plan);
-    if (ret != 0)
+    if (ret > 0)
     {
-        _linkg_discovery_rollback_peer_registration(report->node.node_id, false, transport_registered, node_registered);
-        return ret;
-    }
+        _linkg_discovery_build_default_send_plan(report, access, &plan);
 
-    switch_registered = true;
+        ret = linkg_switch_set_plan(report->node.node_id, &plan);
+        if (ret != 0)
+        {
+            _linkg_discovery_rollback_peer_registration(report->node.node_id, false, transport_registered, node_registered);
+            return ret;
+        }
+
+        switch_registered = true;
+    }
 
     ret = linkg_route_add_node(report->node.node_id);
     if (ret != 0)
@@ -294,8 +361,11 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
 /**
  * @brief 同步在线直接Peer最新完整状态。
  *
- * 同Session更新仅注册或更新Report当前声明的Path，不动态注销旧Path，
- * 也不覆盖Switch模块维护的当前发送计划；
+ * 同Session更新仅注册或更新本次实际收到Report的Access对应Path；
+ * 当前Access没有业务Path属于合法状态，并继续保存完整Peer Report。
+ * 当前Access首次形成有效业务Path且Peer尚无发送计划时建立Bootstrap计划；
+ * 已存在发送计划时保持Switch模块当前运行计划不变。
+ *
  * Discovery Session变化时额外重置Transport序列和接收窗口。
  * 调用方必须持有Discovery状态锁。
  */
@@ -332,12 +402,64 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link
     }
 
     ret = _linkg_discovery_register_access_path_locked(report, access);
-    if (ret != 0)
+    if (ret < 0)
     {
         return ret;
     }
 
+    if (ret > 0)
+    {
+        ret = _linkg_discovery_ensure_bootstrap_send_plan_locked(report, access);
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+
     peer->report = *report;
+
+    return 0;
+}
+
+/**
+ * @brief 刷新在线直接Peer当前Access运行资源。
+ *
+ * 同版本Report不替换已保存的Peer完整状态，仅根据本次实际收到Report的
+ * Access注册或更新对应业务Path；首次形成有效业务Path且当前尚无发送计划时
+ * 建立Bootstrap发送计划。
+ *
+ * 调用方必须持有Discovery状态锁。
+ */
+int _linkg_discovery_refresh_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
+{
+    int ret;
+
+    if (peer == NULL || report == NULL || !peer->used || !peer->online)
+    {
+        return -EINVAL;
+    }
+
+    if (peer->report.node.node_id != report->node.node_id ||
+        peer->report.session_id != report->session_id ||
+        peer->report.revision != report->revision)
+    {
+        return -EINVAL;
+    }
+
+    ret = _linkg_discovery_register_access_path_locked(report, access);
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    if (ret > 0)
+    {
+        ret = _linkg_discovery_ensure_bootstrap_send_plan_locked(report, access);
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
 
     return 0;
 }
