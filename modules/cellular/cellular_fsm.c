@@ -1416,6 +1416,8 @@ static cellular_fsm_step_t _cellular_fsm_state_verify(cellular_fsm_t *fsm, const
     }
 
     ret = _cellular_fsm_probe_connectivity(ipv6);
+
+    now_ms = linkg_time_elapsed_ms();
     if (ret == 0)
     {
         fsm->verify_failure_count = 0U;
@@ -1479,6 +1481,9 @@ static cellular_fsm_step_t _cellular_fsm_online_verify(cellular_fsm_t *fsm, cons
     ipv6 = fsm->verify_ipv4_done;
 
     ret = _cellular_fsm_probe_connectivity(ipv6);
+
+    now_ms = linkg_time_elapsed_ms();
+
     if (ret == 0)
     {
         fsm->verify_failure_count = 0U;

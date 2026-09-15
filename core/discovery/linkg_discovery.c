@@ -819,3 +819,65 @@ int linkg_discovery_deinit(void)
 
     return _linkg_discovery_deinit_core();
 }
+
+/****************************** 状态查询 ******************************/
+
+/**
+ * @brief 获取STA当前已知在线组网节点总数。
+ *
+ * 数量包含本机、当前在线AP以及AP同步的其他在线STA。
+ */
+int linkg_discovery_get_network_node_count(uint32_t *count)
+{
+    int ret;
+
+    if (count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *count = 0U;
+
+    if (!g_discovery.initialized)
+    {
+        return -ENODEV;
+    }
+
+    ret = pthread_mutex_lock(&g_discovery.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    if (g_discovery.local_report.node.role != LINKG_DEVICE_ROLE_STA)
+    {
+        ret = -EPERM;
+        goto out;
+    }
+
+    /**
+     * 本机始终计入组网节点。
+     * 未发现在线AP时，不使用可能仍在清理中的旧Topology。
+     */
+    *count = 1U;
+
+    if (_linkg_discovery_has_online_ap_locked())
+    {
+        *count += 1U + g_discovery.topology.node_count;
+    }
+
+    ret = 0;
+
+out:
+    {
+        int unlock_ret;
+
+        unlock_ret = pthread_mutex_unlock(&g_discovery.lock);
+        if (unlock_ret != 0)
+        {
+            return -unlock_ret;
+        }
+    }
+
+    return ret;
+}

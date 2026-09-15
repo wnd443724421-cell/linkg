@@ -25,18 +25,25 @@
 #include "linkg_network_ops.h"
 #include "linkg_node.h"
 #include "linkg_path.h"
+#include "linkg_switch.h"
 #include "linkg_system_resources.h"
 #include "linkg_thread.h"
+#include "linkg_time.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_LINK_HEARTBEAT_THREAD_NAME      "cell-link-hb" // 心跳工作线程名称
-#define LINKG_CELLULAR_LINK_HEARTBEAT_INTERVAL_MS      6000           // 业务链路心跳周期，单位毫秒
-#define LINKG_CELLULAR_LINK_HEARTBEAT_MAGIC_SIZE       4U             // 心跳Magic长度
-#define LINKG_CELLULAR_LINK_HEARTBEAT_VERSION          1U             // 心跳协议版本
-#define LINKG_CELLULAR_LINK_HEARTBEAT_RESERVED_0       0xA5U          // 心跳保留校验字节0
-#define LINKG_CELLULAR_LINK_HEARTBEAT_RESERVED_1       0x5AU          // 心跳保留校验字节1
-#define LINKG_CELLULAR_LINK_HEARTBEAT_TX_CONTROL_SIZE  CMSG_SPACE(sizeof(struct in6_pktinfo)) // IPv6发送辅助控制区大小
+#define LINKG_CELLULAR_LINK_HEARTBEAT_THREAD_NAME             "cell-link-hb" // 心跳工作线程名称
+#define LINKG_CELLULAR_LINK_HEARTBEAT_POLL_INTERVAL_MS        100U           // 心跳策略检查周期，单位毫秒
+#define LINKG_CELLULAR_LINK_HEARTBEAT_FAST_INTERVAL_US        100000ULL      // 主用5G低流量心跳周期，单位微秒
+#define LINKG_CELLULAR_LINK_HEARTBEAT_SLOW_INTERVAL_US        5000000ULL     // 备用或高流量心跳周期，单位微秒
+#define LINKG_CELLULAR_LINK_HEARTBEAT_PPS_SAMPLE_INTERVAL_US  1000000ULL     // 真实业务PPS统计窗口，单位微秒
+#define LINKG_CELLULAR_LINK_HEARTBEAT_HIGH_PPS_THRESHOLD      100U           // 高频真实业务PPS阈值
+#define LINKG_CELLULAR_LINK_HEARTBEAT_PEER_STATE_COUNT        (LINKG_RESOURCE_NODE_ID_MAX + 1U) // Peer状态槽位数量
+#define LINKG_CELLULAR_LINK_HEARTBEAT_MAGIC_SIZE              4U             // 心跳Magic长度
+#define LINKG_CELLULAR_LINK_HEARTBEAT_VERSION                 1U             // 心跳协议版本
+#define LINKG_CELLULAR_LINK_HEARTBEAT_RESERVED_0              0xA5U          // 心跳保留校验字节0
+#define LINKG_CELLULAR_LINK_HEARTBEAT_RESERVED_1              0x5AU          // 心跳保留校验字节1
+#define LINKG_CELLULAR_LINK_HEARTBEAT_TX_CONTROL_SIZE         CMSG_SPACE(sizeof(struct in6_pktinfo)) // IPv6发送辅助控制区大小
 
 /****************************** 内部类型 ******************************/
 
@@ -49,13 +56,24 @@ typedef struct
     uint8_t reserved_1;                                      // 固定保留校验字节1
 } linkg_cellular_link_heartbeat_wire_t;
 
+typedef struct
+{
+    uint64_t sample_started_us;     // 当前PPS统计窗口起始时间
+    uint64_t last_business_packets; // 上次统计累计真实业务包数
+    uint64_t last_heartbeat_us;     // 最近一次心跳尝试时间
+    uint32_t current_pps;           // 当前Peer Cellular真实业务PPS
+    bool     sample_initialized;    // PPS统计是否已经建立基线
+    bool     tracked;               // 当前Peer是否存在活动Cellular Path
+} linkg_cellular_link_heartbeat_peer_state_t;
+
 struct linkg_cellular_link_heartbeat
 {
-    linkg_thread_t  thread;         // 心跳工作线程
-    int            *socket_fds;     // 借用Cellular Link三个业务Socket数组
-    const uint16_t *service_ports;  // 借用Cellular Link三个业务端口数组
-    const char     *interface_name; // 借用蜂窝出口接口名称
-    uint32_t        link_id;        // 当前Cellular Link运行实例标识
+    linkg_thread_t                              thread;         // 心跳工作线程
+    int                                       *socket_fds;     // 借用Cellular Link三个业务Socket数组
+    const uint16_t                            *service_ports;  // 借用Cellular Link三个业务端口数组
+    const char                                *interface_name; // 借用蜂窝出口接口名称
+    uint32_t                                   link_id;        // 当前Cellular Link运行实例标识
+    linkg_cellular_link_heartbeat_peer_state_t peer_states[LINKG_CELLULAR_LINK_HEARTBEAT_PEER_STATE_COUNT]; // Per-Peer心跳状态
 };
 
 _Static_assert(sizeof(linkg_cellular_link_heartbeat_wire_t) == 8U, "invalid cellular link heartbeat wire size");
@@ -155,6 +173,242 @@ static int _linkg_cellular_link_heartbeat_build_wire(linkg_link_tx_class_t tx_cl
     return 0;
 }
 
+/****************************** 心跳策略 ******************************/
+
+/**
+ * @brief 重置指定Peer心跳运行状态。
+ */
+static void _linkg_cellular_link_heartbeat_reset_peer_state(linkg_cellular_link_heartbeat_peer_state_t *state, bool tracked)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    memset(state, 0, sizeof(*state));
+    state->tracked = tracked;
+}
+
+/**
+ * @brief 获取Path累计真实业务包数量。
+ */
+static uint64_t _linkg_cellular_link_heartbeat_business_packets(const linkg_path_stats_t *stats)
+{
+    if (stats == NULL)
+    {
+        return 0U;
+    }
+
+    return stats->tx_packets + stats->rx_packets;
+}
+
+/**
+ * @brief 更新指定Peer当前Cellular真实业务PPS。
+ */
+static void _linkg_cellular_link_heartbeat_update_pps(linkg_cellular_link_heartbeat_peer_state_t *state, const linkg_path_stats_t *stats, uint64_t now_us)
+{
+    uint64_t total_packets;
+    uint64_t elapsed_us;
+    uint64_t delta_packets;
+    uint64_t pps;
+
+    if (state == NULL || stats == NULL)
+    {
+        return;
+    }
+
+    total_packets = _linkg_cellular_link_heartbeat_business_packets(stats);
+
+    if (!state->sample_initialized ||
+        total_packets < state->last_business_packets ||
+        now_us < state->sample_started_us)
+    {
+        state->sample_started_us     = now_us;
+        state->last_business_packets = total_packets;
+        state->last_heartbeat_us     = 0U;
+        state->current_pps           = 0U;
+        state->sample_initialized    = true;
+
+        return;
+    }
+
+    elapsed_us = now_us - state->sample_started_us;
+
+    if (elapsed_us < LINKG_CELLULAR_LINK_HEARTBEAT_PPS_SAMPLE_INTERVAL_US)
+    {
+        return;
+    }
+
+    delta_packets = total_packets - state->last_business_packets;
+    pps           = (delta_packets * 1000000ULL) / elapsed_us;
+
+    state->current_pps = pps > UINT32_MAX ? UINT32_MAX : (uint32_t)pps;
+
+    state->sample_started_us     = now_us;
+    state->last_business_packets = total_packets;
+}
+
+/**
+ * @brief 判断指定Peer当前Send Plan是否实际使用Cellular Link发送业务。
+ */
+static int _linkg_cellular_link_heartbeat_plan_uses_cellular(uint8_t peer_node_id, uint32_t cellular_link_id, bool *used)
+{
+    linkg_send_plan_t plan;
+    int               ret;
+
+    if (used == NULL || cellular_link_id == LINKG_LINK_ID_INVALID)
+    {
+        return -EINVAL;
+    }
+
+    *used = false;
+
+    ret = linkg_switch_get_plan(peer_node_id, &plan);
+    if (ret == -ENOENT)
+    {
+        return 0;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (plan.mode == LINKG_SEND_MODE_SINGLE)
+    {
+        *used = plan.primary_link_id == cellular_link_id;
+        return 0;
+    }
+
+    if (plan.mode == LINKG_SEND_MODE_REDUNDANT)
+    {
+        *used = plan.primary_link_id == cellular_link_id ||
+                plan.secondary_link_id == cellular_link_id;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 根据Send Plan和真实业务PPS选择指定Peer心跳周期。
+ */
+static uint64_t _linkg_cellular_link_heartbeat_select_interval(bool cellular_used, uint32_t pps)
+{
+    if (cellular_used && pps <= LINKG_CELLULAR_LINK_HEARTBEAT_HIGH_PPS_THRESHOLD)
+    {
+        return LINKG_CELLULAR_LINK_HEARTBEAT_FAST_INTERVAL_US;
+    }
+
+    return LINKG_CELLULAR_LINK_HEARTBEAT_SLOW_INTERVAL_US;
+}
+
+/**
+ * @brief 判断指定Peer本轮是否到达心跳发送时间。
+ */
+static bool _linkg_cellular_link_heartbeat_due(const linkg_cellular_link_heartbeat_peer_state_t *state, uint64_t now_us, uint64_t interval_us)
+{
+    if (state == NULL || interval_us == 0U)
+    {
+        return false;
+    }
+
+    if (state->last_heartbeat_us == 0U || now_us < state->last_heartbeat_us)
+    {
+        return true;
+    }
+
+    return now_us - state->last_heartbeat_us >= interval_us;
+}
+
+/**
+ * @brief 获取当前已经跟踪的Cellular Peer数量。
+ */
+static uint32_t _linkg_cellular_link_heartbeat_tracked_count(const linkg_cellular_link_heartbeat_t *heartbeat)
+{
+    uint32_t node_id;
+    uint32_t count;
+
+    if (heartbeat == NULL)
+    {
+        return 0U;
+    }
+
+    count = 0U;
+
+    for (node_id = LINKG_RESOURCE_NODE_ID_MIN; node_id <= LINKG_RESOURCE_NODE_ID_MAX; node_id++)
+    {
+        if (heartbeat->peer_states[node_id].tracked)
+        {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/**
+ * @brief 重新扫描当前Cellular Link上的直接Peer并同步本地跟踪状态。
+ *
+ * @note 仅在Path数量变化或已跟踪Path失效时调用，避免每100ms遍历全部Node ID。
+ */
+static int _linkg_cellular_link_heartbeat_refresh_tracking(linkg_cellular_link_heartbeat_t *heartbeat)
+{
+    linkg_cellular_link_heartbeat_peer_state_t *state;
+    linkg_path_endpoint_t                       destination;
+    linkg_path_t                               *path;
+    uint32_t                                    node_id;
+    int                                         first_error;
+    int                                         ret;
+
+    if (heartbeat == NULL || heartbeat->link_id == LINKG_LINK_ID_INVALID)
+    {
+        return -EINVAL;
+    }
+
+    first_error = 0;
+
+    for (node_id = LINKG_RESOURCE_NODE_ID_MIN; node_id <= LINKG_RESOURCE_NODE_ID_MAX; node_id++)
+    {
+        state = &heartbeat->peer_states[node_id];
+        path  = NULL;
+
+        memset(&destination, 0, sizeof(destination));
+
+        ret = linkg_node_acquire_path((uint8_t)node_id,
+                                      heartbeat->link_id,
+                                      &path,
+                                      &destination);
+        if (ret == 0)
+        {
+            linkg_path_release(path);
+
+            if (!state->tracked)
+            {
+                _linkg_cellular_link_heartbeat_reset_peer_state(state, true);
+            }
+
+            continue;
+        }
+
+        if (ret == -ENOENT || ret == -ENODEV)
+        {
+            if (state->tracked)
+            {
+                _linkg_cellular_link_heartbeat_reset_peer_state(state, false);
+            }
+
+            continue;
+        }
+
+        if (first_error == 0)
+        {
+            first_error = ret;
+        }
+    }
+
+    return first_error;
+}
+
 /****************************** 接口辅助 ******************************/
 
 /**
@@ -221,14 +475,14 @@ static int _linkg_cellular_link_heartbeat_prepare_pktinfo(struct msghdr *header,
  */
 static int _linkg_cellular_link_heartbeat_send_class(linkg_cellular_link_heartbeat_t *heartbeat, const linkg_path_endpoint_t *destination, linkg_link_tx_class_t tx_class, unsigned int interface_index)
 {
-    unsigned char                       control[LINKG_CELLULAR_LINK_HEARTBEAT_TX_CONTROL_SIZE];
+    unsigned char                        control[LINKG_CELLULAR_LINK_HEARTBEAT_TX_CONTROL_SIZE];
     linkg_cellular_link_heartbeat_wire_t wire;
-    struct sockaddr_in6                 target;
-    struct msghdr                       message;
-    struct iovec                        iovec;
-    ssize_t                             sent;
-    int                                 socket_fd;
-    int                                 ret;
+    struct sockaddr_in6                  target;
+    struct msghdr                        message;
+    struct iovec                         iovec;
+    ssize_t                              sent;
+    int                                  socket_fd;
+    int                                  ret;
 
     if (heartbeat == NULL || destination == NULL)
     {
@@ -332,17 +586,28 @@ static int _linkg_cellular_link_heartbeat_send_peer(linkg_cellular_link_heartbea
     return first_error;
 }
 
+/****************************** 心跳维护 ******************************/
+
 /**
- * @brief 向当前全部活动Cellular Path发送一轮业务链路心跳。
+ * @brief 按Peer当前Send Plan和真实业务PPS维护Cellular业务链路心跳。
  */
 static int _linkg_cellular_link_heartbeat_process(linkg_cellular_link_heartbeat_t *heartbeat)
 {
-    linkg_path_endpoint_t destinations[LINKG_NODE_PEER_MAX];
-    unsigned int          interface_index;
-    uint32_t              destination_count;
-    uint32_t              index;
-    int                   first_error;
-    int                   ret;
+    linkg_path_endpoint_t                       path_endpoints[LINKG_NODE_PEER_MAX];
+    linkg_cellular_link_heartbeat_peer_state_t *state;
+    linkg_path_endpoint_t                       destination;
+    linkg_path_stats_t                          stats;
+    linkg_path_t                               *path;
+    unsigned int                                interface_index;
+    uint64_t                                    heartbeat_interval_us;
+    uint64_t                                    now_us;
+    uint32_t                                    path_count;
+    uint32_t                                    tracked_count;
+    uint32_t                                    node_id;
+    bool                                        cellular_used;
+    bool                                        tracking_changed;
+    int                                         first_error;
+    int                                         ret;
 
     if (heartbeat == NULL || heartbeat->link_id == LINKG_LINK_ID_INVALID)
     {
@@ -355,26 +620,127 @@ static int _linkg_cellular_link_heartbeat_process(linkg_cellular_link_heartbeat_
         return ret;
     }
 
-    memset(destinations, 0, sizeof(destinations));
+    memset(path_endpoints, 0, sizeof(path_endpoints));
 
-    destination_count = 0U;
+    path_count = 0U;
 
     ret = linkg_node_get_path_endpoints(heartbeat->link_id,
-                                        destinations,
+                                        path_endpoints,
                                         LINKG_NODE_PEER_MAX,
-                                        &destination_count);
+                                        &path_count);
     if (ret != 0)
     {
         return ret;
     }
 
-    first_error = 0;
+    tracked_count = _linkg_cellular_link_heartbeat_tracked_count(heartbeat);
+    first_error   = 0;
 
-    for (index = 0U; index < destination_count; index++)
+    if (tracked_count != path_count)
     {
+        ret = _linkg_cellular_link_heartbeat_refresh_tracking(heartbeat);
+        if (ret != 0)
+        {
+            first_error = ret;
+        }
+    }
+
+    now_us = linkg_time_monotonic_us();
+    if (now_us == 0U)
+    {
+        return first_error != 0 ? first_error : -EIO;
+    }
+
+    tracking_changed = false;
+
+    for (node_id = LINKG_RESOURCE_NODE_ID_MIN; node_id <= LINKG_RESOURCE_NODE_ID_MAX; node_id++)
+    {
+        state = &heartbeat->peer_states[node_id];
+        if (!state->tracked)
+        {
+            continue;
+        }
+
+        path = NULL;
+
+        memset(&destination, 0, sizeof(destination));
+        memset(&stats, 0, sizeof(stats));
+
+        ret = linkg_node_acquire_path((uint8_t)node_id,
+                                      heartbeat->link_id,
+                                      &path,
+                                      &destination);
+        if (ret == -ENOENT || ret == -ENODEV)
+        {
+            _linkg_cellular_link_heartbeat_reset_peer_state(state, false);
+            tracking_changed = true;
+            continue;
+        }
+
+        if (ret != 0)
+        {
+            if (first_error == 0)
+            {
+                first_error = ret;
+            }
+
+            continue;
+        }
+
+        ret = linkg_path_get_stats(path, &stats);
+        linkg_path_release(path);
+
+        if (ret != 0)
+        {
+            if (first_error == 0)
+            {
+                first_error = ret;
+            }
+
+            continue;
+        }
+
+        _linkg_cellular_link_heartbeat_update_pps(state, &stats, now_us);
+
+        cellular_used = false;
+
+        ret = _linkg_cellular_link_heartbeat_plan_uses_cellular((uint8_t)node_id,
+                                                                 heartbeat->link_id,
+                                                                 &cellular_used);
+        if (ret != 0)
+        {
+            // Send Plan查询异常时按备用链路低频策略处理，不放大单个Peer异常。
+            cellular_used = false;
+
+            if (first_error == 0)
+            {
+                first_error = ret;
+            }
+        }
+
+        heartbeat_interval_us = _linkg_cellular_link_heartbeat_select_interval(cellular_used,
+                                                                                state->current_pps);
+
+        if (!_linkg_cellular_link_heartbeat_due(state, now_us, heartbeat_interval_us))
+        {
+            continue;
+        }
+
+        // 先记录本轮时间，发送失败时也等待当前策略周期后再重试，避免100ms持续异常重发。
+        state->last_heartbeat_us = now_us;
+
         ret = _linkg_cellular_link_heartbeat_send_peer(heartbeat,
-                                                       &destinations[index],
+                                                       &destination,
                                                        interface_index);
+        if (ret != 0 && first_error == 0)
+        {
+            first_error = ret;
+        }
+    }
+
+    if (tracking_changed)
+    {
+        ret = _linkg_cellular_link_heartbeat_refresh_tracking(heartbeat);
         if (ret != 0 && first_error == 0)
         {
             first_error = ret;
@@ -418,7 +784,7 @@ static int _linkg_cellular_link_heartbeat_run(linkg_cellular_link_heartbeat_t *h
 
         do
         {
-            poll_result = poll(&descriptor, 1U, LINKG_CELLULAR_LINK_HEARTBEAT_INTERVAL_MS);
+            poll_result = poll(&descriptor, 1U, LINKG_CELLULAR_LINK_HEARTBEAT_POLL_INTERVAL_MS);
         }
         while (poll_result < 0 && errno == EINTR && linkg_thread_is_running(&heartbeat->thread));
 
@@ -545,6 +911,7 @@ int linkg_cellular_link_heartbeat_start(linkg_cellular_link_heartbeat_t *heartbe
     }
 
     heartbeat->link_id = link_id;
+    memset(heartbeat->peer_states, 0, sizeof(heartbeat->peer_states));
 
     ret = linkg_thread_start(&heartbeat->thread);
     if (ret != 0)
@@ -575,6 +942,7 @@ int linkg_cellular_link_heartbeat_stop(linkg_cellular_link_heartbeat_t *heartbea
     }
 
     heartbeat->link_id = LINKG_LINK_ID_INVALID;
+    memset(heartbeat->peer_states, 0, sizeof(heartbeat->peer_states));
 
     return 0;
 }

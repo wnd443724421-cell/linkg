@@ -852,6 +852,8 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
 
         step = cellular_fsm_run(&g_cellular.fsm, &g_cellular.config, _linkg_cellular_get_channel(), &info, now_ms);
 
+        now_ms = linkg_time_elapsed_ms();
+        
         switch (step.result)
         {
             case CELLULAR_RUNTIME_STEP_DONE:

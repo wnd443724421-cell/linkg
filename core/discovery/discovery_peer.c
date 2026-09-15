@@ -444,11 +444,14 @@ static linkg_discovery_peer_event_t _linkg_discovery_classify_peer_report(const 
 }
 
 /**
- * @brief 处理直接Peer新Discovery会话。
+ * @brief 处理直接Peer新的Discovery Session。
+ *
+ * 清理旧Session关联的Path、Send Plan及Transport状态后，
+ * 提交新Session完整Report；当前Access运行资源由事件处理层重新建立。
  *
  * 调用方必须持有Discovery状态锁。
  */
-static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
+static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
 {
     int ret;
 
@@ -469,12 +472,13 @@ static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, li
 
     peer->session_closed = true;
 
-    ret = _linkg_discovery_update_peer_locked(peer, access, report);
+    ret = _linkg_discovery_reset_peer_session_locked(peer);
     if (ret != 0)
     {
         return ret;
     }
 
+    peer->report = *report;
     peer->session_closed = false;
 
     return 0;
@@ -571,7 +575,7 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
             return 0;
 
         case LINKG_DISCOVERY_PEER_EVENT_RESTART:
-            ret = _linkg_discovery_restart_peer_locked(peer, access, report);
+            ret = _linkg_discovery_restart_peer_locked(peer, report);
             if (ret != 0)
             {
                 return ret;
@@ -579,6 +583,12 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
 
             _linkg_discovery_clear_peer_liveness_locked(peer);
             _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
+
+            ret = _linkg_discovery_refresh_peer_locked(peer, access, report);
+            if (ret == -EBUSY)
+            {
+                return 0;
+            }
 
             return 0;
 

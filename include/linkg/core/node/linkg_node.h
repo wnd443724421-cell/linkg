@@ -48,6 +48,15 @@ typedef struct
     int                   result;       // 当前元素处理结果
 } linkg_node_path_rx_item_t;
 
+/****************************** 路径快照 ******************************/
+
+typedef struct
+{
+    uint8_t               peer_node_id; // 直接Peer节点编号
+    linkg_path_endpoint_t endpoint;     // 当前活动Path下一跳
+    linkg_path_stats_t    stats;        // 当前Path累计统计快照
+} linkg_node_path_snapshot_t;
+
 /****************************** 生命周期 ******************************/
 
 int linkg_node_init(const linkg_node_info_t *local);
@@ -59,7 +68,9 @@ const linkg_node_info_t *linkg_node_get_local(void);
 
 /****************************** 对端查询 ******************************/
 
+int linkg_node_get_peer_count(uint32_t *count);
 int linkg_node_get_peer_snapshot(uint8_t node_id, linkg_node_peer_snapshot_t *snapshot);
+
 
 /****************************** 路径查询 ******************************/
 

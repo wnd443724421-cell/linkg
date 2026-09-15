@@ -121,6 +121,7 @@ int _linkg_discovery_age_peers_locked(uint64_t now_us);
 
 int _linkg_discovery_cleanup_peer_route_locked(linkg_discovery_peer_t *peer);
 int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t *report, linkg_link_access_t access);
+int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer);
 int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report);
 int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report);
 int _linkg_discovery_refresh_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report);

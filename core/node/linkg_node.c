@@ -661,6 +661,36 @@ const linkg_node_info_t *linkg_node_get_local(void)
 }
 
 /**
+ * @brief 获取当前已注册直接Peer数量。
+ */
+int linkg_node_get_peer_count(uint32_t *count)
+{
+    int ret;
+
+    if (!g_node.initialized)
+    {
+        return -ENODEV;
+    }
+
+    if (count == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *count = 0U;
+
+    ret = _linkg_node_lock();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    *count = g_node.peer_count;
+
+    return _linkg_node_unlock(0);
+}
+
+/**
  * @brief 获取直接对端节点快照。
  */
 int linkg_node_get_peer_snapshot(uint8_t node_id, linkg_node_peer_snapshot_t *snapshot)

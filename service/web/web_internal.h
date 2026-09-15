@@ -20,8 +20,9 @@ extern "C" {
 
 typedef enum
 {
-    LINKG_WEB_CMD_INVALID    = 0,    // 无效命令
-    LINKG_WEB_CMD_HEADER_GET = 1001  // 获取Web固定头部状态
+    LINKG_WEB_CMD_INVALID      = 0,    // 无效命令
+    LINKG_WEB_CMD_HEADER_GET   = 1001, // 获取Web固定头部状态
+    LINKG_WEB_CMD_OVERVIEW_GET = 1002  // 获取概览界面的参数
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -47,6 +48,7 @@ int _linkg_web_response_error(int cmd, const char *message, char **response);
 /****************************** 请求处理 ******************************/
 
 int _linkg_web_handler_header_get(const cJSON *param, char **response);
+int _linkg_web_handler_overview_get(const cJSON *param, char **response);
 
 #ifdef __cplusplus
 }
