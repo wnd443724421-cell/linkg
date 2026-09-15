@@ -42,12 +42,7 @@
         minutes = Math.floor(totalSeconds / 60);
         seconds = totalSeconds % 60;
 
-        timeText =
-            padNumber(hours) +
-            ":" +
-            padNumber(minutes) +
-            ":" +
-            padNumber(seconds);
+        timeText = padNumber(hours) + ":" + padNumber(minutes) + ":" + padNumber(seconds);
 
         if (days > 0)
         {
@@ -76,6 +71,49 @@
     }
 
     /**
+     * 格式化Wi-Fi工作模式。
+     */
+    function formatWifiWorkMode(wifi)
+    {
+        if (wifi == null)
+        {
+            return "--";
+        }
+
+        if (wifi.work_mode === "narrow")
+        {
+            if (wifi.narrow_mode === "adaptive")
+            {
+                return "窄带 · 自适应";
+            }
+
+            if (wifi.narrow_mode === "fixed")
+            {
+                if (Number.isInteger(wifi.rate_level))
+                {
+                    return "窄带 · 档位 " + wifi.rate_level;
+                }
+
+                return "窄带 · 固定";
+            }
+
+            return "窄带";
+        }
+
+        if (wifi.work_mode === "wide")
+        {
+            if (Number.isInteger(wifi.bandwidth_mhz) && wifi.bandwidth_mhz > 0)
+            {
+                return "宽带 · " + wifi.bandwidth_mhz + " MHz";
+            }
+
+            return "宽带";
+        }
+
+        return "--";
+    }
+
+    /**
      * 设置指定文本元素内容。
      */
     function setText(id, value)
@@ -89,7 +127,7 @@
     }
 
     /**
-     * 渲染设备信息卡。
+     * 渲染设备信息。
      */
     function renderDeviceInfo(device)
     {
@@ -105,14 +143,35 @@
     }
 
     /**
-     * 渲染设备信息获取失败状态。
+     * 渲染Wi-Fi信息。
      */
-    function renderDeviceError()
+    function renderWifiInfo(wifi)
+    {
+        if (wifi == null)
+        {
+            throw new Error("Wi-Fi概览数据不存在");
+        }
+
+        setText("overviewWifiMode", formatRole(wifi.mode));
+        setText("overviewWifiSsid", typeof wifi.ssid === "string" && wifi.ssid.length > 0 ? wifi.ssid : "--");
+        setText("overviewWifiWorkMode", formatWifiWorkMode(wifi));
+        setText("overviewWifiChannel", Number.isInteger(wifi.channel) && wifi.channel > 0 ? String(wifi.channel) : "--");
+    }
+
+    /**
+     * 渲染概览获取失败状态。
+     */
+    function renderError()
     {
         setText("overviewDeviceRole", "--");
         setText("overviewDeviceNodeId", "--");
         setText("overviewDeviceNetworkNodeCount", "--");
         setText("overviewDeviceUptime", "--");
+
+        setText("overviewWifiMode", "--");
+        setText("overviewWifiSsid", "--");
+        setText("overviewWifiWorkMode", "--");
+        setText("overviewWifiChannel", "--");
     }
 
     /**
@@ -136,18 +195,19 @@
                 return;
             }
 
-            if (response.data == null || response.data.device == null)
+            if (response.data == null || response.data.device == null || response.data.wifi == null)
             {
-                throw new Error("设备概览响应无效");
+                throw new Error("概览响应数据无效");
             }
 
             renderDeviceInfo(response.data.device);
+            renderWifiInfo(response.data.wifi);
         }
         catch (error)
         {
             if (mounted)
             {
-                renderDeviceError();
+                renderError();
                 console.warn("Overview刷新失败:", error.message);
             }
         }

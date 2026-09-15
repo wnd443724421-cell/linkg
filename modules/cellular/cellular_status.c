@@ -586,6 +586,9 @@ static void _cellular_status_clear_radio(cellular_status_info_t *info, uint64_t 
 {
     info->network.serving_cell_valid = false;
     info->network.network_type       = LINKG_CELLULAR_NETWORK_TYPE_UNKNOWN;
+    info->network.plmn_valid         = false;
+    info->network.mcc[0]             = '\0';
+    info->network.mnc[0]             = '\0';
     info->network.band               = 0U;
     info->network.rsrp_dbm           = 0;
     info->network.rsrp_valid         = false;
@@ -623,6 +626,7 @@ static void _cellular_status_refresh_radio(at_channel_t *channel, cellular_statu
 
     info->network.serving_cell_valid = true;
     info->network.network_type       = serving_cell.network_type;
+    info->network.plmn_valid         = serving_cell.plmn_valid;
     info->network.band               = serving_cell.band;
     info->network.rsrp_dbm           = serving_cell.rsrp_dbm;
     info->network.rsrp_valid         = serving_cell.rsrp_valid;
@@ -630,6 +634,8 @@ static void _cellular_status_refresh_radio(at_channel_t *channel, cellular_statu
     info->network.rsrq_valid         = serving_cell.rsrq_valid;
     info->network.sinr_db            = serving_cell.sinr_db;
     info->network.sinr_valid         = serving_cell.sinr_valid;
+    memcpy(info->network.mcc, serving_cell.mcc, sizeof(info->network.mcc));
+    memcpy(info->network.mnc, serving_cell.mnc, sizeof(info->network.mnc));
 
     _cellular_status_meta_success(&info->network.radio_meta, now_ms);
 }
@@ -1750,6 +1756,9 @@ int cellular_status_get_snapshot(linkg_cellular_status_snapshot_t *snapshot)
     snapshot->network.network_type_updated_ms = info.network.radio_meta.updated_ms;
 
     snapshot->network.serving_cell.valid      = info.network.radio_meta.confirmed && info.network.serving_cell_valid;
+    snapshot->network.serving_cell.plmn_valid = info.network.radio_meta.confirmed && info.network.plmn_valid;
+    memcpy(snapshot->network.serving_cell.mcc, info.network.mcc, sizeof(snapshot->network.serving_cell.mcc));
+    memcpy(snapshot->network.serving_cell.mnc, info.network.mnc, sizeof(snapshot->network.serving_cell.mnc));
     snapshot->network.serving_cell.band       = info.network.band;
     snapshot->network.serving_cell.rsrp_dbm   = info.network.rsrp_dbm;
     snapshot->network.serving_cell.rsrp_valid = info.network.rsrp_valid;

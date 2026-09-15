@@ -876,6 +876,80 @@ static int _rg255_query_5g_registration(at_channel_t *channel, linkg_cellular_re
 }
 
 /**
+ * @brief 解析服务小区PLMN字段。
+ */
+static int _rg255_query_parse_plmn(char *mcc_field, char *mnc_field, rg255_serving_cell_info_t *info)
+{
+    char  *mcc;
+    char  *mnc;
+    size_t mcc_length;
+    size_t mnc_length;
+    size_t index;
+    int    ret;
+
+    if (mcc_field == NULL || mnc_field == NULL || info == NULL)
+    {
+        return -EINVAL;
+    }
+
+    info->plmn_valid = false;
+    info->mcc[0]     = '\0';
+    info->mnc[0]     = '\0';
+
+    ret = _rg255_query_get_field_text(mcc_field, &mcc);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_get_field_text(mnc_field, &mnc);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    mcc_length = strlen(mcc);
+    mnc_length = strlen(mnc);
+
+    if (mcc_length != LINKG_CELLULAR_MCC_MAX_LENGTH || mnc_length < 2U || mnc_length > LINKG_CELLULAR_MNC_MAX_LENGTH)
+    {
+        return -EBADMSG;
+    }
+
+    for (index = 0U; index < mcc_length; index++)
+    {
+        if (!isdigit((unsigned char)mcc[index]))
+        {
+            return -EBADMSG;
+        }
+    }
+
+    for (index = 0U; index < mnc_length; index++)
+    {
+        if (!isdigit((unsigned char)mnc[index]))
+        {
+            return -EBADMSG;
+        }
+    }
+
+    ret = _rg255_query_copy_text(info->mcc, sizeof(info->mcc), mcc);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_copy_text(info->mnc, sizeof(info->mnc), mnc);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    info->plmn_valid = true;
+
+    return 0;
+}
+
+/**
  * @brief 解析LTE服务小区无线状态。
  */
 static int _rg255_query_parse_lte_serving_cell(char **fields, size_t field_count, rg255_serving_cell_info_t *info)
@@ -891,6 +965,12 @@ static int _rg255_query_parse_lte_serving_cell(char **fields, size_t field_count
     if (field_count < 17U)
     {
         return -EBADMSG;
+    }
+
+    ret = _rg255_query_parse_plmn(fields[4], fields[5], info);
+    if (ret != 0)
+    {
+        return ret;
     }
 
     ret = _rg255_query_get_field_text(fields[9], &text);
@@ -949,6 +1029,12 @@ static int _rg255_query_parse_nr5g_sa_serving_cell(char **fields, size_t field_c
     if (field_count < 15U)
     {
         return -EBADMSG;
+    }
+
+    ret = _rg255_query_parse_plmn(fields[4], fields[5], info);
+    if (ret != 0)
+    {
+        return ret;
     }
 
     ret = _rg255_query_get_field_text(fields[10], &text);

@@ -42,14 +42,17 @@ typedef enum
 
 typedef struct
 {
-    linkg_cellular_network_type_t network_type; // 当前实际接入网络类型
-    uint16_t                      band;         // 当前工作频段
-    int32_t                       rsrp_dbm;     // 当前RSRP，单位dBm
-    bool                          rsrp_valid;   // 当前RSRP是否有效
-    int32_t                       rsrq_db;      // 当前RSRQ，单位dB
-    bool                          rsrq_valid;   // 当前RSRQ是否有效
-    int32_t                       sinr_db;      // 当前SINR，单位dB
-    bool                          sinr_valid;   // 当前SINR是否有效
+    linkg_cellular_network_type_t network_type;  // 当前实际接入网络类型
+    bool                          plmn_valid;    // 当前服务小区PLMN是否有效
+    char                          mcc[LINKG_CELLULAR_MCC_MAX_LENGTH + 1U]; // 当前移动国家码
+    char                          mnc[LINKG_CELLULAR_MNC_MAX_LENGTH + 1U]; // 当前移动网络码
+    uint16_t                      band;          // 当前工作频段
+    int32_t                       rsrp_dbm;      // 当前RSRP，单位dBm
+    bool                          rsrp_valid;    // 当前RSRP是否有效
+    int32_t                       rsrq_db;       // 当前RSRQ，单位dB
+    bool                          rsrq_valid;    // 当前RSRQ是否有效
+    int32_t                       sinr_db;       // 当前SINR，单位dB
+    bool                          sinr_valid;    // 当前SINR是否有效
 } rg255_serving_cell_info_t;
 
 /****************************** USB网卡IPv4信息 ******************************/

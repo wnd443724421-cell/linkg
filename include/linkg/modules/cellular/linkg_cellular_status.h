@@ -50,9 +50,16 @@ typedef enum
 
 /****************************** 服务小区状态 ******************************/
 
+#define LINKG_CELLULAR_MCC_MAX_LENGTH 3U // 移动国家码最大长度
+#define LINKG_CELLULAR_MNC_MAX_LENGTH 3U // 移动网络码最大长度
+
 typedef struct
 {
     bool     valid;      // 当前服务小区无线状态是否有效
+
+    bool     plmn_valid; // 当前服务小区PLMN是否有效
+    char     mcc[LINKG_CELLULAR_MCC_MAX_LENGTH + 1U]; // 当前移动国家码
+    char     mnc[LINKG_CELLULAR_MNC_MAX_LENGTH + 1U]; // 当前移动网络码
 
     uint16_t band;       // 当前工作频段
 

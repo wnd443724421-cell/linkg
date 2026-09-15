@@ -7,6 +7,7 @@
 #define LINKG_CELLULAR_H
 
 #include "linkg_cellular_config.h"
+#include "linkg_cellular_status.h"
 #include "linkg_thread.h"
 
 #ifdef __cplusplus
@@ -20,6 +21,11 @@ int linkg_cellular_start(void);
 int linkg_cellular_run(linkg_thread_t *owner_thread);
 int linkg_cellular_stop(void);
 int linkg_cellular_deinit(void);
+
+/****************************** 状态读取 ******************************/
+
+int linkg_cellular_get_status(linkg_cellular_status_snapshot_t *snapshot);
+int linkg_cellular_get_internet_available(bool *available);
 
 #ifdef __cplusplus
 }

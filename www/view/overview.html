@@ -1,10 +1,12 @@
 <div class="page overview-page">
+
     <div class="page-header">
         <h1 class="page-title">概览</h1>
         <p class="page-description">查看当前设备和组网的关键运行信息</p>
     </div>
 
-    <section class="page-card">
+    <!-- 设备信息 -->
+    <section class="page-card overview-section">
         <div class="page-card-header">
             <h2 class="page-card-title">设备信息</h2>
         </div>
@@ -31,4 +33,39 @@
             </div>
         </div>
     </section>
+
+    <!-- 链路状态 -->
+    <div class="overview-status-grid overview-section">
+
+        <section class="page-card overview-status-card">
+            <div class="page-card-header overview-card-header">
+                <h2 class="page-card-title">Wi-Fi 状态</h2>
+                <a class="overview-card-link" href="#/link/wifi">查看详情</a>
+            </div>
+
+            <div class="overview-status-list">
+                <div class="overview-status-row">
+                    <span class="overview-status-label">模式</span>
+                    <span id="overviewWifiMode" class="overview-status-value">--</span>
+                </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">SSID</span>
+                    <span id="overviewWifiSsid" class="overview-status-value">--</span>
+                </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">工作模式</span>
+                    <span id="overviewWifiWorkMode" class="overview-status-value">--</span>
+                </div>
+
+                <div class="overview-status-row">
+                    <span class="overview-status-label">信道</span>
+                    <span id="overviewWifiChannel" class="overview-status-value">--</span>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
 </div>

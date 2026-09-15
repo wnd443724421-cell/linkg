@@ -67,6 +67,7 @@ typedef struct
     bool                       status_initialized;     // Status软件资源是否已经初始化
     bool                       monitor_started;        // Monitor是否已经注册URC回调
     bool                       status_started;         // Status是否已经借用当前AT通道
+    bool                       internet_available;     // 当前蜂窝数据链是否已通过公网验证
 } linkg_cellular_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -156,6 +157,21 @@ static void _linkg_cellular_reset_context_locked(void)
     g_cellular.status_initialized     = false;
     g_cellular.monitor_started        = false;
     g_cellular.status_started         = false;
+    g_cellular.internet_available     = false;
+}
+
+/**
+ * @brief 发布当前蜂窝公网可用状态。
+ */
+static void _linkg_cellular_publish_internet_state(void)
+{
+    bool available;
+
+    available = cellular_runtime_online(&g_cellular.fsm.runtime);
+
+    pthread_mutex_lock(&g_cellular.lock);
+    g_cellular.internet_available = available;
+    pthread_mutex_unlock(&g_cellular.lock);
 }
 
 /**
@@ -840,6 +856,7 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
         }
 
         session_result = cellular_fsm_sync_sim_session(&g_cellular.fsm, _linkg_cellular_get_channel(), &events, &info, now_ms);
+        _linkg_cellular_publish_internet_state();
         if (session_result < 0)
         {
             return session_result;
@@ -853,11 +870,12 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
         step = cellular_fsm_run(&g_cellular.fsm, &g_cellular.config, _linkg_cellular_get_channel(), &info, now_ms);
 
         now_ms = linkg_time_elapsed_ms();
-        
+
         switch (step.result)
         {
             case CELLULAR_RUNTIME_STEP_DONE:
                 ret = cellular_fsm_enter(&g_cellular.fsm, step.next_state, now_ms);
+                _linkg_cellular_publish_internet_state();
                 if (ret != 0)
                 {
                     return ret;
@@ -872,6 +890,7 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
 
             case CELLULAR_RUNTIME_STEP_FAILED:
                 ret = cellular_fsm_handle_failure(&g_cellular.fsm, _linkg_cellular_get_channel(), step.error, now_ms);
+                _linkg_cellular_publish_internet_state();
                 if (ret != 0)
                 {
                     return ret;
@@ -939,6 +958,7 @@ static int _linkg_cellular_stop_runtime(void)
 
     _linkg_cellular_destroy_channel();
     cellular_fsm_reset(&g_cellular.fsm, linkg_time_elapsed_ms());
+    _linkg_cellular_publish_internet_state();
 
     return first_error;
 }
@@ -1102,6 +1122,7 @@ int linkg_cellular_start(void)
     cellular_fsm_reset(&g_cellular.fsm, linkg_time_elapsed_ms());
 
     ret = cellular_fsm_enter(&g_cellular.fsm, CELLULAR_RUNTIME_STATE_WAIT_SIM, linkg_time_elapsed_ms());
+    _linkg_cellular_publish_internet_state();
     if (ret != 0)
     {
         goto fail_runtime;
@@ -1280,4 +1301,73 @@ int linkg_cellular_deinit(void)
     }
 
     return first_error;
+}
+
+/****************************** 状态读取 ******************************/
+
+/**
+ * @brief 获取最新有效的统一蜂窝网络状态快照。
+ */
+int linkg_cellular_get_status(linkg_cellular_status_snapshot_t *snapshot)
+{
+    linkg_cellular_lifecycle_t lifecycle;
+    bool                       enabled;
+    int                        ret;
+
+    if (snapshot == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+
+    pthread_mutex_lock(&g_cellular.lock);
+    lifecycle = g_cellular.lifecycle;
+    enabled   = g_cellular.config.enabled;
+    pthread_mutex_unlock(&g_cellular.lock);
+
+    if (lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED || !enabled)
+    {
+        return -ENODEV;
+    }
+
+    if (lifecycle != LINKG_CELLULAR_LIFECYCLE_RUNNING)
+    {
+        return -ENETDOWN;
+    }
+
+    ret = cellular_status_get_snapshot(snapshot);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 获取当前蜂窝数据链公网可用状态。
+ */
+int linkg_cellular_get_internet_available(bool *available)
+{
+    linkg_cellular_lifecycle_t lifecycle;
+
+    if (available == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *available = false;
+
+    pthread_mutex_lock(&g_cellular.lock);
+    lifecycle = g_cellular.lifecycle;
+
+    if (lifecycle != LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED && g_cellular.config.enabled)
+    {
+        *available = lifecycle == LINKG_CELLULAR_LIFECYCLE_RUNNING && g_cellular.internet_available;
+    }
+
+    pthread_mutex_unlock(&g_cellular.lock);
+
+    return lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED ? -ENODEV : 0;
 }
