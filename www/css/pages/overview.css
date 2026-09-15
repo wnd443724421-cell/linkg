@@ -1,0 +1,45 @@
+/****************************** 概览布局 ******************************/
+
+.overview-page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/****************************** 设备信息 ******************************/
+
+.overview-device-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.overview-device-item {
+    min-width: 0;
+    padding: 22px 28px;
+}
+
+.overview-device-item + .overview-device-item {
+    border-left: 1px solid var(--linkg-color-border-light);
+}
+
+.overview-device-label {
+    display: block;
+    margin-bottom: 8px;
+
+    font-size: 13px;
+    color: var(--linkg-color-text-secondary);
+}
+
+.overview-device-value {
+    display: block;
+
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.3;
+
+    color: var(--linkg-color-text);
+}
+
+.overview-device-value.is-role {
+    color: var(--linkg-color-primary);
+}

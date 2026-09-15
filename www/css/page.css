@@ -1,0 +1,55 @@
+/****************************** 页面 ******************************/
+
+.page {
+    width: 100%;
+    max-width: 1440px;
+    margin: 0 auto;
+}
+
+.page-header {
+    margin-bottom: 20px;
+}
+
+.page-title {
+    margin: 0;
+
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.35;
+
+    color: var(--linkg-color-text);
+}
+
+.page-description {
+    margin: 5px 0 0;
+
+    font-size: 13px;
+    color: var(--linkg-color-text-secondary);
+}
+
+/****************************** 卡片 ******************************/
+
+.page-card {
+    background: var(--linkg-color-surface);
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-large);
+}
+
+.page-card-header {
+    display: flex;
+    align-items: center;
+
+    min-height: 52px;
+    padding: 0 20px;
+
+    border-bottom: 1px solid var(--linkg-color-border-light);
+}
+
+.page-card-title {
+    margin: 0;
+
+    font-size: 15px;
+    font-weight: 600;
+
+    color: var(--linkg-color-text);
+}

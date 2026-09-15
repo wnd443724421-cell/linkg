@@ -318,14 +318,17 @@
                     window.LINKG_WEB_VERSION = latestVersion;
 
 					await Promise.all([
-						loadStylesheet("/css/base.css", latestVersion),
-						loadStylesheet("/css/layout.css", latestVersion)
-					]);
-
+                        loadStylesheet("/css/base.css", latestVersion),
+                        loadStylesheet("/css/layout.css", latestVersion),
+                        loadStylesheet("/css/page.css", latestVersion),
+                        loadStylesheet("/css/pages/overview.css", latestVersion)
+                    ]);
 					await loadScript("/js/core/cache.js", latestVersion);
-					await loadScript("/js/api/http.js", latestVersion);
-					await loadScript("/js/api/header.js", latestVersion);
-					await loadScript("/js/pages/index.js", latestVersion);
+                    await loadScript("/js/api/http.js", latestVersion);
+                    await loadScript("/js/api/header.js", latestVersion);
+                    await loadScript("/js/api/overview.js", latestVersion);
+                    await loadScript("/js/pages/overview.js", latestVersion);
+                    await loadScript("/js/pages/index.js", latestVersion);
 
 					document.documentElement.classList.remove("linkg-booting");
                 }

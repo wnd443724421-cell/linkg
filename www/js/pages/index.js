@@ -6,6 +6,7 @@
 
     let pageLoadSerial = 0;
     let pageLoadController = null;
+    let activePageModule = null;
     let initialized = false;
 
     /**
@@ -155,6 +156,46 @@
     }
 
     /**
+     * 卸载当前业务页面。
+     */
+    function unmountActivePage()
+    {
+        if (activePageModule == null)
+        {
+            return;
+        }
+
+        if (typeof activePageModule.unmount === "function")
+        {
+            activePageModule.unmount();
+        }
+
+        activePageModule = null;
+    }
+
+    /**
+     * 挂载指定Route对应的业务页面。
+     */
+    function mountRoutePage(route)
+    {
+        const pages = window.LinkGPages;
+
+        activePageModule = null;
+
+        if (pages == null || pages[route] == null)
+        {
+            return;
+        }
+
+        activePageModule = pages[route];
+
+        if (typeof activePageModule.mount === "function")
+        {
+            activePageModule.mount();
+        }
+    }
+
+    /**
      * 加载指定Route对应的View页面。
      */
     async function loadRoute(route)
@@ -180,6 +221,7 @@
         }
 
         setActiveMenu(route);
+        unmountActivePage();
         showPageLoading();
 
         if (pageLoadController != null)
@@ -217,6 +259,7 @@
             }
 
             content.innerHTML = html;
+            mountRoutePage(route);
         }
         catch (error)
         {

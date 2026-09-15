@@ -27,6 +27,16 @@ typedef struct
     uint64_t            uptime_ms;          // 本次LinkG程序运行时间
 } linkg_web_overview_device_info_t;
 
+typedef struct
+{
+    linkg_device_role_t       mode;                           // 当前Wi-Fi角色模式
+    char                      ssid[LINKG_WIFI_SSID_MAX + 1U]; // 当前Wi-Fi SSID
+    linkg_wifi_work_mode_t    work_mode;                      // 当前宽窄带工作模式
+    linkg_wifi_narrow_mode_t  narrow_mode;                    // 当前窄带速率控制模式
+    uint16_t                  rate_level;                     // 当前固定窄带速率档位
+    uint16_t                  bandwidth_mhz;                  // 当前实际工作带宽
+    uint16_t                  channel;                        // 当前工作信道
+} linkg_web_overview_wifi_info_t;
 /****************************** 内部辅助 ******************************/
 
 /**
