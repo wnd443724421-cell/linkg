@@ -58,6 +58,33 @@ static const uint16_t g_wifi_wide_channels[] =
 #endif
 };
 
+static const uint16_t g_wifi_wide_40mhz_channels[] =
+{
+#if LINKG_WIFI_ENABLE_EXTENDED_CHANNELS
+     36U,  40U,  44U,  48U,
+     52U,  56U,  60U,  64U,
+    100U, 104U, 108U, 112U,
+    116U, 120U, 124U, 128U,
+    132U, 136U, 140U, 144U,
+#endif
+    149U, 153U, 157U, 161U,
+#if LINKG_WIFI_ENABLE_EXTENDED_CHANNELS
+    184U, 188U, 192U, 196U
+#endif
+};
+
+static const uint16_t g_wifi_wide_80mhz_channels[] =
+{
+#if LINKG_WIFI_ENABLE_EXTENDED_CHANNELS
+     36U,  40U,  44U,  48U,
+     52U,  56U,  60U,  64U,
+    100U, 104U, 108U, 112U,
+    116U, 120U, 124U, 128U,
+    132U, 136U, 140U, 144U,
+#endif
+    149U, 153U, 157U, 161U
+};
+
 /****************************** 内部辅助 ******************************/
 
 /**
@@ -255,4 +282,31 @@ bool linkg_wifi_wide_bandwidth_valid(linkg_wifi_wide_bandwidth_t bandwidth)
     return bandwidth == LINKG_WIFI_WIDE_BANDWIDTH_20_MHZ ||
            bandwidth == LINKG_WIFI_WIDE_BANDWIDTH_40_MHZ ||
            bandwidth == LINKG_WIFI_WIDE_BANDWIDTH_80_MHZ;
+}
+
+/**
+ * @brief 检查Wi-Fi宽带信道与带宽组合是否有效。
+ */
+bool linkg_wifi_wide_channel_bandwidth_valid(uint16_t channel, linkg_wifi_wide_bandwidth_t bandwidth)
+{
+    if (!linkg_wifi_channel_valid(LINKG_WIFI_WORK_MODE_WIDE, channel))
+    {
+        return false;
+    }
+
+    switch (bandwidth)
+    {
+        case LINKG_WIFI_WIDE_BANDWIDTH_20_MHZ:
+            return true;
+
+        case LINKG_WIFI_WIDE_BANDWIDTH_40_MHZ:
+            return _wifi_channel_in_list(channel, g_wifi_wide_40mhz_channels, LINKG_ARRAY_SIZE(g_wifi_wide_40mhz_channels));
+
+        case LINKG_WIFI_WIDE_BANDWIDTH_80_MHZ:
+            return _wifi_channel_in_list(channel, g_wifi_wide_80mhz_channels, LINKG_ARRAY_SIZE(g_wifi_wide_80mhz_channels));
+
+        case LINKG_WIFI_WIDE_BANDWIDTH_UNKNOWN:
+        default:
+            return false;
+    }
 }

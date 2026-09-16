@@ -9,33 +9,25 @@
 #include "linkg_network.h"
 
 #include <errno.h>
-#include <limits.h>
 #include <poll.h>
 #include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
+#include "linkg_cellular.h"
 #include "linkg_config.h"
-#include "linkg_file.h"
+#include "linkg_ethernet.h"
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
 #include "linkg_wifi.h"
-#include "linkg_cellular.h"
 
 #include "network_internal.h"
 
 /****************************** 模块常量 ******************************/
 
+#define LINKG_NETWORK_ETHERNET_THREAD_NAME               "network-eth"     // Ethernet管理线程名称
 #define LINKG_NETWORK_WIFI_THREAD_NAME                   "network-wifi"    // Wi-Fi Owner线程名称
 #define LINKG_NETWORK_CELLULAR_THREAD_NAME               "network-cell"    // 蜂窝管理线程名称
-#define LINKG_NETWORK_ETHERNET_WAIT_TIMEOUT_MS           3000U             // Ethernet接口等待超时
-#define LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID             0U                // Ethernet接收IRQ固定CPU编号
-#define LINKG_NETWORK_ETHERNET_IRQ_LINE_MAX              512U              // /proc/interrupts单行缓冲区长度
-#define LINKG_NETWORK_ETHERNET_DEVICE_NAME_MAX           128U              // Ethernet平台设备名称缓冲区长度
-#define LINKG_NETWORK_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U               // IRQ affinity写入值缓冲区长度
 #define LINKG_NETWORK_NODE_ADDRESS_PREFIX                32U               // 本机节点IPv4地址固定前缀
 
 /****************************** 全局上下文 ******************************/
@@ -473,6 +465,12 @@ static int _linkg_network_worker_stop(linkg_network_worker_t *worker)
  */
 static int _linkg_network_get_worker_failure_locked(void)
 {
+    if (g_network.ethernet_worker.run_completed &&
+        g_network.ethernet_worker.run_result != 0)
+    {
+        return g_network.ethernet_worker.run_result;
+    }
+
     if (g_network.wifi_worker.run_completed &&
         g_network.wifi_worker.run_result != 0)
     {
@@ -486,298 +484,6 @@ static int _linkg_network_get_worker_failure_locked(void)
     }
 
     return -EIO;
-}
-
-/****************************** Ethernet ******************************/
-
-/**
- * @brief 获取Ethernet接口对应的平台设备名称。
- *
- * /sys/class/net/<ifname>/device指向实际平台设备，
- * sunxi-gmac在/proc/interrupts中使用该设备名称注册gmacirq。
- */
-static int _linkg_network_ethernet_get_device_name(const char *ifname, char *device_name, size_t device_name_size)
-{
-    char    device_path[LINKG_FILE_PATH_MAX];
-    char    device_link[LINKG_FILE_PATH_MAX];
-    char   *name;
-    size_t  name_length;
-    ssize_t length;
-    int     written;
-
-    if (ifname == NULL || device_name == NULL || device_name_size == 0U)
-    {
-        return -EINVAL;
-    }
-
-    written = snprintf(device_path, sizeof(device_path), "/sys/class/net/%s/device", ifname);
-    if (written < 0 || (size_t)written >= sizeof(device_path))
-    {
-        return -ENAMETOOLONG;
-    }
-
-    length = readlink(device_path, device_link, sizeof(device_link) - 1U);
-    if (length < 0)
-    {
-        return -errno;
-    }
-
-    if ((size_t)length >= sizeof(device_link) - 1U)
-    {
-        return -ENAMETOOLONG;
-    }
-
-    device_link[length] = '\0';
-
-    name = strrchr(device_link, '/');
-    if (name != NULL)
-    {
-        name++;
-    }
-    else
-    {
-        name = device_link;
-    }
-
-    if (name[0] == '\0')
-    {
-        return -ENODEV;
-    }
-
-    name_length = strlen(name);
-    if (name_length >= device_name_size)
-    {
-        return -ENAMETOOLONG;
-    }
-
-    memcpy(device_name, name, name_length + 1U);
-
-    return 0;
-}
-
-/**
- * @brief 从/proc/interrupts解析Ethernet平台设备对应的IRQ编号。
- */
-static int _linkg_network_ethernet_get_irq(const char *ifname, unsigned int *irq)
-{
-    FILE         *stream;
-    char          device_name[LINKG_NETWORK_ETHERNET_DEVICE_NAME_MAX];
-    char          line[LINKG_NETWORK_ETHERNET_IRQ_LINE_MAX];
-    char         *end;
-    unsigned long value;
-    int           close_ret;
-    int           ret;
-
-    if (ifname == NULL || irq == NULL)
-    {
-        return -EINVAL;
-    }
-
-    ret = _linkg_network_ethernet_get_device_name(ifname, device_name, sizeof(device_name));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    stream = NULL;
-
-    ret = linkg_file_stream_open("/proc/interrupts", "r", &stream);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = -ENODEV;
-
-    while (fgets(line, sizeof(line), stream) != NULL)
-    {
-        if (strstr(line, device_name) == NULL)
-        {
-            continue;
-        }
-
-        errno = 0;
-        value = strtoul(line, &end, 10);
-        if (errno != 0 || end == line || *end != ':')
-        {
-            continue;
-        }
-
-        if (value > UINT_MAX)
-        {
-            ret = -ERANGE;
-            break;
-        }
-
-        *irq = (unsigned int)value;
-        ret  = 0;
-        break;
-    }
-
-    if (ret == -ENODEV && ferror(stream))
-    {
-        ret = errno != 0 ? -errno : -EIO;
-    }
-
-    close_ret = linkg_file_stream_close(&stream);
-    if (ret == 0 && close_ret != 0)
-    {
-        ret = close_ret;
-    }
-
-    return ret;
-}
-
-/**
- * @brief 将指定IRQ绑定到固定CPU。
- *
- * 优先写smp_affinity_list；旧内核没有该节点时，
- * 回退到smp_affinity位掩码。
- */
-static int _linkg_network_ethernet_set_irq_cpu(unsigned int irq, unsigned int cpu_id)
-{
-    char affinity_path[LINKG_FILE_PATH_MAX];
-    char affinity_value[LINKG_NETWORK_ETHERNET_IRQ_AFFINITY_VALUE_MAX];
-    int  value_length;
-    int  written;
-    int  ret;
-
-    written = snprintf(affinity_path, sizeof(affinity_path), "/proc/irq/%u/smp_affinity_list", irq);
-    if (written < 0 || (size_t)written >= sizeof(affinity_path))
-    {
-        return -ENAMETOOLONG;
-    }
-
-    value_length = snprintf(affinity_value, sizeof(affinity_value), "%u\n", cpu_id);
-    if (value_length < 0 || (size_t)value_length >= sizeof(affinity_value))
-    {
-        return -EOVERFLOW;
-    }
-
-    ret = linkg_file_write_all(affinity_path, affinity_value, (size_t)value_length);
-    if (ret == 0)
-    {
-        return 0;
-    }
-
-    if (ret != -ENOENT)
-    {
-        return ret;
-    }
-
-    if (cpu_id >= 32U)
-    {
-        return -ERANGE;
-    }
-
-    written = snprintf(affinity_path, sizeof(affinity_path), "/proc/irq/%u/smp_affinity", irq);
-    if (written < 0 || (size_t)written >= sizeof(affinity_path))
-    {
-        return -ENAMETOOLONG;
-    }
-
-    value_length = snprintf(affinity_value, sizeof(affinity_value), "%x\n", 1U << cpu_id);
-    if (value_length < 0 || (size_t)value_length >= sizeof(affinity_value))
-    {
-        return -EOVERFLOW;
-    }
-
-    return linkg_file_write_all(affinity_path, affinity_value, (size_t)value_length);
-}
-
-/**
- * @brief 将Ethernet接收中断固定到CPU1。
- *
- * T113当前sunxi-gmac驱动的RX/TX共用同一个gmacirq，
- * 因此绑定该GMAC IRQ即可保证Ethernet接收中断固定在CPU1。
- */
-static int _linkg_network_ethernet_bind_rx_irq(void)
-{
-    unsigned int irq;
-    int          ret;
-
-    ret = _linkg_network_ethernet_get_irq(LINKG_RESOURCE_INTERFACE_ETHERNET, &irq);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_network_ethernet_set_irq_cpu(irq, LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    LINKG_LOG_INFO("Ethernet RX IRQ bound, interface=%s, irq=%u, cpu=%u", LINKG_RESOURCE_INTERFACE_ETHERNET, irq, LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID);
-
-    return 0;
-}
-
-/**
- * @brief 启动Ethernet接口。
- */
-static int _linkg_network_ethernet_start(void)
-{
-    linkg_network_ipv4_config_t ethernet;
-    int                         ret;
-
-    if (g_network.ethernet_started)
-    {
-        return 0;
-    }
-
-    ret = linkg_network_interface_wait(LINKG_RESOURCE_INTERFACE_ETHERNET, LINKG_NETWORK_ETHERNET_WAIT_TIMEOUT_MS);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = linkg_network_config_get_ethernet(&g_network.network_config, &ethernet);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = linkg_network_interface_set_ipv4(LINKG_RESOURCE_INTERFACE_ETHERNET, &ethernet.ip, &ethernet.netmask);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = linkg_network_interface_set_up(LINKG_RESOURCE_INTERFACE_ETHERNET, true);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _linkg_network_ethernet_bind_rx_irq();
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("bind Ethernet RX IRQ failed, interface=%s, cpu=%u, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, LINKG_NETWORK_ETHERNET_RX_IRQ_CPU_ID, ret);
-
-        return ret;
-    }
-
-    g_network.ethernet_started = true;
-
-    return 0;
-}
-
-/**
- * @brief 停止网络服务对Ethernet接口的管理状态。
- *
- * 保持现有行为：停止网络服务时不主动关闭系统Ethernet接口。
- */
-static int _linkg_network_ethernet_stop(void)
-{
-    if (!g_network.ethernet_started)
-    {
-        return 0;
-    }
-
-    g_network.ethernet_started = false;
-
-    return 0;
 }
 
 /****************************** IPv4转发 ******************************/
@@ -833,9 +539,10 @@ static int _linkg_network_ipv4_forwarding_stop(void)
  */
 int linkg_network_init(void)
 {
-    linkg_device_config_t device_config;
-    int                   cleanup_ret;
-    int                   ret;
+    linkg_network_ipv4_config_t ethernet_config;
+    linkg_device_config_t       device_config;
+    int                         cleanup_ret;
+    int                         ret;
 
     if (g_network.state != LINKG_NETWORK_STATE_UNINITIALIZED)
     {
@@ -896,6 +603,29 @@ int linkg_network_init(void)
     }
 
     g_network.role = device_config.role;
+
+    ret = linkg_network_config_get_ethernet(&g_network.network_config, &ethernet_config);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("get Ethernet configuration failed, error=%d", ret);
+        goto fail;
+    }
+
+    ret = linkg_ethernet_init(&ethernet_config);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize Ethernet module failed, error=%d", ret);
+        goto fail;
+    }
+
+    g_network.ethernet_initialized = true;
+
+    ret = _linkg_network_worker_init(&g_network.ethernet_worker, LINKG_NETWORK_ETHERNET_THREAD_NAME, linkg_ethernet_start, linkg_ethernet_run, linkg_ethernet_stop);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize Ethernet worker failed, error=%d", ret);
+        goto fail;
+    }
 
     if (g_network.wifi_config.enabled)
     {
@@ -970,6 +700,19 @@ fail:
         g_network.wifi_initialized = false;
     }
 
+    _linkg_network_worker_deinit(&g_network.ethernet_worker);
+
+    if (g_network.ethernet_initialized)
+    {
+        cleanup_ret = linkg_ethernet_deinit();
+        if (cleanup_ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize Ethernet module after init failure failed, error=%d", cleanup_ret);
+        }
+
+        g_network.ethernet_initialized = false;
+    }
+
     cleanup_ret = pthread_cond_destroy(&g_network.worker_condition);
     if (cleanup_ret != 0)
     {
@@ -1022,6 +765,39 @@ int linkg_network_start(void)
 
     pthread_mutex_unlock(&g_network.lock);
 
+    /**
+     * Ethernet是LinkG本地基础网络入口，优先启动并确认就绪。
+     */
+    if (!g_network.ethernet_initialized)
+    {
+        ret = -ENODEV;
+        goto fail;
+    }
+
+    ret = _linkg_network_worker_start(&g_network.ethernet_worker);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start Ethernet worker failed, error=%d", ret);
+        goto fail;
+    }
+
+    ret = _linkg_network_worker_wait_start(&g_network.ethernet_worker);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start Ethernet module failed, error=%d", ret);
+        goto fail;
+    }
+
+    ret = _linkg_network_node_address_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start local node address failed, error=%d", ret);
+        goto fail;
+    }
+
+    /**
+     * Ethernet基础网络就绪后并行启动Wi-Fi和蜂窝接入模块。
+     */
     if (g_network.wifi_config.enabled)
     {
         if (!g_network.wifi_initialized)
@@ -1052,21 +828,6 @@ int linkg_network_start(void)
             LINKG_LOG_ERROR("start cellular worker failed, error=%d", ret);
             goto fail;
         }
-    }
-
-    // Wi-Fi与蜂窝模块后台启动期间并行配置Ethernet。
-    ret = _linkg_network_ethernet_start();
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("start Ethernet failed, interface=%s, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, ret);
-        goto fail;
-    }
-
-    ret = _linkg_network_node_address_start();
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("start local node address failed, error=%d", ret);
-        goto fail;
     }
 
     if (g_network.wifi_config.enabled)
@@ -1123,13 +884,22 @@ fail:
         _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
     }
 
-    if (g_network.cellular_config.enabled &&
-        g_network.cellular_worker.initialized)
+    if (g_network.cellular_config.enabled && g_network.cellular_worker.initialized)
     {
         cleanup_ret = _linkg_network_worker_stop(&g_network.cellular_worker);
         if (cleanup_ret != 0)
         {
             LINKG_LOG_ERROR("rollback cellular worker failed, error=%d", cleanup_ret);
+            _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
+        }
+    }
+
+    if (g_network.wifi_config.enabled && g_network.wifi_worker.initialized)
+    {
+        cleanup_ret = _linkg_network_worker_stop(&g_network.wifi_worker);
+        if (cleanup_ret != 0)
+        {
+            LINKG_LOG_ERROR("rollback Wi-Fi Owner worker failed, error=%d", cleanup_ret);
             _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
         }
     }
@@ -1141,21 +911,12 @@ fail:
         _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
     }
 
-    cleanup_ret = _linkg_network_ethernet_stop();
-    if (cleanup_ret != 0)
+    if (g_network.ethernet_worker.initialized)
     {
-        LINKG_LOG_ERROR("rollback Ethernet failed, interface=%s, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, cleanup_ret);
-
-        _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
-    }
-
-    if (g_network.wifi_config.enabled &&
-        g_network.wifi_worker.initialized)
-    {
-        cleanup_ret = _linkg_network_worker_stop(&g_network.wifi_worker);
+        cleanup_ret = _linkg_network_worker_stop(&g_network.ethernet_worker);
         if (cleanup_ret != 0)
         {
-            LINKG_LOG_ERROR("rollback Wi-Fi Owner worker failed, error=%d", cleanup_ret);
+            LINKG_LOG_ERROR("rollback Ethernet worker failed, error=%d", cleanup_ret);
             _linkg_network_record_first_error(&cleanup_error, cleanup_ret);
         }
     }
@@ -1195,15 +956,13 @@ int linkg_network_stop(void)
         return 0;
     }
 
-    if (state == LINKG_NETWORK_STATE_STARTING ||
-        state == LINKG_NETWORK_STATE_STOPPING)
+    if (state == LINKG_NETWORK_STATE_STARTING || state == LINKG_NETWORK_STATE_STOPPING)
     {
         pthread_mutex_unlock(&g_network.lock);
         return -EBUSY;
     }
 
-    if (state != LINKG_NETWORK_STATE_RUNNING &&
-        state != LINKG_NETWORK_STATE_FAILED)
+    if (state != LINKG_NETWORK_STATE_RUNNING && state != LINKG_NETWORK_STATE_FAILED)
     {
         pthread_mutex_unlock(&g_network.lock);
         return -EINVAL;
@@ -1222,8 +981,10 @@ int linkg_network_stop(void)
         _linkg_network_record_first_error(&first_error, ret);
     }
 
-    if (g_network.cellular_config.enabled &&
-        g_network.cellular_worker.initialized)
+    /**
+     * 停止顺序与启动顺序相反，Ethernet作为基础网络最后停止。
+     */
+    if (g_network.cellular_config.enabled && g_network.cellular_worker.initialized)
     {
         ret = _linkg_network_worker_stop(&g_network.cellular_worker);
         if (ret != 0)
@@ -1232,6 +993,17 @@ int linkg_network_stop(void)
             _linkg_network_record_first_error(&first_error, ret);
         }
     }
+
+    if (g_network.wifi_config.enabled && g_network.wifi_worker.initialized)
+    {
+        ret = _linkg_network_worker_stop(&g_network.wifi_worker);
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop Wi-Fi Owner worker failed, error=%d", ret);
+            _linkg_network_record_first_error(&first_error, ret);
+        }
+    }
+
     ret = _linkg_network_node_address_stop();
     if (ret != 0)
     {
@@ -1239,21 +1011,12 @@ int linkg_network_stop(void)
         _linkg_network_record_first_error(&first_error, ret);
     }
 
-    ret = _linkg_network_ethernet_stop();
-    if (ret != 0)
+    if (g_network.ethernet_worker.initialized)
     {
-        LINKG_LOG_ERROR("stop Ethernet failed, interface=%s, error=%d", LINKG_RESOURCE_INTERFACE_ETHERNET, ret);
-
-        _linkg_network_record_first_error(&first_error, ret);
-    }
-
-    if (g_network.wifi_config.enabled &&
-        g_network.wifi_worker.initialized)
-    {
-        ret = _linkg_network_worker_stop(&g_network.wifi_worker);
+        ret = _linkg_network_worker_stop(&g_network.ethernet_worker);
         if (ret != 0)
         {
-            LINKG_LOG_ERROR("stop Wi-Fi Owner worker failed, error=%d", ret);
+            LINKG_LOG_ERROR("stop Ethernet worker failed, error=%d", ret);
             _linkg_network_record_first_error(&first_error, ret);
         }
     }
@@ -1297,13 +1060,14 @@ int linkg_network_deinit(void)
         return -EBUSY;
     }
 
-    if (g_network.ethernet_started ||
-    g_network.node_address_started ||
-    g_network.ipv4_forwarding_enabled ||
-    (g_network.wifi_worker.initialized &&
-     linkg_thread_is_started(&g_network.wifi_worker.thread)) ||
-    (g_network.cellular_worker.initialized &&
-     linkg_thread_is_started(&g_network.cellular_worker.thread)))
+    if (g_network.node_address_started ||
+        g_network.ipv4_forwarding_enabled ||
+        (g_network.ethernet_worker.initialized &&
+         linkg_thread_is_started(&g_network.ethernet_worker.thread)) ||
+        (g_network.wifi_worker.initialized &&
+         linkg_thread_is_started(&g_network.wifi_worker.thread)) ||
+        (g_network.cellular_worker.initialized &&
+         linkg_thread_is_started(&g_network.cellular_worker.thread)))
     {
         return -EBUSY;
     }
@@ -1334,6 +1098,20 @@ int linkg_network_deinit(void)
         }
 
         g_network.wifi_initialized = false;
+    }
+
+    _linkg_network_worker_deinit(&g_network.ethernet_worker);
+
+    if (g_network.ethernet_initialized)
+    {
+        ret = linkg_ethernet_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize Ethernet module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_network.ethernet_initialized = false;
     }
 
     ret = pthread_cond_destroy(&g_network.worker_condition);

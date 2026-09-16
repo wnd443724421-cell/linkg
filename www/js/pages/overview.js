@@ -28,10 +28,11 @@
     function setText(id, value)
     {
         const element = document.getElementById(id);
+        const text = String(value);
 
-        if (element != null)
+        if (element != null && element.textContent !== text)
         {
-            element.textContent = value;
+            element.textContent = text;
         }
     }
 
@@ -346,6 +347,121 @@
         row.appendChild(cell);
     }
 
+    /**
+     * 获取组网节点排序后的副本。
+     */
+    function sortNodes(nodes)
+    {
+        return nodes.slice().sort(function (a, b) {
+            const aLocal = a.relation === "local" ? 0 : 1;
+            const bLocal = b.relation === "local" ? 0 : 1;
+
+            if (aLocal !== bLocal)
+            {
+                return aLocal - bLocal;
+            }
+
+            return Number(a.node_id) - Number(b.node_id);
+        });
+    }
+
+    /**
+     * 获取当前节点表中已经存在的行。
+     */
+    function getExistingNodeRows(body)
+    {
+        const rows = new Map();
+
+        Array.from(body.children).forEach(function (row) {
+            if (row.dataset.nodeId != null)
+            {
+                rows.set(row.dataset.nodeId, row);
+                return;
+            }
+
+            row.remove();
+        });
+
+        return rows;
+    }
+
+    /**
+     * 更新一个组网节点表格行。
+     */
+    function updateNodeRow(row, node, traffic, wifiAvailable, cellularAvailable)
+    {
+        const values = [
+            String(node.node_id),
+            node.virtual_ip || "--",
+            formatNodeRelation(node),
+            formatNodePrimaryLink(node),
+            wifiAvailable,
+            cellularAvailable,
+            traffic.tx,
+            traffic.rx
+        ];
+
+        const classes = [
+            "overview-node-id",
+            "",
+            "",
+            "",
+            wifiAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable",
+            cellularAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable",
+            "overview-node-rate",
+            "overview-node-rate"
+        ];
+
+        values.forEach(function (value, index) {
+            const cell = row.cells[index];
+
+            if (cell.textContent !== value)
+            {
+                cell.textContent = value;
+            }
+
+            cell.className = classes[index];
+        });
+
+        row.classList.toggle("is-local", node.relation === "local");
+    }
+
+    /**
+     * 创建一个新的组网节点表格行。
+     */
+    function createNodeRow(node, traffic, wifiAvailable, cellularAvailable)
+    {
+        const row = document.createElement("tr");
+
+        row.dataset.nodeId = String(node.node_id);
+
+        appendTableCell(row, String(node.node_id), "overview-node-id");
+        appendTableCell(row, node.virtual_ip || "--");
+        appendTableCell(row, formatNodeRelation(node));
+        appendTableCell(row, formatNodePrimaryLink(node));
+        appendTableCell(row, wifiAvailable, wifiAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
+        appendTableCell(row, cellularAvailable, cellularAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
+        appendTableCell(row, traffic.tx, "overview-node-rate");
+        appendTableCell(row, traffic.rx, "overview-node-rate");
+
+        row.classList.toggle("is-local", node.relation === "local");
+
+        return row;
+    }
+
+    /**
+     * 清理已经离线节点的流量采样状态。
+     */
+    function cleanupNodeTrafficSamples(activeNodeIds)
+    {
+        nodeTrafficSamples.forEach(function (value, nodeId) {
+            if (!activeNodeIds.has(nodeId))
+            {
+                nodeTrafficSamples.delete(nodeId);
+            }
+        });
+    }
+
     /****************************** 页面渲染 ******************************/
 
     /**
@@ -424,40 +540,59 @@
         const body = document.getElementById("overviewNodesBody");
         const activeNodeIds = new Set();
         const nowMs = Date.now();
+        let existingRows;
+        let sortedNodes;
 
         if (body == null || !Array.isArray(nodes))
         {
             return;
         }
 
-        body.replaceChildren();
+        sortedNodes = sortNodes(nodes);
+        existingRows = getExistingNodeRows(body);
 
-        nodes.forEach(function (node) {
-            const row = document.createElement("tr");
+        sortedNodes.forEach(function (node, index) {
+            const key = String(node.node_id);
             const traffic = getNodeTrafficRate(node, nowMs);
             const wifiAvailable = formatPathAvailable(node, "wifi_path");
             const cellularAvailable = formatPathAvailable(node, "cellular_path");
+            let row = existingRows.get(key);
 
             activeNodeIds.add(node.node_id);
 
-            appendTableCell(row, String(node.node_id), "overview-node-id");
-            appendTableCell(row, node.virtual_ip || "--");
-            appendTableCell(row, formatNodeRelation(node));
-            appendTableCell(row, formatNodePrimaryLink(node));
-            appendTableCell(row, wifiAvailable, wifiAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
-            appendTableCell(row, cellularAvailable, cellularAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
-            appendTableCell(row, traffic.tx);
-            appendTableCell(row, traffic.rx);
+            if (row == null)
+            {
+                row = createNodeRow(node, traffic, wifiAvailable, cellularAvailable);
+            }
+            else
+            {
+                updateNodeRow(row, node, traffic, wifiAvailable, cellularAvailable);
+            }
+
+            if (body.children[index] !== row)
+            {
+                body.insertBefore(row, body.children[index] || null);
+            }
+
+            existingRows.delete(key);
+        });
+
+        existingRows.forEach(function (row) {
+            row.remove();
+        });
+
+        if (sortedNodes.length === 0)
+        {
+            const row = document.createElement("tr");
+
+            appendTableCell(row, "暂无组网节点", "overview-table-empty");
+
+            row.cells[0].colSpan = 8;
 
             body.appendChild(row);
-        });
+        }
 
-        nodeTrafficSamples.forEach(function (value, nodeId) {
-            if (!activeNodeIds.has(nodeId))
-            {
-                nodeTrafficSamples.delete(nodeId);
-            }
-        });
+        cleanupNodeTrafficSamples(activeNodeIds);
 
         setText("overviewNodesCount", nodes.length + " 个节点");
     }
@@ -502,7 +637,13 @@
 
         if (nodesBody != null)
         {
-            nodesBody.replaceChildren();
+            const row = document.createElement("tr");
+
+            appendTableCell(row, "暂时无法获取节点信息，正在重试…", "overview-table-empty");
+
+            row.cells[0].colSpan = 8;
+
+            nodesBody.replaceChildren(row);
         }
     }
 

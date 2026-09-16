@@ -55,10 +55,11 @@ typedef struct
 
 typedef struct
 {
-    linkg_packet_t          *packet;         // 已完成Transport处理的载荷Packet，仅借用引用
-    linkg_transport_class_t  traffic_class;  // 当前业务类别
-    uint8_t                  source_node_id; // 原始发送节点编号
-    uint8_t                  peer_node_id;   // 当前物理上一跳直接Peer节点编号
+    linkg_packet_t          *packet;          // 已完成Transport处理的载荷Packet，仅借用引用
+    uint32_t                 ingress_link_id; // 当前物理入站Link运行实例标识，无法唯一归属时为LINKG_LINK_ID_INVALID
+    linkg_transport_class_t  traffic_class;   // 当前业务类别
+    uint8_t                  source_node_id;  // 原始发送节点编号
+    uint8_t                  peer_node_id;    // 当前物理上一跳直接Peer节点编号
 } linkg_transport_delivery_t;
 
 typedef int (*linkg_transport_handler_func_t)(const linkg_transport_delivery_t *items, uint32_t count, void *user_data);

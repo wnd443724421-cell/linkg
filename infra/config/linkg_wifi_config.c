@@ -11,9 +11,10 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "config_internal.h"
 #include "linkg_json.h"
 #include "linkg_wifi_ops.h"
+
+#include "config_internal.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -1121,6 +1122,12 @@ int linkg_wifi_config_validate(const linkg_wifi_config_t *config)
     if (ret != CONFIG_OK)
     {
         return ret;
+    }
+
+    if (config->wideband.work_mode == LINKG_WIFI_WORK_MODE_WIDE &&
+        !linkg_wifi_wide_channel_bandwidth_valid(config->ap.channel, config->wideband.wide_params.ap_bandwidth))
+    {
+        return CONFIG_ERR_VALIDATE;
     }
 
     return _wifi_sta_config_validate(&config->sta);

@@ -26,6 +26,10 @@
 #include "linkg_transport.h"
 #include "linkg_wifi.h"
 
+/****************************** 内部常量 ******************************/
+
+#define LINKG_WEB_OVERVIEW_WIFI_STATISTICS_MAX_AGE_MS 2400U // 允许三个Wi-Fi状态采集周期
+
 /****************************** 内部类型 ******************************/
 
 typedef struct
@@ -47,6 +51,8 @@ typedef struct
     uint16_t                 channel;                         // 当前工作信道
     int32_t                  noise_dbm;                       // 当前工作信道噪声
     bool                     noise_valid;                     // 当前噪声是否有效
+    int32_t                  snr_db;                          // 当前STA接收AP的信噪比
+    bool                     snr_valid;                       // 当前STA信噪比是否有效
 } linkg_web_overview_wifi_info_t;
 
 typedef struct
@@ -539,6 +545,7 @@ static int _linkg_web_overview_get_wifi_info(linkg_web_overview_wifi_info_t *inf
 {
     linkg_wifi_status_snapshot_t snapshot;
     linkg_wifi_config_t          config;
+    uint64_t                     now_ms;
     int                          ret;
 
     if (info == NULL)
@@ -577,6 +584,20 @@ static int _linkg_web_overview_get_wifi_info(linkg_web_overview_wifi_info_t *inf
     else if (info->mode == LINKG_DEVICE_ROLE_STA)
     {
         memcpy(info->ssid, config.sta.ssid, sizeof(info->ssid));
+
+        now_ms = linkg_time_elapsed_ms();
+
+        if (info->noise_valid &&
+            snapshot.role.sta.peer.valid &&
+            snapshot.role.sta.peer.statistics_valid &&
+            snapshot.role.sta.peer.state == LINKG_WIFI_PEER_STATE_CONNECTED &&
+            snapshot.role.sta.peer.statistics_updated_ms != 0U &&
+            now_ms >= snapshot.role.sta.peer.statistics_updated_ms &&
+            now_ms - snapshot.role.sta.peer.statistics_updated_ms <= LINKG_WEB_OVERVIEW_WIFI_STATISTICS_MAX_AGE_MS)
+        {
+            info->snr_db    = snapshot.role.sta.peer.rssi_dbm - info->noise_dbm;
+            info->snr_valid = true;
+        }
     }
     else
     {
@@ -967,6 +988,16 @@ static int _linkg_web_overview_build_wifi_json(const linkg_web_overview_wifi_inf
     if (info->noise_valid)
     {
         ret = linkg_json_add_int(wifi, "noise_dbm", info->noise_dbm);
+        if (ret != LINKG_JSON_OK)
+        {
+            cJSON_Delete(wifi);
+            return _linkg_web_overview_json_error(ret);
+        }
+    }
+
+    if (info->snr_valid)
+    {
+        ret = linkg_json_add_int(wifi, "snr_db", info->snr_db);
         if (ret != LINKG_JSON_OK)
         {
             cJSON_Delete(wifi);

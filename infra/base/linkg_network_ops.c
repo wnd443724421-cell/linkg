@@ -16,6 +16,8 @@
 #include <limits.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/if_packet.h>
+#include <net/ethernet.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <stdint.h>
@@ -24,6 +26,8 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <linux/sockios.h>
+#include <linux/ethtool.h>
 #include <linux/sockios.h>
 
 #include "linkg_file.h"
@@ -839,6 +843,48 @@ int linkg_network_interface_is_up(const char *ifname, bool *up)
 }
 
 /**
+ * @brief 检查实际载波状态。
+ */
+int linkg_network_interface_carrier_is_up( const char *ifname, bool *carrier_up)
+{
+    struct ethtool_value link_status;
+    struct ifreq         ifr;
+    int                  fd;
+    int                  ret;
+
+    if (carrier_up == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *carrier_up = false;
+
+    ret = _network_ifreq_init(ifname, &ifr);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    memset(&link_status, 0, sizeof(link_status));
+    link_status.cmd = ETHTOOL_GLINK;
+    ifr.ifr_data = (void *)&link_status;
+
+    fd = _network_control_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+
+    ret = _network_interface_ioctl(fd, SIOCETHTOOL, &ifr);
+    if (ret == 0)
+    {
+        *carrier_up = link_status.data != 0U;
+    }
+
+    return _network_control_socket_close(fd, ret);
+}
+
+/**
  * @brief 设置网络接口启用状态。
  */
 int linkg_network_interface_set_up(const char *ifname, bool up)
@@ -991,6 +1037,43 @@ int linkg_network_interface_set_mac(const char *ifname, const uint8_t mac[LINKG_
 
     return _network_control_socket_close(fd, ret);
 }
+
+int linkg_network_interface_get_mac(const char *ifname, uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
+{
+    struct ifreq ifr;
+    int fd;
+    int ret;
+
+    if (mac == NULL)
+    {
+        return -EINVAL;
+    }
+    memset(mac, 0, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+    ret = _network_ifreq_init(ifname, &ifr);
+    if (ret != 0)
+    {
+        return ret;
+    }
+    fd = _network_control_socket_open();
+    if (fd < 0)
+    {
+        return fd;
+    }
+    ret = _network_interface_ioctl(fd, SIOCGIFHWADDR, &ifr);
+    if (ret == 0)
+    {
+        if (ifr.ifr_hwaddr.sa_family != ARPHRD_ETHER)
+        {
+            ret = -EAFNOSUPPORT;
+        }
+        else
+        {
+            memcpy(mac, ifr.ifr_hwaddr.sa_data, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+        }
+    }
+    return _network_control_socket_close(fd, ret);
+}
+
 
 /**
  * @brief 设置网络接口IPv4地址和子网掩码。
@@ -1240,6 +1323,122 @@ int linkg_network_interface_add_ipv4(const char *ifname, const struct in_addr *a
 int linkg_network_interface_remove_ipv4(const char *ifname, const struct in_addr *address, uint8_t prefix_length)
 {
     return _network_interface_modify_ipv4_address(ifname, address, prefix_length, false);
+}
+
+
+/**
+ * @brief 发送网络接口当前IPv4地址的ARP宣告。
+ */
+int linkg_network_interface_announce_ipv4(const char *ifname)
+{
+    struct sockaddr_ll destination;
+    struct in_addr     address;
+    uint8_t            mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH];
+    unsigned char      packet[28] = {0};
+    uint16_t           field;
+    unsigned int       ifindex;
+    bool               interface_up;
+    bool               carrier_up;
+    ssize_t            sent;
+    int                fd;
+    int                ret;
+
+    ret = linkg_network_interface_is_up(ifname, &interface_up);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!interface_up)
+    {
+        return -ENETDOWN;
+    }
+
+    ret = linkg_network_interface_carrier_is_up(ifname, &carrier_up);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!carrier_up)
+    {
+        return -ENETDOWN;
+    }
+
+    ret = linkg_network_interface_get_ipv4(ifname, &address);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!linkg_network_ipv4_address_valid(&address))
+    {
+        return -EADDRNOTAVAIL;
+    }
+
+    ret = linkg_network_interface_get_mac(ifname, mac);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ifindex = if_nametoindex(ifname);
+    if (ifindex == 0U)
+    {
+        return -ENODEV;
+    }
+
+    fd = socket(AF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, htons(ETH_P_ARP));
+    if (fd < 0)
+    {
+        return -errno;
+    }
+
+    field = htons(ARPHRD_ETHER);
+    memcpy(packet, &field, sizeof(field));
+
+    field = htons(ETH_P_IP);
+    memcpy(packet + 2U, &field, sizeof(field));
+
+    packet[4] = LINKG_NETWORK_MAC_ADDRESS_LENGTH;
+    packet[5] = (uint8_t)sizeof(address.s_addr);
+
+    field = htons(ARPOP_REQUEST);
+    memcpy(packet + 6U, &field, sizeof(field));
+
+    memcpy(packet + 8U, mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+    memcpy(packet + 14U, &address.s_addr, sizeof(address.s_addr));
+    memcpy(packet + 24U, &address.s_addr, sizeof(address.s_addr));
+
+    memset(&destination, 0, sizeof(destination));
+
+    destination.sll_family   = AF_PACKET;
+    destination.sll_protocol = htons(ETH_P_ARP);
+    destination.sll_ifindex  = (int)ifindex;
+    destination.sll_halen    = LINKG_NETWORK_MAC_ADDRESS_LENGTH;
+
+    memset(destination.sll_addr, 0xff, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+
+    do
+    {
+        sent = sendto(fd, packet, sizeof(packet), 0, (const struct sockaddr *)&destination, sizeof(destination));
+    }
+    while (sent < 0 && errno == EINTR);
+
+    if (sent < 0)
+    {
+        ret = -errno;
+    }
+    else if ((size_t)sent != sizeof(packet))
+    {
+        ret = -EIO;
+    }
+    else
+    {
+        ret = 0;
+    }
+
+    return _network_control_socket_close(fd, ret);
 }
 
 /**

@@ -436,8 +436,9 @@
 
         if (data.role === "sta")
         {
+            statusText.title = "";
             text =
-                "STA · 节点 " +
+                "STA · 本机节点：" +
                 data.node_id +
                 " · 当前链路：" +
                 formatActiveLink(data.active_link);
@@ -457,14 +458,15 @@
 
         if (data.role === "ap")
         {
+            statusText.title = "在线对端：当前在线的其他组网节点数量，不包含本机。";
             text =
-                "AP · 节点 " +
+                "AP · 本机节点：" +
                 data.node_id +
-                " · 在线节点：" +
+                " · 在线对端：" +
                 data.peer_count +
-                " · Wi-Fi " +
+                " · Wi-Fi：" +
                 data.wifi_count +
-                " / 5G " +
+                " / 5G：" +
                 data.cellular_count;
 
             if (data.none_count > 0)
@@ -493,6 +495,7 @@
 
         if (statusText != null)
         {
+            statusText.title = "";
             statusText.textContent = "设备连接异常";
         }
 

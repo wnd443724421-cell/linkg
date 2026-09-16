@@ -31,6 +31,7 @@ bool linkg_wifi_narrow_rate_valid(uint16_t rate);
 /****************************** 宽带校验 ******************************/
 
 bool linkg_wifi_wide_bandwidth_valid(linkg_wifi_wide_bandwidth_t bandwidth);
+bool linkg_wifi_wide_channel_bandwidth_valid(uint16_t channel, linkg_wifi_wide_bandwidth_t bandwidth);
 
 #ifdef __cplusplus
 }

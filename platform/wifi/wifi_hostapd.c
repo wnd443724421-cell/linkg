@@ -127,11 +127,6 @@ static const char *_wifi_hostapd_get_80mhz_center_channel(uint16_t channel)
         return "155";
     }
 
-    if (channel >= 184U && channel <= 196U)
-    {
-        return "190";
-    }
-
     return NULL;
 }
 
@@ -212,17 +207,18 @@ static int _wifi_hostapd_update_bandwidth(char **content, size_t *length, const 
         return -EINVAL;
     }
 
+    if (!linkg_wifi_wide_channel_bandwidth_valid(config->ap.channel, config->wideband.wide_params.ap_bandwidth))
+    {
+        WIFI_SERVICE_ERROR("unsupported channel and bandwidth combination, channel=%u, bandwidth=%d",
+                           (unsigned int)config->ap.channel,
+                           config->wideband.wide_params.ap_bandwidth);
+
+        return -EINVAL;
+    }
+
     if (config->wideband.wide_params.ap_bandwidth == LINKG_WIFI_WIDE_BANDWIDTH_20_MHZ)
     {
         return 0;
-    }
-
-    if (config->wideband.wide_params.ap_bandwidth != LINKG_WIFI_WIDE_BANDWIDTH_40_MHZ)
-    {
-        if (config->wideband.wide_params.ap_bandwidth != LINKG_WIFI_WIDE_BANDWIDTH_80_MHZ)
-        {
-            return -EINVAL;
-        }
     }
 
     ht_capab = _wifi_hostapd_get_ht40_capab(config->ap.channel);

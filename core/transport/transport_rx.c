@@ -240,7 +240,7 @@ static void _linkg_transport_rx_flush_delivery(linkg_transport_type_t type, link
 /**
  * @brief 将一个本机Payload加入指定Transport类型批次。
  */
-static void _linkg_transport_rx_append_delivery(linkg_transport_type_t type, linkg_transport_class_t traffic_class, uint8_t source_node_id, uint8_t peer_node_id, linkg_packet_t *packet, bool owned, linkg_transport_delivery_batch_t *batch)
+static void _linkg_transport_rx_append_delivery(uint32_t ingress_link_id, linkg_transport_type_t type, linkg_transport_class_t traffic_class, uint8_t source_node_id, uint8_t peer_node_id, linkg_packet_t *packet, bool owned, linkg_transport_delivery_batch_t *batch)
 {
     linkg_transport_delivery_t *delivery;
 
@@ -256,10 +256,11 @@ static void _linkg_transport_rx_append_delivery(linkg_transport_type_t type, lin
 
     delivery = &batch->items[batch->count];
 
-    delivery->packet         = packet;
-    delivery->traffic_class  = traffic_class;
-    delivery->source_node_id = source_node_id;
-    delivery->peer_node_id   = peer_node_id;
+    delivery->packet          = packet;
+    delivery->ingress_link_id = ingress_link_id;
+    delivery->traffic_class   = traffic_class;
+    delivery->source_node_id  = source_node_id;
+    delivery->peer_node_id    = peer_node_id;
 
     batch->owned[batch->count] = owned;
     batch->count++;
@@ -268,11 +269,11 @@ static void _linkg_transport_rx_append_delivery(linkg_transport_type_t type, lin
 /**
  * @brief 去除普通Transport基础头并加入本机类型批次。
  */
-static int _linkg_transport_rx_append_normal_delivery(const linkg_transport_rx_state_t *state, linkg_link_rx_item_t *item, linkg_transport_delivery_batch_t *batch)
+static int _linkg_transport_rx_append_normal_delivery(uint32_t ingress_link_id, const linkg_transport_rx_state_t *state, linkg_link_rx_item_t *item, linkg_transport_delivery_batch_t *batch)
 {
     linkg_transport_type_t type;
 
-    if (state == NULL || item == NULL || item->packet == NULL || batch == NULL)
+    if (ingress_link_id == LINKG_LINK_ID_INVALID || state == NULL || item == NULL || item->packet == NULL || batch == NULL)
     {
         return -EINVAL;
     }
@@ -284,13 +285,16 @@ static int _linkg_transport_rx_append_normal_delivery(const linkg_transport_rx_s
 
     type = (linkg_transport_type_t)state->header.type;
 
-    _linkg_transport_rx_append_delivery(type, state->traffic_class, state->header.source_node_id, state->peer_node_id, item->packet, false, batch);
+    _linkg_transport_rx_append_delivery(ingress_link_id, type, state->traffic_class, state->header.source_node_id, state->peer_node_id, item->packet, false, batch);
 
     return 0;
 }
 
 /**
  * @brief 将完整重组Payload加入本机类型批次。
+ *
+ * @note Transport允许不同物理Link的分片共同完成重组，
+ *       因此完整重组Payload不存在唯一ingress_link_id。
  */
 static void _linkg_transport_rx_append_reassembled_delivery(const linkg_transport_rx_state_t *state, linkg_packet_t *packet, linkg_transport_delivery_batch_t *batch)
 {
@@ -303,7 +307,7 @@ static void _linkg_transport_rx_append_reassembled_delivery(const linkg_transpor
 
     type = (linkg_transport_type_t)state->header.type;
 
-    _linkg_transport_rx_append_delivery(type, state->traffic_class, state->header.source_node_id, state->peer_node_id, packet, true, batch);
+    _linkg_transport_rx_append_delivery(LINKG_LINK_ID_INVALID, type, state->traffic_class, state->header.source_node_id, state->peer_node_id, packet, true, batch);
 }
 
 /**
@@ -861,7 +865,7 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
  *
  * @note 本机数据按Transport Type进入本机Handler；只有AP的非本机数据进入中继路径，中继批次严格按照traffic_class隔离。
  */
-static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_delivery_batch_t *delivery_batches, linkg_transport_forward_batch_t *forward_batches, linkg_transport_rx_batch_stats_t *stats)
+static void _linkg_transport_rx_dispatch_batch(uint32_t ingress_link_id, linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_delivery_batch_t *delivery_batches, linkg_transport_forward_batch_t *forward_batches, linkg_transport_rx_batch_stats_t *stats)
 {
     linkg_transport_forward_item_t pair_items[LINKG_TRANSPORT_FRAGMENT_COUNT_MAX];
     linkg_transport_type_t         type;
@@ -892,7 +896,7 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
                 continue;
             }
 
-            ret = _linkg_transport_rx_append_normal_delivery(&states[index], &items[index], &delivery_batches[type]);
+            ret = _linkg_transport_rx_append_normal_delivery(ingress_link_id, &states[index], &items[index], &delivery_batches[type]);
             if (ret != 0)
             {
                 stats->invalid_frames++;
@@ -999,7 +1003,7 @@ static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_it
     }
 
     _linkg_transport_rx_reassemble_batch(items, states, count, &stats);
-    _linkg_transport_rx_dispatch_batch(items, states, count, delivery_batches, forward_batches, &stats);
+    _linkg_transport_rx_dispatch_batch(link_id, items, states, count, delivery_batches, forward_batches, &stats);
     _linkg_transport_rx_record_batch_stats(&stats);
 }
 
