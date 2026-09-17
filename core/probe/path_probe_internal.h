@@ -223,7 +223,7 @@ int linkg_path_probe_wire_decode(const linkg_packet_t *packet, linkg_path_probe_
 
 bool                             linkg_path_probe_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right);
 int                              linkg_path_probe_read_target(linkg_device_role_t role, uint8_t local_node_id, uint8_t peer_node_id, uint32_t link_id, linkg_path_endpoint_t *endpoint);
-linkg_path_probe_path_runtime_t  *linkg_path_probe_find_path_locked(uint8_t peer_node_id, uint32_t link_id);
+linkg_path_probe_path_runtime_t *linkg_path_probe_find_path_locked(uint8_t peer_node_id, uint32_t link_id);
 void                             linkg_path_probe_runtime_reset_locked(void);
 void                             linkg_path_probe_cancel_diagnostic_locked(int status, uint64_t now_us);
 void                             linkg_path_probe_cancel_all_locked(int status, uint64_t now_us);

@@ -2,8 +2,8 @@
  * @file linkg_main.c
  * @brief LinkG应用程序入口
  * @author Dawn
- * @version 1.2.1
- * @date 2026-09-11
+ * @version 1.2.2
+ * @date 2026-09-17
  */
 
 #include <errno.h>
@@ -23,6 +23,7 @@
 #include "linkg_network.h"
 #include "linkg_node.h"
 #include "linkg_packet_pool.h"
+#include "linkg_path_probe.h"
 #include "linkg_route.h"
 #include "linkg_scheduler.h"
 #include "linkg_switch.h"
@@ -60,6 +61,7 @@ typedef struct
     bool                route_initialized;           // Route模块是否已经初始化
     bool                nat_initialized;             // NAT模块是否已经初始化
     bool                discovery_initialized;       // Discovery模块是否已经初始化
+    bool                probe_initialized;           // Path Probe模块是否已经初始化
     bool                udhcp_initialized;           // UDHCP模块是否已经初始化
     bool                web_initialized;             // Web模块是否已经初始化
     bool                network_started;             // Network Service是否进入过start生命周期
@@ -68,6 +70,7 @@ typedef struct
     bool                route_started;               // Route模块是否进入过start生命周期
     bool                nat_started;                 // NAT模块是否进入过start生命周期
     bool                discovery_started;           // Discovery模块是否进入过start生命周期
+    bool                probe_started;               // Path Probe模块是否进入过start生命周期
     bool                udhcp_started;               // UDHCP模块是否进入过start生命周期
     bool                web_started;                 // Web模块是否进入过start生命周期
 } linkg_app_context_t;
@@ -95,6 +98,7 @@ static bool _linkg_app_has_initialized_modules(void)
            g_app.route_initialized ||
            g_app.nat_initialized ||
            g_app.discovery_initialized ||
+           g_app.probe_initialized ||
            g_app.udhcp_initialized ||
            g_app.web_initialized;
 }
@@ -110,6 +114,7 @@ static bool _linkg_app_has_started_modules(void)
            g_app.route_started ||
            g_app.nat_started ||
            g_app.discovery_started ||
+           g_app.probe_started ||
            g_app.udhcp_started ||
            g_app.web_started;
 }
@@ -296,6 +301,19 @@ static int _linkg_app_init(void)
 
     g_app.discovery_initialized = true;
 
+    /**
+     * Path Probe依赖全局Packet Pool、Node、Transport和Scheduler。
+     * 初始化阶段只建立内部运行资源，不启动后台探测线程。
+     */
+    ret = linkg_path_probe_init(&g_app.packet_pool);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize Path Probe module failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.probe_initialized = true;
+
     ret = linkg_udhcp_init(&config.network);
     if (ret != 0)
     {
@@ -312,7 +330,6 @@ static int _linkg_app_init(void)
         return ret;
     }
 
-
     g_app.web_initialized = true;
 
     LINKG_LOG_INFO("application modules initialized");
@@ -326,7 +343,7 @@ static int _linkg_app_init(void)
  * @brief 启动全部具有运行态的应用模块。
  *
  * 启动顺序严格按照运行依赖建立：
- * Network -> Link Manager -> TUN -> Route -> NAT -> Discovery -> UDHCP -> Web。
+ * Network -> Link Manager -> TUN -> Route -> NAT -> Discovery -> Probe -> UDHCP -> Web。
  */
 static int _linkg_app_start(void)
 {
@@ -344,6 +361,7 @@ static int _linkg_app_start(void)
         !g_app.route_initialized ||
         !g_app.nat_initialized ||
         !g_app.discovery_initialized ||
+        !g_app.probe_initialized ||
         !g_app.udhcp_initialized ||
         !g_app.web_initialized)
     {
@@ -418,7 +436,7 @@ static int _linkg_app_start(void)
     }
 
     /**
-     * Discovery在DHCP之前启动。
+     * Discovery在Probe和DHCP之前启动。
      * 从此刻开始Peer上线流程才允许创建Node、Transport、Path和Linux Route状态。
      */
     g_app.discovery_started = true;
@@ -431,8 +449,23 @@ static int _linkg_app_start(void)
     }
 
     /**
+     * Path Probe在Discovery之后启动。
+     *
+     * 此时Peer和Path生命周期已经进入运行态，
+     * Probe可以注册PATH_PROBE Transport Handler并启动后台探测线程。
+     */
+    g_app.probe_started = true;
+
+    ret = linkg_path_probe_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start Path Probe module failed, error=%d", ret);
+        return ret;
+    }
+
+    /**
      * UDHCP启动。
-     * 此时Ethernet、TUN、Route、NAT和Discovery均已经进入运行态，
+     * 此时Ethernet、TUN、Route、NAT、Discovery和Probe均已经进入运行态，
      * DHCP Client一旦获取地址和虚拟网络路由即可直接使用完整LinkG数据面。
      */
     g_app.udhcp_started = true;
@@ -490,7 +523,7 @@ static int _linkg_app_stop(void)
     }
 
     /**
-     * UDHCP必须最先停止，避免应用拆除期间继续向新接入设备分配地址和路由。
+     * UDHCP随后停止，避免应用拆除期间继续向新接入设备分配地址和路由。
      * 已经获得租约的客户端不依赖udhcpd进程继续运行。
      */
     if (g_app.udhcp_started)
@@ -503,6 +536,25 @@ static int _linkg_app_stop(void)
         }
 
         g_app.udhcp_started = false;
+    }
+
+    /**
+     * Path Probe必须在Discovery之前停止。
+     *
+     * Probe停止后不再产生新的探测请求，同时注销Transport Handler
+     * 并等待后台Probe运行资源退出。
+     * Discovery随后才能安全注销Peer和Path。
+     */
+    if (g_app.probe_started)
+    {
+        ret = linkg_path_probe_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop Path Probe module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.probe_started = false;
     }
 
     /**
@@ -629,6 +681,24 @@ static int _linkg_app_deinit(void)
         g_app.udhcp_initialized = false;
     }
 
+    /**
+     * Probe必须在Discovery、Scheduler和Transport之前反初始化。
+     *
+     * 此时Probe已经完成stop，不再存在后台探测线程和Transport回调，
+     * 可以安全释放Probe内部软件资源。
+     */
+    if (g_app.probe_initialized)
+    {
+        ret = linkg_path_probe_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize Path Probe module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.probe_initialized = false;
+    }
+
     if (g_app.discovery_initialized)
     {
         ret = linkg_discovery_deinit();
@@ -682,7 +752,7 @@ static int _linkg_app_deinit(void)
     }
 
     /**
-     * TUN已经注销本机USER_DATA交付回调，业务Link线程也已经停止。
+     * TUN和Probe已经注销Transport Handler，业务Link线程也已经停止。
      * Scheduler必须先注销Transport中继回调，随后才能反初始化Transport。
      */
     if (g_app.scheduler_initialized)
