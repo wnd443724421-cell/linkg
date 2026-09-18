@@ -78,10 +78,10 @@ typedef struct
 {
     linkg_path_probe_class_runtime_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三类别周期状态
     linkg_path_endpoint_t            endpoint;                             // 仅用于识别端点变化，不作为缓存发送目的地址
-    uint64_t                         pps_sample_started_us;                 // Cellular业务PPS统计窗口起始时间
+    uint64_t                         pps_sample_started_us;                // Cellular业务PPS统计窗口起始时间
     uint64_t                         pps_last_business_packets;            // 上次统计累计真实业务包数
-    uint64_t                         probe_tx_packets;                      // 本模块经该Path成功提交的Probe帧数
-    uint64_t                         probe_rx_packets;                      // 本模块经该Path收到的有效Probe帧数
+    uint64_t                         probe_tx_packets;                     // 本模块经该Path成功提交的Probe帧数
+    uint64_t                         probe_rx_packets;                     // 本模块经该Path收到的有效Probe帧数
     uint64_t                         generation;                           // 本模块观察到的Path代际
     uint32_t                         link_id;                              // 本地Link实例标识
     uint32_t                         current_pps;                          // 最近一个完整窗口的真实业务PPS

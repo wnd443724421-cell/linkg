@@ -30,7 +30,6 @@
 #include "linkg_network_ops.h"
 #include "linkg_time.h"
 
-#include "cellular_link_heartbeat.h"
 #include "cellular_rx_queue.h"
 
 /****************************** 模块常量 ******************************/
@@ -502,13 +501,6 @@ static int _linkg_cellular_rx_receive_once(linkg_cellular_rx_t *rx, linkg_link_t
 
         if (!linkg_network_ipv6_address_is_global(&source->sin6_addr) ||
             source->sin6_port != htons(rx->service_ports[tx_class]))
-        {
-            linkg_packet_release(packet);
-            scratch->packets[index] = NULL;
-            continue;
-        }
-
-        if (linkg_cellular_link_heartbeat_is_packet(linkg_packet_const_data(packet), scratch->messages[index].msg_len, tx_class))
         {
             linkg_packet_release(packet);
             scratch->packets[index] = NULL;

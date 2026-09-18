@@ -23,7 +23,6 @@
 #include "linkg_system_resources.h"
 
 #include "link_internal.h"
-#include "cellular_link_heartbeat.h"
 #include "cellular_rx.h"
 #include "cellular_tx.h"
 
@@ -48,7 +47,6 @@ typedef struct
     int                              socket_fds[LINKG_LINK_TX_CLASS_COUNT];    // 各业务IPv6 UDP收发套接字
     linkg_cellular_tx_t             *tx;                                      // 蜂窝发送模块
     linkg_cellular_rx_t             *rx;                                      // 蜂窝接收模块
-    linkg_cellular_link_heartbeat_t *heartbeat;                               // 蜂窝业务链路心跳模块
 } linkg_cellular_link_t;
 
 _Static_assert(offsetof(linkg_cellular_link_t, base) == 0U, "linkg_link_t must be the first member");
@@ -222,7 +220,6 @@ fail_socket:
  */
 static int _cellular_link_init(linkg_link_t *link, const void *config)
 {
-    linkg_cellular_link_heartbeat_config_t heartbeat_config;
     const linkg_cellular_link_config_t    *cellular_config;
     linkg_cellular_link_t                 *cellular_link;
     uint32_t                               class_index;
@@ -250,26 +247,13 @@ static int _cellular_link_init(linkg_link_t *link, const void *config)
         cellular_link->socket_fds[class_index] = -1;
     }
 
-    memset(&heartbeat_config, 0, sizeof(heartbeat_config));
-
-    heartbeat_config.socket_fds     = cellular_link->socket_fds;
-    heartbeat_config.service_ports  = cellular_link->service_ports;
-    heartbeat_config.interface_name = LINKG_RESOURCE_INTERFACE_CELLULAR;
-
-    ret = linkg_cellular_link_heartbeat_create(&heartbeat_config, &cellular_link->heartbeat);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
     cellular_link->tx = linkg_cellular_tx_create(link->runtime->tx_batch_size,
                                                   cellular_link->socket_fds,
                                                   cellular_link->service_ports,
                                                   LINKG_RESOURCE_INTERFACE_CELLULAR);
     if (cellular_link->tx == NULL)
     {
-        ret = -ENOMEM;
-        goto fail_heartbeat;
+        return -ENOMEM;
     }
 
     cellular_link->rx = linkg_cellular_rx_create(link->runtime->rx_batch_size,
@@ -289,10 +273,6 @@ fail_tx:
     linkg_cellular_tx_destroy(cellular_link->tx);
     cellular_link->tx = NULL;
 
-fail_heartbeat:
-    linkg_cellular_link_heartbeat_destroy(cellular_link->heartbeat);
-    cellular_link->heartbeat = NULL;
-
     return ret;
 }
 
@@ -310,9 +290,6 @@ static void _cellular_link_deinit(linkg_link_t *link)
     }
 
     cellular_link = (linkg_cellular_link_t *)link;
-
-    linkg_cellular_link_heartbeat_destroy(cellular_link->heartbeat);
-    cellular_link->heartbeat = NULL;
 
     linkg_cellular_rx_destroy(cellular_link->rx);
     cellular_link->rx = NULL;
@@ -400,14 +377,6 @@ static int _cellular_link_open(linkg_link_t *link)
         goto fail_opened;
     }
 
-    ret = linkg_cellular_link_heartbeat_start(cellular_link->heartbeat, link->id);
-    if (ret != 0)
-    {
-        linkg_cellular_tx_stop(cellular_link->tx);
-        (void)linkg_cellular_rx_stop(cellular_link->rx);
-        goto fail_opened;
-    }
-
     return 0;
 
 fail_opened:
@@ -442,16 +411,6 @@ static int _cellular_link_close(linkg_link_t *link)
 
     cellular_link = (linkg_cellular_link_t *)link;
     first_error   = 0;
-
-    /**
-     * 心跳线程直接复用三个业务Socket，必须先完成join，
-     * 确认不再访问Socket以后才能继续停止TX/RX并关闭描述符。
-     */
-    ret = linkg_cellular_link_heartbeat_stop(cellular_link->heartbeat);
-    if (ret != 0)
-    {
-        return ret;
-    }
 
     linkg_cellular_tx_stop(cellular_link->tx);
 
