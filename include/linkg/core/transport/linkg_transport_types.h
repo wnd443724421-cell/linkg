@@ -48,6 +48,7 @@ typedef enum
     LINKG_TRANSPORT_TYPE_NONE       = 0, // 无效类型
     LINKG_TRANSPORT_TYPE_USER_DATA,      // 用户业务数据
     LINKG_TRANSPORT_TYPE_PATH_PROBE,     // Path主动探测数据
+    LINKG_TRANSPORT_TYPE_SWITCH,         // 链路切换控制数据
     LINKG_TRANSPORT_TYPE_COUNT           // 类型数量
 } linkg_transport_type_t;
 

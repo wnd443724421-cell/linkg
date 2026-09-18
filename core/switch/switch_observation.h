@@ -102,7 +102,6 @@ typedef struct
 {
     bool                                 valid;        // 本轮是否形成有效观测快照
     uint8_t                              peer_node_id; // 当前直接Peer节点编号
-    linkg_send_plan_t                    plan;         // 采集时冻结的当前发送计划
     linkg_switch_wifi_observation_t      wifi;         // 当前Wi-Fi质量观测
     linkg_switch_cellular_observation_t  cellular;     // 当前Cellular备用可用状态
     uint64_t                             collected_us; // 本轮观测采集完成时间
@@ -134,6 +133,7 @@ typedef struct
 /****************************** 观测操作 ******************************/
 
 int  linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us);
+int  linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t loss_permille, uint32_t sample_packets);
 void linkg_switch_observation_reset_locked(uint8_t peer_node_id);
 
 #endif

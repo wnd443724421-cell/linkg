@@ -32,23 +32,22 @@
 
 typedef struct
 {
-    linkg_send_plan_t                 plan;                       // 采集开始时冻结的发送计划
-    linkg_wifi_status_snapshot_t      wifi_status;                // Wi-Fi运行状态快照
-    linkg_wifi_config_t               wifi_config;                // Wi-Fi当前配置
-    linkg_path_probe_peer_snapshot_t  probe;                      // Peer周期Probe快照
-    linkg_path_stats_t                wifi_path_stats;            // Wi-Fi Path累计统计
-    linkg_wifi_rx_stats_t             wifi_rx_stats;              // Wi-Fi链路累计接收丢包统计
-    uint32_t                          wifi_link_id;                // 当前Wi-Fi Link实例
-    uint32_t                          cellular_link_id;            // 当前Cellular Link实例
-    uint64_t                          elapsed_ms;                  // 本轮程序运行时间
-    bool                              wifi_status_valid;           // Wi-Fi状态快照是否有效
-    bool                              wifi_config_valid;           // Wi-Fi配置是否有效
-    bool                              probe_valid;                 // Probe快照是否有效
-    bool                              wifi_path_available;         // 当前Peer Wi-Fi Path是否存在且Link运行
-    bool                              wifi_path_stats_valid;       // Wi-Fi Path累计统计是否有效
-    bool                              wifi_rx_stats_valid;         // Wi-Fi接收累计统计是否有效
-    bool                              cellular_internet_available; // Cellular公网状态是否可用
-    bool                              cellular_path_available;     // 当前Peer Cellular Path是否存在且Link运行
+    linkg_wifi_status_snapshot_t     wifi_status;                 // Wi-Fi运行状态快照
+    linkg_wifi_config_t              wifi_config;                 // Wi-Fi当前配置
+    linkg_path_probe_peer_snapshot_t probe;                       // Peer周期Probe快照
+    linkg_path_stats_t               wifi_path_stats;             // Wi-Fi Path累计统计
+    linkg_wifi_rx_stats_t            wifi_rx_stats;               // Wi-Fi链路累计接收丢包统计
+    uint32_t                         wifi_link_id;                // 当前Wi-Fi Link实例
+    uint32_t                         cellular_link_id;            // 当前Cellular Link实例
+    uint64_t                         elapsed_ms;                  // 本轮程序运行时间
+    bool                             wifi_status_valid;           // Wi-Fi状态快照是否有效
+    bool                             wifi_config_valid;           // Wi-Fi配置是否有效
+    bool                             probe_valid;                 // Probe快照是否有效
+    bool                             wifi_path_available;         // 当前Peer Wi-Fi Path是否存在且Link运行
+    bool                             wifi_path_stats_valid;       // Wi-Fi Path累计统计是否有效
+    bool                             wifi_rx_stats_valid;         // Wi-Fi接收累计统计是否有效
+    bool                             cellular_internet_available; // Cellular公网状态是否可用
+    bool                             cellular_path_available;     // 当前Peer Cellular Path是否存在且Link运行
 } linkg_switch_observation_raw_t;
 
 /****************************** 内部辅助 ******************************/
@@ -88,21 +87,22 @@ static uint32_t _linkg_switch_observation_u32_saturate(uint64_t value)
 }
 
 /**
- * @brief 按真实采样间隔将累计增量换算为每秒速率。
+ * @brief 计算带比例系数的无符号整数比值，并避免中间乘法溢出。
  */
-static uint64_t _linkg_switch_observation_rate_per_second(uint64_t delta, uint64_t scale, uint64_t elapsed_us)
+static uint64_t _linkg_switch_observation_scale_ratio(uint64_t numerator, uint64_t scale, uint64_t denominator)
 {
     uint64_t quotient;
     uint64_t remainder;
     uint64_t value;
+    uint64_t scaled_remainder;
 
-    if (elapsed_us == 0U)
+    if (denominator == 0U)
     {
         return 0U;
     }
 
-    quotient  = delta / elapsed_us;
-    remainder = delta % elapsed_us;
+    quotient  = numerator / denominator;
+    remainder = numerator % denominator;
 
     if (quotient > UINT64_MAX / scale)
     {
@@ -111,22 +111,24 @@ static uint64_t _linkg_switch_observation_rate_per_second(uint64_t delta, uint64
 
     value = quotient * scale;
 
-    if (remainder != 0U)
+    if (remainder == 0U)
     {
-        if (remainder > UINT64_MAX / scale)
-        {
-            return UINT64_MAX;
-        }
-
-        if (UINT64_MAX - value < (remainder * scale) / elapsed_us)
-        {
-            return UINT64_MAX;
-        }
-
-        value += (remainder * scale) / elapsed_us;
+        return value;
     }
 
-    return value;
+    if (remainder > UINT64_MAX / scale)
+    {
+        return UINT64_MAX;
+    }
+
+    scaled_remainder = (remainder * scale) / denominator;
+
+    if (UINT64_MAX - value < scaled_remainder)
+    {
+        return UINT64_MAX;
+    }
+
+    return value + scaled_remainder;
 }
 
 /**
@@ -205,6 +207,10 @@ static int _linkg_switch_observation_collect_path(uint8_t peer_node_id, uint32_t
     if (read_stats)
     {
         ret = linkg_path_get_stats(path, stats);
+    }
+    else
+    {
+        ret = 0;
     }
 
     linkg_path_release(path);
@@ -355,9 +361,7 @@ static void _linkg_switch_observation_build_wifi_radio(const linkg_switch_observ
     radio->noise_valid       = raw->wifi_status.local.radio.noise_valid;
     radio->work_mode         = raw->wifi_status.local.radio.work_mode;
     radio->temperature_valid = raw->wifi_status.local.chip_temperature_valid;
-    radio->status_updated_us = _linkg_switch_observation_elapsed_ms_to_monotonic_us(raw->wifi_status.local.updated_ms,
-                                                                                    now_us,
-                                                                                    raw->elapsed_ms);
+    radio->status_updated_us = _linkg_switch_observation_elapsed_ms_to_monotonic_us(raw->wifi_status.local.updated_ms, now_us, raw->elapsed_ms);
 
     if (radio->statistics_valid)
     {
@@ -365,9 +369,7 @@ static void _linkg_switch_observation_build_wifi_radio(const linkg_switch_observ
         radio->tx_phy_kbps           = peer->tx_rate_kbps;
         radio->rx_phy_kbps           = peer->rx_rate_kbps;
         radio->inactive_ms           = peer->inactive_ms;
-        radio->statistics_updated_us = _linkg_switch_observation_elapsed_ms_to_monotonic_us(peer->statistics_updated_ms,
-                                                                                            now_us,
-                                                                                            raw->elapsed_ms);
+        radio->statistics_updated_us = _linkg_switch_observation_elapsed_ms_to_monotonic_us(peer->statistics_updated_ms, now_us, raw->elapsed_ms);
     }
 
     if (radio->noise_valid)
@@ -434,7 +436,7 @@ static void _linkg_switch_observation_build_probe(const linkg_switch_observation
 /**
  * @brief 按本轮真实时间间隔更新Wi-Fi Path累计差分速率采样，调用方持有Switch锁。
  */
-static void _linkg_switch_observation_update_traffic_locked(linkg_switch_peer_runtime_t *peer, const linkg_switch_observation_raw_t *raw, uint64_t now_us, linkg_switch_traffic_observation_t *traffic)
+static void _linkg_switch_observation_update_traffic_locked(linkg_switch_sta_peer_runtime_t *runtime, const linkg_switch_observation_raw_t *raw, uint64_t now_us, linkg_switch_traffic_observation_t *traffic)
 {
     linkg_switch_traffic_sampler_t *sampler;
     uint64_t                        elapsed_us;
@@ -446,7 +448,7 @@ static void _linkg_switch_observation_update_traffic_locked(linkg_switch_peer_ru
     uint64_t                        rx_pps;
 
     memset(traffic, 0, sizeof(*traffic));
-    sampler = &peer->wifi_traffic_sampler;
+    sampler = &runtime->wifi_traffic_sampler;
 
     if (!raw->wifi_path_stats_valid)
     {
@@ -454,7 +456,13 @@ static void _linkg_switch_observation_update_traffic_locked(linkg_switch_peer_ru
         return;
     }
 
-    if (!sampler->initialized || sampler->link_id != raw->wifi_link_id || now_us <= sampler->sampled_us || raw->wifi_path_stats.tx_bytes < sampler->tx_bytes || raw->wifi_path_stats.rx_bytes < sampler->rx_bytes || raw->wifi_path_stats.tx_packets < sampler->tx_packets || raw->wifi_path_stats.rx_packets < sampler->rx_packets)
+    if (!sampler->initialized ||
+        sampler->link_id != raw->wifi_link_id ||
+        now_us <= sampler->sampled_us ||
+        raw->wifi_path_stats.tx_bytes < sampler->tx_bytes ||
+        raw->wifi_path_stats.rx_bytes < sampler->rx_bytes ||
+        raw->wifi_path_stats.tx_packets < sampler->tx_packets ||
+        raw->wifi_path_stats.rx_packets < sampler->rx_packets)
     {
         sampler->initialized = true;
         sampler->link_id     = raw->wifi_link_id;
@@ -472,14 +480,14 @@ static void _linkg_switch_observation_update_traffic_locked(linkg_switch_peer_ru
     tx_byte_delta   = raw->wifi_path_stats.tx_bytes - sampler->tx_bytes;
     rx_byte_delta   = raw->wifi_path_stats.rx_bytes - sampler->rx_bytes;
 
-    tx_pps = _linkg_switch_observation_rate_per_second(tx_packet_delta, 1000000ULL, elapsed_us);
-    rx_pps = _linkg_switch_observation_rate_per_second(rx_packet_delta, 1000000ULL, elapsed_us);
+    tx_pps = _linkg_switch_observation_scale_ratio(tx_packet_delta, 1000000ULL, elapsed_us);
+    rx_pps = _linkg_switch_observation_scale_ratio(rx_packet_delta, 1000000ULL, elapsed_us);
 
     traffic->valid      = true;
     traffic->tx_pps     = _linkg_switch_observation_u32_saturate(tx_pps);
     traffic->rx_pps     = _linkg_switch_observation_u32_saturate(rx_pps);
-    traffic->tx_bps     = _linkg_switch_observation_rate_per_second(tx_byte_delta, 8000000ULL, elapsed_us);
-    traffic->rx_bps     = _linkg_switch_observation_rate_per_second(rx_byte_delta, 8000000ULL, elapsed_us);
+    traffic->tx_bps     = _linkg_switch_observation_scale_ratio(tx_byte_delta, 8000000ULL, elapsed_us);
+    traffic->rx_bps     = _linkg_switch_observation_scale_ratio(rx_byte_delta, 8000000ULL, elapsed_us);
     traffic->updated_us = now_us;
 
     sampler->sampled_us = now_us;
@@ -492,15 +500,16 @@ static void _linkg_switch_observation_update_traffic_locked(linkg_switch_peer_ru
 /**
  * @brief 更新STA本机统计的AP到STA Wi-Fi下行丢包窗口，调用方持有Switch锁。
  */
-static void _linkg_switch_observation_update_downlink_loss_locked(linkg_switch_peer_runtime_t *peer, const linkg_switch_observation_raw_t *raw, uint64_t now_us, linkg_switch_loss_observation_t *loss)
+static void _linkg_switch_observation_update_downlink_loss_locked(linkg_switch_sta_peer_runtime_t *runtime, const linkg_switch_observation_raw_t *raw, uint64_t now_us, linkg_switch_loss_observation_t *loss)
 {
     linkg_switch_loss_sampler_t *sampler;
     uint64_t                     received_delta;
     uint64_t                     lost_delta;
     uint64_t                     total_delta;
+    uint64_t                     loss_permille;
 
     memset(loss, 0, sizeof(*loss));
-    sampler = &peer->wifi_downlink_loss_sampler;
+    sampler = &runtime->wifi_downlink_loss_sampler;
 
     if (!raw->wifi_rx_stats_valid)
     {
@@ -508,7 +517,10 @@ static void _linkg_switch_observation_update_downlink_loss_locked(linkg_switch_p
         return;
     }
 
-    if (!sampler->initialized || sampler->link_id != raw->wifi_link_id || raw->wifi_rx_stats.received_packets < sampler->received_packets || raw->wifi_rx_stats.confirmed_lost_packets < sampler->lost_packets)
+    if (!sampler->initialized ||
+        sampler->link_id != raw->wifi_link_id ||
+        raw->wifi_rx_stats.received_packets < sampler->received_packets ||
+        raw->wifi_rx_stats.confirmed_lost_packets < sampler->lost_packets)
     {
         sampler->initialized      = true;
         sampler->link_id          = raw->wifi_link_id;
@@ -521,13 +533,14 @@ static void _linkg_switch_observation_update_downlink_loss_locked(linkg_switch_p
     lost_delta     = raw->wifi_rx_stats.confirmed_lost_packets - sampler->lost_packets;
     total_delta    = received_delta + lost_delta;
 
-    loss->updated_us = now_us;
-
     if (total_delta != 0U)
     {
+        loss_permille = _linkg_switch_observation_scale_ratio(lost_delta, 1000ULL, total_delta);
+
         loss->valid          = true;
-        loss->loss_permille  = (uint32_t)((lost_delta * 1000ULL) / total_delta);
+        loss->loss_permille  = _linkg_switch_observation_u32_saturate(loss_permille);
         loss->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
+        loss->updated_us     = now_us;
     }
 
     sampler->received_packets = raw->wifi_rx_stats.received_packets;
@@ -535,21 +548,21 @@ static void _linkg_switch_observation_update_downlink_loss_locked(linkg_switch_p
 }
 
 /**
- * @brief 发布本轮完整观测快照并更新本地差分采样状态。
+ * @brief 发布本轮完整观测快照并更新STA本地差分采样状态。
  */
 static int _linkg_switch_observation_publish(uint8_t peer_node_id, const linkg_switch_observation_raw_t *raw, uint64_t now_us)
 {
-    linkg_switch_peer_runtime_t *peer;
-    linkg_switch_observation_t   observation;
+    linkg_switch_sta_peer_runtime_t *runtime;
+    linkg_switch_peer_runtime_t     *peer;
+    linkg_switch_observation_t       observation;
 
     memset(&observation, 0, sizeof(observation));
 
-    observation.valid              = true;
-    observation.peer_node_id       = peer_node_id;
-    observation.plan               = raw->plan;
-    observation.collected_us       = now_us;
-    observation.wifi.link_id       = raw->wifi_link_id;
-    observation.cellular.link_id   = raw->cellular_link_id;
+    observation.valid               = true;
+    observation.peer_node_id        = peer_node_id;
+    observation.collected_us        = now_us;
+    observation.wifi.link_id        = raw->wifi_link_id;
+    observation.cellular.link_id    = raw->cellular_link_id;
     observation.cellular.updated_us = now_us;
 
     _linkg_switch_observation_build_wifi_radio(raw, now_us, &observation.wifi.radio);
@@ -566,6 +579,18 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, const linkg_s
         return -ENODEV;
     }
 
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
+    if (g_switch.role != LINKG_DEVICE_ROLE_STA)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -EPERM;
+    }
+
     peer = linkg_switch_find_peer_locked(peer_node_id);
     if (peer == NULL)
     {
@@ -573,18 +598,20 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, const linkg_s
         return -ENOENT;
     }
 
-    _linkg_switch_observation_update_traffic_locked(peer,
+    runtime = &peer->role.sta;
+
+    _linkg_switch_observation_update_traffic_locked(runtime,
                                                      raw,
                                                      now_us,
                                                      &observation.wifi.traffic);
 
-    _linkg_switch_observation_update_downlink_loss_locked(peer,
+    _linkg_switch_observation_update_downlink_loss_locked(runtime,
                                                            raw,
                                                            now_us,
                                                            &observation.wifi.loss.downlink);
 
-    observation.wifi.loss.uplink = peer->remote_wifi_uplink_loss;
-    peer->observation             = observation;
+    observation.wifi.loss.uplink = runtime->remote_wifi_uplink_loss;
+    runtime->observation         = observation;
 
     pthread_mutex_unlock(&g_switch.lock);
 
@@ -603,11 +630,8 @@ static void _linkg_switch_observation_log(const linkg_switch_observation_t *obse
         return;
     }
 
-    LINKG_LOG_DEBUG("SWITCH-OBS: peer=%u plan=%d/%u/%u wifi=%d connected=%d rssi=%d noise=%d/%d phy_kbps=%u/%u traffic=%d pps=%u/%u bps=%llu/%llu loss_up=%d/%u/%u loss_down=%d/%u/%u probe=%d/%d/%u,%d/%d/%u,%d/%d/%u temp=%d/%d mode=%d bw=%u rate=%d/%u cell=%d",
+    LINKG_LOG_DEBUG("SWITCH-OBS: peer=%u wifi=%d connected=%d rssi=%d noise=%d/%d phy_kbps=%u/%u traffic=%d pps=%u/%u bps=%llu/%llu loss_up=%d/%u/%u loss_down=%d/%u/%u probe=%d/%d/%u,%d/%d/%u,%d/%d/%u temp=%d/%d mode=%d bw=%u rate=%d/%u cell=%d",
                     (unsigned int)observation->peer_node_id,
-                    (int)observation->plan.mode,
-                    (unsigned int)observation->plan.primary_link_id,
-                    (unsigned int)observation->plan.secondary_link_id,
                     observation->wifi.available ? 1 : 0,
                     observation->wifi.radio.connected ? 1 : 0,
                     observation->wifi.radio.rssi_dbm,
@@ -652,7 +676,6 @@ static void _linkg_switch_observation_log(const linkg_switch_observation_t *obse
 int linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us)
 {
     linkg_switch_observation_raw_t raw;
-    linkg_switch_peer_runtime_t   *peer;
     int                            first_error;
     int                            ret;
 
@@ -675,20 +698,23 @@ int linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us)
         return -ENODEV;
     }
 
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
     if (g_switch.role != LINKG_DEVICE_ROLE_STA)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return -EPERM;
     }
 
-    peer = linkg_switch_find_peer_locked(peer_node_id);
-    if (peer == NULL)
+    if (linkg_switch_find_peer_locked(peer_node_id) == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return -ENOENT;
     }
-
-    raw.plan = peer->plan;
 
     pthread_mutex_unlock(&g_switch.lock);
 
@@ -707,11 +733,80 @@ int linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us)
 }
 
 /**
- * @brief 清空指定Peer观测快照和本地差分采样基线，调用方持有Switch锁。
+ * @brief 更新AP上报的STA到AP Wi-Fi上行丢包观测。
+ */
+int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t loss_permille, uint32_t sample_packets)
+{
+    linkg_switch_sta_peer_runtime_t *runtime;
+    linkg_switch_peer_runtime_t     *peer;
+    uint64_t now_us;
+
+    if (peer_node_id < LINKG_RESOURCE_NODE_ID_MIN ||
+        peer_node_id > LINKG_RESOURCE_NODE_ID_MAX ||
+        loss_permille > 1000U)
+    {
+        return -EINVAL;
+    }
+
+    now_us = linkg_time_monotonic_us();
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (!g_switch.initialized)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENODEV;
+    }
+
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
+    if (g_switch.role != LINKG_DEVICE_ROLE_STA)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -EPERM;
+    }
+
+    peer = linkg_switch_find_peer_locked(peer_node_id);
+    if (peer == NULL)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENOENT;
+    }
+
+    runtime = &peer->role.sta;
+
+    if (runtime->remote_wifi_uplink_loss.valid && now_us < runtime->remote_wifi_uplink_loss.updated_us)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    runtime->remote_wifi_uplink_loss.valid          = sample_packets != 0U;
+    runtime->remote_wifi_uplink_loss.loss_permille  = sample_packets != 0U ? loss_permille : 0U;
+    runtime->remote_wifi_uplink_loss.sample_packets = sample_packets;
+    runtime->remote_wifi_uplink_loss.updated_us     = now_us;
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    return 0;
+}
+
+/**
+ * @brief 清空指定STA Peer的观测快照和本地差分采样状态，调用方持有Switch锁。
  */
 void linkg_switch_observation_reset_locked(uint8_t peer_node_id)
 {
-    linkg_switch_peer_runtime_t *peer;
+    linkg_switch_sta_peer_runtime_t *runtime;
+    linkg_switch_peer_runtime_t     *peer;
+
+    if (g_switch.role != LINKG_DEVICE_ROLE_STA)
+    {
+        return;
+    }
 
     peer = linkg_switch_find_peer_locked(peer_node_id);
     if (peer == NULL)
@@ -719,8 +814,10 @@ void linkg_switch_observation_reset_locked(uint8_t peer_node_id)
         return;
     }
 
-    memset(&peer->observation, 0, sizeof(peer->observation));
-    memset(&peer->wifi_traffic_sampler, 0, sizeof(peer->wifi_traffic_sampler));
-    memset(&peer->wifi_downlink_loss_sampler, 0, sizeof(peer->wifi_downlink_loss_sampler));
-    memset(&peer->remote_wifi_uplink_loss, 0, sizeof(peer->remote_wifi_uplink_loss));
+    runtime = &peer->role.sta;
+
+    memset(&runtime->observation, 0, sizeof(runtime->observation));
+    memset(&runtime->wifi_traffic_sampler, 0, sizeof(runtime->wifi_traffic_sampler));
+    memset(&runtime->wifi_downlink_loss_sampler, 0, sizeof(runtime->wifi_downlink_loss_sampler));
+    memset(&runtime->remote_wifi_uplink_loss, 0, sizeof(runtime->remote_wifi_uplink_loss));
 }
