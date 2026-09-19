@@ -54,22 +54,33 @@ _Static_assert(LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE == 64U, "Wi-Fi RX sequence win
 /****************************** 内部类型 ******************************/
 
 /**
- * @brief 单个Wi-Fi对端接收Session、Sequence窗口与累计统计状态。
+ * @brief 单个Peer单个业务类别的Sequence窗口与累计统计状态。
  *
- * session_id由发送端Wi-Fi TX对象创建时生成，整个TX生命周期内保持不变。
- * 接收端发现新的session_id时直接重建Sequence窗口，但累计统计保持单调递增。
- * previous_session_id只用于丢弃上一代Session的迟到报文，避免窗口回切。
+ * REALTIME、VIDEO和DATA分别维护独立Sequence窗口，累计统计跨Session保持单调递增。
  */
 typedef struct
 {
-    uint32_t session_id;             // 当前对端Wi-Fi TX Session ID
-    uint32_t previous_session_id;    // 上一个已经退役的Wi-Fi TX Session ID
-    uint32_t highest_sequence;       // 当前Session窗口最高Sequence
-    uint32_t window_span;            // 当前Sequence窗口有效跨度
+    uint32_t highest_sequence;       // 当前Session当前业务类别窗口最高Sequence
+    uint32_t window_span;            // 当前业务类别Sequence窗口有效跨度
     uint64_t received_bitmap;        // bit0表示highest_sequence，向高位表示更旧Sequence
-    uint64_t received_packets;       // 累计唯一成功接收Wi-Fi Packet数量
-    uint64_t confirmed_lost_packets; // 累计64窗口确认丢失Packet数量
-    bool     initialized;            // 当前节点是否已经建立Session窗口
+    uint64_t received_packets;       // 当前业务类别累计唯一成功接收Wi-Fi Packet数量
+    uint64_t confirmed_lost_packets; // 当前业务类别累计64窗口确认丢失Packet数量
+    bool     initialized;            // 当前Session当前业务类别是否已经建立Sequence窗口
+} linkg_wifi_rx_class_stats_t;
+
+/**
+ * @brief 单个Wi-Fi对端接收Session与三业务累计统计状态。
+ *
+ * session_id由发送端Wi-Fi TX对象统一生成，三个业务类别共享同一Session生命周期。
+ * Session切换时同时重建三业务Sequence窗口，但各业务累计received/lost统计不清零。
+ * previous_session_id只用于丢弃上一代Session的迟到报文，避免Session回切。
+ */
+typedef struct
+{
+    uint32_t                    session_id;                         // 当前对端Wi-Fi TX Session ID
+    uint32_t                    previous_session_id;                // 上一个已经退役的Wi-Fi TX Session ID
+    linkg_wifi_rx_class_stats_t classes[LINKG_WIFI_TRAFFIC_COUNT]; // 三业务独立Sequence窗口和累计统计
+    bool                        initialized;                        // 当前节点是否已经建立Session
 } linkg_wifi_rx_peer_stats_t;
 
 /**
@@ -97,7 +108,7 @@ struct linkg_wifi_rx
     linkg_wifi_rx_queue_item_t consume_items[LINKG_WIFI_RX_BATCH_SIZE_MAX];  // Link RX消费临时元素
     linkg_wifi_rx_queue_t     *queues[LINKG_WIFI_TRAFFIC_COUNT];             // 三业务SPSC接收FIFO
 
-    pthread_mutex_t            peer_stats_lock;                              // Peer Session、Sequence窗口和累计统计锁
+    pthread_mutex_t            peer_stats_lock;                              // Peer Session、三业务Sequence窗口和累计统计锁
     linkg_wifi_rx_peer_stats_t peer_stats[LINKG_WIFI_NODE_SLOT_COUNT];       // 按Node ID直接索引的Wi-Fi接收统计
 
     linkg_packet_pool_t       *packet_pool;                                  // 借用Link Packet Pool
@@ -145,59 +156,76 @@ static uint32_t _linkg_wifi_rx_popcount(uint64_t bitmap)
     return (uint32_t)__builtin_popcountll((unsigned long long)bitmap);
 }
 
+static void _linkg_wifi_rx_reset_class_window(linkg_wifi_rx_class_stats_t *class_stats)
+{
+    class_stats->highest_sequence = 0U;
+    class_stats->window_span      = 0U;
+    class_stats->received_bitmap  = 0U;
+    class_stats->initialized      = false;
+}
+
+static void _linkg_wifi_rx_reset_peer_windows(linkg_wifi_rx_peer_stats_t *peer_stats)
+{
+    uint32_t class_index;
+
+    for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
+    {
+        _linkg_wifi_rx_reset_class_window(&peer_stats->classes[class_index]);
+    }
+}
+
 /**
  * @brief 使用指定Session和Sequence建立当前Peer接收窗口基线。
  *
  * 累计received/lost统计不在Session切换时清零，只重建当前Sequence窗口。
  */
-static void _linkg_wifi_rx_set_baseline(linkg_wifi_rx_peer_stats_t *peer_stats, uint32_t session_id, uint32_t sequence)
+static void _linkg_wifi_rx_set_baseline(linkg_wifi_rx_class_stats_t *class_stats, uint32_t sequence)
 {
-    peer_stats->session_id        = session_id;
-    peer_stats->highest_sequence  = sequence;
-    peer_stats->window_span       = 1U;
-    peer_stats->received_bitmap   = UINT64_C(1);
-    peer_stats->received_packets++;
-    peer_stats->initialized       = true;
+    class_stats->highest_sequence = sequence;
+    class_stats->window_span      = 1U;
+    class_stats->received_bitmap  = UINT64_C(1);
+    class_stats->received_packets++;
+    class_stats->initialized      = true;
 }
+
 
 /**
  * @brief 计算当前Sequence窗口向前滑动时被推出窗口的确认丢包数量。
  */
-static uint64_t _linkg_wifi_rx_count_shifted_lost(const linkg_wifi_rx_peer_stats_t *peer_stats, uint32_t shift)
+static uint64_t _linkg_wifi_rx_count_shifted_lost(const linkg_wifi_rx_class_stats_t *class_stats, uint32_t shift)
 {
     uint64_t valid_mask;
     uint64_t shifted_mask;
     uint32_t shifted_count;
     uint32_t received_count;
 
-    if (shift == 0U || peer_stats->window_span == 0U)
+    if (shift == 0U || class_stats->window_span == 0U)
     {
         return 0U;
     }
 
-    valid_mask = _linkg_wifi_rx_low_mask(peer_stats->window_span);
+    valid_mask = _linkg_wifi_rx_low_mask(class_stats->window_span);
 
     if (shift >= LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE)
     {
-        received_count = _linkg_wifi_rx_popcount(peer_stats->received_bitmap & valid_mask);
+        received_count = _linkg_wifi_rx_popcount(class_stats->received_bitmap & valid_mask);
 
-        return (uint64_t)(peer_stats->window_span - received_count) +
-               (uint64_t)(shift - LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE);
+        return (uint64_t)(class_stats->window_span - received_count) + (uint64_t)(shift - LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE);
     }
 
-    if (peer_stats->window_span <= LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE - shift)
+    if (class_stats->window_span <= LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE - shift)
     {
         return 0U;
     }
 
-    shifted_mask = valid_mask &
-                   ~_linkg_wifi_rx_low_mask(LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE - shift);
+    shifted_mask = valid_mask & ~_linkg_wifi_rx_low_mask(LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE - shift);
 
-    shifted_count  = peer_stats->window_span - (LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE - shift);
-    received_count = _linkg_wifi_rx_popcount(peer_stats->received_bitmap & shifted_mask);
+    shifted_count  = class_stats->window_span - (LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE - shift);
+    received_count = _linkg_wifi_rx_popcount(class_stats->received_bitmap & shifted_mask);
 
     return (uint64_t)(shifted_count - received_count);
 }
+
 
 /**
  * @brief 更新当前Session内的Wi-Fi Sequence窗口和累计统计。
@@ -205,7 +233,7 @@ static uint64_t _linkg_wifi_rx_count_shifted_lost(const linkg_wifi_rx_peer_stats
  * 主窗口使用64位Bitmap容忍有限乱序。缺口只有被窗口真正推出后才计入
  * confirmed_lost_packets。重复包和已经超出确认窗口的迟到包不增加公开累计统计。
  */
-static void _linkg_wifi_rx_record_sequence_locked(linkg_wifi_rx_peer_stats_t *peer_stats, uint32_t sequence)
+static void _linkg_wifi_rx_record_sequence_locked(linkg_wifi_rx_class_stats_t *class_stats, uint32_t sequence)
 {
     uint64_t bit;
     uint64_t confirmed_lost;
@@ -213,35 +241,33 @@ static void _linkg_wifi_rx_record_sequence_locked(linkg_wifi_rx_peer_stats_t *pe
     uint32_t shift;
     int32_t  delta;
 
-    delta = (int32_t)(sequence - peer_stats->highest_sequence);
+    delta = (int32_t)(sequence - class_stats->highest_sequence);
 
     if (delta > 0)
     {
         shift          = (uint32_t)delta;
-        confirmed_lost = _linkg_wifi_rx_count_shifted_lost(peer_stats, shift);
+        confirmed_lost = _linkg_wifi_rx_count_shifted_lost(class_stats, shift);
 
-        peer_stats->confirmed_lost_packets += confirmed_lost;
+        class_stats->confirmed_lost_packets += confirmed_lost;
 
         if (shift >= LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE)
         {
-            peer_stats->received_bitmap = UINT64_C(1);
-            peer_stats->window_span     = LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE;
+            class_stats->received_bitmap = UINT64_C(1);
+            class_stats->window_span     = LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE;
         }
         else
         {
-            peer_stats->received_bitmap =
-                (peer_stats->received_bitmap << shift) | UINT64_C(1);
+            class_stats->received_bitmap = (class_stats->received_bitmap << shift) | UINT64_C(1);
+            class_stats->window_span    += shift;
 
-            peer_stats->window_span += shift;
-
-            if (peer_stats->window_span > LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE)
+            if (class_stats->window_span > LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE)
             {
-                peer_stats->window_span = LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE;
+                class_stats->window_span = LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE;
             }
         }
 
-        peer_stats->highest_sequence = sequence;
-        peer_stats->received_packets++;
+        class_stats->highest_sequence = sequence;
+        class_stats->received_packets++;
         return;
     }
 
@@ -250,22 +276,22 @@ static void _linkg_wifi_rx_record_sequence_locked(linkg_wifi_rx_peer_stats_t *pe
         return;
     }
 
-    distance = peer_stats->highest_sequence - sequence;
+    distance = class_stats->highest_sequence - sequence;
 
-    if (distance >= peer_stats->window_span)
+    if (distance >= class_stats->window_span)
     {
         return;
     }
 
     bit = UINT64_C(1) << distance;
 
-    if ((peer_stats->received_bitmap & bit) != 0U)
+    if ((class_stats->received_bitmap & bit) != 0U)
     {
         return;
     }
 
-    peer_stats->received_bitmap |= bit;
-    peer_stats->received_packets++;
+    class_stats->received_bitmap |= bit;
+    class_stats->received_packets++;
 }
 
 /**
@@ -280,21 +306,39 @@ static void _linkg_wifi_rx_record_sequence_locked(linkg_wifi_rx_peer_stats_t *pe
  *
  * @note 调用方必须持有rx->peer_stats_lock。
  */
-static bool _linkg_wifi_rx_record_wire_locked(linkg_wifi_rx_t *rx, uint8_t peer_node_id, uint32_t session_id, uint32_t sequence)
+static bool _linkg_wifi_rx_record_wire_locked(linkg_wifi_rx_t *rx, uint8_t peer_node_id, linkg_wifi_traffic_class_t traffic_class, uint32_t session_id, uint32_t sequence)
 {
-    linkg_wifi_rx_peer_stats_t *peer_stats;
+    linkg_wifi_rx_class_stats_t *class_stats;
+    linkg_wifi_rx_peer_stats_t  *peer_stats;
 
-    peer_stats = &rx->peer_stats[peer_node_id];
+    if (traffic_class >= LINKG_WIFI_TRAFFIC_COUNT)
+    {
+        return false;
+    }
+
+    peer_stats  = &rx->peer_stats[peer_node_id];
+    class_stats = &peer_stats->classes[traffic_class];
 
     if (!peer_stats->initialized)
     {
-        _linkg_wifi_rx_set_baseline(peer_stats, session_id, sequence);
+        peer_stats->session_id  = session_id;
+        peer_stats->initialized = true;
+
+        _linkg_wifi_rx_set_baseline(class_stats, sequence);
         return true;
     }
 
     if (session_id == peer_stats->session_id)
     {
-        _linkg_wifi_rx_record_sequence_locked(peer_stats, sequence);
+        if (!class_stats->initialized)
+        {
+            _linkg_wifi_rx_set_baseline(class_stats, sequence);
+        }
+        else
+        {
+            _linkg_wifi_rx_record_sequence_locked(class_stats, sequence);
+        }
+
         return true;
     }
 
@@ -304,8 +348,10 @@ static bool _linkg_wifi_rx_record_wire_locked(linkg_wifi_rx_t *rx, uint8_t peer_
     }
 
     peer_stats->previous_session_id = peer_stats->session_id;
-    
-    _linkg_wifi_rx_set_baseline(peer_stats, session_id, sequence);
+    peer_stats->session_id          = session_id;
+
+    _linkg_wifi_rx_reset_peer_windows(peer_stats);
+    _linkg_wifi_rx_set_baseline(&peer_stats->classes[traffic_class], sequence);
 
     return true;
 }
@@ -781,6 +827,7 @@ static int _linkg_wifi_rx_receive_once(linkg_wifi_rx_t *rx, linkg_wifi_traffic_c
     {
         if (!_linkg_wifi_rx_record_wire_locked(rx,
                                                scratch->peer_node_ids[index],
+                                               traffic_class,
                                                scratch->session_ids[index],
                                                scratch->sequences[index]))
         {
@@ -1354,8 +1401,10 @@ retry:
  */
 int linkg_wifi_rx_get_peer_stats(linkg_wifi_rx_t *rx, uint8_t peer_node_id, linkg_wifi_rx_stats_t *stats)
 {
-    linkg_wifi_rx_peer_stats_t *peer_stats;
-    int                         ret;
+    const linkg_wifi_rx_class_stats_t *class_stats;
+    const linkg_wifi_rx_peer_stats_t  *peer_stats;
+    uint32_t                           class_index;
+    int                                ret;
 
     if (rx == NULL || stats == NULL)
     {
@@ -1366,6 +1415,8 @@ int linkg_wifi_rx_get_peer_stats(linkg_wifi_rx_t *rx, uint8_t peer_node_id, link
     {
         return -EINVAL;
     }
+
+    memset(stats, 0, sizeof(*stats));
 
     ret = pthread_mutex_lock(&rx->peer_stats_lock);
     if (ret != 0)
@@ -1381,8 +1432,13 @@ int linkg_wifi_rx_get_peer_stats(linkg_wifi_rx_t *rx, uint8_t peer_node_id, link
         return -ENOENT;
     }
 
-    stats->received_packets       = peer_stats->received_packets;
-    stats->confirmed_lost_packets = peer_stats->confirmed_lost_packets;
+    for (class_index = 0U; class_index < LINKG_WIFI_TRAFFIC_COUNT; class_index++)
+    {
+        class_stats = &peer_stats->classes[class_index];
+
+        stats->received_packets       += class_stats->received_packets;
+        stats->confirmed_lost_packets += class_stats->confirmed_lost_packets;
+    }
 
     ret = pthread_mutex_unlock(&rx->peer_stats_lock);
     if (ret != 0)

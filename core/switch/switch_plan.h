@@ -32,7 +32,8 @@ typedef struct
 int linkg_switch_plan_set(uint8_t peer_node_id, const linkg_send_plan_t *plan);
 int linkg_switch_plan_get(uint8_t peer_node_id, linkg_send_plan_t *plan);
 int linkg_switch_plan_remove(uint8_t peer_node_id);
-int linkg_switch_plan_commit_local(uint8_t peer_node_id, const linkg_send_plan_t *plan, uint64_t now_us);
+int linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *plan);
+int linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *plan, uint64_t now_us);
 
 /****************************** 事件处理 ******************************/
 

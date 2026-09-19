@@ -45,14 +45,14 @@
 /****************************** 内部类型 ******************************/
 
 /**
- * @brief 单个对端节点的Wi-Fi发送序列状态。
+ * @brief 单个对端节点单个业务类别的Wi-Fi发送序列状态。
  *
- * Node ID直接作为peer_sequences数组索引，同一Node的REALTIME/VIDEO/DATA业务共享
- * 同一个32位Wi-Fi链路Sequence。状态仅随Wi-Fi TX对象生命周期重置。
+ * 每个Node的REALTIME、VIDEO和DATA分别维护独立32位Wi-Fi链路Sequence，
+ * 避免三个独立UDP Socket之间的正常接收乱序相互影响丢包统计。
  */
 typedef struct
 {
-    uint32_t next_sequence; // 下一个真正Socket提交使用的Wi-Fi链路Sequence
+    uint32_t next_sequence; // 当前Peer当前业务类别下一个真正Socket提交使用的Sequence
 } linkg_wifi_tx_peer_sequence_t;
 
 /**
@@ -85,7 +85,7 @@ struct linkg_wifi_tx
     linkg_wifi_tx_scratch_t       scratch[LINKG_WIFI_TRAFFIC_COUNT];             // 三业务预分配Scratch
     linkg_wifi_tx_queue_t        *queues[LINKG_WIFI_TRAFFIC_COUNT];              // 三业务等待FIFO
     linkg_wifi_flowctrl_t        *flowctrl;                                      // Wi-Fi设备发送流控Gate
-    linkg_wifi_tx_peer_sequence_t peer_sequences[LINKG_WIFI_NODE_SLOT_COUNT];    // 每个对端独立Wi-Fi Sequence
+    linkg_wifi_tx_peer_sequence_t peer_sequences[LINKG_WIFI_TRAFFIC_COUNT][LINKG_WIFI_NODE_SLOT_COUNT]; // 每个业务类别每个对端独立Wi-Fi Sequence
     uint32_t                      session_id;                                    // 当前Wi-Fi TX实例全局会话ID
     int                          *socket_fds;                                    // 借用Wi-Fi Link业务Socket数组
     const uint16_t               *service_ports;                                 // 借用Wi-Fi Link业务端口数组
@@ -474,7 +474,7 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
             return ret;
         }
 
-        peer_state = &tx->peer_sequences[peer_node_id];
+        peer_state = &tx->peer_sequences[traffic_class][peer_node_id];
         sequence   = peer_state->next_sequence + (uint32_t)reserved_counts[peer_node_id];
 
         reserved_counts[peer_node_id]++;
@@ -524,6 +524,7 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
 
     return ret;
 }
+
 
 /****************************** QoS发送 ******************************/
 
@@ -756,6 +757,7 @@ static int _linkg_wifi_tx_dispatch_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_t
  * 创建时生成一次全局session_id，整个TX对象生命周期内全部Node和业务类别共享。
  * 每个业务类别创建独立固定容量等待队列，发送Scratch随Wi-Fi TX对象一次性分配，
  * Flowctrl由Wi-Fi TX模块独占管理。
+ * 每个Peer的REALTIME、VIDEO和DATA分别维护独立Sequence。
  */
 linkg_wifi_tx_t *linkg_wifi_tx_create(uint32_t capacity, int *socket_fds, const uint16_t *service_ports)
 {

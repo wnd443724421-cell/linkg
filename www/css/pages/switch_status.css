@@ -1,0 +1,189 @@
+/* 切换状态页面：按角色分区展示计划、链路质量和维护事务。 */
+.switch-status-page { padding-bottom: 8px; }
+.switch-status-section { margin-top: var(--page-space); }
+.page-header + .switch-status-section { margin-top: 0; }
+.switch-status-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+}
+.switch-status-refresh {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px 5px 12px;
+    color: var(--linkg-color-text-secondary);
+    background: var(--linkg-color-surface);
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+}
+.switch-status-refresh-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    background: var(--linkg-color-text-muted);
+    border-radius: 50%;
+}
+.switch-status-refresh-dot.is-online { background: var(--linkg-color-success); }
+.switch-status-refresh-dot.is-warning { background: var(--linkg-color-warning); }
+.switch-status-refresh-dot.is-offline { background: var(--linkg-color-danger); }
+.switch-status-refresh-text {
+    min-width: 126px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.switch-status-refresh-button {
+    height: 24px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--linkg-color-primary);
+    background: var(--linkg-color-primary-soft);
+    border-radius: var(--linkg-radius-small);
+    cursor: pointer;
+}
+.switch-status-refresh-button:hover { color: var(--linkg-color-primary-hover); }
+.switch-status-refresh-button:disabled { color: var(--linkg-color-text-muted); cursor: default; opacity: 0.72; }
+.switch-status-card-note {
+    flex: none;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--linkg-color-text-secondary);
+}
+.switch-status-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.switch-status-summary-item { min-width: 0; padding: 20px; }
+.switch-status-summary-item + .switch-status-summary-item { border-left: 1px solid var(--linkg-color-border-light); }
+.switch-status-summary-label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--linkg-color-text-secondary);
+}
+.switch-status-summary-value {
+    display: block;
+    overflow: hidden;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 30px;
+    font-variant-numeric: tabular-nums;
+    color: var(--linkg-color-text);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.switch-status-summary-value.is-primary { color: var(--linkg-color-primary); }
+.switch-status-summary-value.is-compact { font-size: 17px; }
+.switch-status-badge {
+    min-width: 54px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 9px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    border-radius: 999px;
+}
+.switch-status-badge.is-neutral { color: var(--linkg-color-text-secondary); background: var(--linkg-color-background); }
+.switch-status-badge.is-online { color: var(--linkg-color-success); background: #edf8f2; }
+.switch-status-badge.is-warning { color: var(--linkg-color-warning); background: #fff7e8; }
+.switch-status-badge.is-offline { color: var(--linkg-color-danger); background: #fff0f0; }
+.switch-status-badge.is-primary { color: var(--linkg-color-primary); background: var(--linkg-color-primary-soft); }
+.switch-status-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 0 20px 8px;
+    column-gap: 28px;
+}
+.switch-status-detail-grid.is-four-columns { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.switch-status-detail-item {
+    min-width: 0;
+    height: 48px;
+    display: grid;
+    grid-template-columns: minmax(84px, 0.72fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--linkg-color-border-light);
+}
+.switch-status-detail-label { font-size: 13px; color: var(--linkg-color-text-secondary); }
+.switch-status-detail-value {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--linkg-color-text);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.switch-status-link-grid,
+.switch-status-quality-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--page-space);
+}
+.switch-status-link-card { min-width: 0; }
+.switch-status-link-card-body {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    padding: 20px;
+}
+.switch-status-link-label { font-size: 13px; color: var(--linkg-color-text-secondary); }
+.switch-status-link-value { font-size: 20px; font-weight: 600; color: var(--linkg-color-text); }
+.switch-status-link-meta { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--linkg-color-text-muted); }
+.switch-status-probe-table th:nth-child(1) { width: 24%; }
+.switch-status-probe-table th:nth-child(2) { width: 24%; }
+.switch-status-probe-table th:nth-child(3) { width: 24%; }
+.switch-status-probe-table th:nth-child(4) { width: 28%; }
+.switch-status-probe-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
+.switch-status-peer-table { min-width: 960px; }
+.switch-status-peer-table th:nth-child(1) { width: 8%; }
+.switch-status-peer-table th:nth-child(2) { width: 21%; }
+.switch-status-peer-table th:nth-child(3),
+.switch-status-peer-table th:nth-child(4) { width: 11%; }
+.switch-status-peer-table th:nth-child(5) { width: 16%; }
+.switch-status-peer-table th:nth-child(6) { width: 18%; }
+.switch-status-peer-table th:nth-child(7) { width: 15%; }
+.switch-status-peer-table td { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.switch-status-peer-table td:first-child { font-weight: 600; color: var(--linkg-color-primary); }
+.switch-status-path-online { font-weight: 500; color: var(--linkg-color-success); }
+.switch-status-path-offline { color: var(--linkg-color-text-muted); }
+.switch-status-maintenance-active { font-weight: 500; color: var(--linkg-color-warning); }
+.switch-status-table-empty {
+    height: 86px !important;
+    text-align: center !important;
+    color: var(--linkg-color-text-muted);
+}
+@media (max-width: 1180px) {
+    .switch-status-summary-value { font-size: 19px; }
+    .switch-status-summary-value.is-compact { font-size: 15px; }
+    .switch-status-detail-grid.is-four-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1000px) {
+    .switch-status-page-header { align-items: stretch; flex-direction: column; gap: 12px; }
+    .switch-status-refresh { align-self: flex-end; }
+    .switch-status-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .switch-status-summary-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--linkg-color-border-light); }
+    .switch-status-summary-item:nth-child(4) { border-top: 1px solid var(--linkg-color-border-light); }
+    .switch-status-detail-grid { padding-right: 16px; padding-left: 16px; }
+}
+@media (max-width: 720px) {
+    .switch-status-refresh { align-self: stretch; flex-wrap: wrap; }
+    .switch-status-refresh-text { min-width: 0; flex: 1; }
+    .switch-status-summary-grid,
+    .switch-status-link-grid,
+    .switch-status-quality-grid,
+    .switch-status-detail-grid,
+    .switch-status-detail-grid.is-four-columns { grid-template-columns: minmax(0, 1fr); }
+    .switch-status-summary-item + .switch-status-summary-item { border-left: 0; border-top: 1px solid var(--linkg-color-border-light); }
+    .switch-status-link-card-body { grid-template-columns: minmax(88px, auto) minmax(0, 1fr); }
+    .switch-status-link-meta { grid-column: 1 / -1; }
+}

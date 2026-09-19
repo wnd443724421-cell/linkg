@@ -52,14 +52,12 @@ typedef struct
 
 /****************************** 内部辅助 ******************************/
 
-static void _linkg_switch_observation_log(const linkg_switch_observation_t *observation);
-
 /**
  * @brief 判断外部运行状态暂不可用是否属于正常状态变化。
  */
 static bool _linkg_switch_observation_expected_state_error(int error)
 {
-    return error == -ENOENT || error == -ENODEV || error == -ENETDOWN || error == -EAGAIN;
+    return error == -ENOENT || error == -ENODEV || error == -ENETDOWN || error == -EAGAIN || error == -ESTALE;
 }
 
 /**
@@ -550,7 +548,7 @@ static void _linkg_switch_observation_update_downlink_loss_locked(linkg_switch_s
 /**
  * @brief 发布本轮完整观测快照并更新STA本地差分采样状态。
  */
-static int _linkg_switch_observation_publish(uint8_t peer_node_id, const linkg_switch_observation_raw_t *raw, uint64_t now_us)
+static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer_generation, const linkg_switch_observation_raw_t *raw, uint64_t now_us)
 {
     linkg_switch_sta_peer_runtime_t *runtime;
     linkg_switch_peer_runtime_t     *peer;
@@ -591,11 +589,11 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, const linkg_s
         return -EPERM;
     }
 
-    peer = linkg_switch_find_peer_locked(peer_node_id);
+    peer = linkg_switch_find_peer_generation_locked(peer_node_id, peer_generation);
     if (peer == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
-        return -ENOENT;
+        return -ESTALE;
     }
 
     runtime = &peer->role.sta;
@@ -615,57 +613,7 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, const linkg_s
 
     pthread_mutex_unlock(&g_switch.lock);
 
-    //_linkg_switch_observation_log(&observation);
-
     return 0;
-}
-
-/**
- * @brief 输出当前观测快照调试信息。
- */
-static void _linkg_switch_observation_log(const linkg_switch_observation_t *observation)
-{
-    if (observation == NULL || !observation->valid)
-    {
-        return;
-    }
-
-    LINKG_LOG_DEBUG("SWITCH-OBS: peer=%u wifi=%d connected=%d rssi=%d noise=%d/%d phy_kbps=%u/%u traffic=%d pps=%u/%u bps=%llu/%llu loss_up=%d/%u/%u loss_down=%d/%u/%u probe=%d/%d/%u,%d/%d/%u,%d/%d/%u temp=%d/%d mode=%d bw=%u rate=%d/%u cell=%d",
-                    (unsigned int)observation->peer_node_id,
-                    observation->wifi.available ? 1 : 0,
-                    observation->wifi.radio.connected ? 1 : 0,
-                    observation->wifi.radio.rssi_dbm,
-                    observation->wifi.radio.noise_valid ? 1 : 0,
-                    observation->wifi.radio.noise_dbm,
-                    (unsigned int)observation->wifi.radio.tx_phy_kbps,
-                    (unsigned int)observation->wifi.radio.rx_phy_kbps,
-                    observation->wifi.traffic.valid ? 1 : 0,
-                    (unsigned int)observation->wifi.traffic.tx_pps,
-                    (unsigned int)observation->wifi.traffic.rx_pps,
-                    (unsigned long long)observation->wifi.traffic.tx_bps,
-                    (unsigned long long)observation->wifi.traffic.rx_bps,
-                    observation->wifi.loss.uplink.valid ? 1 : 0,
-                    (unsigned int)observation->wifi.loss.uplink.loss_permille,
-                    (unsigned int)observation->wifi.loss.uplink.sample_packets,
-                    observation->wifi.loss.downlink.valid ? 1 : 0,
-                    (unsigned int)observation->wifi.loss.downlink.loss_permille,
-                    (unsigned int)observation->wifi.loss.downlink.sample_packets,
-                    observation->wifi.probe[LINKG_TRANSPORT_CLASS_REALTIME].valid ? 1 : 0,
-                    observation->wifi.probe[LINKG_TRANSPORT_CLASS_REALTIME].reachable ? 1 : 0,
-                    (unsigned int)observation->wifi.probe[LINKG_TRANSPORT_CLASS_REALTIME].rtt_us,
-                    observation->wifi.probe[LINKG_TRANSPORT_CLASS_VIDEO].valid ? 1 : 0,
-                    observation->wifi.probe[LINKG_TRANSPORT_CLASS_VIDEO].reachable ? 1 : 0,
-                    (unsigned int)observation->wifi.probe[LINKG_TRANSPORT_CLASS_VIDEO].rtt_us,
-                    observation->wifi.probe[LINKG_TRANSPORT_CLASS_DATA].valid ? 1 : 0,
-                    observation->wifi.probe[LINKG_TRANSPORT_CLASS_DATA].reachable ? 1 : 0,
-                    (unsigned int)observation->wifi.probe[LINKG_TRANSPORT_CLASS_DATA].rtt_us,
-                    observation->wifi.radio.temperature_valid ? 1 : 0,
-                    observation->wifi.radio.temperature_c,
-                    (int)observation->wifi.radio.work_mode,
-                    (unsigned int)observation->wifi.radio.bandwidth_mhz,
-                    observation->wifi.radio.rate_level_valid ? 1 : 0,
-                    (unsigned int)observation->wifi.radio.rate_level,
-                    observation->cellular.available ? 1 : 0);
 }
 
 /****************************** Observation ******************************/
@@ -673,13 +621,14 @@ static void _linkg_switch_observation_log(const linkg_switch_observation_t *obse
 /**
  * @brief 刷新指定STA直接AP的一轮Switch观测快照。
  */
-int linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us)
+int linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generation, uint64_t now_us)
 {
     linkg_switch_observation_raw_t raw;
     int                            first_error;
     int                            ret;
 
-    if (peer_node_id < LINKG_RESOURCE_NODE_ID_MIN || peer_node_id > LINKG_RESOURCE_NODE_ID_MAX || now_us == 0U)
+    if (peer_node_id < LINKG_RESOURCE_NODE_ID_MIN || peer_node_id > LINKG_RESOURCE_NODE_ID_MAX ||
+        peer_generation == LINKG_SWITCH_PEER_GENERATION_INVALID || now_us == 0U)
     {
         return -EINVAL;
     }
@@ -710,10 +659,10 @@ int linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us)
         return -EPERM;
     }
 
-    if (linkg_switch_find_peer_locked(peer_node_id) == NULL)
+    if (linkg_switch_find_peer_generation_locked(peer_node_id, peer_generation) == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
-        return -ENOENT;
+        return -ESTALE;
     }
 
     pthread_mutex_unlock(&g_switch.lock);
@@ -723,7 +672,7 @@ int linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us)
     _linkg_switch_observation_collect_wifi_path(peer_node_id, &raw, &first_error);
     _linkg_switch_observation_collect_cellular(peer_node_id, &raw, &first_error);
 
-    ret = _linkg_switch_observation_publish(peer_node_id, &raw, now_us);
+    ret = _linkg_switch_observation_publish(peer_node_id, peer_generation, &raw, now_us);
     if (ret != 0)
     {
         return ret;

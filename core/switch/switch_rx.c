@@ -149,6 +149,40 @@ static int _linkg_switch_rx_dispatch_plan_ack(linkg_device_role_t role, uint8_t 
 }
 
 /**
+ * @brief 将对端Maintenance开始或结束通知转换为Worker内部事件。
+ */
+static int _linkg_switch_rx_dispatch_maintenance(uint8_t peer_node_id, const linkg_switch_wire_message_t *message)
+{
+    linkg_switch_event_t event;
+
+    memset(&event, 0, sizeof(event));
+
+    event.type                    = LINKG_SWITCH_EVENT_MAINTENANCE_RX;
+    event.peer_node_id            = peer_node_id;
+    event.message_id              = message->header.message_id;
+    event.payload.maintenance     = message->payload.maintenance;
+
+    return linkg_switch_event_post(&event);
+}
+
+/**
+ * @brief 将对端Maintenance END确认转换为Worker内部事件。
+ */
+static int _linkg_switch_rx_dispatch_maintenance_ack(uint8_t peer_node_id, const linkg_switch_wire_message_t *message)
+{
+    linkg_switch_event_t event;
+
+    memset(&event, 0, sizeof(event));
+
+    event.type                    = LINKG_SWITCH_EVENT_MAINTENANCE_ACK_RX;
+    event.peer_node_id            = peer_node_id;
+    event.message_id              = message->header.message_id;
+    event.payload.maintenance_ack = message->payload.maintenance_ack;
+
+    return linkg_switch_event_post(&event);
+}
+
+/**
  * @brief 按Switch Wire消息类型分发到对应内部模块。
  */
 static int _linkg_switch_rx_dispatch(linkg_device_role_t role, uint8_t peer_node_id, const linkg_switch_wire_message_t *message)
@@ -175,6 +209,16 @@ static int _linkg_switch_rx_dispatch(linkg_device_role_t role, uint8_t peer_node
             return _linkg_switch_rx_dispatch_plan_ack(role, peer_node_id, message);
         }
 
+        case LINKG_SWITCH_WIRE_TYPE_MAINTENANCE:
+        {
+            return _linkg_switch_rx_dispatch_maintenance(peer_node_id, message);
+        }
+
+        case LINKG_SWITCH_WIRE_TYPE_MAINTENANCE_ACK:
+        {
+            return _linkg_switch_rx_dispatch_maintenance_ack(peer_node_id, message);
+        }
+
         default:
         {
             return -EPROTONOSUPPORT;
@@ -188,8 +232,8 @@ static int _linkg_switch_rx_dispatch(linkg_device_role_t role, uint8_t peer_node
  * @brief 处理Transport交付的Switch控制消息批次。
  *
  * Transport同步借用所有Packet，本回调不修改、释放或长期保存Packet。
- * Quality Report直接更新轻量运行状态，Plan Sync和Plan Ack仅复制为内部事件，
- * 后续发送计划事务统一由Switch Worker处理。
+ * Quality Report直接更新轻量运行状态，Plan和Maintenance控制消息仅复制为内部事件，
+ * 后续控制事务统一由Switch Worker处理。
  */
 int linkg_switch_transport_receive(const linkg_transport_delivery_t *items, uint32_t count, void *user_data)
 {

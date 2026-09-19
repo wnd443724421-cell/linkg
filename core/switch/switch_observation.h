@@ -132,7 +132,7 @@ typedef struct
 
 /****************************** 观测操作 ******************************/
 
-int  linkg_switch_observation_refresh(uint8_t peer_node_id, uint64_t now_us);
+int  linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generation, uint64_t now_us);
 int  linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t loss_permille, uint32_t sample_packets);
 void linkg_switch_observation_reset_locked(uint8_t peer_node_id);
 

@@ -83,6 +83,7 @@ static uint32_t _linkg_switch_event_next_index(uint32_t index)
 int linkg_switch_event_post(const linkg_switch_event_t *event)
 {
     linkg_switch_event_queue_t *queue;
+    linkg_switch_peer_runtime_t *peer;
     uint32_t                    slot;
     int                         ret;
 
@@ -105,6 +106,13 @@ int linkg_switch_event_post(const linkg_switch_event_t *event)
         return -ESHUTDOWN;
     }
 
+    peer = linkg_switch_find_peer_locked(event->peer_node_id);
+    if (peer == NULL || peer->generation == LINKG_SWITCH_PEER_GENERATION_INVALID)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENOENT;
+    }
+
     queue = &g_switch.event_queue;
 
     if (queue->count >= LINKG_SWITCH_EVENT_QUEUE_CAPACITY)
@@ -113,9 +121,10 @@ int linkg_switch_event_post(const linkg_switch_event_t *event)
         return -ENOSPC;
     }
 
-    slot               = queue->tail;
-    queue->items[slot] = *event;
-    queue->tail        = _linkg_switch_event_next_index(queue->tail);
+    slot                               = queue->tail;
+    queue->items[slot]                 = *event;
+    queue->items[slot].peer_generation = peer->generation;
+    queue->tail                        = _linkg_switch_event_next_index(queue->tail);
     queue->count++;
 
     /**
@@ -143,6 +152,7 @@ int linkg_switch_event_post(const linkg_switch_event_t *event)
 
     return 0;
 }
+
 
 /**
  * @brief 从Switch内部队列取出最早控制事件，调用方持有Switch锁。

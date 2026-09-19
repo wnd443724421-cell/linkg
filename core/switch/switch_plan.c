@@ -21,6 +21,7 @@
 #include "linkg_system_resources.h"
 
 #include "switch_internal.h"
+#include "switch_maintenance.h"
 #include "switch_tx.h"
 
 /****************************** 模块常量 ******************************/
@@ -37,8 +38,7 @@
  */
 static bool _linkg_switch_plan_peer_id_valid(uint8_t peer_node_id)
 {
-    return peer_node_id >= LINKG_RESOURCE_NODE_ID_MIN &&
-           peer_node_id <= LINKG_RESOURCE_NODE_ID_MAX;
+    return peer_node_id >= LINKG_RESOURCE_NODE_ID_MIN && peer_node_id <= LINKG_RESOURCE_NODE_ID_MAX;
 }
 
 /**
@@ -58,6 +58,21 @@ static linkg_switch_peer_runtime_t *_linkg_switch_plan_find_unused_peer_locked(v
 
     return NULL;
 }
+
+static uint32_t _linkg_switch_plan_allocate_peer_generation_locked(void)
+{
+    uint32_t generation;
+
+    generation = ++g_switch.next_peer_generation;
+
+    if (generation == LINKG_SWITCH_PEER_GENERATION_INVALID)
+    {
+        generation = ++g_switch.next_peer_generation;
+    }
+
+    return generation;
+}
+
 
 /**
  * @brief 查找指定直接Peer运行槽位，调用方持有Switch锁。
@@ -82,6 +97,54 @@ linkg_switch_peer_runtime_t *linkg_switch_find_peer_locked(uint8_t peer_node_id)
     return NULL;
 }
 
+/**
+ * @brief 按节点编号和运行代际查找当前直接Peer，调用方持有Switch锁。
+ *
+ * 只有节点编号和generation同时匹配当前Peer Runtime时才返回Peer，
+ * 用于阻止旧Event或延迟Action作用到同节点编号的新一代Peer。
+ */
+linkg_switch_peer_runtime_t *linkg_switch_find_peer_generation_locked(uint8_t peer_node_id, uint32_t generation)
+{
+    linkg_switch_peer_runtime_t *peer;
+
+    if (generation == LINKG_SWITCH_PEER_GENERATION_INVALID)
+    {
+        return NULL;
+    }
+
+    peer = linkg_switch_find_peer_locked(peer_node_id);
+    if (peer == NULL || peer->generation != generation)
+    {
+        return NULL;
+    }
+
+    return peer;
+}
+
+/**
+ * @brief 判断指定节点编号和运行代际是否仍对应当前有效直接Peer。
+ *
+ * 本接口内部获取Switch锁，可供解锁后的延迟操作在继续执行前
+ * 确认目标Peer未发生删除和重新建立。
+ */
+bool linkg_switch_peer_generation_current(uint8_t peer_node_id, uint32_t generation)
+{
+    bool current;
+
+    current = false;
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (g_switch.initialized && g_switch.running)
+    {
+        current = linkg_switch_find_peer_generation_locked(peer_node_id, generation) != NULL;
+    }
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    return current;
+}
+
 /****************************** 计划校验 ******************************/
 
 /**
@@ -96,8 +159,7 @@ static bool _linkg_switch_plan_valid(const linkg_send_plan_t *plan)
 
     if (plan->mode == LINKG_SEND_MODE_NONE)
     {
-        return plan->primary_link_id == LINKG_LINK_ID_INVALID &&
-               plan->secondary_link_id == LINKG_LINK_ID_INVALID;
+        return plan->primary_link_id == LINKG_LINK_ID_INVALID && plan->secondary_link_id == LINKG_LINK_ID_INVALID;
     }
 
     if (plan->mode == LINKG_SEND_MODE_SINGLE)
@@ -107,8 +169,7 @@ static bool _linkg_switch_plan_valid(const linkg_send_plan_t *plan)
             return false;
         }
 
-        return plan->secondary_link_id == LINKG_LINK_ID_INVALID ||
-               plan->secondary_link_id != plan->primary_link_id;
+        return plan->secondary_link_id == LINKG_LINK_ID_INVALID || plan->secondary_link_id != plan->primary_link_id;
     }
 
     if (plan->mode == LINKG_SEND_MODE_REDUNDANT)
@@ -119,6 +180,21 @@ static bool _linkg_switch_plan_valid(const linkg_send_plan_t *plan)
     }
 
     return false;
+}
+
+/**
+ * @brief 判断两个本地发送计划是否完全一致。
+ */
+static bool _linkg_switch_plan_equal(const linkg_send_plan_t *left, const linkg_send_plan_t *right)
+{
+    if (left == NULL || right == NULL)
+    {
+        return false;
+    }
+
+    return left->mode == right->mode &&
+           left->primary_link_id == right->primary_link_id &&
+           left->secondary_link_id == right->secondary_link_id;
 }
 
 /**
@@ -140,8 +216,7 @@ static bool _linkg_switch_plan_message_id_newer(uint32_t message_id, uint32_t cu
 
     delta = message_id - current_message_id;
 
-    return delta != 0U &&
-           delta < LINKG_SWITCH_PLAN_MESSAGE_ID_HALF_RANGE;
+    return delta != 0U && delta < LINKG_SWITCH_PLAN_MESSAGE_ID_HALF_RANGE;
 }
 
 /**
@@ -283,13 +358,76 @@ static int _linkg_switch_plan_local_to_wire(const linkg_send_plan_t *plan, linkg
         return -EINVAL;
     }
 
-    if (wire_plan->mode == LINKG_SWITCH_WIRE_MODE_REDUNDANT &&
-        wire_plan->secondary_access == LINKG_SWITCH_WIRE_ACCESS_NONE)
+    if (wire_plan->mode == LINKG_SWITCH_WIRE_MODE_REDUNDANT && wire_plan->secondary_access == LINKG_SWITCH_WIRE_ACCESS_NONE)
     {
         return -EINVAL;
     }
 
     return 0;
+}
+
+/**
+ * @brief 判断逻辑发送计划是否使用指定本地Access。
+ */
+static bool _linkg_switch_plan_wire_uses_access(const linkg_switch_wire_plan_sync_t *wire_plan, linkg_link_access_t access)
+{
+    linkg_switch_wire_access_t wire_access;
+
+    if (wire_plan == NULL)
+    {
+        return false;
+    }
+
+    if (access == LINKG_LINK_ACCESS_WIFI)
+    {
+        wire_access = LINKG_SWITCH_WIRE_ACCESS_WIFI;
+    }
+    else if (access == LINKG_LINK_ACCESS_CELLULAR)
+    {
+        wire_access = LINKG_SWITCH_WIRE_ACCESS_CELLULAR;
+    }
+    else
+    {
+        return false;
+    }
+
+    return wire_plan->primary_access == wire_access || wire_plan->secondary_access == wire_access;
+}
+
+/**
+ * @brief 判断新计划是否使用当前Maintenance已经Block的Access。
+ *
+ * 调用方必须持有g_switch.lock。
+ */
+static bool _linkg_switch_plan_wire_blocked_locked(const linkg_switch_peer_runtime_t *peer, const linkg_switch_wire_plan_sync_t *wire_plan)
+{
+    const linkg_switch_maintenance_peer_runtime_t *maintenance;
+
+    if (wire_plan == NULL)
+    {
+        return false;
+    }
+
+    maintenance = peer == NULL ? NULL : &peer->maintenance;
+
+    if (_linkg_switch_plan_wire_uses_access(wire_plan, LINKG_LINK_ACCESS_WIFI) &&
+        linkg_switch_maintenance_access_blocked_locked(maintenance, LINKG_LINK_ACCESS_WIFI))
+    {
+        return true;
+    }
+
+    return _linkg_switch_plan_wire_uses_access(wire_plan, LINKG_LINK_ACCESS_CELLULAR) &&
+           linkg_switch_maintenance_access_blocked_locked(maintenance, LINKG_LINK_ACCESS_CELLULAR);
+}
+
+/**
+ * @brief 判断是否存在会约束指定Peer计划写入的Maintenance事务。
+ *
+ * 调用方必须持有g_switch.lock。
+ */
+static bool _linkg_switch_plan_maintenance_active_locked(const linkg_switch_peer_runtime_t *peer)
+{
+    return g_switch.local_maintenance.active || (peer != NULL && peer->maintenance.remote.active);
 }
 
 /**
@@ -406,23 +544,25 @@ static int _linkg_switch_plan_validate_remote_target(uint8_t peer_node_id, const
  */
 static int _linkg_switch_plan_process_sync_event(const linkg_switch_event_t *event)
 {
-    linkg_switch_wire_plan_ack_t ack;
+    linkg_switch_wire_plan_ack_t    ack;
     linkg_switch_ap_peer_runtime_t *runtime;
-    linkg_switch_peer_runtime_t     *peer;
-    linkg_packet_pool_t             *packet_pool;
-    linkg_send_plan_t                plan;
-    int32_t                          status;
-    bool                             duplicate;
-    bool                             stale;
-    int                              ret;
+    linkg_switch_peer_runtime_t    *peer;
+    linkg_packet_pool_t            *packet_pool;
+    linkg_send_plan_t               plan;
+    int32_t                         status;
+    bool                            duplicate;
+    bool                            stale;
+    bool                            plan_converted;
+    int                             ret;
 
     memset(&ack, 0, sizeof(ack));
     memset(&plan, 0, sizeof(plan));
 
-    duplicate = false;
-    stale     = false;
-    status    = 0;
-    packet_pool = NULL;
+    duplicate      = false;
+    stale          = false;
+    plan_converted = false;
+    status         = 0;
+    packet_pool    = NULL;
 
     pthread_mutex_lock(&g_switch.lock);
 
@@ -444,20 +584,19 @@ static int _linkg_switch_plan_process_sync_event(const linkg_switch_event_t *eve
         return -EPERM;
     }
 
-    peer = linkg_switch_find_peer_locked(event->peer_node_id);
+    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
     if (peer == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
-        return -ENOENT;
+        return -ESTALE;
     }
 
     runtime = &peer->role.ap;
 
-    if (event->message_id == runtime->remote_plan_message_id &&
-        runtime->remote_plan_message_id != LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID)
+    if (event->message_id == runtime->remote_plan_message_id && runtime->remote_plan_message_id != LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID)
     {
-        duplicate = true;
-        status    = runtime->remote_plan_status;
+        duplicate   = true;
+        status      = runtime->remote_plan_status;
         packet_pool = g_switch.packet_pool;
     }
     else if (!_linkg_switch_plan_message_id_newer(event->message_id, runtime->remote_plan_message_id))
@@ -481,14 +620,18 @@ static int _linkg_switch_plan_process_sync_event(const linkg_switch_event_t *eve
             return -ENODEV;
         }
 
-        return linkg_switch_tx_send_plan_ack(packet_pool,
-                                             event->peer_node_id,
-                                             event->message_id,
-                                             &ack);
+        if (!linkg_switch_peer_generation_current(event->peer_node_id, event->peer_generation))
+        {
+            return -ESTALE;
+        }
+
+        return linkg_switch_tx_send_plan_ack(packet_pool, event->peer_node_id, event->message_id, &ack);
     }
 
-    ret = _linkg_switch_plan_wire_to_local(&event->payload.plan_sync, &plan);
-    if (ret == 0)
+    ret            = _linkg_switch_plan_wire_to_local(&event->payload.plan_sync, &plan);
+    plan_converted = ret == 0;
+
+    if (plan_converted)
     {
         ret = _linkg_switch_plan_validate_remote_target(event->peer_node_id, &plan);
     }
@@ -515,14 +658,19 @@ static int _linkg_switch_plan_process_sync_event(const linkg_switch_event_t *eve
         return -EPERM;
     }
 
-    peer = linkg_switch_find_peer_locked(event->peer_node_id);
+    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
     if (peer == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
-        return -ENOENT;
+        return -ESTALE;
     }
 
     runtime = &peer->role.ap;
+
+    if (plan_converted && _linkg_switch_plan_wire_blocked_locked(peer, &event->payload.plan_sync))
+    {
+        status = -EBUSY;
+    }
 
     /**
      * Worker串行处理Plan事件，但仍重新检查消息编号，
@@ -563,15 +711,21 @@ static int _linkg_switch_plan_process_sync_event(const linkg_switch_event_t *eve
         return -ENODEV;
     }
 
+    if (!linkg_switch_peer_generation_current(event->peer_node_id, event->peer_generation))
+    {
+        return -ESTALE;
+    }
+
     return linkg_switch_tx_send_plan_ack(packet_pool, event->peer_node_id, event->message_id, &ack);
 }
+
 
 /****************************** STA确认处理 ******************************/
 
 /**
  * @brief 处理STA收到的一条AP发送计划同步确认事件。
  */
-static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *event, uint64_t now_us)
+static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *event)
 {
     linkg_switch_plan_sync_runtime_t *sync;
     linkg_switch_peer_runtime_t      *peer;
@@ -611,8 +765,8 @@ static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *even
         return 0;
     }
 
-    sync->active      = false;
-    sync->last_status = event->payload.plan_ack.status;
+    sync->active        = false;
+    sync->last_status   = event->payload.plan_ack.status;
     sync->next_retry_us = 0U;
     sync->deadline_us   = 0U;
 
@@ -624,13 +778,8 @@ static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *even
     }
     else
     {
-        LINKG_LOG_WARN("SWITCH-PLAN: remote sync rejected, peer=%u message=%u status=%d",
-                       (unsigned int)event->peer_node_id,
-                       (unsigned int)event->message_id,
-                       event->payload.plan_ack.status);
+        LINKG_LOG_WARN("SWITCH-PLAN: remote sync rejected, peer=%u message=%u status=%d", (unsigned int)event->peer_node_id, (unsigned int)event->message_id, event->payload.plan_ack.status);
     }
-
-    (void)now_us;
 
     return 0;
 }
@@ -642,12 +791,21 @@ static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *even
  */
 int linkg_switch_plan_set(uint8_t peer_node_id, const linkg_send_plan_t *plan)
 {
-    linkg_switch_peer_runtime_t *peer;
+    linkg_switch_peer_runtime_t  *peer;
+    linkg_switch_wire_plan_sync_t wire_plan;
+    bool                          wire_plan_valid;
 
-    if (!_linkg_switch_plan_peer_id_valid(peer_node_id) ||
-        !_linkg_switch_plan_valid(plan))
+    if (!_linkg_switch_plan_peer_id_valid(peer_node_id) || !_linkg_switch_plan_valid(plan))
     {
         return -EINVAL;
+    }
+
+    memset(&wire_plan, 0, sizeof(wire_plan));
+    wire_plan_valid = false;
+
+    if (plan->mode != LINKG_SEND_MODE_NONE)
+    {
+        wire_plan_valid = _linkg_switch_plan_local_to_wire(plan, &wire_plan) == 0;
     }
 
     pthread_mutex_lock(&g_switch.lock);
@@ -659,6 +817,19 @@ int linkg_switch_plan_set(uint8_t peer_node_id, const linkg_send_plan_t *plan)
     }
 
     peer = linkg_switch_find_peer_locked(peer_node_id);
+
+    /**
+     * 新Peer首次Plan属于Discovery恢复控制面的bootstrap例外。
+     * 已有Peer的实际Plan变化必须继续受Maintenance Block约束。
+     */
+    if (peer != NULL && !_linkg_switch_plan_equal(&peer->plan, plan) && plan->mode != LINKG_SEND_MODE_NONE &&
+        ((!wire_plan_valid && _linkg_switch_plan_maintenance_active_locked(peer)) ||
+         (wire_plan_valid && _linkg_switch_plan_wire_blocked_locked(peer, &wire_plan))))
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -EBUSY;
+    }
+
     if (peer == NULL)
     {
         peer = _linkg_switch_plan_find_unused_peer_locked();
@@ -671,6 +842,7 @@ int linkg_switch_plan_set(uint8_t peer_node_id, const linkg_send_plan_t *plan)
         memset(peer, 0, sizeof(*peer));
         peer->used         = true;
         peer->peer_node_id = peer_node_id;
+        peer->generation   = _linkg_switch_plan_allocate_peer_generation_locked();
     }
 
     peer->plan = *plan;
@@ -679,6 +851,7 @@ int linkg_switch_plan_set(uint8_t peer_node_id, const linkg_send_plan_t *plan)
 
     return 0;
 }
+
 
 /**
  * @brief 获取指定直接Peer当前发送计划。
@@ -751,12 +924,78 @@ int linkg_switch_plan_remove(uint8_t peer_node_id)
 }
 
 /**
+ * @brief 仅在本机应用指定直接Peer发送计划，不触发远端计划同步。
+ *
+ * 本接口用于Maintenance等双方已经通过其它控制协议完成协调的场景。
+ * 调用成功后新的发送计划立即成为该Peer唯一生效计划，
+ * 不创建PLAN_SYNC事务，也不发送任何Switch控制消息。
+ */
+int linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *plan)
+{
+    linkg_switch_peer_runtime_t  *peer;
+    linkg_switch_wire_plan_sync_t wire_plan;
+    bool                          wire_plan_valid;
+
+    if (!_linkg_switch_plan_peer_id_valid(peer_node_id) || peer_generation == LINKG_SWITCH_PEER_GENERATION_INVALID || !_linkg_switch_plan_valid(plan))
+    {
+        return -EINVAL;
+    }
+
+    memset(&wire_plan, 0, sizeof(wire_plan));
+    wire_plan_valid = false;
+
+    /**
+     * NONE是合法的本地停发计划，但没有对应的PLAN_SYNC Wire表示。
+     * 只有实际携带Access的计划才需要执行Maintenance Block检查。
+     */
+    if (plan->mode != LINKG_SEND_MODE_NONE)
+    {
+        wire_plan_valid = _linkg_switch_plan_local_to_wire(plan, &wire_plan) == 0;
+    }
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (!g_switch.initialized)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENODEV;
+    }
+
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
+    peer = linkg_switch_find_peer_generation_locked(peer_node_id, peer_generation);
+    if (peer == NULL)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESTALE;
+    }
+
+    if ((!wire_plan_valid && plan->mode != LINKG_SEND_MODE_NONE && _linkg_switch_plan_maintenance_active_locked(peer)) ||
+        (wire_plan_valid && _linkg_switch_plan_wire_blocked_locked(peer, &wire_plan)))
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -EBUSY;
+    }
+
+    peer->plan = *plan;
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    return 0;
+}
+
+
+/**
  * @brief STA提交本地新发送计划并启动对应AP远端同步事务。
  *
  * 本地Plan在发送PLAN_SYNC前立即生效；发送失败不会回滚本地Plan，
  * 当前同步事务保留并由Switch Worker按截止时间继续重试。
  */
-int linkg_switch_plan_commit_local(uint8_t peer_node_id, const linkg_send_plan_t *plan, uint64_t now_us)
+int linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *plan, uint64_t now_us)
 {
     linkg_switch_plan_sync_runtime_t *sync;
     linkg_switch_peer_runtime_t      *peer;
@@ -765,9 +1004,8 @@ int linkg_switch_plan_commit_local(uint8_t peer_node_id, const linkg_send_plan_t
     uint32_t                          message_id;
     int                               ret;
 
-    if (!_linkg_switch_plan_peer_id_valid(peer_node_id) ||
-        !_linkg_switch_plan_valid(plan) ||
-        now_us == 0U)
+    if (!_linkg_switch_plan_peer_id_valid(peer_node_id) || peer_generation == LINKG_SWITCH_PEER_GENERATION_INVALID ||
+        !_linkg_switch_plan_valid(plan) || now_us == 0U)
     {
         return -EINVAL;
     }
@@ -798,15 +1036,20 @@ int linkg_switch_plan_commit_local(uint8_t peer_node_id, const linkg_send_plan_t
         return -EPERM;
     }
 
-    peer = linkg_switch_find_peer_locked(peer_node_id);
+    peer = linkg_switch_find_peer_generation_locked(peer_node_id, peer_generation);
     if (peer == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
-        return -ENOENT;
+        return -ESTALE;
     }
 
-    sync = &peer->role.sta.plan_sync;
+    if (_linkg_switch_plan_wire_blocked_locked(peer, &wire_plan))
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -EBUSY;
+    }
 
+    sync       = &peer->role.sta.plan_sync;
     message_id = _linkg_switch_plan_allocate_message_id_locked(&peer->role.sta);
 
     peer->plan          = *plan;
@@ -827,8 +1070,14 @@ int linkg_switch_plan_commit_local(uint8_t peer_node_id, const linkg_send_plan_t
         return -ENODEV;
     }
 
+    if (!linkg_switch_peer_generation_current(peer_node_id, peer_generation))
+    {
+        return -ESTALE;
+    }
+
     return linkg_switch_tx_send_plan_sync(packet_pool, peer_node_id, message_id, &wire_plan);
 }
+
 
 /****************************** 事件处理 ******************************/
 
@@ -849,7 +1098,7 @@ int linkg_switch_plan_process_event(const linkg_switch_event_t *event, uint64_t 
 
     if (event->type == LINKG_SWITCH_EVENT_PLAN_ACK_RX)
     {
-        return _linkg_switch_plan_process_ack_event(event, now_us);
+        return _linkg_switch_plan_process_ack_event(event);
     }
 
     return -EINVAL;
@@ -865,9 +1114,9 @@ int linkg_switch_plan_process(uint64_t now_us)
     linkg_switch_plan_sync_runtime_t sync_copy;
     linkg_switch_peer_runtime_t     *peer;
     linkg_packet_pool_t             *packet_pool;
+    uint32_t                         peer_generation;
     uint32_t                         index;
     uint8_t                          peer_node_id;
-    bool                             send_retry;
     int                              first_error;
     int                              ret;
 
@@ -881,9 +1130,9 @@ int linkg_switch_plan_process(uint64_t now_us)
     for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
     {
         memset(&sync_copy, 0, sizeof(sync_copy));
-        packet_pool = NULL;
-        peer_node_id = 0U;
-        send_retry = false;
+        packet_pool     = NULL;
+        peer_generation = LINKG_SWITCH_PEER_GENERATION_INVALID;
+        peer_node_id    = 0U;
 
         pthread_mutex_lock(&g_switch.lock);
 
@@ -913,8 +1162,7 @@ int linkg_switch_plan_process(uint64_t now_us)
             continue;
         }
 
-        if (now_us >= peer->role.sta.plan_sync.deadline_us ||
-            peer->role.sta.plan_sync.retry_count >= LINKG_SWITCH_PLAN_SYNC_RETRY_MAX)
+        if (now_us >= peer->role.sta.plan_sync.deadline_us || peer->role.sta.plan_sync.retry_count >= LINKG_SWITCH_PLAN_SYNC_RETRY_MAX)
         {
             peer->role.sta.plan_sync.active        = false;
             peer->role.sta.plan_sync.last_status   = -ETIMEDOUT;
@@ -925,8 +1173,7 @@ int linkg_switch_plan_process(uint64_t now_us)
 
             pthread_mutex_unlock(&g_switch.lock);
 
-            LINKG_LOG_WARN("SWITCH-PLAN: remote sync timeout, peer=%u",
-                           (unsigned int)peer_node_id);
+            LINKG_LOG_WARN("SWITCH-PLAN: remote sync timeout, peer=%u", (unsigned int)peer_node_id);
             continue;
         }
 
@@ -939,17 +1186,12 @@ int linkg_switch_plan_process(uint64_t now_us)
         peer->role.sta.plan_sync.retry_count++;
         peer->role.sta.plan_sync.next_retry_us = now_us + LINKG_SWITCH_PLAN_SYNC_RETRY_INTERVAL_US;
 
-        sync_copy   = peer->role.sta.plan_sync;
-        peer_node_id = peer->peer_node_id;
-        packet_pool = g_switch.packet_pool;
-        send_retry  = true;
+        sync_copy       = peer->role.sta.plan_sync;
+        peer_generation = peer->generation;
+        peer_node_id    = peer->peer_node_id;
+        packet_pool     = g_switch.packet_pool;
 
         pthread_mutex_unlock(&g_switch.lock);
-
-        if (!send_retry)
-        {
-            continue;
-        }
 
         if (packet_pool == NULL)
         {
@@ -961,10 +1203,12 @@ int linkg_switch_plan_process(uint64_t now_us)
             continue;
         }
 
-        ret = linkg_switch_tx_send_plan_sync(packet_pool,
-                                              peer_node_id,
-                                              sync_copy.message_id,
-                                              &sync_copy.wire_plan);
+        if (!linkg_switch_peer_generation_current(peer_node_id, peer_generation))
+        {
+            continue;
+        }
+
+        ret = linkg_switch_tx_send_plan_sync(packet_pool, peer_node_id, sync_copy.message_id, &sync_copy.wire_plan);
         if (ret != 0 && first_error == 0)
         {
             first_error = ret;
@@ -983,9 +1227,7 @@ uint64_t linkg_switch_plan_next_deadline_locked(void)
     uint64_t                          deadline_us;
     uint32_t                          index;
 
-    if (!g_switch.initialized ||
-        !g_switch.running ||
-        g_switch.role != LINKG_DEVICE_ROLE_STA)
+    if (!g_switch.initialized || !g_switch.running || g_switch.role != LINKG_DEVICE_ROLE_STA)
     {
         return UINT64_MAX;
     }

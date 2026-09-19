@@ -19,14 +19,16 @@
 #include "linkg_thread.h"
 #include "linkg_packet_pool.h"
 #include "switch_event.h"
+#include "switch_maintenance.h"
 #include "switch_observation.h"
 #include "switch_plan.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_SWITCH_THREAD_NAME              "linkg-switch"                      // Switch后台线程名称
-#define LINKG_SWITCH_PEER_MAX                 LINKG_RESOURCE_NETWORK_STA_MAX      // 最大直接Peer运行槽位数量
-#define LINKG_SWITCH_OBSERVATION_INTERVAL_US  250000ULL                           // 默认观测快照刷新周期
+#define LINKG_SWITCH_THREAD_NAME              "linkg-switch"                     // Switch后台线程名称
+#define LINKG_SWITCH_PEER_MAX                 LINKG_RESOURCE_NETWORK_STA_MAX     // 最大直接Peer运行槽位数量
+#define LINKG_SWITCH_PEER_GENERATION_INVALID  0U                                 // 无效Peer运行代际
+#define LINKG_SWITCH_OBSERVATION_INTERVAL_US  250000ULL                          // 默认观测快照刷新周期
 
 /****************************** Peer运行状态 ******************************/
 
@@ -55,9 +57,11 @@ typedef struct
 
 typedef struct
 {
-    bool              used;         // 当前Peer槽位是否已经使用
-    uint8_t           peer_node_id; // 当前直接Peer节点编号
-    linkg_send_plan_t plan;         // 当前唯一生效发送计划
+    bool                                    used;         // 当前Peer槽位是否已经使用
+    uint8_t                                 peer_node_id; // 当前直接Peer节点编号
+    uint32_t                                generation;   // 当前Peer运行代际
+    linkg_send_plan_t                       plan;         // 当前唯一生效发送计划
+    linkg_switch_maintenance_peer_runtime_t maintenance;  // 当前Peer Maintenance运行状态
 
     union
     {
@@ -66,28 +70,30 @@ typedef struct
     } role;
 } linkg_switch_peer_runtime_t;
 
-
 /****************************** 模块上下文 ******************************/
 
 typedef struct
 {
-    pthread_mutex_t             lock;                         // 模块状态锁，保护全部Switch共享运行状态
-    pthread_cond_t              rx_condition;                 // 等待已进入Transport回调全部退出
-    linkg_thread_t              thread;                       // Switch后台工作线程
-    pthread_t                   worker_tid;                   // 当前Worker线程标识
-    linkg_packet_pool_t        *packet_pool;                  // 外部Packet Pool，仅借用，不拥有生命周期
-    linkg_switch_peer_runtime_t peers[LINKG_SWITCH_PEER_MAX]; // 全部直接Peer运行状态
-    linkg_switch_event_queue_t  event_queue;                  // 待Worker处理的内部控制事件
-    linkg_device_role_t         role;                         // 当前本机设备角色
-    uint8_t                     local_node_id;                // 当前本机节点编号
-    uintptr_t                   run_token;                    // 当前Transport Handler运行代际
-    uint32_t                    rx_users;                     // 当前正在执行的Transport回调数量
-    uint64_t                    next_observation_us;          // STA下一轮观测刷新时间
-    uint64_t                    next_report_us;               // AP下一轮质量上报时间
-    bool                        worker_tid_valid;             // Worker线程标识当前是否有效
-    bool                        handler_registered;           // SWITCH Transport Handler是否已注册
-    bool                        initialized;                  // 模块是否已经初始化
-    bool                        running;                      // Switch是否正在运行
+    pthread_mutex_t                          lock;                         // 模块状态锁，保护全部Switch共享运行状态
+    pthread_cond_t                           rx_condition;                 // 等待已进入Transport回调全部退出
+    linkg_thread_t                           thread;                       // Switch后台工作线程
+    pthread_t                                worker_tid;                   // 当前Worker线程标识
+    linkg_packet_pool_t                     *packet_pool;                  // 外部Packet Pool，仅借用，不拥有生命周期
+    linkg_switch_peer_runtime_t              peers[LINKG_SWITCH_PEER_MAX]; // 全部直接Peer运行状态
+    linkg_switch_event_queue_t               event_queue;                  // 待Worker处理的内部控制事件
+    linkg_switch_maintenance_local_runtime_t local_maintenance;            // 当前本机Access Maintenance运行状态
+    linkg_device_role_t                      role;                         // 当前本机设备角色
+    uint8_t                                  local_node_id;                // 当前本机节点编号
+    uintptr_t                                run_token;                    // 当前Transport Handler运行代际
+    uint32_t                                 rx_users;                     // 当前正在执行的Transport回调数量
+    uint32_t                                 next_peer_generation;         // 下一Peer运行代际编号基线
+    uint32_t                                 next_maintenance_message_id;  // 下一Maintenance事务消息编号基线
+    uint64_t                                 next_observation_us;          // STA下一轮观测刷新时间
+    uint64_t                                 next_report_us;               // AP下一轮质量上报时间
+    bool                                     worker_tid_valid;             // Worker线程标识当前是否有效
+    bool                                     handler_registered;           // SWITCH Transport Handler是否已注册
+    bool                                     initialized;                  // 模块是否已经初始化
+    bool                                     running;                      // Switch是否正在运行
 } linkg_switch_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -97,6 +103,8 @@ extern linkg_switch_context_t g_switch;
 /****************************** Peer管理 ******************************/
 
 linkg_switch_peer_runtime_t *linkg_switch_find_peer_locked(uint8_t peer_node_id);
+linkg_switch_peer_runtime_t *linkg_switch_find_peer_generation_locked(uint8_t peer_node_id, uint32_t generation);
+bool                         linkg_switch_peer_generation_current(uint8_t peer_node_id, uint32_t generation);
 
 /****************************** Runtime ******************************/
 

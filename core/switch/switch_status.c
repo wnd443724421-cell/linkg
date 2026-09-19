@@ -2,7 +2,7 @@
  * @file switch_status.c
  * @brief LinkG链路切换运行状态快照实现
  * @author Dawn
- * @version 1.0.0
+ * @version 1.1.0
  * @date 2026-09-19
  */
 
@@ -13,12 +13,32 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "linkg_link.h"
 #include "linkg_time.h"
 
 #include "switch_internal.h"
+#include "switch_maintenance.h"
 #include "switch_observation.h"
 
 /****************************** 内部辅助 ******************************/
+
+/**
+ * @brief 将内部Link Access转换为公共Switch状态Access。
+ */
+static linkg_switch_status_access_t _linkg_switch_status_convert_access(linkg_link_access_t access)
+{
+    if (access == LINKG_LINK_ACCESS_WIFI)
+    {
+        return LINKG_SWITCH_STATUS_ACCESS_WIFI;
+    }
+
+    if (access == LINKG_LINK_ACCESS_CELLULAR)
+    {
+        return LINKG_SWITCH_STATUS_ACCESS_CELLULAR;
+    }
+
+    return LINKG_SWITCH_STATUS_ACCESS_NONE;
+}
 
 /**
  * @brief 复制单个Path Probe观测状态。
@@ -56,6 +76,42 @@ static void _linkg_switch_status_copy_loss(linkg_switch_status_loss_t *destinati
 }
 
 /**
+ * @brief 复制当前本机Maintenance公共状态。
+ */
+static void _linkg_switch_status_copy_local_maintenance(linkg_switch_maintenance_status_t *destination, const linkg_switch_maintenance_local_runtime_t *source)
+{
+    memset(destination, 0, sizeof(*destination));
+
+    if (!source->active)
+    {
+        return;
+    }
+
+    destination->active     = true;
+    destination->access     = _linkg_switch_status_convert_access(source->access);
+    destination->message_id = source->message_id;
+    destination->started_us = source->started_us;
+}
+
+/**
+ * @brief 复制指定Peer当前远端Maintenance公共状态。
+ */
+static void _linkg_switch_status_copy_remote_maintenance(linkg_switch_maintenance_status_t *destination, const linkg_switch_maintenance_remote_runtime_t *source)
+{
+    memset(destination, 0, sizeof(*destination));
+
+    if (!source->active)
+    {
+        return;
+    }
+
+    destination->active     = true;
+    destination->access     = _linkg_switch_status_convert_access(source->access);
+    destination->message_id = source->last_message_id;
+    destination->started_us = source->started_us;
+}
+
+/**
  * @brief 复制STA当前Wi-Fi完整观测状态。
  */
 static void _linkg_switch_status_copy_sta_wifi(linkg_switch_sta_wifi_status_t *destination, const linkg_switch_wifi_observation_t *source)
@@ -88,9 +144,7 @@ static void _linkg_switch_status_copy_sta_wifi(linkg_switch_sta_wifi_status_t *d
     }
 
     _linkg_switch_status_copy_traffic(&destination->traffic, &source->traffic);
-
     _linkg_switch_status_copy_loss(&destination->uplink_loss, &source->loss.uplink);
-
     _linkg_switch_status_copy_loss(&destination->downlink_loss, &source->loss.downlink);
 }
 
@@ -114,6 +168,12 @@ static void _linkg_switch_status_build_sta_locked(linkg_switch_sta_status_t *sta
 
     memset(status, 0, sizeof(*status));
 
+    /**
+     * 本机Maintenance属于设备全局状态，
+     * 即使当前尚未建立直接AP Peer也必须正常对外发布。
+     */
+    _linkg_switch_status_copy_local_maintenance(&status->local_maintenance, &g_switch.local_maintenance);
+
     for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
     {
         peer = &g_switch.peers[index];
@@ -132,13 +192,9 @@ static void _linkg_switch_status_build_sta_locked(linkg_switch_sta_status_t *sta
         status->observation_updated_us = runtime->observation.collected_us;
 
         _linkg_switch_status_copy_sta_wifi(&status->wifi, &runtime->observation.wifi);
-
         _linkg_switch_status_copy_sta_cellular(&status->cellular, &runtime->observation.cellular);
+        _linkg_switch_status_copy_remote_maintenance(&status->remote_maintenance, &peer->maintenance.remote);
 
-        /**
-         * Maintenance Runtime尚未接入当前Switch运行结构。
-         * memset后的inactive状态代表当前没有已发布的Maintenance状态。
-         */
         break;
     }
 }
@@ -150,9 +206,9 @@ static void _linkg_switch_status_build_ap_peer_locked(linkg_switch_ap_peer_statu
 {
     const linkg_switch_ap_peer_runtime_t *runtime;
 
-    runtime = &peer->role.ap;
-
     memset(status, 0, sizeof(*status));
+
+    runtime = &peer->role.ap;
 
     status->peer_node_id            = peer->peer_node_id;
     status->plan                    = peer->plan;
@@ -161,11 +217,7 @@ static void _linkg_switch_status_build_ap_peer_locked(linkg_switch_ap_peer_statu
     status->path_updated_us         = runtime->path_updated_us;
 
     _linkg_switch_status_copy_loss(&status->wifi_uplink_loss, &runtime->wifi_uplink_loss);
-
-    /**
-     * remote_maintenance后续由Maintenance模块运行状态填充。
-     * 当前保持inactive，不影响第一版Web状态查询。
-     */
+    _linkg_switch_status_copy_remote_maintenance(&status->remote_maintenance, &peer->maintenance.remote);
 }
 
 /**
@@ -178,6 +230,8 @@ static void _linkg_switch_status_build_ap_locked(linkg_switch_ap_status_t *statu
     uint32_t                           peer_count;
 
     memset(status, 0, sizeof(*status));
+
+    _linkg_switch_status_copy_local_maintenance(&status->local_maintenance, &g_switch.local_maintenance);
 
     peer_count = 0U;
 
@@ -201,17 +255,15 @@ static void _linkg_switch_status_build_ap_locked(linkg_switch_ap_status_t *statu
     }
 
     status->peer_count = peer_count;
-
-    /**
-     * local_maintenance后续由Maintenance模块运行状态填充。
-     * 当前保持inactive，不影响第一版Web状态查询。
-     */
 }
 
 /****************************** 状态查询 ******************************/
 
 /**
  * @brief 获取当前Switch模块只读运行状态快照。
+ *
+ * 本接口只复制Switch已经缓存的运行状态，不主动访问Wi-Fi、Cellular、
+ * Path Probe、Node或Link模块，也不会触发新的质量采样。
  */
 int linkg_switch_get_status(linkg_switch_status_t *status)
 {

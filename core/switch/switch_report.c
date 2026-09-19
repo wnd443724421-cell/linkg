@@ -49,8 +49,10 @@ static bool _linkg_switch_report_expected_state_error(int error)
     return error == -ENOENT ||
            error == -ENODEV ||
            error == -ENETDOWN ||
-           error == -EAGAIN;
+           error == -EAGAIN ||
+           error == -ESTALE;
 }
+
 
 /**
  * @brief 记录本轮第一个非预期错误。
@@ -335,7 +337,7 @@ static void _linkg_switch_report_publish_locked(linkg_switch_ap_peer_runtime_t *
 /**
  * @brief 处理指定AP Peer的一轮Wi-Fi上行质量报告。
  */
-static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t wifi_link_id, uint32_t cellular_link_id, linkg_packet_pool_t *packet_pool, uint64_t now_us)
+static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t peer_generation, uint32_t wifi_link_id, uint32_t cellular_link_id, linkg_packet_pool_t *packet_pool, uint64_t now_us)
 {
     linkg_switch_wire_wifi_quality_report_t report;
     linkg_switch_report_sample_t            sample;
@@ -376,11 +378,11 @@ static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t wifi
         return -EPERM;
     }
 
-    peer = linkg_switch_find_peer_locked(peer_node_id);
+    peer = linkg_switch_find_peer_generation_locked(peer_node_id, peer_generation);
     if (peer == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
-        return -ENOENT;
+        return -ESTALE;
     }
 
     runtime = &peer->role.ap;
@@ -404,6 +406,11 @@ static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t wifi
 
     pthread_mutex_unlock(&g_switch.lock);
 
+    if (!linkg_switch_peer_generation_current(peer_node_id, peer_generation))
+    {
+        return -ESTALE;
+    }
+
     return linkg_switch_tx_send_wifi_quality_report(packet_pool, peer_node_id, message_id, &report);
 }
 
@@ -416,6 +423,7 @@ int linkg_switch_report_process(uint64_t now_us)
 {
     linkg_packet_pool_t *packet_pool;
     uint8_t              peer_node_ids[LINKG_SWITCH_PEER_MAX];
+    uint32_t             peer_generations[LINKG_SWITCH_PEER_MAX];
     uint32_t             cellular_link_id;
     uint32_t             wifi_link_id;
     uint32_t             peer_count;
@@ -468,7 +476,9 @@ int linkg_switch_report_process(uint64_t now_us)
             continue;
         }
 
-        peer_node_ids[peer_count++] = g_switch.peers[index].peer_node_id;
+        peer_node_ids[peer_count]    = g_switch.peers[index].peer_node_id;
+        peer_generations[peer_count] = g_switch.peers[index].generation;
+        peer_count++;
     }
 
     pthread_mutex_unlock(&g_switch.lock);
@@ -484,6 +494,7 @@ int linkg_switch_report_process(uint64_t now_us)
     for (index = 0U; index < peer_count; index++)
     {
         ret = _linkg_switch_report_process_peer(peer_node_ids[index],
+                                                 peer_generations[index],
                                                  wifi_link_id,
                                                  cellular_link_id,
                                                  packet_pool,
@@ -494,6 +505,7 @@ int linkg_switch_report_process(uint64_t now_us)
 
     return first_error;
 }
+
 
 /**
  * @brief 获取AP下一轮Wi-Fi质量报告截止时间，调用方持有Switch锁。

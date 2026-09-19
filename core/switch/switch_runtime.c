@@ -22,6 +22,7 @@
 #include "switch_observation.h"
 #include "switch_plan.h"
 #include "switch_report.h"
+#include "switch_maintenance.h"
 
 /****************************** 内部辅助 ******************************/
 
@@ -34,8 +35,10 @@ static bool _linkg_switch_runtime_expected_error(int error)
            error == -ENODEV ||
            error == -ENETDOWN ||
            error == -EAGAIN ||
+           error == -ESTALE ||
            error == -ESHUTDOWN;
 }
+
 
 /**
  * @brief 记录Switch周期任务的非预期错误。
@@ -51,7 +54,38 @@ static void _linkg_switch_runtime_log_error(const char *task, int error)
 }
 
 /**
- * @brief 取出并处理当前待处理的内部控制事件。
+ * @brief 将单个Switch内部事件分发到对应业务模块。
+ */
+static int _linkg_switch_runtime_process_event(const linkg_switch_event_t *event, uint64_t now_us)
+{
+    if (event == NULL)
+    {
+        return -EINVAL;
+    }
+
+    switch (event->type)
+    {
+        case LINKG_SWITCH_EVENT_PLAN_SYNC_RX:
+        case LINKG_SWITCH_EVENT_PLAN_ACK_RX:
+        {
+            return linkg_switch_plan_process_event(event, now_us);
+        }
+
+        case LINKG_SWITCH_EVENT_MAINTENANCE_RX:
+        case LINKG_SWITCH_EVENT_MAINTENANCE_ACK_RX:
+        {
+            return linkg_switch_maintenance_process_event(event, now_us);
+        }
+
+        default:
+        {
+            return -EPROTONOSUPPORT;
+        }
+    }
+}
+
+/**
+ * @brief 取出并处理当前待处理的Switch内部控制事件。
  */
 static void _linkg_switch_runtime_process_events(uint64_t now_us)
 {
@@ -71,8 +105,8 @@ static void _linkg_switch_runtime_process_events(uint64_t now_us)
             break;
         }
 
-        ret = linkg_switch_plan_process_event(&event, now_us);
-        _linkg_switch_runtime_log_error("plan event", ret);
+        ret = _linkg_switch_runtime_process_event(&event, now_us);
+        _linkg_switch_runtime_log_error("control event", ret);
     }
 }
 
@@ -82,6 +116,7 @@ static void _linkg_switch_runtime_process_events(uint64_t now_us)
 static void _linkg_switch_runtime_process_observation(uint64_t now_us)
 {
     uint8_t  peer_node_ids[LINKG_SWITCH_PEER_MAX];
+    uint32_t peer_generations[LINKG_SWITCH_PEER_MAX];
     uint32_t peer_count;
     uint32_t index;
     int      ret;
@@ -115,17 +150,20 @@ static void _linkg_switch_runtime_process_observation(uint64_t now_us)
             continue;
         }
 
-        peer_node_ids[peer_count++] = g_switch.peers[index].peer_node_id;
+        peer_node_ids[peer_count]    = g_switch.peers[index].peer_node_id;
+        peer_generations[peer_count] = g_switch.peers[index].generation;
+        peer_count++;
     }
 
     pthread_mutex_unlock(&g_switch.lock);
 
     for (index = 0U; index < peer_count; index++)
     {
-        ret = linkg_switch_observation_refresh(peer_node_ids[index], now_us);
+        ret = linkg_switch_observation_refresh(peer_node_ids[index], peer_generations[index], now_us);
         _linkg_switch_runtime_log_error("observation refresh", ret);
     }
 }
+
 
 /**
  * @brief 执行AP当前到期的一轮Wi-Fi质量上报。
@@ -192,6 +230,37 @@ static void _linkg_switch_runtime_process_plan(uint64_t now_us)
 }
 
 /**
+ * @brief 执行当前到期的Maintenance重试和保护超时处理。
+ */
+static void _linkg_switch_runtime_process_maintenance(uint64_t now_us)
+{
+    uint64_t deadline_us;
+    bool     due;
+    int      ret;
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    due = false;
+
+    if (g_switch.initialized &&
+        g_switch.running)
+    {
+        deadline_us = linkg_switch_maintenance_next_deadline_locked();
+        due         = deadline_us <= now_us;
+    }
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    if (!due)
+    {
+        return;
+    }
+
+    ret = linkg_switch_maintenance_process(now_us);
+    _linkg_switch_runtime_log_error("maintenance", ret);
+}
+
+/**
  * @brief 执行当前所有已经到期的Switch周期任务。
  */
 static void _linkg_switch_runtime_process_due(uint64_t now_us)
@@ -199,6 +268,7 @@ static void _linkg_switch_runtime_process_due(uint64_t now_us)
     _linkg_switch_runtime_process_observation(now_us);
     _linkg_switch_runtime_process_report(now_us);
     _linkg_switch_runtime_process_plan(now_us);
+    _linkg_switch_runtime_process_maintenance(now_us);
 }
 
 /**
@@ -223,7 +293,7 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
         return 0;
     }
 
-    deadline_us = UINT64_MAX;
+     deadline_us = UINT64_MAX;
 
     if (g_switch.role == LINKG_DEVICE_ROLE_STA)
     {
@@ -246,6 +316,12 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
         {
             deadline_us = candidate_us;
         }
+    }
+
+    candidate_us = linkg_switch_maintenance_next_deadline_locked();
+    if (candidate_us < deadline_us)
+    {
+        deadline_us = candidate_us;
     }
 
     if (deadline_us == UINT64_MAX)
@@ -272,7 +348,7 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
 /****************************** 工作线程 ******************************/
 
 /**
- * @brief 调度Switch内部事件、周期观测、质量上报及计划同步事务。
+ * @brief 调度Switch内部事件、周期观测、质量上报、计划同步及Maintenance事务。
  */
 void linkg_switch_worker(linkg_thread_t *thread, void *user_data)
 {

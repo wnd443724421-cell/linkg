@@ -2,8 +2,8 @@
  * @file linkg_switch.c
  * @brief LinkG链路切换生命周期及公共接口实现
  * @author Dawn
- * @version 2.0.0
- * @date 2026-09-18
+ * @version 2.1.0
+ * @date 2026-09-19
  */
 
 #include "linkg_switch.h"
@@ -25,6 +25,7 @@
 
 #include "switch_event.h"
 #include "switch_internal.h"
+#include "switch_maintenance.h"
 #include "switch_plan.h"
 #include "switch_rx.h"
 #include "switch_wire.h"
@@ -70,10 +71,14 @@ static int _linkg_switch_validate_packet_pool(const linkg_packet_pool_t *packet_
 }
 
 /**
- * @brief 清理单次运行的角色私有状态并保留当前Peer发送计划和本地消息序列。
+ * @brief 清理单次运行状态并保留当前Peer发送计划和本地主动消息序列。
  *
  * STA保留下一PLAN_SYNC消息编号，AP保留下一质量报告消息编号，
- * 避免普通stop/start后重新从零开始本地主动消息序列。
+ * Switch同时保留下一Maintenance事务编号，避免普通stop/start后
+ * 本地主动消息序列重新从零开始。
+ *
+ * 当前Maintenance事务、远端Maintenance状态和END确认事务均属于
+ * 单次运行状态，必须在新一轮start前清理。
  */
 static void _linkg_switch_reset_session_locked(void)
 {
@@ -83,9 +88,15 @@ static void _linkg_switch_reset_session_locked(void)
 
     linkg_switch_event_reset_locked();
 
+    memset(&g_switch.local_maintenance, 0, sizeof(g_switch.local_maintenance));
+
     for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
     {
         peer = &g_switch.peers[index];
+
+        // Maintenance属于Peer公共单次运行状态，不随角色保留。
+        memset(&peer->maintenance, 0, sizeof(peer->maintenance));
+
         if (!peer->used)
         {
             continue;
@@ -94,13 +105,17 @@ static void _linkg_switch_reset_session_locked(void)
         if (g_switch.role == LINKG_DEVICE_ROLE_STA)
         {
             message_id = peer->role.sta.next_plan_message_id;
+
             memset(&peer->role, 0, sizeof(peer->role));
+
             peer->role.sta.next_plan_message_id = message_id;
         }
         else if (g_switch.role == LINKG_DEVICE_ROLE_AP)
         {
             message_id = peer->role.ap.report_message_id;
+
             memset(&peer->role, 0, sizeof(peer->role));
+
             peer->role.ap.report_message_id = message_id;
         }
         else
@@ -113,20 +128,25 @@ static void _linkg_switch_reset_session_locked(void)
     g_switch.next_report_us      = 0U;
 }
 
+
 /**
  * @brief 清空全部Peer及单次运行状态，不回退Transport Handler运行代际。
  */
 static void _linkg_switch_reset_all_locked(void)
 {
     memset(g_switch.peers, 0, sizeof(g_switch.peers));
+    memset(&g_switch.local_maintenance, 0, sizeof(g_switch.local_maintenance));
+
     linkg_switch_event_reset_locked();
 
-    g_switch.next_observation_us = 0U;
-    g_switch.next_report_us      = 0U;
-    g_switch.rx_users            = 0U;
-    g_switch.worker_tid_valid    = false;
-    g_switch.handler_registered  = false;
-    g_switch.running             = false;
+    g_switch.next_peer_generation         = 0U;
+    g_switch.next_maintenance_message_id  = 0U;
+    g_switch.next_observation_us          = 0U;
+    g_switch.next_report_us               = 0U;
+    g_switch.rx_users                     = 0U;
+    g_switch.worker_tid_valid             = false;
+    g_switch.handler_registered           = false;
+    g_switch.running                      = false;
 }
 
 /**
@@ -372,7 +392,9 @@ int linkg_switch_start(void)
     }
 
     pthread_mutex_lock(&g_switch.lock);
+
     g_switch.handler_registered = true;
+
     pthread_mutex_unlock(&g_switch.lock);
 
     LINKG_LOG_INFO("SWITCH: started, role=%d, observation_ms=250, report_ms=250",
@@ -385,6 +407,7 @@ int linkg_switch_start(void)
 out:
     pthread_mutex_unlock(&g_switch.lock);
     pthread_mutex_unlock(&g_switch_lifecycle_lock);
+
     return ret;
 }
 
@@ -434,7 +457,9 @@ int linkg_switch_stop(void)
         else
         {
             pthread_mutex_lock(&g_switch.lock);
+
             g_switch.handler_registered = false;
+
             pthread_mutex_unlock(&g_switch.lock);
         }
     }
@@ -499,11 +524,15 @@ int linkg_switch_deinit(void)
     g_switch.local_node_id = LINKG_RESOURCE_NODE_ID_INVALID;
 
     memset(g_switch.peers, 0, sizeof(g_switch.peers));
+    memset(&g_switch.local_maintenance, 0, sizeof(g_switch.local_maintenance));
+
     linkg_switch_event_reset_locked();
 
-    g_switch.next_observation_us = 0U;
-    g_switch.next_report_us      = 0U;
-    g_switch.worker_tid_valid    = false;
+    g_switch.next_peer_generation         = 0U;
+    g_switch.next_maintenance_message_id  = 0U;
+    g_switch.next_observation_us          = 0U;
+    g_switch.next_report_us               = 0U;
+    g_switch.worker_tid_valid             = false;
 
     pthread_mutex_unlock(&g_switch.lock);
 
@@ -519,6 +548,7 @@ out:
 
     return ret;
 }
+
 
 /****************************** 计划管理 ******************************/
 
@@ -544,4 +574,22 @@ int linkg_switch_get_plan(uint8_t peer_node_id, linkg_send_plan_t *plan)
 int linkg_switch_remove_plan(uint8_t peer_node_id)
 {
     return linkg_switch_plan_remove(peer_node_id);
+}
+
+/****************************** 接入维护 ******************************/
+
+/**
+ * @brief 开始本机指定Access维护。
+ */
+int linkg_switch_begin_maintenance(linkg_link_access_t access)
+{
+    return linkg_switch_maintenance_begin(access);
+}
+
+/**
+ * @brief 结束本机指定Access维护。
+ */
+int linkg_switch_end_maintenance(linkg_link_access_t access)
+{
+    return linkg_switch_maintenance_end(access);
 }

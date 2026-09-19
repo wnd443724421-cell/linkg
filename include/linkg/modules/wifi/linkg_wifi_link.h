@@ -35,8 +35,9 @@ typedef struct
 /**
  * @brief 指定对端Wi-Fi链路累计接收统计。
  *
- * received_packets只统计首次成功接收的唯一Wi-Fi Wire Packet；
- * confirmed_lost_packets只统计64包滑动窗口推出后仍未到达的确认丢包。
+ * REALTIME、VIDEO和DATA在Wi-Fi RX内部使用独立Sequence窗口统计，
+ * received_packets为三业务首次成功接收唯一Wi-Fi Wire Packet数量之和；
+ * confirmed_lost_packets为三业务64包滑动窗口确认丢包数量之和。
  * 两个字段均为进程生命周期内累计值，loss rate、时间窗口和Report ID由上层统计模块计算。
  */
 typedef struct

@@ -2,13 +2,14 @@
  * @file switch_tx.c
  * @brief LinkG链路切换控制消息发送实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-09-18
+ * @version 1.1.0
+ * @date 2026-09-19
  */
 
 #include "switch_tx.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -23,8 +24,7 @@
  */
 static bool _linkg_switch_tx_peer_valid(uint8_t peer_node_id)
 {
-    return peer_node_id >= LINKG_RESOURCE_NODE_ID_MIN &&
-           peer_node_id <= LINKG_RESOURCE_NODE_ID_MAX;
+    return peer_node_id >= LINKG_RESOURCE_NODE_ID_MIN && peer_node_id <= LINKG_RESOURCE_NODE_ID_MAX;
 }
 
 /**
@@ -129,10 +129,10 @@ int linkg_switch_tx_send_wifi_quality_report(linkg_packet_pool_t *pool, uint8_t 
     }
 
     ret = linkg_switch_wire_encode_wifi_quality_report(message_id,
-                                                        report,
-                                                        linkg_packet_data(packet),
-                                                        linkg_packet_capacity(packet),
-                                                        &wire_length);
+                                                       report,
+                                                       linkg_packet_data(packet),
+                                                       linkg_packet_capacity(packet),
+                                                       &wire_length);
     if (ret == 0)
     {
         ret = _linkg_switch_tx_submit(peer_node_id, packet, wire_length);
@@ -167,10 +167,10 @@ int linkg_switch_tx_send_plan_sync(linkg_packet_pool_t *pool, uint8_t peer_node_
     }
 
     ret = linkg_switch_wire_encode_plan_sync(message_id,
-                                              plan,
-                                              linkg_packet_data(packet),
-                                              linkg_packet_capacity(packet),
-                                              &wire_length);
+                                             plan,
+                                             linkg_packet_data(packet),
+                                             linkg_packet_capacity(packet),
+                                             &wire_length);
     if (ret == 0)
     {
         ret = _linkg_switch_tx_submit(peer_node_id, packet, wire_length);
@@ -204,7 +204,87 @@ int linkg_switch_tx_send_plan_ack(linkg_packet_pool_t *pool, uint8_t peer_node_i
         return ret;
     }
 
-    ret = linkg_switch_wire_encode_plan_ack(message_id, ack, linkg_packet_data(packet), linkg_packet_capacity(packet), &wire_length);
+    ret = linkg_switch_wire_encode_plan_ack(message_id,
+                                            ack,
+                                            linkg_packet_data(packet),
+                                            linkg_packet_capacity(packet),
+                                            &wire_length);
+    if (ret == 0)
+    {
+        ret = _linkg_switch_tx_submit(peer_node_id, packet, wire_length);
+    }
+
+    linkg_packet_release(packet);
+
+    return ret;
+}
+
+/**
+ * @brief 向指定直接Peer发送Maintenance开始或结束通知。
+ */
+int linkg_switch_tx_send_maintenance(linkg_packet_pool_t *pool, uint8_t peer_node_id, uint32_t message_id, const linkg_switch_wire_maintenance_t *maintenance)
+{
+    linkg_packet_t *packet;
+    size_t          wire_length;
+    int             ret;
+
+    if (maintenance == NULL)
+    {
+        return -EINVAL;
+    }
+
+    packet      = NULL;
+    wire_length = 0U;
+
+    ret = _linkg_switch_tx_create_packet(pool, &packet);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_switch_wire_encode_maintenance(message_id,
+                                               maintenance,
+                                               linkg_packet_data(packet),
+                                               linkg_packet_capacity(packet),
+                                               &wire_length);
+    if (ret == 0)
+    {
+        ret = _linkg_switch_tx_submit(peer_node_id, packet, wire_length);
+    }
+
+    linkg_packet_release(packet);
+
+    return ret;
+}
+
+/**
+ * @brief 向指定直接Peer发送Maintenance END处理确认。
+ */
+int linkg_switch_tx_send_maintenance_ack(linkg_packet_pool_t *pool, uint8_t peer_node_id, uint32_t message_id, const linkg_switch_wire_maintenance_ack_t *ack)
+{
+    linkg_packet_t *packet;
+    size_t          wire_length;
+    int             ret;
+
+    if (ack == NULL)
+    {
+        return -EINVAL;
+    }
+
+    packet      = NULL;
+    wire_length = 0U;
+
+    ret = _linkg_switch_tx_create_packet(pool, &packet);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_switch_wire_encode_maintenance_ack(message_id,
+                                                   ack,
+                                                   linkg_packet_data(packet),
+                                                   linkg_packet_capacity(packet),
+                                                   &wire_length);
     if (ret == 0)
     {
         ret = _linkg_switch_tx_submit(peer_node_id, packet, wire_length);

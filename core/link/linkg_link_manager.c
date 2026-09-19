@@ -511,7 +511,7 @@ int linkg_link_manager_start(void)
 /**
  * @brief 停止全部已创建的业务链路。
  */
-int linkg_link_manager_stop(void)
+int  linkg_link_manager_stop(void)
 {
     linkg_link_t *link;
     uint32_t      index;

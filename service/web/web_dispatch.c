@@ -27,9 +27,10 @@ typedef struct
 
 static const linkg_web_command_entry_t g_web_commands[] =
 {
-    {LINKG_WEB_CMD_HEADER_GET,   _linkg_web_handler_header_get},
-    {LINKG_WEB_CMD_OVERVIEW_GET, _linkg_web_handler_overview_get},
-    {LINKG_WEB_CMD_INVALID,      NULL}
+    {LINKG_WEB_CMD_HEADER_GET,        _linkg_web_handler_header_get},
+    {LINKG_WEB_CMD_OVERVIEW_GET,      _linkg_web_handler_overview_get},
+    {LINKG_WEB_CMD_SWITCH_STATUS_GET, _linkg_web_handler_switch_status_get},
+    {LINKG_WEB_CMD_INVALID,           NULL}
 };
 
 /****************************** 内部辅助 ******************************/

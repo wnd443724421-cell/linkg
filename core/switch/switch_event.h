@@ -19,24 +19,29 @@
 
 typedef enum
 {
-    LINKG_SWITCH_EVENT_NONE         = 0, // 无效事件
-    LINKG_SWITCH_EVENT_PLAN_SYNC_RX,     // 收到STA发送计划同步
-    LINKG_SWITCH_EVENT_PLAN_ACK_RX,      // 收到AP发送计划确认
-    LINKG_SWITCH_EVENT_COUNT             // 事件类型数量
+    LINKG_SWITCH_EVENT_NONE               = 0, // 无效事件
+    LINKG_SWITCH_EVENT_PLAN_SYNC_RX,           // 收到STA发送计划同步
+    LINKG_SWITCH_EVENT_PLAN_ACK_RX,            // 收到AP发送计划确认
+    LINKG_SWITCH_EVENT_MAINTENANCE_RX,         // 收到对端Maintenance BEGIN或END
+    LINKG_SWITCH_EVENT_MAINTENANCE_ACK_RX,     // 收到对端Maintenance END确认
+    LINKG_SWITCH_EVENT_COUNT                   // 事件类型数量
 } linkg_switch_event_type_t;
 
 /****************************** 事件消息 ******************************/
 
 typedef struct
 {
-    linkg_switch_event_type_t type;         // 内部事件类型
-    uint8_t                   peer_node_id; // 消息来源直接Peer节点编号
-    uint32_t                  message_id;   // Switch Wire消息编号
+    linkg_switch_event_type_t type;            // 内部事件类型
+    uint8_t                   peer_node_id;    // 消息来源直接Peer节点编号
+    uint32_t                  peer_generation; // 事件入队时对应Peer运行代际
+    uint32_t                  message_id;      // Switch Wire消息编号
 
     union
     {
-        linkg_switch_wire_plan_sync_t plan_sync; // 收到的发送计划同步
-        linkg_switch_wire_plan_ack_t  plan_ack;  // 收到的发送计划确认
+        linkg_switch_wire_plan_sync_t       plan_sync;       // 收到的发送计划同步
+        linkg_switch_wire_plan_ack_t        plan_ack;        // 收到的发送计划确认
+        linkg_switch_wire_maintenance_t     maintenance;     // 收到的Maintenance BEGIN或END
+        linkg_switch_wire_maintenance_ack_t maintenance_ack; // 收到的Maintenance END确认
     } payload;
 } linkg_switch_event_t;
 
