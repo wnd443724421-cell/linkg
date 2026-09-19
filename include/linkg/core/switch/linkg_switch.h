@@ -30,9 +30,15 @@ typedef struct
     uint32_t          secondary_link_id; // 当前备用链路，可无效
 } linkg_send_plan_t;
 
+/****************************** 前置声明 ******************************/
+
+typedef struct linkg_packet_pool linkg_packet_pool_t; // LinkG数据包内存池
+
 /****************************** 生命周期 ******************************/
 
-int linkg_switch_init(void);
+int linkg_switch_init(linkg_packet_pool_t *packet_pool);
+int linkg_switch_start(void);
+int linkg_switch_stop(void);
 int linkg_switch_deinit(void);
 
 /****************************** 计划管理 ******************************/

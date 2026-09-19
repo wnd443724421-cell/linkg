@@ -66,6 +66,7 @@ typedef struct
     bool                web_initialized;             // Web模块是否已经初始化
     bool                network_started;             // Network Service是否进入过start生命周期
     bool                link_manager_started;        // Link Manager是否进入过start生命周期
+    bool                switch_started;              // Switch模块是否进入过start生命周期
     bool                tun_started;                 // TUN模块是否进入过start生命周期
     bool                route_started;               // Route模块是否进入过start生命周期
     bool                nat_started;                 // NAT模块是否进入过start生命周期
@@ -74,7 +75,6 @@ typedef struct
     bool                udhcp_started;               // UDHCP模块是否进入过start生命周期
     bool                web_started;                 // Web模块是否进入过start生命周期
 } linkg_app_context_t;
-
 /****************************** 全局上下文 ******************************/
 
 static linkg_app_context_t g_app;
@@ -110,6 +110,7 @@ static bool _linkg_app_has_started_modules(void)
 {
     return g_app.network_started ||
            g_app.link_manager_started ||
+           g_app.switch_started ||
            g_app.tun_started ||
            g_app.route_started ||
            g_app.nat_started ||
@@ -234,7 +235,7 @@ static int _linkg_app_init(void)
 
     g_app.node_initialized = true;
 
-    ret = linkg_switch_init();
+    ret = linkg_switch_init(&g_app.packet_pool);
     if (ret != 0)
     {
         LINKG_LOG_ERROR("initialize switch module failed, error=%d", ret);
@@ -343,7 +344,7 @@ static int _linkg_app_init(void)
  * @brief 启动全部具有运行态的应用模块。
  *
  * 启动顺序严格按照运行依赖建立：
- * Network -> Link Manager -> TUN -> Route -> NAT -> Discovery -> Probe -> UDHCP -> Web。
+ * Network -> Link Manager -> TUN -> Route -> NAT -> Switch -> Discovery -> Probe -> UDHCP -> Web。
  */
 static int _linkg_app_start(void)
 {
@@ -435,9 +436,26 @@ static int _linkg_app_start(void)
         return ret;
     }
 
+        /**
+     * Switch在Discovery之前启动。
+     *
+     * 此时Transport、Scheduler和业务Link均已经完成初始化，
+     * Switch可以注册SWITCH Transport Handler并启动后台Worker。
+     * Discovery随后创建Peer和Path时即可直接建立对应发送计划。
+     */
+    g_app.switch_started = true;
+
+    ret = linkg_switch_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start switch module failed, error=%d", ret);
+        return ret;
+    }
+
     /**
-     * Discovery在Probe和DHCP之前启动。
-     * 从此刻开始Peer上线流程才允许创建Node、Transport、Path和Linux Route状态。
+     * Discovery在Switch、Probe和DHCP之后进入运行态。
+     * 从此刻开始Peer上线流程才允许创建Node、Transport、Path和Linux Route状态，
+     * 并可以直接向已经运行的Switch模块建立对应Peer发送计划。
      */
     g_app.discovery_started = true;
 
@@ -573,7 +591,27 @@ static int _linkg_app_stop(void)
         g_app.discovery_started = false;
     }
 
-    // Discovery已经删除全部Peer路由后才能关闭NAT和Route运行资源。
+    /**
+     * Discovery已经停止并完成全部Peer和Path注销，
+     * 此时Switch不再接收新的Peer生命周期变化。
+     *
+     * Switch停止时注销SWITCH Transport Handler、停止后台Worker，
+     * 并等待已经进入的Transport接收回调全部退出。
+     * Link Manager和Transport资源仍然保留，保证停止过程可安全完成。
+     */
+    if (g_app.switch_started)
+    {
+        ret = linkg_switch_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop switch module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.switch_started = false;
+    }
+
+    // Discovery和Switch已经退出后才能关闭NAT和Route运行资源。
     if (g_app.nat_started)
     {
         ret = linkg_nat_stop();

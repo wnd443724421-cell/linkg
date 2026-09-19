@@ -615,7 +615,7 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, const linkg_s
 
     pthread_mutex_unlock(&g_switch.lock);
 
-    _linkg_switch_observation_log(&observation);
+    //_linkg_switch_observation_log(&observation);
 
     return 0;
 }

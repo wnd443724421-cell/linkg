@@ -2,8 +2,8 @@
  * @file switch_report.c
  * @brief LinkG链路切换Wi-Fi质量上报实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-09-18
+ * @version 1.1.0
+ * @date 2026-09-19
  */
 
 #include "switch_report.h"
@@ -26,16 +26,17 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_SWITCH_REPORT_INTERVAL_US                   250000ULL  // AP Wi-Fi质量报告周期
-#define LINKG_SWITCH_REPORT_MESSAGE_ID_HALF_RANGE         0x80000000U // 32位消息编号前后关系半区间
+#define LINKG_SWITCH_REPORT_INTERVAL_US           250000ULL   // AP Wi-Fi质量报告周期
+#define LINKG_SWITCH_REPORT_MESSAGE_ID_HALF_RANGE 0x80000000U // 32位消息编号前后关系半区间
 
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
-    linkg_wifi_rx_stats_t stats;          // 当前Peer Wi-Fi累计接收统计
-    bool                  path_available; // 当前Peer Wi-Fi Path是否存在
-    bool                  stats_valid;    // 当前累计接收统计是否有效
+    linkg_wifi_rx_stats_t stats;                   // 当前Peer Wi-Fi累计接收统计
+    bool                  wifi_path_available;     // 当前Peer Wi-Fi Path是否存在
+    bool                  cellular_path_available; // 当前Peer Cellular Path是否存在
+    bool                  stats_valid;             // 当前Wi-Fi累计接收统计是否有效
 } linkg_switch_report_sample_t;
 
 /****************************** 内部辅助 ******************************/
@@ -139,9 +140,58 @@ static uint32_t _linkg_switch_report_allocate_message_id_locked(linkg_switch_ap_
 }
 
 /**
- * @brief 读取指定Peer当前Wi-Fi Path及累计接收统计。
+ * @brief 查询指定Peer在目标Link上的Path当前是否存在且Link处于运行态。
  */
-static int _linkg_switch_report_collect_sample(uint8_t peer_node_id, uint32_t wifi_link_id, linkg_switch_report_sample_t *sample)
+static int _linkg_switch_report_collect_path_available(uint8_t peer_node_id, uint32_t link_id, bool *available)
+{
+    linkg_path_endpoint_t endpoint;
+    linkg_link_t         *link;
+    linkg_path_t         *path;
+    int                   ret;
+
+    if (available == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *available = false;
+
+    if (link_id == LINKG_LINK_ID_INVALID)
+    {
+        return 0;
+    }
+
+    link = linkg_link_manager_get(link_id);
+    if (link == NULL || !linkg_link_is_running(link))
+    {
+        return 0;
+    }
+
+    memset(&endpoint, 0, sizeof(endpoint));
+    path = NULL;
+
+    ret = linkg_node_acquire_path(peer_node_id, link_id, &path, &endpoint);
+    if (_linkg_switch_report_expected_state_error(ret))
+    {
+        return 0;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    *available = true;
+
+    linkg_path_release(path);
+
+    return 0;
+}
+
+/**
+ * @brief 读取指定Peer当前Wi-Fi接收统计和Wi-Fi、Cellular Path状态。
+ */
+static int _linkg_switch_report_collect_sample(uint8_t peer_node_id, uint32_t wifi_link_id, uint32_t cellular_link_id, linkg_switch_report_sample_t *sample)
 {
     linkg_path_endpoint_t endpoint;
     linkg_link_t         *link;
@@ -154,6 +204,14 @@ static int _linkg_switch_report_collect_sample(uint8_t peer_node_id, uint32_t wi
     }
 
     memset(sample, 0, sizeof(*sample));
+
+    ret = _linkg_switch_report_collect_path_available(peer_node_id,
+                                                       cellular_link_id,
+                                                       &sample->cellular_path_available);
+    if (ret != 0)
+    {
+        return ret;
+    }
 
     if (wifi_link_id == LINKG_LINK_ID_INVALID)
     {
@@ -180,7 +238,8 @@ static int _linkg_switch_report_collect_sample(uint8_t peer_node_id, uint32_t wi
         return ret;
     }
 
-    sample->path_available = true;
+    sample->wifi_path_available = true;
+
     linkg_path_release(path);
 
     ret = linkg_wifi_link_get_rx_stats(link, peer_node_id, &sample->stats);
@@ -212,7 +271,7 @@ static void _linkg_switch_report_build_locked(linkg_switch_ap_peer_runtime_t *ru
     memset(report, 0, sizeof(*report));
     sampler = &runtime->wifi_uplink_loss_sampler;
 
-    if (!sample->path_available)
+    if (!sample->wifi_path_available)
     {
         memset(sampler, 0, sizeof(*sampler));
         return;
@@ -259,26 +318,42 @@ static void _linkg_switch_report_build_locked(linkg_switch_ap_peer_runtime_t *ru
 }
 
 /**
+ * @brief 发布当前AP Peer的Path和Wi-Fi上行丢包状态，调用方持有Switch锁。
+ */
+static void _linkg_switch_report_publish_locked(linkg_switch_ap_peer_runtime_t *runtime, const linkg_switch_report_sample_t *sample, const linkg_switch_wire_wifi_quality_report_t *report, uint64_t now_us)
+{
+    runtime->wifi_path_available     = sample->wifi_path_available;
+    runtime->cellular_path_available = sample->cellular_path_available;
+    runtime->path_updated_us          = now_us;
+
+    runtime->wifi_uplink_loss.valid          = report->sample_packets != 0U;
+    runtime->wifi_uplink_loss.loss_permille  = report->sample_packets != 0U ? report->loss_permille : 0U;
+    runtime->wifi_uplink_loss.sample_packets = report->sample_packets;
+    runtime->wifi_uplink_loss.updated_us     = now_us;
+}
+
+/**
  * @brief 处理指定AP Peer的一轮Wi-Fi上行质量报告。
  */
-static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t wifi_link_id, linkg_packet_pool_t *packet_pool)
+static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t wifi_link_id, uint32_t cellular_link_id, linkg_packet_pool_t *packet_pool, uint64_t now_us)
 {
     linkg_switch_wire_wifi_quality_report_t report;
     linkg_switch_report_sample_t            sample;
     linkg_switch_ap_peer_runtime_t         *runtime;
     linkg_switch_peer_runtime_t            *peer;
     uint32_t                                message_id;
-    bool                                    send_report;
     int                                     ret;
 
-    ret = _linkg_switch_report_collect_sample(peer_node_id, wifi_link_id, &sample);
+    ret = _linkg_switch_report_collect_sample(peer_node_id,
+                                               wifi_link_id,
+                                               cellular_link_id,
+                                               &sample);
     if (ret != 0)
     {
         return ret;
     }
 
-    send_report = false;
-    message_id  = LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID;
+    message_id = LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID;
     memset(&report, 0, sizeof(report));
 
     pthread_mutex_lock(&g_switch.lock);
@@ -310,24 +385,24 @@ static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t wifi
 
     runtime = &peer->role.ap;
 
-    if (!sample.path_available)
+    if (!sample.wifi_path_available)
     {
         memset(&runtime->wifi_uplink_loss_sampler, 0, sizeof(runtime->wifi_uplink_loss_sampler));
+
+        _linkg_switch_report_publish_locked(runtime, &sample, &report, now_us);
+
         pthread_mutex_unlock(&g_switch.lock);
+
         return 0;
     }
 
     _linkg_switch_report_build_locked(runtime, wifi_link_id, &sample, &report);
 
-    message_id  = _linkg_switch_report_allocate_message_id_locked(runtime);
-    send_report = true;
+    _linkg_switch_report_publish_locked(runtime, &sample, &report, now_us);
+
+    message_id = _linkg_switch_report_allocate_message_id_locked(runtime);
 
     pthread_mutex_unlock(&g_switch.lock);
-
-    if (!send_report)
-    {
-        return 0;
-    }
 
     return linkg_switch_tx_send_wifi_quality_report(packet_pool, peer_node_id, message_id, &report);
 }
@@ -341,6 +416,7 @@ int linkg_switch_report_process(uint64_t now_us)
 {
     linkg_packet_pool_t *packet_pool;
     uint8_t              peer_node_ids[LINKG_SWITCH_PEER_MAX];
+    uint32_t             cellular_link_id;
     uint32_t             wifi_link_id;
     uint32_t             peer_count;
     uint32_t             index;
@@ -352,7 +428,7 @@ int linkg_switch_report_process(uint64_t now_us)
         return -EINVAL;
     }
 
-    peer_count = 0U;
+    peer_count  = 0U;
     first_error = 0;
 
     pthread_mutex_lock(&g_switch.lock);
@@ -375,7 +451,8 @@ int linkg_switch_report_process(uint64_t now_us)
         return -EPERM;
     }
 
-    if (g_switch.next_report_us != 0U && now_us < g_switch.next_report_us)
+    if (g_switch.next_report_us != 0U &&
+        now_us < g_switch.next_report_us)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
@@ -401,11 +478,17 @@ int linkg_switch_report_process(uint64_t now_us)
         return -ENODEV;
     }
 
-    wifi_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    wifi_link_id     = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    cellular_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
 
     for (index = 0U; index < peer_count; index++)
     {
-        ret = _linkg_switch_report_process_peer(peer_node_ids[index], wifi_link_id, packet_pool);
+        ret = _linkg_switch_report_process_peer(peer_node_ids[index],
+                                                 wifi_link_id,
+                                                 cellular_link_id,
+                                                 packet_pool,
+                                                 now_us);
+
         _linkg_switch_report_record_error(ret, &first_error);
     }
 
@@ -459,7 +542,8 @@ int linkg_switch_report_receive_wifi_quality(uint8_t peer_node_id, uint32_t mess
         return -EINVAL;
     }
 
-    if (report->sample_packets == 0U && report->loss_permille != 0U)
+    if (report->sample_packets == 0U &&
+        report->loss_permille != 0U)
     {
         return -EINVAL;
     }
@@ -495,7 +579,8 @@ int linkg_switch_report_receive_wifi_quality(uint8_t peer_node_id, uint32_t mess
 
     runtime = &peer->role.sta;
 
-    if (!_linkg_switch_report_message_id_newer(message_id, runtime->remote_wifi_uplink_report_id))
+    if (!_linkg_switch_report_message_id_newer(message_id,
+                                                runtime->remote_wifi_uplink_report_id))
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
