@@ -139,10 +139,9 @@
 .switch-status-link-label { font-size: 13px; color: var(--linkg-color-text-secondary); }
 .switch-status-link-value { font-size: 20px; font-weight: 600; color: var(--linkg-color-text); }
 .switch-status-link-meta { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--linkg-color-text-muted); }
-.switch-status-probe-table th:nth-child(1) { width: 24%; }
-.switch-status-probe-table th:nth-child(2) { width: 24%; }
-.switch-status-probe-table th:nth-child(3) { width: 24%; }
-.switch-status-probe-table th:nth-child(4) { width: 28%; }
+.switch-status-probe-table th:nth-child(1) { width: 32%; }
+.switch-status-probe-table th:nth-child(2) { width: 30%; }
+.switch-status-probe-table th:nth-child(3) { width: 38%; }
 .switch-status-probe-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
 .switch-status-peer-table { min-width: 960px; }
 .switch-status-peer-table th:nth-child(1) { width: 8%; }

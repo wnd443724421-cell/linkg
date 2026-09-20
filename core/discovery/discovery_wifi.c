@@ -25,6 +25,7 @@
 #include "linkg_system_resources.h"
 #include "linkg_thread.h"
 #include "linkg_time.h"
+#include "linkg_log.h"
 
 #include "discovery_channel.h"
 #include "discovery_types.h"
@@ -519,7 +520,15 @@ static void _linkg_discovery_wifi_handle_sta_report(const uint8_t *buffer, uint3
         return;
     }
 
-    (void)linkg_discovery_channel_handle_peer_report(LINKG_LINK_ACCESS_WIFI, &report, now_us);
+    ret = linkg_discovery_channel_handle_peer_report(LINKG_LINK_ACCESS_WIFI, &report, now_us);
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("DISCOVERY-WIFI: STA report rejected, node=%u session=%llu revision=%llu error=%d",
+                    (unsigned int)report.node.node_id,
+                    (unsigned long long)report.session_id,
+                    (unsigned long long)report.revision,
+                    ret);
+    }
 }
 
 /**
@@ -547,6 +556,11 @@ static void _linkg_discovery_wifi_handle_ap_sync(const uint8_t *buffer, uint32_t
     ret = linkg_discovery_channel_handle_ap_sync(LINKG_LINK_ACCESS_WIFI, &sync, now_us);
     if (ret != 0)
     {
+        LINKG_LOG_WARN("DISCOVERY-WIFI: AP sync rejected, node=%u session=%llu revision=%llu error=%d",
+                    (unsigned int)sync.ap.node.node_id,
+                    (unsigned long long)sync.ap.session_id,
+                    (unsigned long long)sync.ap.revision,
+                    ret);
         return;
     }
 
@@ -751,6 +765,8 @@ static int _linkg_discovery_wifi_get_poll_timeout(uint64_t now_us)
 static void _linkg_discovery_wifi_process_periodic(uint64_t now_us)
 {
     linkg_device_role_t role;
+    int                 age_ret;
+    int                 send_ret;
 
     if (now_us < g_discovery_wifi.next_report_us)
     {
@@ -761,16 +777,27 @@ static void _linkg_discovery_wifi_process_periodic(uint64_t now_us)
     role = g_discovery_wifi.role;
     pthread_mutex_unlock(&g_discovery_wifi.lock);
 
+    send_ret = 0;
+
     if (role == LINKG_DEVICE_ROLE_AP)
     {
-        (void)_linkg_discovery_wifi_send_ap_sync();
+        send_ret = _linkg_discovery_wifi_send_ap_sync();
     }
     else if (role == LINKG_DEVICE_ROLE_STA)
     {
-        (void)_linkg_discovery_wifi_send_sta_report();
+        send_ret = _linkg_discovery_wifi_send_sta_report();
     }
 
-    (void)linkg_discovery_channel_age_peers(now_us);
+    if (send_ret != 0)
+    {
+        LINKG_LOG_WARN("DISCOVERY-WIFI: periodic report send failed, role=%d error=%d", role, send_ret);
+    }
+
+    age_ret = linkg_discovery_channel_age_peers(now_us);
+    if (age_ret != 0)
+    {
+        LINKG_LOG_WARN("DISCOVERY-WIFI: peer aging failed, error=%d", age_ret);
+    }
 
     g_discovery_wifi.next_report_us = now_us + LINKG_DISCOVERY_WIFI_REPORT_INTERVAL_US;
 }
@@ -900,9 +927,15 @@ static void _linkg_discovery_wifi_thread(linkg_thread_t *thread, void *user_data
         return;
     }
 
+    LINKG_LOG_ERROR("DISCOVERY-WIFI: worker exited unexpectedly, run_error=%d", ret);
+
     now_us = linkg_time_monotonic_us();
 
+    LINKG_LOG_ERROR("DISCOVERY-WIFI: unregistering Wi-Fi discovery channel after worker failure");
+
     unregister_ret = linkg_discovery_channel_unregister(LINKG_LINK_ACCESS_WIFI, now_us);
+
+    LINKG_LOG_ERROR("DISCOVERY-WIFI: channel unregister completed after worker failure, error=%d", unregister_ret);
 
     pthread_mutex_lock(&context->lock);
 

@@ -3,7 +3,7 @@
     <div class="page-header switch-status-page-header">
         <div>
             <h1 class="page-title">切换状态</h1>
-            <p class="page-description">实时查看发送计划、链路质量和维护事务</p>
+            <p class="page-description">查看发送计划、链路质量和维护事务</p>
         </div>
 
         <div class="switch-status-refresh">
@@ -17,7 +17,7 @@
     <section class="page-card switch-status-section">
         <div class="page-card-header">
             <h2 class="page-card-title">运行概况</h2>
-            <span class="switch-status-card-note">每秒自动刷新</span>
+            <span class="switch-status-card-note">页面每约 1 s 刷新</span>
         </div>
 
         <div class="switch-status-summary-grid">
@@ -205,8 +205,8 @@
         <div class="switch-status-quality-grid switch-status-section">
             <section class="page-card">
                 <div class="page-card-header">
-                    <h2 class="page-card-title">实时业务流量</h2>
-                    <span id="switchStatusStaTrafficAge" class="switch-status-card-note">--</span>
+                    <h2 class="page-card-title">Wi-Fi Path 流量</h2>
+                    <span class="switch-status-card-note">统计窗口约 250 ms</span>
                 </div>
 
                 <div class="switch-status-detail-grid">
@@ -234,27 +234,28 @@
 
             <section class="page-card">
                 <div class="page-card-header">
-                    <h2 class="page-card-title">Wi-Fi 真实丢包</h2>
+                    <h2 class="page-card-title">Wi-Fi 包缺口率</h2>
+                    <span class="switch-status-card-note">统计窗口约 250 ms</span>
                 </div>
 
                 <div class="switch-status-detail-grid">
                     <div class="switch-status-detail-item">
-                        <span class="switch-status-detail-label">上行丢包</span>
+                        <span class="switch-status-detail-label">上行缺口率</span>
                         <span id="switchStatusStaUplinkLoss" class="switch-status-detail-value">--</span>
                     </div>
 
                     <div class="switch-status-detail-item">
-                        <span class="switch-status-detail-label">上行样本</span>
+                        <span class="switch-status-detail-label">上行样本数</span>
                         <span id="switchStatusStaUplinkSamples" class="switch-status-detail-value">--</span>
                     </div>
 
                     <div class="switch-status-detail-item">
-                        <span class="switch-status-detail-label">下行丢包</span>
+                        <span class="switch-status-detail-label">下行缺口率</span>
                         <span id="switchStatusStaDownlinkLoss" class="switch-status-detail-value">--</span>
                     </div>
 
                     <div class="switch-status-detail-item">
-                        <span class="switch-status-detail-label">下行样本</span>
+                        <span class="switch-status-detail-label">下行样本数</span>
                         <span id="switchStatusStaDownlinkSamples" class="switch-status-detail-value">--</span>
                     </div>
                 </div>
@@ -263,8 +264,8 @@
 
         <section class="page-card switch-status-section">
             <div class="page-card-header">
-                <h2 class="page-card-title">业务探测</h2>
-                <span class="switch-status-card-note">不同业务类别分别探测</span>
+                <h2 class="page-card-title">Wi-Fi 业务探测</h2>
+                <span class="switch-status-card-note">各业务约 1 s 探测一次</span>
             </div>
 
             <div class="page-table-wrap">
@@ -274,7 +275,6 @@
                             <th>业务类别</th>
                             <th>可达状态</th>
                             <th>往返时延</th>
-                            <th>更新时间</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -282,19 +282,16 @@
                             <td>实时业务</td>
                             <td id="switchStatusProbeRealtimeState">--</td>
                             <td id="switchStatusProbeRealtimeRtt">--</td>
-                            <td id="switchStatusProbeRealtimeAge">--</td>
                         </tr>
                         <tr>
                             <td>视频业务</td>
                             <td id="switchStatusProbeVideoState">--</td>
                             <td id="switchStatusProbeVideoRtt">--</td>
-                            <td id="switchStatusProbeVideoAge">--</td>
                         </tr>
                         <tr>
                             <td>普通数据</td>
                             <td id="switchStatusProbeDataState">--</td>
                             <td id="switchStatusProbeDataRtt">--</td>
-                            <td id="switchStatusProbeDataAge">--</td>
                         </tr>
                     </tbody>
                 </table>
@@ -348,7 +345,7 @@
                             <th>发送计划</th>
                             <th>Wi-Fi Path</th>
                             <th>5G Path</th>
-                            <th>Wi-Fi 上行丢包</th>
+                            <th>Wi-Fi 上行缺口（约 250 ms）</th>
                             <th>对端维护</th>
                             <th>状态更新时间</th>
                         </tr>

@@ -44,7 +44,7 @@
 #define LINKG_WIFI_RX_QUEUE_BATCH_COUNT         5U                                                                                   // 单业务接收队列最多缓存批次数
 #define LINKG_WIFI_RX_EPOLL_EVENT_COUNT         (LINKG_WIFI_TRAFFIC_COUNT + 1U)                                                      // 三业务Socket和Worker唤醒描述符数量
 #define LINKG_WIFI_RX_WORKER_WAKEUP_EVENT       LINKG_WIFI_TRAFFIC_COUNT                                                             // Worker唤醒事件索引
-#define LINKG_WIFI_RX_WORKER_CPU_CORE           1                                                                                    // RX生产线程绑定CPU1
+#define LINKG_WIFI_RX_WORKER_CPU_CORE           0                                                                                    // RX生产线程绑定CPU0
 #define LINKG_WIFI_RX_RETRY_MS                  1U                                                                                   // Queue或Packet Pool暂不可用时重试间隔
 #define LINKG_WIFI_NODE_SLOT_COUNT              256U                                                                                 // uint8_t Node ID直接索引空间
 #define LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE      64U                                                                                  // Wi-Fi链路Sequence乱序窗口大小

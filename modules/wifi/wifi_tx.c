@@ -29,6 +29,7 @@
 #include "wifi_traffic.h"
 #include "wifi_tx_queue.h"
 #include "wifi_wire.h"
+#include "linkg_log.h"
 
 /****************************** 发送参数 ******************************/
 
@@ -40,9 +41,39 @@
 #define LINKG_WIFI_TX_UDP_PAYLOAD_MAX       (LINKG_WIFI_TX_MTU - LINKG_WIFI_TX_IPV4_HEADER_SIZE - LINKG_WIFI_TX_UDP_HEADER_SIZE) // 单个UDP报文最大负载
 #define LINKG_WIFI_TX_TRANSPORT_PAYLOAD_MAX (LINKG_WIFI_TX_UDP_PAYLOAD_MAX - LINKG_WIFI_WIRE_HEADER_SIZE)                        // Wi-Fi私有头之后的最大Transport报文长度
 #define LINKG_WIFI_NODE_SLOT_COUNT          256U                                                                                 // uint8_t Node ID直接索引空间
-
+#define LINKG_WIFI_TX_DIAG_LOG_INTERVAL_US  1000000ULL                                                                           // 发送异常诊断日志最小时间间隔
+#define LINKG_WIFI_TX_DIAG_COUNT_STEP       1000ULL                                                                              // 高频异常累计到该步长后才检查日志时间
 
 /****************************** 内部类型 ******************************/
+
+typedef enum
+{
+    LINKG_WIFI_TX_DROP_QUEUE_FULL = 0, // 等待队列满，主动淘汰最旧Packet
+    LINKG_WIFI_TX_DROP_PATH_SUBMIT,    // 新批次提交时Path已经失效
+    LINKG_WIFI_TX_DROP_PATH_QUEUE,     // 已入队Packet发送前Path变为失效
+    LINKG_WIFI_TX_DROP_REASON_COUNT    // 主动丢包原因数量
+} linkg_wifi_tx_drop_reason_t;
+
+/**
+ * @brief 获取Wi-Fi主动丢包原因名称。
+ */
+static const char *_linkg_wifi_tx_drop_reason_name(linkg_wifi_tx_drop_reason_t reason)
+{
+    switch (reason)
+    {
+        case LINKG_WIFI_TX_DROP_QUEUE_FULL:
+            return "queue-full";
+
+        case LINKG_WIFI_TX_DROP_PATH_SUBMIT:
+            return "path-inactive-submit";
+
+        case LINKG_WIFI_TX_DROP_PATH_QUEUE:
+            return "path-inactive-queue";
+
+        default:
+            return "unknown";
+    }
+}
 
 /**
  * @brief 单个对端节点单个业务类别的Wi-Fi发送序列状态。
@@ -92,6 +123,15 @@ struct linkg_wifi_tx
 
     uint32_t                      capacity;                                      // 单次发送调度最大提交Packet数量
     uint32_t                      queue_capacity;                                // 单个业务等待队列最大Packet数量
+
+    uint64_t                      dropped_total;                                 // 当前进程生命周期主动丢包总数
+    uint64_t                      dropped_by_reason[LINKG_WIFI_TX_DROP_REASON_COUNT]; // 各主动丢包原因累计数量
+    uint64_t                      last_drop_log_us[LINKG_WIFI_TX_DROP_REASON_COUNT];   // 各主动丢包原因最近诊断日志时间
+    uint64_t                      flowctrl_blocked_since_us;                      // 当前Flowctrl连续阻塞起始时间
+    uint64_t                      last_flowctrl_log_us;                           // 最近一次Flowctrl阻塞日志时间
+    uint64_t                      socket_backpressure_count;                     // sendmmsg短时背压累计次数
+    uint64_t                      last_socket_backpressure_log_us;               // 最近一次Socket背压诊断日志时间
+    bool                          flowctrl_blocked;                               // 当前是否处于Flowctrl连续阻塞状态
 
     _Atomic bool                  started;                                       // 发送模块运行状态
 };
@@ -220,26 +260,67 @@ static int _linkg_wifi_tx_ipv4_to_node_id(const struct sockaddr_in *address, uin
 /****************************** Path统计 ******************************/
 
 /**
- * @brief 记录单个Packet为主动丢弃。
+ * @brief 判断高频诊断计数是否需要检查日志时间。
  */
-static void _linkg_wifi_tx_record_dropped(linkg_path_t *path, const linkg_packet_t *packet)
+static bool _linkg_wifi_tx_diag_count_due(uint64_t count)
 {
-    static _Atomic uint64_t dropped_count;
-    uint64_t                count;
+    return count == 1U || (count % LINKG_WIFI_TX_DIAG_COUNT_STEP) == 0U;
+}
 
-    if (path == NULL || packet == NULL)
+/**
+ * @brief 判断指定诊断日志是否已经达到最小时间间隔。
+ *
+ * @note 调用方必须持有tx->lock。
+ */
+static bool _linkg_wifi_tx_diag_time_due(uint64_t now_us, uint64_t last_us)
+{
+    return last_us == 0U || now_us < last_us || now_us - last_us >= LINKG_WIFI_TX_DIAG_LOG_INTERVAL_US;
+}
+
+/**
+ * @brief 记录并限频打印单个Packet主动丢弃原因。
+ *
+ * @note 调用方必须持有tx->lock。
+ */
+static void _linkg_wifi_tx_record_dropped(linkg_wifi_tx_t *tx, linkg_path_t *path, const linkg_packet_t *packet, linkg_wifi_tx_drop_reason_t reason)
+{
+    uint64_t now_us;
+    uint64_t reason_count;
+
+    if (tx == NULL || path == NULL || packet == NULL || reason >= LINKG_WIFI_TX_DROP_REASON_COUNT)
     {
         return;
     }
 
     linkg_path_record_tx_dropped(path, packet->data_length, 1U);
 
-    count = atomic_fetch_add(&dropped_count, 1U) + 1U;
+    tx->dropped_total++;
+    tx->dropped_by_reason[reason]++;
+    reason_count = tx->dropped_by_reason[reason];
 
-    if ((count % 1000U) == 0U)
+    if (!_linkg_wifi_tx_diag_count_due(reason_count))
     {
-        WIFI_WARN("TX主动丢包累计=%llu", (unsigned long long)count);
+        return;
     }
+
+    now_us = linkg_time_monotonic_us();
+    if (!_linkg_wifi_tx_diag_time_due(now_us, tx->last_drop_log_us[reason]))
+    {
+        return;
+    }
+
+    tx->last_drop_log_us[reason] = now_us;
+
+    WIFI_WARN("TX主动丢包统计，reason=%s reason_count=%llu total=%llu queue_full=%llu path_submit=%llu path_queue=%llu wait_queue_rt_video_data=%u/%u/%u",
+              _linkg_wifi_tx_drop_reason_name(reason),
+              (unsigned long long)reason_count,
+              (unsigned long long)tx->dropped_total,
+              (unsigned long long)tx->dropped_by_reason[LINKG_WIFI_TX_DROP_QUEUE_FULL],
+              (unsigned long long)tx->dropped_by_reason[LINKG_WIFI_TX_DROP_PATH_SUBMIT],
+              (unsigned long long)tx->dropped_by_reason[LINKG_WIFI_TX_DROP_PATH_QUEUE],
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_REALTIME]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_VIDEO]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_DATA]));
 }
 
 /**
@@ -253,6 +334,124 @@ static void _linkg_wifi_tx_record_failed(linkg_path_t *path, const linkg_packet_
     }
 
     linkg_path_record_tx_failed(path, packet->data_length, 1U);
+}
+
+/**
+ * @brief 限频记录Flowctrl连续阻塞状态。
+ *
+ * @note 调用方必须持有tx->lock。
+ */
+static void _linkg_wifi_tx_log_flowctrl_blocked_locked(linkg_wifi_tx_t *tx, const linkg_wifi_flowctrl_sample_t *sample)
+{
+    uint64_t blocked_us;
+    uint64_t now_us;
+
+    if (tx == NULL || sample == NULL)
+    {
+        return;
+    }
+
+    now_us = linkg_time_monotonic_us();
+
+    if (!tx->flowctrl_blocked)
+    {
+        tx->flowctrl_blocked          = true;
+        tx->flowctrl_blocked_since_us = now_us;
+    }
+
+    if (!_linkg_wifi_tx_diag_time_due(now_us, tx->last_flowctrl_log_us))
+    {
+        return;
+    }
+
+    tx->last_flowctrl_log_us = now_us;
+    blocked_us               = now_us >= tx->flowctrl_blocked_since_us ? now_us - tx->flowctrl_blocked_since_us : 0U;
+
+    WIFI_WARN("TX流控阻塞，blocked_ms=%llu status_valid=%u driver_allowed=%u new_off=%u off_count=%u driver_queue_vo_vi_be=%u/%u/%u wait_queue_rt_video_data=%u/%u/%u read_us=%llu",
+              (unsigned long long)(blocked_us / 1000ULL),
+              sample->status_valid ? 1U : 0U,
+              sample->driver_tx_allowed ? 1U : 0U,
+              sample->new_off_detected ? 1U : 0U,
+              sample->flowctrl_off_count,
+              sample->vo_queue_length,
+              sample->vi_queue_length,
+              sample->be_queue_length,
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_REALTIME]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_VIDEO]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_DATA]),
+              (unsigned long long)sample->read_us);
+}
+
+/**
+ * @brief Flowctrl恢复允许提交后记录连续阻塞时长。
+ *
+ * @note 调用方必须持有tx->lock。
+ */
+static void _linkg_wifi_tx_log_flowctrl_recovered_locked(linkg_wifi_tx_t *tx, const linkg_wifi_flowctrl_sample_t *sample)
+{
+    uint64_t blocked_us;
+    uint64_t now_us;
+
+    if (tx == NULL || sample == NULL || !tx->flowctrl_blocked)
+    {
+        return;
+    }
+
+    now_us     = linkg_time_monotonic_us();
+    blocked_us = now_us >= tx->flowctrl_blocked_since_us ? now_us - tx->flowctrl_blocked_since_us : 0U;
+
+    WIFI_INFO("TX流控恢复，blocked_ms=%llu off_count=%u driver_queue_vo_vi_be=%u/%u/%u wait_queue_rt_video_data=%u/%u/%u",
+              (unsigned long long)(blocked_us / 1000ULL),
+              sample->flowctrl_off_count,
+              sample->vo_queue_length,
+              sample->vi_queue_length,
+              sample->be_queue_length,
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_REALTIME]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_VIDEO]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_DATA]));
+
+    tx->flowctrl_blocked          = false;
+    tx->flowctrl_blocked_since_us = 0U;
+    tx->last_flowctrl_log_us      = 0U;
+}
+
+/**
+ * @brief 限频记录Socket短时发送背压。
+ *
+ * @note 调用方必须持有tx->lock。
+ */
+static void _linkg_wifi_tx_log_socket_backpressure_locked(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class, int error, uint32_t submit_count)
+{
+    uint64_t now_us;
+
+    if (tx == NULL)
+    {
+        return;
+    }
+
+    tx->socket_backpressure_count++;
+
+    if (!_linkg_wifi_tx_diag_count_due(tx->socket_backpressure_count))
+    {
+        return;
+    }
+
+    now_us = linkg_time_monotonic_us();
+    if (!_linkg_wifi_tx_diag_time_due(now_us, tx->last_socket_backpressure_log_us))
+    {
+        return;
+    }
+
+    tx->last_socket_backpressure_log_us = now_us;
+
+    WIFI_WARN("TX Socket背压，count=%llu traffic=%u submit=%u error=%d wait_queue_rt_video_data=%u/%u/%u",
+              (unsigned long long)tx->socket_backpressure_count,
+              (unsigned int)traffic_class,
+              submit_count,
+              error,
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_REALTIME]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_VIDEO]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_DATA]));
 }
 
 /****************************** Queue辅助 ******************************/
@@ -303,7 +502,7 @@ static uint32_t _linkg_wifi_tx_drop_oldest_locked(linkg_wifi_tx_t *tx, linkg_wif
     // Queue丢弃会释放Packet和Path引用，因此必须提前记录丢包统计。
     for (index = 0U; index < drop_count; index++)
     {
-        _linkg_wifi_tx_record_dropped(items[index].path, items[index].packet);
+        _linkg_wifi_tx_record_dropped(tx, items[index].path, items[index].packet, LINKG_WIFI_TX_DROP_QUEUE_FULL);
     }
 
     ret = linkg_wifi_tx_queue_discard_batch(queue, drop_count);
@@ -595,7 +794,7 @@ static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_
          */
         if (send_count == 0U)
         {
-            _linkg_wifi_tx_record_dropped(scratch->items[0].path, scratch->items[0].packet);
+            _linkg_wifi_tx_record_dropped(tx, scratch->items[0].path, scratch->items[0].packet, LINKG_WIFI_TX_DROP_PATH_QUEUE);
 
             ret = linkg_wifi_tx_queue_discard_batch(queue, 1U);
             if (ret != 0)
@@ -616,6 +815,8 @@ static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_
 
             if (_linkg_wifi_tx_error_transient(send_error))
             {
+                _linkg_wifi_tx_log_socket_backpressure_locked(tx, traffic_class, send_error, send_count);
+
                 *stopped = true;
                 return (int)submitted_total;
             }
@@ -713,8 +914,11 @@ static int _linkg_wifi_tx_dispatch_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_t
 
     if (!submit_allowed)
     {
+        _linkg_wifi_tx_log_flowctrl_blocked_locked(tx, &sample);
         return 0;
     }
+
+    _linkg_wifi_tx_log_flowctrl_recovered_locked(tx, &sample);
 
     _linkg_wifi_tx_build_plan_locked(tx, trigger_class, &plan);
 
@@ -977,11 +1181,20 @@ int linkg_wifi_tx_purge_path(linkg_wifi_tx_t *tx, linkg_path_t *path, uint32_t *
 
     *purged_count = 0U;
 
+    WIFI_INFO("TX Path队列清理开始，path=%p", (void *)path);
+
     ret = pthread_mutex_lock(&tx->lock);
     if (ret != 0)
     {
+        WIFI_WARN("TX Path队列清理获取锁失败，path=%p error=%d", (void *)path, ret);
         return -ret;
     }
+
+    WIFI_INFO("TX Path队列清理获得锁，path=%p wait_queue_rt_video_data=%u/%u/%u",
+              (void *)path,
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_REALTIME]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_VIDEO]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_DATA]));
 
     first_error = 0;
     total_purged = 0U;
@@ -1003,6 +1216,11 @@ int linkg_wifi_tx_purge_path(linkg_wifi_tx_t *tx, linkg_path_t *path, uint32_t *
         ret = linkg_wifi_tx_queue_purge_path(tx->queues[index], path, &queue_purged);
         if (ret != 0)
         {
+            WIFI_WARN("TX Path队列清理失败，path=%p traffic=%u error=%d",
+                      (void *)path,
+                      index,
+                      ret);
+
             if (first_error == 0)
             {
                 first_error = ret;
@@ -1015,6 +1233,14 @@ int linkg_wifi_tx_purge_path(linkg_wifi_tx_t *tx, linkg_path_t *path, uint32_t *
     }
 
     *purged_count = total_purged;
+
+    WIFI_INFO("TX Path队列清理完成，path=%p purged=%u error=%d wait_queue_rt_video_data=%u/%u/%u",
+              (void *)path,
+              total_purged,
+              first_error,
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_REALTIME]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_VIDEO]),
+              linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_DATA]));
 
     pthread_mutex_unlock(&tx->lock);
 
@@ -1078,7 +1304,7 @@ int linkg_wifi_tx_submit(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_link_tx_
         for (index = 0U; index < count; index++)
         {
             results[index] = -ENODEV;
-            _linkg_wifi_tx_record_dropped(path, packets[index]);
+            _linkg_wifi_tx_record_dropped(tx, path, packets[index], LINKG_WIFI_TX_DROP_PATH_SUBMIT);
         }
 
         pthread_mutex_unlock(&tx->lock);

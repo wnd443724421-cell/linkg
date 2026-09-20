@@ -19,8 +19,27 @@
 #include "linkg_route.h"
 #include "linkg_switch.h"
 #include "linkg_transport.h"
+#include "linkg_log.h"
 
 /****************************** Path辅助 ******************************/
+
+/**
+ * @brief 获取Discovery Access日志名称。
+ */
+static const char *_linkg_discovery_access_name(linkg_link_access_t access)
+{
+    switch (access)
+    {
+        case LINKG_LINK_ACCESS_WIFI:
+            return "wifi";
+
+        case LINKG_LINK_ACCESS_CELLULAR:
+            return "cellular";
+
+        default:
+            return "unknown";
+    }
+}
 
 /**
  * @brief 获取Report指定Access当前对应的本地业务Link ID。
@@ -107,6 +126,11 @@ int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t 
     ret = linkg_node_register_path(report->node.node_id, link_id, endpoint);
     if (ret != 0)
     {
+        LINKG_LOG_WARN("DISCOVERY: access path register failed, node=%u access=%s link=%u error=%d",
+                       (unsigned int)report->node.node_id,
+                       _linkg_discovery_access_name(access),
+                       link_id,
+                       ret);
         return ret;
     }
 
@@ -149,6 +173,9 @@ static int _linkg_discovery_unregister_invalidated_paths_locked(linkg_discovery_
     {
         path_invalidated = true;
 
+        LINKG_LOG_INFO("DISCOVERY: report invalidated access path, node=%u access=wifi",
+                       (unsigned int)peer->report.node.node_id);
+
         ret = _linkg_discovery_unregister_access_path_locked(peer, LINKG_LINK_ACCESS_WIFI);
         if (ret != 0 && first_error == 0)
         {
@@ -160,6 +187,9 @@ static int _linkg_discovery_unregister_invalidated_paths_locked(linkg_discovery_
         (report->path_flags & LINKG_DISCOVERY_PATH_CELLULAR_VALID) == 0U)
     {
         path_invalidated = true;
+
+        LINKG_LOG_INFO("DISCOVERY: report invalidated access path, node=%u access=cellular",
+                       (unsigned int)peer->report.node.node_id);
 
         ret = _linkg_discovery_unregister_access_path_locked(peer, LINKG_LINK_ACCESS_CELLULAR);
         if (ret != 0 && first_error == 0)
@@ -243,7 +273,23 @@ static int _linkg_discovery_ensure_bootstrap_send_plan_locked(const linkg_discov
         return -EINVAL;
     }
 
-    return linkg_switch_set_plan(report->node.node_id, &plan);
+    ret = linkg_switch_set_plan(report->node.node_id, &plan);
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("DISCOVERY: bootstrap send plan failed, node=%u access=%s primary_link=%u error=%d",
+                       (unsigned int)report->node.node_id,
+                       _linkg_discovery_access_name(access),
+                       plan.primary_link_id,
+                       ret);
+        return ret;
+    }
+
+    LINKG_LOG_INFO("DISCOVERY: bootstrap send plan created, node=%u access=%s primary_link=%u",
+                   (unsigned int)report->node.node_id,
+                   _linkg_discovery_access_name(access),
+                   plan.primary_link_id);
+
+    return 0;
 }
 
 /****************************** 注册回滚 ******************************/
@@ -253,20 +299,48 @@ static int _linkg_discovery_ensure_bootstrap_send_plan_locked(const linkg_discov
  */
 static void _linkg_discovery_rollback_peer_registration(uint8_t node_id, bool switch_registered, bool transport_registered, bool node_registered)
 {
+    int ret;
+
+    LINKG_LOG_WARN("DISCOVERY: peer register rollback begin, node=%u switch=%u transport=%u node_runtime=%u",
+                   (unsigned int)node_id,
+                   switch_registered ? 1U : 0U,
+                   transport_registered ? 1U : 0U,
+                   node_registered ? 1U : 0U);
+
     if (switch_registered)
     {
-        (void)linkg_switch_remove_plan(node_id);
+        ret = linkg_switch_remove_plan(node_id);
+        if (ret != 0 && ret != -ENOENT)
+        {
+            LINKG_LOG_WARN("DISCOVERY: peer register rollback failed, node=%u stage=switch error=%d",
+                           (unsigned int)node_id,
+                           ret);
+        }
     }
 
     if (transport_registered)
     {
-        (void)linkg_transport_unregister_peer(node_id);
+        ret = linkg_transport_unregister_peer(node_id);
+        if (ret != 0 && ret != -ENOENT)
+        {
+            LINKG_LOG_WARN("DISCOVERY: peer register rollback failed, node=%u stage=transport error=%d",
+                           (unsigned int)node_id,
+                           ret);
+        }
     }
 
     if (node_registered)
     {
-        (void)linkg_node_unregister_peer(node_id);
+        ret = linkg_node_unregister_peer(node_id);
+        if (ret != 0 && ret != -ENOENT)
+        {
+            LINKG_LOG_WARN("DISCOVERY: peer register rollback failed, node=%u stage=node error=%d",
+                           (unsigned int)node_id,
+                           ret);
+        }
     }
+
+    LINKG_LOG_WARN("DISCOVERY: peer register rollback complete, node=%u", (unsigned int)node_id);
 }
 
 /****************************** Route清理 ******************************/
@@ -295,13 +369,22 @@ int _linkg_discovery_cleanup_peer_route_locked(linkg_discovery_peer_t *peer)
         return 0;
     }
 
+    LINKG_LOG_INFO("DISCOVERY: retry peer route cleanup, node=%u",
+                   (unsigned int)peer->report.node.node_id);
+
     ret = linkg_route_remove_node(peer->report.node.node_id);
     if (ret != 0)
     {
+        LINKG_LOG_WARN("DISCOVERY: peer route cleanup failed, node=%u error=%d",
+                       (unsigned int)peer->report.node.node_id,
+                       ret);
         return ret;
     }
 
     peer->route_cleanup_pending = false;
+
+    LINKG_LOG_INFO("DISCOVERY: peer route cleanup complete, node=%u",
+                   (unsigned int)peer->report.node.node_id);
 
     return 0;
 }
@@ -323,6 +406,7 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
     bool              node_registered;
     bool              transport_registered;
     bool              switch_registered;
+    int               path_result;
     int               ret;
 
     if (peer == NULL || report == NULL)
@@ -345,9 +429,24 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
         return -ENOSPC;
     }
 
+    LINKG_LOG_INFO("DISCOVERY: peer register begin, node=%u access=%s session=%llu revision=%llu flags=0x%02x",
+                   (unsigned int)report->node.node_id,
+                   _linkg_discovery_access_name(access),
+                   (unsigned long long)report->session_id,
+                   (unsigned long long)report->revision,
+                   (unsigned int)report->path_flags);
+
     if (peer->route_cleanup_pending)
     {
+        LINKG_LOG_INFO("DISCOVERY: peer register stage begin, node=%u stage=route-cleanup",
+                       (unsigned int)report->node.node_id);
+
         ret = _linkg_discovery_cleanup_peer_route_locked(peer);
+
+        LINKG_LOG_INFO("DISCOVERY: peer register stage end, node=%u stage=route-cleanup error=%d",
+                       (unsigned int)report->node.node_id,
+                       ret);
+
         if (ret != 0)
         {
             return ret;
@@ -358,7 +457,15 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
     transport_registered = false;
     switch_registered    = false;
 
+    LINKG_LOG_INFO("DISCOVERY: peer register stage begin, node=%u stage=node",
+                   (unsigned int)report->node.node_id);
+
     ret = linkg_node_register_peer(&report->node);
+
+    LINKG_LOG_INFO("DISCOVERY: peer register stage end, node=%u stage=node error=%d",
+                   (unsigned int)report->node.node_id,
+                   ret);
+
     if (ret != 0)
     {
         return ret;
@@ -366,7 +473,15 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
 
     node_registered = true;
 
+    LINKG_LOG_INFO("DISCOVERY: peer register stage begin, node=%u stage=transport",
+                   (unsigned int)report->node.node_id);
+
     ret = linkg_transport_register_peer(report->node.node_id);
+
+    LINKG_LOG_INFO("DISCOVERY: peer register stage end, node=%u stage=transport error=%d",
+                   (unsigned int)report->node.node_id,
+                   ret);
+
     if (ret != 0)
     {
         _linkg_discovery_rollback_peer_registration(report->node.node_id, false, false, node_registered);
@@ -375,18 +490,37 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
 
     transport_registered = true;
 
-    ret = _linkg_discovery_register_access_path_locked(report, access);
-    if (ret < 0)
+    LINKG_LOG_INFO("DISCOVERY: peer register stage begin, node=%u stage=path access=%s",
+                   (unsigned int)report->node.node_id,
+                   _linkg_discovery_access_name(access));
+
+    path_result = _linkg_discovery_register_access_path_locked(report, access);
+
+    LINKG_LOG_INFO("DISCOVERY: peer register stage end, node=%u stage=path access=%s result=%d",
+                   (unsigned int)report->node.node_id,
+                   _linkg_discovery_access_name(access),
+                   path_result);
+
+    if (path_result < 0)
     {
         _linkg_discovery_rollback_peer_registration(report->node.node_id, false, transport_registered, node_registered);
-        return ret;
+        return path_result;
     }
 
-    if (ret > 0)
+    if (path_result > 0)
     {
         _linkg_discovery_build_default_send_plan(report, access, &plan);
 
+        LINKG_LOG_INFO("DISCOVERY: peer register stage begin, node=%u stage=switch primary_link=%u",
+                       (unsigned int)report->node.node_id,
+                       plan.primary_link_id);
+
         ret = linkg_switch_set_plan(report->node.node_id, &plan);
+
+        LINKG_LOG_INFO("DISCOVERY: peer register stage end, node=%u stage=switch error=%d",
+                       (unsigned int)report->node.node_id,
+                       ret);
+
         if (ret != 0)
         {
             _linkg_discovery_rollback_peer_registration(report->node.node_id, false, transport_registered, node_registered);
@@ -396,7 +530,15 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
         switch_registered = true;
     }
 
+    LINKG_LOG_INFO("DISCOVERY: peer register stage begin, node=%u stage=route",
+                   (unsigned int)report->node.node_id);
+
     ret = linkg_route_add_node(report->node.node_id);
+
+    LINKG_LOG_INFO("DISCOVERY: peer register stage end, node=%u stage=route error=%d",
+                   (unsigned int)report->node.node_id,
+                   ret);
+
     if (ret != 0)
     {
         _linkg_discovery_rollback_peer_registration(report->node.node_id, switch_registered, transport_registered, node_registered);
@@ -416,9 +558,15 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
         _linkg_discovery_advance_topology_revision_locked();
     }
 
+    LINKG_LOG_INFO("DISCOVERY: peer runtime registered, node=%u access=%s path=%u switch=%u peer_count=%u",
+                   (unsigned int)report->node.node_id,
+                   _linkg_discovery_access_name(access),
+                   path_result > 0 ? 1U : 0U,
+                   switch_registered ? 1U : 0U,
+                   g_discovery.peer_count);
+
     return 0;
 }
-/****************************** Session重置 ******************************/
 
 /****************************** Session重置 ******************************/
 
@@ -432,20 +580,29 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
  */
 int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
 {
-    int first_error;
-    int ret;
+    uint8_t node_id;
+    int     first_error;
+    int     ret;
 
     if (peer == NULL || !peer->used || !peer->online)
     {
         return -EINVAL;
     }
 
+    node_id     = peer->report.node.node_id;
     first_error = 0;
+
+    LINKG_LOG_INFO("DISCOVERY: peer session reset begin, node=%u session=%llu",
+                   (unsigned int)node_id,
+                   (unsigned long long)peer->report.session_id);
 
     /**
      * 先移除旧发送计划，禁止后续调度继续引用旧Session Path。
      */
-    ret = linkg_switch_remove_plan(peer->report.node.node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage begin, node=%u stage=switch", (unsigned int)node_id);
+    ret = linkg_switch_remove_plan(node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage end, node=%u stage=switch error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0 && ret != -ENOENT)
     {
         first_error = ret;
@@ -454,7 +611,10 @@ int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
     /**
      * 退役旧Session Wi-Fi Path。
      */
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage begin, node=%u stage=wifi-path", (unsigned int)node_id);
     ret = _linkg_discovery_unregister_access_path_locked(peer, LINKG_LINK_ACCESS_WIFI);
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage end, node=%u stage=wifi-path error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
@@ -463,7 +623,10 @@ int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
     /**
      * 退役旧Session Cellular Path。
      */
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage begin, node=%u stage=cellular-path", (unsigned int)node_id);
     ret = _linkg_discovery_unregister_access_path_locked(peer, LINKG_LINK_ACCESS_CELLULAR);
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage end, node=%u stage=cellular-path error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
@@ -472,11 +635,16 @@ int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
     /**
      * 清理旧Session Transport序列、接收窗口及重组状态。
      */
-    ret = linkg_transport_reset_peer(peer->report.node.node_id, false);
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage begin, node=%u stage=transport", (unsigned int)node_id);
+    ret = linkg_transport_reset_peer(node_id, false);
+    LINKG_LOG_INFO("DISCOVERY: peer session reset stage end, node=%u stage=transport error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
     }
+
+    LINKG_LOG_INFO("DISCOVERY: peer session reset complete, node=%u error=%d", (unsigned int)node_id, first_error);
 
     return first_error;
 }
@@ -640,15 +808,29 @@ int _linkg_discovery_unregister_access_path_locked(linkg_discovery_peer_t *peer,
     }
 
     first_error = 0;
-    link_id = linkg_link_manager_get_id(access);
+    link_id     = linkg_link_manager_get_id(access);
 
-    if (link_id != LINKG_LINK_ID_INVALID)
+    if (link_id == LINKG_LINK_ID_INVALID)
     {
-        ret = linkg_node_unregister_path(peer->report.node.node_id, link_id);
-        if (ret != 0 && ret != -ENOENT)
-        {
-            first_error = ret;
-        }
+        return 0;
+    }
+
+    LINKG_LOG_INFO("DISCOVERY: access path unregister begin, node=%u access=%s link=%u",
+                   (unsigned int)peer->report.node.node_id,
+                   _linkg_discovery_access_name(access),
+                   link_id);
+
+    ret = linkg_node_unregister_path(peer->report.node.node_id, link_id);
+
+    LINKG_LOG_INFO("DISCOVERY: access path unregister end, node=%u access=%s link=%u error=%d",
+                   (unsigned int)peer->report.node.node_id,
+                   _linkg_discovery_access_name(access),
+                   link_id,
+                   ret);
+
+    if (ret != 0 && ret != -ENOENT)
+    {
+        first_error = ret;
     }
 
     return first_error;
@@ -666,8 +848,9 @@ int _linkg_discovery_unregister_access_path_locked(linkg_discovery_peer_t *peer,
  */
 int _linkg_discovery_unregister_peer_locked(linkg_discovery_peer_t *peer, uint64_t now_us)
 {
-    int first_error;
-    int ret;
+    uint8_t node_id;
+    int     first_error;
+    int     ret;
 
     if (peer == NULL || !peer->used)
     {
@@ -679,27 +862,45 @@ int _linkg_discovery_unregister_peer_locked(linkg_discovery_peer_t *peer, uint64
         return 0;
     }
 
+    node_id     = peer->report.node.node_id;
     first_error = 0;
 
-    ret = linkg_switch_remove_plan(peer->report.node.node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister begin, node=%u session=%llu revision=%llu",
+                   (unsigned int)node_id,
+                   (unsigned long long)peer->report.session_id,
+                   (unsigned long long)peer->report.revision);
+
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage begin, node=%u stage=switch", (unsigned int)node_id);
+    ret = linkg_switch_remove_plan(node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage end, node=%u stage=switch error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0 && ret != -ENOENT)
     {
         first_error = ret;
     }
 
-    ret = linkg_transport_unregister_peer(peer->report.node.node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage begin, node=%u stage=transport", (unsigned int)node_id);
+    ret = linkg_transport_unregister_peer(node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage end, node=%u stage=transport error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0 && ret != -ENOENT && first_error == 0)
     {
         first_error = ret;
     }
 
-    ret = linkg_node_unregister_peer(peer->report.node.node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage begin, node=%u stage=node", (unsigned int)node_id);
+    ret = linkg_node_unregister_peer(node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage end, node=%u stage=node error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0 && ret != -ENOENT && first_error == 0)
     {
         first_error = ret;
     }
 
-    ret = linkg_route_remove_node(peer->report.node.node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage begin, node=%u stage=route", (unsigned int)node_id);
+    ret = linkg_route_remove_node(node_id);
+    LINKG_LOG_INFO("DISCOVERY: peer unregister stage end, node=%u stage=route error=%d", (unsigned int)node_id, ret);
+
     if (ret != 0)
     {
         peer->route_cleanup_pending = true;
@@ -728,12 +929,22 @@ int _linkg_discovery_unregister_peer_locked(linkg_discovery_peer_t *peer, uint64
     }
     else if (g_discovery.local_report.node.role == LINKG_DEVICE_ROLE_STA)
     {
+        LINKG_LOG_INFO("DISCOVERY: peer unregister stage begin, node=%u stage=topology-clear", (unsigned int)node_id);
         ret = _linkg_discovery_clear_topology_locked();
+        LINKG_LOG_INFO("DISCOVERY: peer unregister stage end, node=%u stage=topology-clear error=%d", (unsigned int)node_id, ret);
+
         if (ret != 0 && first_error == 0)
         {
             first_error = ret;
         }
     }
 
+    LINKG_LOG_INFO("DISCOVERY: peer unregister complete, node=%u error=%d route_cleanup_pending=%u peer_count=%u",
+                   (unsigned int)node_id,
+                   first_error,
+                   peer->route_cleanup_pending ? 1U : 0U,
+                   g_discovery.peer_count);
+
     return first_error;
 }
+

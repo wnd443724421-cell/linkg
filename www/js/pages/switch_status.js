@@ -3,25 +3,22 @@
 
     /****************************** 常量 ******************************/
 
-    const LINKG_SWITCH_STATUS_REFRESH_INTERVAL_MS = 250;
-    const LINKG_SWITCH_STATUS_REALTIME_AGE_MS = 2000;
+    const LINKG_SWITCH_STATUS_REFRESH_INTERVAL_MS = 1000;
+    const LINKG_SWITCH_STATUS_RECENT_AGE_MS = 2000;
     const SWITCH_STATUS_BADGE_CLASSES = ["is-neutral", "is-online", "is-warning", "is-offline", "is-primary"];
     const SWITCH_STATUS_VALUE_CLASSES = ["switch-status-path-online", "switch-status-path-offline", "switch-status-maintenance-active"];
     const SWITCH_STATUS_PROBE_FIELDS = {
         realtime: {
             state: "switchStatusProbeRealtimeState",
-            rtt: "switchStatusProbeRealtimeRtt",
-            age: "switchStatusProbeRealtimeAge"
+            rtt: "switchStatusProbeRealtimeRtt"
         },
         video: {
             state: "switchStatusProbeVideoState",
-            rtt: "switchStatusProbeVideoRtt",
-            age: "switchStatusProbeVideoAge"
+            rtt: "switchStatusProbeVideoRtt"
         },
         data: {
             state: "switchStatusProbeDataState",
-            rtt: "switchStatusProbeDataRtt",
-            age: "switchStatusProbeDataAge"
+            rtt: "switchStatusProbeDataRtt"
         }
     };
 
@@ -281,7 +278,7 @@
     }
 
     /**
-     * 格式化状态更新时间。
+     * 格式化状态距今时间。
      */
     function formatAge(ageMs)
     {
@@ -290,9 +287,9 @@
             return "--";
         }
 
-        if (ageMs < LINKG_SWITCH_STATUS_REALTIME_AGE_MS)
+        if (ageMs < LINKG_SWITCH_STATUS_RECENT_AGE_MS)
         {
-            return "实时";
+            return "刚刚";
         }
 
         if (ageMs < 60000)
@@ -570,7 +567,6 @@
     {
         const valid = traffic != null && traffic.valid === true;
 
-        setText("switchStatusStaTrafficAge", valid ? "更新：" + formatAge(traffic.age_ms) : "暂无有效统计");
         setText("switchStatusStaTrafficTxRate", valid ? formatBitRate(traffic.tx_bps) : "--");
         setText("switchStatusStaTrafficRxRate", valid ? formatBitRate(traffic.rx_bps) : "--");
         setText("switchStatusStaTrafficTxPps", valid && isNonNegativeNumber(traffic.tx_pps) ? Math.floor(traffic.tx_pps) + " packet/s" : "--");
@@ -584,7 +580,7 @@
     {
         const valid = loss != null && loss.valid === true;
 
-        setText(prefix + "Loss", valid ? formatLoss(loss.loss_permille) + " · " + formatAge(loss.age_ms) : "--");
+        setText(prefix + "Loss", valid ? formatLoss(loss.loss_permille) : "--");
         setText(prefix + "Samples", valid && Number.isInteger(loss.sample_packets) ? loss.sample_packets + " 包" : "--");
     }
 
@@ -598,7 +594,6 @@
 
             setStateText(fields.state, "--", "");
             setText(fields.rtt, "--");
-            setText(fields.age, "--");
         });
     }
 
@@ -624,7 +619,6 @@
 
             setStateText(fields.state, probe.reachable === true ? "可达" : "不可达", probe.reachable === true ? "switch-status-path-online" : "switch-status-path-offline");
             setText(fields.rtt, probe.reachable === true ? formatRtt(probe.rtt_us) : "--");
-            setText(fields.age, formatAge(probe.age_ms));
         });
     }
 
@@ -712,7 +706,7 @@
             appendTableCell(row, formatPlan(peer.plan), "");
             appendTableCell(row, pathValid ? (wifiAvailable ? "可用" : "不可用") : "--", pathValid ? (wifiAvailable ? "switch-status-path-online" : "switch-status-path-offline") : "");
             appendTableCell(row, pathValid ? (cellularAvailable ? "可用" : "不可用") : "--", pathValid ? (cellularAvailable ? "switch-status-path-online" : "switch-status-path-offline") : "");
-            appendTableCell(row, loss != null && loss.valid === true ? formatLoss(loss.loss_permille) + " · " + loss.sample_packets + " 包 · " + formatAge(loss.age_ms) : "--", "");
+            appendTableCell(row, loss != null && loss.valid === true ? formatLoss(loss.loss_permille) + " · " + loss.sample_packets + " 包" : "--", "");
 
             maintenanceCell = appendTableCell(row, formatPeerMaintenance(maintenance), maintenance != null && maintenance.active === true ? "switch-status-maintenance-active" : "");
 

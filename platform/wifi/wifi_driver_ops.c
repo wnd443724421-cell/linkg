@@ -99,6 +99,15 @@ _Static_assert(offsetof(wal_tx_flowctrl_status_stru, struct_size) == sizeof(uint
 _Static_assert(sizeof(WIFI_PLATFORM_INTERFACE_NAME) <= IFNAMSIZ,
                "Wi-Fi interface name exceeds IFNAMSIZ");
 
+_Static_assert(sizeof(wal_temperature_status_stru) == 8U,
+               "wal_temperature_status_stru ABI size mismatch");
+
+_Static_assert(offsetof(wal_temperature_status_stru, version) == 0U,
+               "wal_temperature_status_stru.version must be the first field");
+
+_Static_assert(offsetof(wal_temperature_status_stru, struct_size) == sizeof(uint16_t),
+               "wal_temperature_status_stru.struct_size must follow version");
+
 /****************************** 内部辅助 ******************************/
 
 /**
@@ -458,6 +467,57 @@ int wifi_driver_get_radio_status(wal_radio_status_stru *status)
                       status->role,
                       status->state,
                       status->peer_count);
+
+    return 0;
+}
+
+/**
+ * @brief 获取HI1105当前芯片结温。
+ */
+int wifi_driver_get_temperature(int32_t *temperature_c)
+{
+    wal_temperature_status_stru status;
+    int                         unlock_ret;
+    int                         ret;
+
+    if (temperature_c == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *temperature_c = 0;
+
+    memset(&status, 0, sizeof(status));
+
+    status.version     = WAL_TEMPERATURE_ABI_VERSION;
+    status.struct_size = (uint16_t)sizeof(status);
+
+    ret = _wifi_driver_lock();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _wifi_driver_ioctl_locked(WAL_TEMPERATURE_IOCTL, &status, false);
+
+    unlock_ret = _wifi_driver_unlock();
+    if (ret == 0 && unlock_ret != 0)
+    {
+        ret = unlock_ret;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (status.version != WAL_TEMPERATURE_ABI_VERSION ||
+        status.struct_size != (uint16_t)sizeof(status))
+    {
+        return -EPROTO;
+    }
+
+    *temperature_c = status.temperature_c;
 
     return 0;
 }

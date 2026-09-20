@@ -13,12 +13,32 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "linkg_log.h"
+
 /****************************** 模块常量 ******************************/
 
 #define LINKG_DISCOVERY_ACCESS_INDEX_WIFI      0U // Wi-Fi存活状态索引
 #define LINKG_DISCOVERY_ACCESS_INDEX_CELLULAR  1U // Cellular存活状态索引
 
 /****************************** Access映射 ******************************/
+
+/**
+ * @brief 获取Discovery Access日志名称。
+ */
+static const char *_linkg_discovery_access_name(uint32_t index)
+{
+    if (index == 0U)
+    {
+        return "wifi";
+    }
+
+    if (index == 1U)
+    {
+        return "cellular";
+    }
+
+    return "unknown";
+}
 
 /**
  * @brief 将Discovery Access转换为内部数组索引。
@@ -256,6 +276,11 @@ static uint32_t _linkg_discovery_age_liveness_locked(linkg_discovery_peer_t *pee
         {
             continue;
         }
+
+        LINKG_LOG_WARN("DISCOVERY: liveness expired, peer=%u access=%s age_ms=%llu",
+               (unsigned int)peer->report.node.node_id,
+               _linkg_discovery_access_name(index),
+               (unsigned long long)((now_us - liveness->last_seen_us) / 1000ULL));
 
         liveness->active = false;
         expired_mask |= (1U << index);
@@ -542,8 +567,20 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
             ret = _linkg_discovery_register_peer_locked(peer, access, report);
             if (ret != 0)
             {
+                LINKG_LOG_WARN("DISCOVERY: peer register failed, node=%u access=%s session=%llu revision=%llu error=%d",
+                   (unsigned int)report->node.node_id,
+                   _linkg_discovery_access_name(access_index),
+                   (unsigned long long)report->session_id,
+                   (unsigned long long)report->revision,
+                   ret);
                 return ret;
             }
+
+            LINKG_LOG_INFO("DISCOVERY: peer online, node=%u access=%s session=%llu revision=%llu",
+               (unsigned int)report->node.node_id,
+               _linkg_discovery_access_name(access_index),
+               (unsigned long long)report->session_id,
+               (unsigned long long)report->revision);
 
             peer->session_closed = false;
 
@@ -717,6 +754,8 @@ int _linkg_discovery_age_peers_locked(uint64_t now_us)
 
                 continue;
             }
+
+            LINKG_LOG_WARN("DISCOVERY: all liveness expired, peer=%u, unregistering runtime resources", (unsigned int)peer->report.node.node_id);
 
             ret = _linkg_discovery_unregister_peer_locked(peer, now_us);
             if (ret != 0 && first_error == 0)

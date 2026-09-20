@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "linkg_device_config.h"
+#include "wal_temperature_ioctl.h"
 
 #include "wal_radio_status_ioctl.h"
 #include "wal_tx_flowctrl_ioctl.h"
@@ -35,6 +36,7 @@ void wifi_driver_ops_deinit(void);
 /****************************** 状态查询 ******************************/
 
 int wifi_driver_get_radio_status(wal_radio_status_stru *status);
+int wifi_driver_get_temperature(int32_t *temperature_c);
 int wifi_driver_get_tx_flowctrl_status(wal_tx_flowctrl_status_stru *status);
 
 /****************************** 接收模式 ******************************/
