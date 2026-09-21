@@ -537,12 +537,18 @@ static int _linkg_network_ipv4_forwarding_stop(void)
 /**
  * @brief 初始化网络服务及已启用的接入模块。
  */
-int linkg_network_init(void)
+int linkg_network_init(linkg_packet_pool_t *packet_pool)
 {
     linkg_network_ipv4_config_t ethernet_config;
     linkg_device_config_t       device_config;
+    linkg_paths_config_t        paths_config;
     int                         cleanup_ret;
     int                         ret;
+
+    if (packet_pool == NULL)
+    {
+        return -EINVAL;
+    }
 
     if (g_network.state != LINKG_NETWORK_STATE_UNINITIALIZED)
     {
@@ -602,6 +608,13 @@ int linkg_network_init(void)
         goto fail;
     }
 
+    ret = linkg_config_get_paths(&paths_config);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("get path configuration failed, error=%d", ret);
+        goto fail;
+    }
+
     g_network.role = device_config.role;
 
     ret = linkg_network_config_get_ethernet(&g_network.network_config, &ethernet_config);
@@ -629,7 +642,7 @@ int linkg_network_init(void)
 
     if (g_network.wifi_config.enabled)
     {
-        ret = linkg_wifi_init(g_network.role, g_network.network_config.node_id, &g_network.wifi_config);
+        ret = linkg_wifi_init(g_network.role, g_network.network_config.node_id, &g_network.wifi_config, paths_config.wifi.enabled, packet_pool);
         if (ret != 0)
         {
             LINKG_LOG_ERROR("initialize Wi-Fi module failed, role=%d, node_id=%u, error=%d", (int)g_network.role, (unsigned int)g_network.network_config.node_id, ret);
@@ -648,7 +661,7 @@ int linkg_network_init(void)
 
     if (g_network.cellular_config.enabled)
     {
-        ret = linkg_cellular_init(&g_network.cellular_config);
+        ret = linkg_cellular_init(&g_network.cellular_config, paths_config.cellular.enabled, packet_pool);
         if (ret != 0)
         {
             LINKG_LOG_ERROR("initialize cellular module failed, error=%d", ret);

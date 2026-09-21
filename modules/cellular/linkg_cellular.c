@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "linkg_cellular_link.h"
+#include "linkg_link_manager.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
 #include "linkg_uart.h"
@@ -38,6 +40,7 @@
 #define LINKG_CELLULAR_AT_READY_RETRY_MS           500U           // AT通道就绪失败重试间隔
 #define LINKG_CELLULAR_MODEM_RESTART_SETTLE_MS     2000U          // CFUN重启后首次重新探测等待时间
 #define LINKG_CELLULAR_POLL_DESCRIPTOR_MAX         2U             // Owner循环最大poll描述符数量
+#define LINKG_CELLULAR_LINK_NAME                   "cellular"     // 蜂窝业务链路名称
 
 /****************************** 内部类型 ******************************/
 
@@ -60,6 +63,7 @@ typedef struct
     cellular_fsm_t             fsm;                    // network-cell Owner连接状态机
 
     at_channel_t              *channel;                // RG255 AT通道，模块持有对象所有权
+    linkg_link_t               *link;                   // 蜂窝业务Link，由蜂窝模块创建并拥有
 
     linkg_cellular_lifecycle_t lifecycle;              // 蜂窝模块生命周期
     int                        last_error;             // 最近一次不可恢复生命周期错误
@@ -151,6 +155,7 @@ static void _linkg_cellular_reset_context_locked(void)
     memset(&g_cellular.fsm, 0, sizeof(g_cellular.fsm));
 
     g_cellular.channel                = NULL;
+    g_cellular.link                   = NULL;
     g_cellular.lifecycle              = LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED;
     g_cellular.last_error             = 0;
     g_cellular.monitor_initialized    = false;
@@ -916,6 +921,41 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
     return 0;
 }
 
+/****************************** 链路辅助 ******************************/
+
+/**
+ * @brief 创建蜂窝业务链路对象。
+ */
+static int _linkg_cellular_create_link(linkg_packet_pool_t *packet_pool, linkg_link_t **out)
+{
+    linkg_cellular_link_config_t cellular_config;
+    linkg_link_config_t          link_config;
+
+    if (packet_pool == NULL || out == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *out = NULL;
+
+    memset(&link_config, 0, sizeof(link_config));
+    memset(&cellular_config, 0, sizeof(cellular_config));
+
+    link_config.name              = LINKG_CELLULAR_LINK_NAME;
+    link_config.access            = LINKG_LINK_ACCESS_CELLULAR;
+    link_config.tx_batch_size     = LINKG_LINK_TX_BATCH_SIZE_DEFAULT;
+    link_config.rx_batch_size     = LINKG_LINK_RX_BATCH_SIZE_DEFAULT;
+    link_config.packet_pool       = packet_pool;
+    link_config.receive           = NULL;
+    link_config.receive_user_data = NULL;
+
+    cellular_config.data_port     = LINKG_RESOURCE_UDP_PORT_CELLULAR_DATA;
+    cellular_config.realtime_port = LINKG_RESOURCE_UDP_PORT_CELLULAR_REALTIME;
+    cellular_config.video_port    = LINKG_RESOURCE_UDP_PORT_CELLULAR_VIDEO;
+
+    return linkg_cellular_link_create(&link_config, &cellular_config, out);
+}
+
 /****************************** 运行资源回收 ******************************/
 
 /**
@@ -925,6 +965,16 @@ static int _linkg_cellular_stop_runtime(void)
 {
     int first_error;
     int ret;
+
+    if (g_cellular.link != NULL)
+    {
+        ret = linkg_link_stop(g_cellular.link);
+        if (ret != 0)
+        {
+            CELLULAR_ERROR("stop cellular business link failed, error=%d", ret);
+            return ret;
+        }
+    }
 
     first_error = 0;
 
@@ -968,13 +1018,20 @@ static int _linkg_cellular_stop_runtime(void)
 /**
  * @brief 初始化蜂窝模块及其内部纯软件子模块。
  */
-int linkg_cellular_init(const linkg_cellular_config_t *config)
+int linkg_cellular_init(const linkg_cellular_config_t *config, bool path_enabled, linkg_packet_pool_t *packet_pool)
 {
     cellular_fsm_t fsm;
+    linkg_link_t  *link;
     uint64_t       now_ms;
+    int            cleanup_ret;
     int            ret;
 
     if (config == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (path_enabled && (packet_pool == NULL || !config->enabled))
     {
         return -EINVAL;
     }
@@ -1005,6 +1062,8 @@ int linkg_cellular_init(const linkg_cellular_config_t *config)
 
     pthread_mutex_unlock(&g_cellular.lock);
 
+    link = NULL;
+
     ret = cellular_monitor_init();
     if (ret != 0)
     {
@@ -1018,10 +1077,30 @@ int linkg_cellular_init(const linkg_cellular_config_t *config)
         goto fail;
     }
 
+    if (path_enabled)
+    {
+        ret = _linkg_cellular_create_link(packet_pool, &link);
+        if (ret != 0)
+        {
+            CELLULAR_ERROR("create cellular business link failed, error=%d", ret);
+            goto fail_modules;
+        }
+
+        ret = linkg_link_manager_register(link);
+        if (ret != 0)
+        {
+            CELLULAR_ERROR("register cellular business link failed, error=%d", ret);
+            linkg_link_destroy(link);
+            link = NULL;
+            goto fail_modules;
+        }
+    }
+
     pthread_mutex_lock(&g_cellular.lock);
 
     g_cellular.config              = *config;
     g_cellular.fsm                 = fsm;
+    g_cellular.link                = link;
     g_cellular.monitor_initialized = true;
     g_cellular.status_initialized  = true;
     g_cellular.lifecycle           = LINKG_CELLULAR_LIFECYCLE_INITIALIZED;
@@ -1029,10 +1108,19 @@ int linkg_cellular_init(const linkg_cellular_config_t *config)
 
     pthread_mutex_unlock(&g_cellular.lock);
 
-    CELLULAR_INFO("module initialized");
+    CELLULAR_INFO("module initialized, link_id=%u", link != NULL ? linkg_link_get_id(link) : LINKG_LINK_ID_INVALID);
     CELLULAR_DEBUG("config loaded, enabled=%d, network_mode=%d, apn=%s, pin_configured=%d", config->enabled ? 1 : 0, (int)config->network_mode, config->apn[0] != '\0' ? config->apn : "<auto>", config->pin[0] != '\0' ? 1 : 0);
 
     return 0;
+
+fail_modules:
+    cleanup_ret = cellular_status_deinit();
+    if (cleanup_ret != 0)
+    {
+        CELLULAR_WARN("deinitialize cellular status after init failure failed, error=%d", cleanup_ret);
+    }
+
+    cellular_monitor_deinit();
 
 fail:
     pthread_mutex_lock(&g_cellular.lock);
@@ -1052,6 +1140,7 @@ fail:
 int linkg_cellular_start(void)
 {
     at_channel_t *channel;
+    linkg_link_t *link;
     int           cleanup_ret;
     int           ret;
 
@@ -1073,6 +1162,7 @@ int linkg_cellular_start(void)
     }
 
     g_cellular.lifecycle = LINKG_CELLULAR_LIFECYCLE_STARTING;
+    link                 = g_cellular.link;
 
     pthread_mutex_unlock(&g_cellular.lock);
 
@@ -1126,6 +1216,15 @@ int linkg_cellular_start(void)
     if (ret != 0)
     {
         goto fail_runtime;
+    }
+
+    if (link != NULL)
+    {
+        ret = linkg_link_start(link);
+        if (ret != 0)
+        {
+            goto fail_runtime;
+        }
     }
 
     _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_RUNNING, 0);
@@ -1250,6 +1349,7 @@ int linkg_cellular_stop(void)
 int linkg_cellular_deinit(void)
 {
     linkg_cellular_lifecycle_t lifecycle;
+    linkg_link_t              *link;
     int                        first_error;
     int                        ret;
 
@@ -1262,16 +1362,35 @@ int linkg_cellular_deinit(void)
         return 0;
     }
 
-    first_error = 0;
-
     if (lifecycle != LINKG_CELLULAR_LIFECYCLE_INITIALIZED)
     {
         ret = linkg_cellular_stop();
         if (ret != 0)
         {
-            _linkg_cellular_record_first_error(&first_error, ret);
+            return ret;
         }
     }
+
+    pthread_mutex_lock(&g_cellular.lock);
+    link = g_cellular.link;
+    pthread_mutex_unlock(&g_cellular.lock);
+
+    if (link != NULL)
+    {
+        ret = linkg_link_manager_unregister(link);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        linkg_link_destroy(link);
+
+        pthread_mutex_lock(&g_cellular.lock);
+        g_cellular.link = NULL;
+        pthread_mutex_unlock(&g_cellular.lock);
+    }
+
+    first_error = 0;
 
     if (g_cellular.status_initialized)
     {

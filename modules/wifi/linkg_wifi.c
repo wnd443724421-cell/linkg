@@ -14,8 +14,11 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "linkg_link_manager.h"
 #include "linkg_network_ops.h"
+#include "linkg_system_resources.h"
 #include "linkg_time.h"
+#include "linkg_wifi_link.h"
 
 #include "wifi_address.h"
 #include "wifi_driver_loader.h"
@@ -29,7 +32,14 @@
 
 /****************************** 运行参数 ******************************/
 
-#define WIFI_INTERFACE_CREATE_TIMEOUT_MS 5000U // 无线接口创建等待时间
+#define LINKG_WIFI_LINK_REALTIME_SNDBUF_SIZE (32U   * 1024U) // 实时UDP发送缓冲请求值，32KiB
+#define LINKG_WIFI_LINK_VIDEO_SNDBUF_SIZE    (64U   * 1024U) // 视频UDP发送缓冲请求值，64KiB
+#define LINKG_WIFI_LINK_DATA_SNDBUF_SIZE     (128U  * 1024U) // 普通数据UDP发送缓冲请求值，128KiB
+#define LINKG_WIFI_LINK_REALTIME_RCVBUF_SIZE (256U  * 1024U) // 实时UDP接收缓冲请求值，256KiB
+#define LINKG_WIFI_LINK_VIDEO_RCVBUF_SIZE    (512U  * 1024U) // 视频UDP接收缓冲请求值，512KiB
+#define LINKG_WIFI_LINK_DATA_RCVBUF_SIZE     (1024U * 1024U) // 普通数据UDP接收缓冲请求值，1MiB
+#define LINKG_WIFI_LINK_NAME                 "wifi"          // Wi-Fi业务链路名称
+#define WIFI_INTERFACE_CREATE_TIMEOUT_MS     5000U            // 无线接口创建等待时间
 
 /****************************** 模块上下文 ******************************/
 
@@ -80,6 +90,48 @@ static void _linkg_wifi_reset_context_locked(void)
     g_wifi.lifecycle = LINKG_WIFI_LIFECYCLE_UNINITIALIZED;
     g_wifi.role      = LINKG_DEVICE_ROLE_UNKNOWN;
     g_wifi.node_id   = 0U;
+    g_wifi.link      = NULL;
+}
+
+/****************************** 链路辅助 ******************************/
+
+/**
+ * @brief 创建Wi-Fi业务链路对象。
+ */
+static int _linkg_wifi_create_link(linkg_packet_pool_t *packet_pool, linkg_link_t **out)
+{
+    linkg_wifi_link_config_t wifi_config;
+    linkg_link_config_t      link_config;
+
+    if (packet_pool == NULL || out == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *out = NULL;
+
+    memset(&link_config, 0, sizeof(link_config));
+    memset(&wifi_config, 0, sizeof(wifi_config));
+
+    link_config.name              = LINKG_WIFI_LINK_NAME;
+    link_config.access            = LINKG_LINK_ACCESS_WIFI;
+    link_config.tx_batch_size     = LINKG_LINK_TX_BATCH_SIZE_DEFAULT;
+    link_config.rx_batch_size     = LINKG_LINK_RX_BATCH_SIZE_DEFAULT;
+    link_config.packet_pool       = packet_pool;
+    link_config.receive           = NULL;
+    link_config.receive_user_data = NULL;
+
+    wifi_config.data_port                    = LINKG_RESOURCE_UDP_PORT_WIFI_DATA;
+    wifi_config.realtime_port                = LINKG_RESOURCE_UDP_PORT_WIFI_REALTIME;
+    wifi_config.video_port                   = LINKG_RESOURCE_UDP_PORT_WIFI_VIDEO;
+    wifi_config.data_send_buffer_size        = LINKG_WIFI_LINK_DATA_SNDBUF_SIZE;
+    wifi_config.realtime_send_buffer_size    = LINKG_WIFI_LINK_REALTIME_SNDBUF_SIZE;
+    wifi_config.video_send_buffer_size       = LINKG_WIFI_LINK_VIDEO_SNDBUF_SIZE;
+    wifi_config.data_receive_buffer_size     = LINKG_WIFI_LINK_DATA_RCVBUF_SIZE;
+    wifi_config.realtime_receive_buffer_size = LINKG_WIFI_LINK_REALTIME_RCVBUF_SIZE;
+    wifi_config.video_receive_buffer_size    = LINKG_WIFI_LINK_VIDEO_RCVBUF_SIZE;
+
+    return linkg_wifi_link_create(&link_config, &wifi_config, out);
 }
 
 /****************************** 运行参数 ******************************/
@@ -617,6 +669,16 @@ static int _linkg_wifi_stop_runtime(void)
     int first_error;
     int ret;
 
+    if (g_wifi.link != NULL)
+    {
+        ret = linkg_link_stop(g_wifi.link);
+        if (ret != 0)
+        {
+            WIFI_ERROR("stop Wi-Fi business link failed, error=%d", ret);
+            return ret;
+        }
+    }
+
     first_error = 0;
 
     if (g_wifi.role == LINKG_DEVICE_ROLE_STA)
@@ -705,14 +767,20 @@ static int _linkg_wifi_deinit_modules(void)
  *
  * @note 本接口只初始化进程内资源，不加载驱动、不操作无线接口。
  */
-int linkg_wifi_init(linkg_device_role_t role, uint8_t node_id, const linkg_wifi_config_t *config)
+int linkg_wifi_init(linkg_device_role_t role, uint8_t node_id, const linkg_wifi_config_t *config, bool path_enabled, linkg_packet_pool_t *packet_pool)
 {
     linkg_network_ipv4_config_t ipv4;
+    linkg_link_t               *link;
     wifi_runtime_t              runtime;
     int                         cleanup_ret;
     int                         ret;
 
     if (config == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (path_enabled && (packet_pool == NULL || !config->enabled))
     {
         return -EINVAL;
     }
@@ -752,6 +820,8 @@ int linkg_wifi_init(linkg_device_role_t role, uint8_t node_id, const linkg_wifi_
 
     pthread_mutex_unlock(&g_wifi.lock);
 
+    link = NULL;
+
     if (config->enabled)
     {
         ret = wifi_driver_ops_init();
@@ -782,6 +852,25 @@ int linkg_wifi_init(linkg_device_role_t role, uint8_t node_id, const linkg_wifi_
         }
     }
 
+    if (path_enabled)
+    {
+        ret = _linkg_wifi_create_link(packet_pool, &link);
+        if (ret != 0)
+        {
+            WIFI_ERROR("create Wi-Fi business link failed, error=%d", ret);
+            goto fail;
+        }
+
+        ret = linkg_link_manager_register(link);
+        if (ret != 0)
+        {
+            WIFI_ERROR("register Wi-Fi business link failed, error=%d", ret);
+            linkg_link_destroy(link);
+            link = NULL;
+            goto fail;
+        }
+    }
+
     pthread_mutex_lock(&g_wifi.lock);
 
     g_wifi.role      = role;
@@ -789,14 +878,16 @@ int linkg_wifi_init(linkg_device_role_t role, uint8_t node_id, const linkg_wifi_
     g_wifi.config    = *config;
     g_wifi.ipv4      = ipv4;
     g_wifi.runtime   = runtime;
+    g_wifi.link      = link;
     g_wifi.lifecycle = LINKG_WIFI_LIFECYCLE_STOPPED;
 
     pthread_mutex_unlock(&g_wifi.lock);
 
-    WIFI_INFO("module initialized, role=%d, node_id=%u, enabled=%d",
+    WIFI_INFO("module initialized, role=%d, node_id=%u, enabled=%d, link_id=%u",
               (int)role,
               (unsigned int)node_id,
-              config->enabled);
+              config->enabled,
+              link != NULL ? linkg_link_get_id(link) : LINKG_LINK_ID_INVALID);
 
     return 0;
 
@@ -829,6 +920,7 @@ fail:
 int linkg_wifi_start(void)
 {
     wifi_runtime_event_t initial_event;
+    linkg_link_t        *link;
     const char          *phase;
     bool                 driver_was_loaded;
     bool                 ini_changed;
@@ -859,6 +951,7 @@ int linkg_wifi_start(void)
     }
 
     g_wifi.lifecycle = LINKG_WIFI_LIFECYCLE_STARTING;
+    link             = g_wifi.link;
 
     if (!g_wifi.config.enabled)
     {
@@ -990,6 +1083,16 @@ int linkg_wifi_start(void)
         goto fail;
     }
 
+    if (link != NULL)
+    {
+        phase = "start_link";
+        ret = linkg_link_start(link);
+        if (ret != 0)
+        {
+            goto fail;
+        }
+    }
+
     _linkg_wifi_set_lifecycle(LINKG_WIFI_LIFECYCLE_RUNNING);
 
     WIFI_INFO("module started, role=%d, interface=%s",
@@ -1099,9 +1202,10 @@ int linkg_wifi_stop(void)
  */
 int linkg_wifi_deinit(void)
 {
-    bool resources_initialized;
-    int  cleanup_ret;
-    int  ret;
+    linkg_link_t *link;
+    bool          resources_initialized;
+    int           cleanup_ret;
+    int           ret;
 
     ret = linkg_wifi_stop();
     if (ret != 0)
@@ -1125,8 +1229,25 @@ int linkg_wifi_deinit(void)
 
     g_wifi.lifecycle       = LINKG_WIFI_LIFECYCLE_DEINITIALIZING;
     resources_initialized = g_wifi.config.enabled;
+    link                  = g_wifi.link;
 
     pthread_mutex_unlock(&g_wifi.lock);
+
+    if (link != NULL)
+    {
+        ret = linkg_link_manager_unregister(link);
+        if (ret != 0)
+        {
+            _linkg_wifi_set_lifecycle(LINKG_WIFI_LIFECYCLE_STOPPED);
+            return ret;
+        }
+
+        linkg_link_destroy(link);
+
+        pthread_mutex_lock(&g_wifi.lock);
+        g_wifi.link = NULL;
+        pthread_mutex_unlock(&g_wifi.lock);
+    }
 
     cleanup_ret = 0;
 

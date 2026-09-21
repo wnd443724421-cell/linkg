@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <stdint.h>
 
+#include "linkg_link.h"
 #include "linkg_log.h"
 #include "linkg_network_config.h"
 #include "linkg_wifi_config.h"
@@ -58,6 +59,7 @@ typedef struct
     linkg_wifi_config_t         config;    // Wi-Fi运行配置
     linkg_network_ipv4_config_t ipv4;      // Wi-Fi接口IPv4配置
     wifi_runtime_t              runtime;   // Wi-Fi内部逻辑运行状态
+    linkg_link_t               *link;      // Wi-Fi业务Link，由Wi-Fi模块创建并拥有
 } linkg_wifi_context_t;
 
 #endif

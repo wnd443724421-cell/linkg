@@ -65,7 +65,6 @@ typedef struct
     bool                udhcp_initialized;           // UDHCP模块是否已经初始化
     bool                web_initialized;             // Web模块是否已经初始化
     bool                network_started;             // Network Service是否进入过start生命周期
-    bool                link_manager_started;        // Link Manager是否进入过start生命周期
     bool                switch_started;              // Switch模块是否进入过start生命周期
     bool                tun_started;                 // TUN模块是否进入过start生命周期
     bool                route_started;               // Route模块是否进入过start生命周期
@@ -109,7 +108,6 @@ static bool _linkg_app_has_initialized_modules(void)
 static bool _linkg_app_has_started_modules(void)
 {
     return g_app.network_started ||
-           g_app.link_manager_started ||
            g_app.switch_started ||
            g_app.tun_started ||
            g_app.route_started ||
@@ -152,7 +150,6 @@ static int _linkg_app_build_local_node(const linkg_config_t *config, linkg_node_
  */
 static int _linkg_app_init(void)
 {
-    linkg_link_manager_config_t link_manager_config;
     linkg_packet_pool_config_t  packet_pool_config;
     linkg_node_info_t           local_node;
     linkg_config_t              config;
@@ -197,20 +194,7 @@ static int _linkg_app_init(void)
 
     g_app.packet_pool_initialized = true;
 
-    ret = linkg_network_init();
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("initialize network service failed, error=%d", ret);
-        return ret;
-    }
-
-    g_app.network_initialized = true;
-
-    memset(&link_manager_config, 0, sizeof(link_manager_config));
-
-    link_manager_config.packet_pool = &g_app.packet_pool;
-
-    ret = linkg_link_manager_init(&link_manager_config);
+    ret = linkg_link_manager_init();
     if (ret != 0)
     {
         LINKG_LOG_ERROR("initialize link manager failed, error=%d", ret);
@@ -218,6 +202,19 @@ static int _linkg_app_init(void)
     }
 
     g_app.link_manager_initialized = true;
+
+    /**
+     * Network初始化Wi-Fi/Cellular模块时会创建并注册各自业务Link，
+     * 因此必须在Link Manager初始化完成后执行。
+     */
+    ret = linkg_network_init(&g_app.packet_pool);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize network service failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.network_initialized = true;
 
     ret = _linkg_app_build_local_node(&config, &local_node);
     if (ret != 0)
@@ -344,7 +341,7 @@ static int _linkg_app_init(void)
  * @brief 启动全部具有运行态的应用模块。
  *
  * 启动顺序严格按照运行依赖建立：
- * Network -> Link Manager -> TUN -> Route -> NAT -> Switch -> Discovery -> Probe -> UDHCP -> Web。
+ * Network -> TUN -> Route -> NAT -> Switch -> Discovery -> Probe -> UDHCP -> Web。
  */
 static int _linkg_app_start(void)
 {
@@ -385,19 +382,6 @@ static int _linkg_app_start(void)
     if (ret != 0)
     {
         LINKG_LOG_ERROR("start network service failed, error=%d", ret);
-        return ret;
-    }
-
-    /**
-     * Transport已经在初始化阶段注册统一接收回调，
-     * 此时才允许业务Link启动收发线程。
-     */
-    g_app.link_manager_started = true;
-
-    ret = linkg_link_manager_start();
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("start link manager failed, error=%d", ret);
         return ret;
     }
 
@@ -649,19 +633,10 @@ static int _linkg_app_stop(void)
         g_app.tun_started = false;
     }
 
-    if (g_app.link_manager_started)
-    {
-        ret = linkg_link_manager_stop();
-        if (ret != 0)
-        {
-            LINKG_LOG_ERROR("stop link manager failed, error=%d", ret);
-            return ret;
-        }
-
-        g_app.link_manager_started = false;
-    }
-
-    // 所有业务Link线程退出以后再关闭底层网络接入模块。
+    /**
+     * Network停止Wi-Fi/Cellular模块时会先停止各自业务Link，
+     * 再关闭对应底层网络接入资源。
+     */
     if (g_app.network_started)
     {
         ret = linkg_network_stop();
@@ -842,21 +817,9 @@ static int _linkg_app_deinit(void)
     }
 
     /**
-     * Transport已经注销Link Manager接收回调，
-     * 所有业务Link也已经停止，此时才能销毁Link实例。
+     * Network拥有Wi-Fi/Cellular业务Link对象，必须先让各模块完成
+     * unregister + destroy，再反初始化只保存注册关系的Link Manager。
      */
-    if (g_app.link_manager_initialized)
-    {
-        ret = linkg_link_manager_deinit();
-        if (ret != 0)
-        {
-            LINKG_LOG_ERROR("deinitialize link manager failed, error=%d", ret);
-            return ret;
-        }
-
-        g_app.link_manager_initialized = false;
-    }
-
     if (g_app.network_initialized)
     {
         ret = linkg_network_deinit();
@@ -867,6 +830,18 @@ static int _linkg_app_deinit(void)
         }
 
         g_app.network_initialized = false;
+    }
+
+    if (g_app.link_manager_initialized)
+    {
+        ret = linkg_link_manager_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize link manager failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.link_manager_initialized = false;
     }
 
     if (g_app.packet_pool_initialized)

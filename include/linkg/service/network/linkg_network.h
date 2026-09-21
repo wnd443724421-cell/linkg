@@ -6,6 +6,8 @@
 #ifndef LINKG_NETWORK_H
 #define LINKG_NETWORK_H
 
+#include "linkg_packet_pool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -24,7 +26,7 @@ typedef enum
 
 /****************************** 生命周期 ******************************/
 
-int linkg_network_init(void);
+int linkg_network_init(linkg_packet_pool_t *packet_pool);
 int linkg_network_start(void);
 int linkg_network_stop(void);
 int linkg_network_deinit(void);
