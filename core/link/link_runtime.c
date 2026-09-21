@@ -9,6 +9,7 @@
 #include "link_internal.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,8 +17,8 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_LINK_RX_THREAD_NAME      "link-rx" // 链路接收线程名称
-#define LINKG_LINK_RX_THREAD_CPU_CORE  1         // RX线程绑定CPU1
+#define LINKG_LINK_RX_THREAD_NAME_SIZE 16U // 链路接收线程名称最大长度
+#define LINKG_LINK_RX_THREAD_CPU_CORE  1   // RX线程绑定CPU1
 
 /****************************** 运行资源 ******************************/
 
@@ -28,6 +29,7 @@ int linkg_link_runtime_create(linkg_link_t *link, const linkg_link_config_t *con
 {
     linkg_thread_config_t rx_thread_config;
     linkg_link_runtime_t *runtime;
+    char                  rx_thread_name[LINKG_LINK_RX_THREAD_NAME_SIZE];
     int                   ret;
 
     if (link == NULL || config == NULL)
@@ -78,13 +80,23 @@ int linkg_link_runtime_create(linkg_link_t *link, const linkg_link_config_t *con
         goto fail_io_lock;
     }
 
+    ret = snprintf(rx_thread_name,
+                   sizeof(rx_thread_name),
+                   "link-rx-%u",
+                   (unsigned int)link->id);
+    if (ret < 0 || (size_t)ret >= sizeof(rx_thread_name))
+    {
+        ret = -EINVAL;
+        goto fail_rx_items;
+    }
+
     memset(&rx_thread_config, 0, sizeof(rx_thread_config));
 
     rx_thread_config.cpu_core         = LINKG_LINK_RX_THREAD_CPU_CORE;
     rx_thread_config.affinity_enabled = true;
 
     ret = linkg_thread_init_with_config(&runtime->rx_thread,
-                                        LINKG_LINK_RX_THREAD_NAME,
+                                        rx_thread_name,
                                         linkg_link_rx_thread,
                                         link,
                                         &rx_thread_config);

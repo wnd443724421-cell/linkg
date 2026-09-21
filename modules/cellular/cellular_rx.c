@@ -2,8 +2,8 @@
  * @file cellular_rx.c
  * @brief LinkG蜂窝链路接收模块实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-09-10
+ * @version 1.1.0
+ * @date 2026-09-21
  */
 
 #define _GNU_SOURCE
@@ -13,8 +13,6 @@
 #include <errno.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <pthread.h>
-#include <sched.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -28,6 +26,7 @@
 
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
+#include "linkg_thread.h"
 #include "linkg_time.h"
 
 #include "cellular_rx_queue.h"
@@ -43,6 +42,7 @@
 #define LINKG_CELLULAR_RX_QUEUE_BATCH_COUNT     5U                                                                                        // 单业务接收队列最多缓存批次数
 #define LINKG_CELLULAR_RX_EPOLL_EVENT_COUNT     (LINKG_LINK_TX_CLASS_COUNT + 1U)                                                           // 三业务Socket和Worker唤醒描述符数量
 #define LINKG_CELLULAR_RX_WORKER_WAKEUP_EVENT   LINKG_LINK_TX_CLASS_COUNT                                                                 // Worker唤醒事件索引
+#define LINKG_CELLULAR_RX_WORKER_THREAD_NAME    "cell-rx"                                                                                 // RX生产线程名称
 #define LINKG_CELLULAR_RX_WORKER_CPU_CORE       0                                                                                         // RX生产线程绑定CPU0
 #define LINKG_CELLULAR_RX_RETRY_MS              1U                                                                                        // Queue或Packet Pool暂不可用时重试间隔
 
@@ -65,10 +65,10 @@ typedef struct
  */
 struct linkg_cellular_rx
 {
-    pthread_t                      worker;                                         // Socket接收生产线程
+    linkg_thread_t                 worker;                                         // Socket接收生产线程
     linkg_cellular_rx_scratch_t    scratch;                                        // 生产线程预分配Scratch
-    linkg_cellular_rx_queue_item_t consume_items[LINKG_CELLULAR_RX_BATCH_SIZE_MAX]; // Link RX消费临时元素
-    linkg_cellular_rx_queue_t     *queues[LINKG_LINK_TX_CLASS_COUNT];               // 三业务SPSC接收FIFO
+    linkg_cellular_rx_queue_item_t consume_items[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];// Link RX消费临时元素
+    linkg_cellular_rx_queue_t     *queues[LINKG_LINK_TX_CLASS_COUNT];              // 三业务SPSC接收FIFO
 
     linkg_packet_pool_t           *packet_pool;                                    // 借用Link Packet Pool
     int                           *socket_fds;                                     // 借用Cellular Link业务Socket数组
@@ -79,10 +79,8 @@ struct linkg_cellular_rx
     uint32_t                       queue_capacity;                                 // 单业务接收队列最大Packet数量
 
     int                            socket_epoll_fd;                                // Worker监听三业务Socket的epoll描述符
-    int                            worker_wakeup_fd;                               // 停止时唤醒Worker的eventfd
     int                            notify_fd;                                      // 通知Link RX存在已完成Packet的eventfd
 
-    bool                           worker_created;                                 // Worker线程是否已经创建
     _Atomic bool                   started;                                        // 接收模块运行状态
     _Atomic bool                   notify_pending;                                 // Link RX通知周期是否已经激活
 };
@@ -568,7 +566,7 @@ static int _linkg_cellular_rx_receive_once(linkg_cellular_rx_t *rx, linkg_link_t
 /**
  * @brief 运行蜂窝Socket接收生产线程。
  */
-static void *_linkg_cellular_rx_worker(void *user_data)
+static void _linkg_cellular_rx_worker(linkg_thread_t *thread, void *user_data)
 {
     static const linkg_link_tx_class_t priority_order[LINKG_LINK_TX_CLASS_COUNT] =
     {
@@ -589,12 +587,12 @@ static void *_linkg_cellular_rx_worker(void *user_data)
     int                   ret;
 
     rx = user_data;
-    if (rx == NULL)
+    if (thread == NULL || rx == NULL)
     {
-        return NULL;
+        return;
     }
 
-    while (atomic_load(&rx->started))
+    while (linkg_thread_is_running(thread) && atomic_load(&rx->started))
     {
         memset(ready, 0, sizeof(ready));
 
@@ -602,9 +600,9 @@ static void *_linkg_cellular_rx_worker(void *user_data)
         {
             event_count = epoll_wait(rx->socket_epoll_fd, events, LINKG_CELLULAR_RX_EPOLL_EVENT_COUNT, -1);
         }
-        while (event_count < 0 && errno == EINTR && atomic_load(&rx->started));
+        while (event_count < 0 && errno == EINTR && linkg_thread_is_running(thread) && atomic_load(&rx->started));
 
-        if (!atomic_load(&rx->started))
+        if (!linkg_thread_is_running(thread) || !atomic_load(&rx->started))
         {
             break;
         }
@@ -619,6 +617,12 @@ static void *_linkg_cellular_rx_worker(void *user_data)
         {
             if (events[event_index].data.u32 == LINKG_CELLULAR_RX_WORKER_WAKEUP_EVENT)
             {
+                ret = linkg_thread_clear_wakeup(thread);
+                if (ret != 0)
+                {
+                    LINKG_LOG_WARN("Cellular RX thread clear wakeup failed, error=%d", ret);
+                }
+
                 continue;
             }
 
@@ -674,7 +678,6 @@ static void *_linkg_cellular_rx_worker(void *user_data)
         }
     }
 
-    return NULL;
 }
 
 /****************************** 生命周期 ******************************/
@@ -687,8 +690,10 @@ static void *_linkg_cellular_rx_worker(void *user_data)
  */
 linkg_cellular_rx_t *linkg_cellular_rx_create(uint32_t capacity, linkg_packet_pool_t *packet_pool, int *socket_fds, const uint16_t *service_ports, const char *interface_name)
 {
-    linkg_cellular_rx_t *rx;
-    uint32_t             class_index;
+    linkg_thread_config_t thread_config;
+    linkg_cellular_rx_t  *rx;
+    uint32_t              class_index;
+    int                   ret;
 
     if (capacity == 0U || capacity > LINKG_CELLULAR_RX_BATCH_SIZE_MAX || packet_pool == NULL || socket_fds == NULL || service_ports == NULL || interface_name == NULL || interface_name[0] == '\0')
     {
@@ -706,11 +711,9 @@ linkg_cellular_rx_t *linkg_cellular_rx_create(uint32_t capacity, linkg_packet_po
     rx->service_ports    = service_ports;
     rx->interface_name   = interface_name;
     rx->capacity         = capacity;
-    rx->queue_capacity   = capacity * LINKG_CELLULAR_RX_QUEUE_BATCH_COUNT;
-    rx->socket_epoll_fd  = -1;
-    rx->worker_wakeup_fd = -1;
-    rx->notify_fd        = -1;
-    rx->worker_created   = false;
+    rx->queue_capacity  = capacity * LINKG_CELLULAR_RX_QUEUE_BATCH_COUNT;
+    rx->socket_epoll_fd = -1;
+    rx->notify_fd       = -1;
 
     atomic_store(&rx->started, false);
     atomic_store(&rx->notify_pending, false);
@@ -722,6 +725,22 @@ linkg_cellular_rx_t *linkg_cellular_rx_create(uint32_t capacity, linkg_packet_po
         {
             goto fail_queues;
         }
+    }
+
+    memset(&thread_config, 0, sizeof(thread_config));
+
+    thread_config.cpu_core         = LINKG_CELLULAR_RX_WORKER_CPU_CORE;
+    thread_config.affinity_enabled = true;
+
+    ret = linkg_thread_init_with_config(&rx->worker,
+                                        LINKG_CELLULAR_RX_WORKER_THREAD_NAME,
+                                        _linkg_cellular_rx_worker,
+                                        rx,
+                                        &thread_config);
+    if (ret != 0)
+    {
+        class_index = LINKG_LINK_TX_CLASS_COUNT;
+        goto fail_queues;
     }
 
     return rx;
@@ -755,6 +774,7 @@ void linkg_cellular_rx_destroy(linkg_cellular_rx_t *rx)
     }
 
     (void)linkg_cellular_rx_stop(rx);
+    linkg_thread_deinit(&rx->worker);
 
     for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
     {
@@ -770,18 +790,16 @@ void linkg_cellular_rx_destroy(linkg_cellular_rx_t *rx)
  */
 int linkg_cellular_rx_start(linkg_cellular_rx_t *rx)
 {
-    pthread_attr_t worker_attr;
-    cpu_set_t      cpu_set;
-    uint32_t       class_index;
-    bool           attr_initialized;
-    int            ret;
+    uint32_t class_index;
+    int      worker_wakeup_fd;
+    int      ret;
 
     if (rx == NULL)
     {
         return -EINVAL;
     }
 
-    if (atomic_load(&rx->started) || rx->worker_created)
+    if (atomic_load(&rx->started) || linkg_thread_is_started(&rx->worker))
     {
         return -EALREADY;
     }
@@ -794,27 +812,26 @@ int linkg_cellular_rx_start(linkg_cellular_rx_t *rx)
         }
     }
 
+    worker_wakeup_fd = linkg_thread_get_wakeup_fd(&rx->worker);
+    if (worker_wakeup_fd < 0)
+    {
+        return -ENODEV;
+    }
+
     rx->socket_epoll_fd = epoll_create1(EPOLL_CLOEXEC);
     if (rx->socket_epoll_fd < 0)
     {
         return -errno;
     }
 
-    rx->worker_wakeup_fd = eventfd(0U, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (rx->worker_wakeup_fd < 0)
+    rx->notify_fd = eventfd(0U, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (rx->notify_fd < 0)
     {
         ret = -errno;
         goto fail_epoll;
     }
 
-    rx->notify_fd = eventfd(0U, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (rx->notify_fd < 0)
-    {
-        ret = -errno;
-        goto fail_wakeup;
-    }
-
-    ret = _linkg_cellular_rx_register_fd(rx->socket_epoll_fd, rx->worker_wakeup_fd, LINKG_CELLULAR_RX_WORKER_WAKEUP_EVENT);
+    ret = _linkg_cellular_rx_register_fd(rx->socket_epoll_fd, worker_wakeup_fd, LINKG_CELLULAR_RX_WORKER_WAKEUP_EVENT);
     if (ret != 0)
     {
         goto fail_notify;
@@ -829,55 +846,24 @@ int linkg_cellular_rx_start(linkg_cellular_rx_t *rx)
         }
     }
 
-    attr_initialized = false;
-
-    ret = pthread_attr_init(&worker_attr);
-    if (ret != 0)
-    {
-        ret = -ret;
-        goto fail_notify;
-    }
-
-    attr_initialized = true;
-
-    CPU_ZERO(&cpu_set);
-    CPU_SET(LINKG_CELLULAR_RX_WORKER_CPU_CORE, &cpu_set);
-
-    ret = pthread_attr_setaffinity_np(&worker_attr, sizeof(cpu_set), &cpu_set);
-    if (ret != 0)
-    {
-        ret = -ret;
-        goto fail_attr;
-    }
-
     atomic_store(&rx->notify_pending, false);
     atomic_store(&rx->started, true);
 
-    ret = pthread_create(&rx->worker, &worker_attr, _linkg_cellular_rx_worker, rx);
+    ret = linkg_thread_start(&rx->worker);
     if (ret != 0)
     {
         atomic_store(&rx->started, false);
-        ret = -ret;
-        goto fail_attr;
+        goto fail_notify;
     }
 
-    rx->worker_created = true;
-
-    pthread_attr_destroy(&worker_attr);
+    LINKG_LOG_DEBUG("Cellular RX worker started, thread=%s, cpu=%u",
+                    LINKG_CELLULAR_RX_WORKER_THREAD_NAME,
+                    LINKG_CELLULAR_RX_WORKER_CPU_CORE);
 
     return 0;
 
-fail_attr:
-    if (attr_initialized)
-    {
-        pthread_attr_destroy(&worker_attr);
-    }
-
 fail_notify:
     (void)_linkg_cellular_rx_close_fd(&rx->notify_fd);
-
-fail_wakeup:
-    (void)_linkg_cellular_rx_close_fd(&rx->worker_wakeup_fd);
 
 fail_epoll:
     (void)_linkg_cellular_rx_close_fd(&rx->socket_epoll_fd);
@@ -901,26 +887,15 @@ int linkg_cellular_rx_stop(linkg_cellular_rx_t *rx)
         return -EINVAL;
     }
 
-    first_error = 0;
+    atomic_store(&rx->started, false);
 
-    if (atomic_exchange(&rx->started, false))
+    if (linkg_thread_is_started(&rx->worker))
     {
-        ret = _linkg_cellular_rx_signal_fd(rx->worker_wakeup_fd);
+        ret = linkg_thread_stop(&rx->worker);
         if (ret != 0)
         {
-            first_error = ret;
+            return ret;
         }
-    }
-
-    if (rx->worker_created)
-    {
-        ret = pthread_join(rx->worker, NULL);
-        if (ret != 0 && first_error == 0)
-        {
-            first_error = -ret;
-        }
-
-        rx->worker_created = false;
     }
 
     for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
@@ -930,13 +905,9 @@ int linkg_cellular_rx_stop(linkg_cellular_rx_t *rx)
 
     atomic_store_explicit(&rx->notify_pending, false, memory_order_release);
 
-    ret = _linkg_cellular_rx_close_fd(&rx->notify_fd);
-    if (ret != 0 && first_error == 0)
-    {
-        first_error = ret;
-    }
+    first_error = 0;
 
-    ret = _linkg_cellular_rx_close_fd(&rx->worker_wakeup_fd);
+    ret = _linkg_cellular_rx_close_fd(&rx->notify_fd);
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
