@@ -7,7 +7,6 @@
 #define LINKG_ETHERNET_H
 
 #include "linkg_network_config.h"
-#include "linkg_thread.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +16,6 @@ extern "C" {
 
 int linkg_ethernet_init(const linkg_network_ipv4_config_t *config);
 int linkg_ethernet_start(void);
-int linkg_ethernet_run(linkg_thread_t *owner_thread);
 int linkg_ethernet_stop(void);
 int linkg_ethernet_deinit(void);
 

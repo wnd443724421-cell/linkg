@@ -18,6 +18,10 @@ int linkg_discovery_wifi_quiesce(void);
 int linkg_discovery_wifi_stop(void);
 int linkg_discovery_wifi_deinit(void);
 
+/****************************** 网络状态通知 ******************************/
+
+int linkg_discovery_wifi_notify_network_changed(void);
+
 #ifdef __cplusplus
 }
 #endif

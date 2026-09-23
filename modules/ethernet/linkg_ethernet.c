@@ -23,10 +23,12 @@
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
+#include "linkg_thread.h"
 #include "linkg_time.h"
 
 /****************************** 模块常量 ******************************/
 
+#define LINKG_ETHERNET_THREAD_NAME               "network-eth"// Ethernet内部监控线程名称
 #define LINKG_ETHERNET_INTERFACE_WAIT_TIMEOUT_MS 3000U        // Ethernet接口等待超时
 #define LINKG_ETHERNET_MONITOR_INTERVAL_MS       500          // 链路状态检查周期
 #define LINKG_ETHERNET_ANNOUNCE_COUNT            2U           // 每次地址变化的ARP宣告次数
@@ -44,22 +46,27 @@ typedef enum
     LINKG_ETHERNET_LIFECYCLE_STOPPED,           // 已初始化且已停止
     LINKG_ETHERNET_LIFECYCLE_STARTING,          // 正在启动
     LINKG_ETHERNET_LIFECYCLE_RUNNING,           // 正在运行
-    LINKG_ETHERNET_LIFECYCLE_STOPPING           // 正在停止
+    LINKG_ETHERNET_LIFECYCLE_STOPPING,          // 正在停止
+    LINKG_ETHERNET_LIFECYCLE_ERROR              // 监控线程异常退出
 } linkg_ethernet_lifecycle_t;
 
 typedef struct
 {
-    pthread_mutex_t             lock;      // Ethernet模块状态锁
-    linkg_network_ipv4_config_t config;    // Ethernet IPv4配置快照
-    linkg_ethernet_lifecycle_t  lifecycle; // Ethernet模块生命周期状态
+    pthread_mutex_t             control_lock; // Ethernet生命周期串行锁
+    pthread_mutex_t             lock;         // Ethernet模块状态锁
+    linkg_thread_t              thread;       // Ethernet内部监控线程
+    linkg_network_ipv4_config_t config;       // Ethernet IPv4配置快照
+    linkg_ethernet_lifecycle_t  lifecycle;    // Ethernet模块生命周期状态
+    int                         run_error;    // 最近一次监控异常
 } linkg_ethernet_context_t;
 
 /****************************** 全局上下文 ******************************/
 
 static linkg_ethernet_context_t g_ethernet =
 {
-    .lock      = PTHREAD_MUTEX_INITIALIZER,            // 初始化静态状态锁
-    .lifecycle = LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED // 初始生命周期状态
+    .control_lock = PTHREAD_MUTEX_INITIALIZER,            // 初始化生命周期串行锁
+    .lock         = PTHREAD_MUTEX_INITIALIZER,            // 初始化状态锁
+    .lifecycle    = LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED // 初始生命周期状态
 };
 
 /****************************** 上下文辅助 ******************************/
@@ -390,113 +397,12 @@ static int _linkg_ethernet_wait_monitor(linkg_thread_t *owner_thread, struct pol
 
 /****************************** 生命周期 ******************************/
 
-/**
- * @brief 初始化Ethernet模块。
- */
-int linkg_ethernet_init(const linkg_network_ipv4_config_t *config)
-{
-    if (config == NULL ||
-        !linkg_network_ipv4_address_valid(&config->ip) ||
-        !linkg_network_ipv4_netmask_valid(&config->netmask))
-    {
-        return -EINVAL;
-    }
-
-    pthread_mutex_lock(&g_ethernet.lock);
-
-    if (g_ethernet.lifecycle != LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED)
-    {
-        pthread_mutex_unlock(&g_ethernet.lock);
-        return -EALREADY;
-    }
-
-    g_ethernet.config    = *config;
-    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_STOPPED;
-
-    pthread_mutex_unlock(&g_ethernet.lock);
-
-    LINKG_LOG_INFO("Ethernet module initialized");
-
-    return 0;
-}
-
-/**
- * @brief 启动Ethernet模块。
- */
-int linkg_ethernet_start(void)
-{
-    linkg_network_ipv4_config_t config;
-    const char                 *phase;
-    int                         ret;
-
-    pthread_mutex_lock(&g_ethernet.lock);
-
-    if (g_ethernet.lifecycle == LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED)
-    {
-        pthread_mutex_unlock(&g_ethernet.lock);
-        return -ENODEV;
-    }
-
-    if (g_ethernet.lifecycle != LINKG_ETHERNET_LIFECYCLE_STOPPED)
-    {
-        pthread_mutex_unlock(&g_ethernet.lock);
-        return -EALREADY;
-    }
-
-    config               = g_ethernet.config;
-    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_STARTING;
-
-    pthread_mutex_unlock(&g_ethernet.lock);
-
-    phase = "wait_interface";
-    ret = linkg_network_interface_wait(LINKG_RESOURCE_INTERFACE_ETHERNET, LINKG_ETHERNET_INTERFACE_WAIT_TIMEOUT_MS);
-    if (ret != 0)
-    {
-        goto fail;
-    }
-
-    phase = "set_ipv4";
-    ret = linkg_network_interface_set_ipv4(LINKG_RESOURCE_INTERFACE_ETHERNET, &config.ip, &config.netmask);
-    if (ret != 0)
-    {
-        goto fail;
-    }
-
-    phase = "interface_up";
-    ret = linkg_network_interface_set_up(LINKG_RESOURCE_INTERFACE_ETHERNET, true);
-    if (ret != 0)
-    {
-        goto fail;
-    }
-
-    phase = "bind_rx_irq";
-    ret = _linkg_ethernet_bind_rx_irq();
-    if (ret != 0)
-    {
-        goto fail;
-    }
-
-    _linkg_ethernet_set_lifecycle(LINKG_ETHERNET_LIFECYCLE_RUNNING);
-
-    LINKG_LOG_INFO("Ethernet module started, interface=%s", LINKG_RESOURCE_INTERFACE_ETHERNET);
-
-    return 0;
-
-fail:
-    _linkg_ethernet_set_lifecycle(LINKG_ETHERNET_LIFECYCLE_STOPPED);
-
-    LINKG_LOG_ERROR("Ethernet module start failed, phase=%s, interface=%s, error=%d",
-                    phase,
-                    LINKG_RESOURCE_INTERFACE_ETHERNET,
-                    ret);
-
-    return ret;
-}
+static void _linkg_ethernet_thread(linkg_thread_t *thread, void *user_data);
 
 /**
  * @brief 运行Ethernet链路和地址监控。
  */
-int linkg_ethernet_run(linkg_thread_t *owner_thread)
+static int _linkg_ethernet_run(linkg_thread_t *owner_thread)
 {
     struct pollfd descriptor;
     struct in_addr last_address = {0};
@@ -595,59 +501,262 @@ int linkg_ethernet_run(linkg_thread_t *owner_thread)
 }
 
 /**
- * @brief 停止Ethernet模块。
+ * @brief Ethernet内部监控线程入口，记录意外退出供停止后恢复。
  */
-int linkg_ethernet_stop(void)
+static void _linkg_ethernet_thread(linkg_thread_t *thread, void *user_data)
+{
+    bool unexpected_exit;
+    int  ret;
+
+    (void)user_data;
+
+    ret = _linkg_ethernet_run(thread);
+    unexpected_exit = linkg_thread_is_running(thread);
+
+    if (!unexpected_exit)
+    {
+        return;
+    }
+
+    if (ret == 0)
+    {
+        ret = -EIO;
+    }
+
+    pthread_mutex_lock(&g_ethernet.lock);
+    g_ethernet.run_error = ret;
+    if (g_ethernet.lifecycle == LINKG_ETHERNET_LIFECYCLE_RUNNING)
+    {
+        g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_ERROR;
+    }
+    pthread_mutex_unlock(&g_ethernet.lock);
+
+    LINKG_LOG_ERROR("Ethernet monitor exited unexpectedly, error=%d", ret);
+}
+
+/**
+ * @brief 初始化Ethernet模块及其内部监控线程对象。
+ */
+int linkg_ethernet_init(const linkg_network_ipv4_config_t *config)
+{
+    int ret;
+
+    if (config == NULL ||
+        !linkg_network_ipv4_address_valid(&config->ip) ||
+        !linkg_network_ipv4_netmask_valid(&config->netmask))
+    {
+        return -EINVAL;
+    }
+
+    pthread_mutex_lock(&g_ethernet.control_lock);
+    pthread_mutex_lock(&g_ethernet.lock);
+
+    if (g_ethernet.lifecycle != LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED)
+    {
+        pthread_mutex_unlock(&g_ethernet.lock);
+        pthread_mutex_unlock(&g_ethernet.control_lock);
+        return -EALREADY;
+    }
+
+    pthread_mutex_unlock(&g_ethernet.lock);
+
+    ret = linkg_thread_init(&g_ethernet.thread, LINKG_ETHERNET_THREAD_NAME, _linkg_ethernet_thread, NULL);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_ethernet.control_lock);
+        return ret;
+    }
+
+    pthread_mutex_lock(&g_ethernet.lock);
+    g_ethernet.config    = *config;
+    g_ethernet.run_error = 0;
+    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_STOPPED;
+    pthread_mutex_unlock(&g_ethernet.lock);
+    pthread_mutex_unlock(&g_ethernet.control_lock);
+
+    LINKG_LOG_INFO("Ethernet module initialized");
+
+    return 0;
+}
+
+/**
+ * @brief 同步配置Ethernet并启动内部监控线程。
+ */
+int linkg_ethernet_start(void)
+{
+    linkg_network_ipv4_config_t config;
+    const char                 *phase;
+    int                         ret;
+
+    pthread_mutex_lock(&g_ethernet.control_lock);
+    pthread_mutex_lock(&g_ethernet.lock);
+
+    if (g_ethernet.lifecycle == LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED)
+    {
+        pthread_mutex_unlock(&g_ethernet.lock);
+        pthread_mutex_unlock(&g_ethernet.control_lock);
+        return -ENODEV;
+    }
+
+    if (g_ethernet.lifecycle != LINKG_ETHERNET_LIFECYCLE_STOPPED)
+    {
+        pthread_mutex_unlock(&g_ethernet.lock);
+        pthread_mutex_unlock(&g_ethernet.control_lock);
+        return -EALREADY;
+    }
+
+    config               = g_ethernet.config;
+    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_STARTING;
+    pthread_mutex_unlock(&g_ethernet.lock);
+
+    phase = "wait_interface";
+    ret = linkg_network_interface_wait(LINKG_RESOURCE_INTERFACE_ETHERNET, LINKG_ETHERNET_INTERFACE_WAIT_TIMEOUT_MS);
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
+    phase = "set_ipv4";
+    ret = linkg_network_interface_set_ipv4(LINKG_RESOURCE_INTERFACE_ETHERNET, &config.ip, &config.netmask);
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
+    phase = "interface_up";
+    ret = linkg_network_interface_set_up(LINKG_RESOURCE_INTERFACE_ETHERNET, true);
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
+    phase = "bind_rx_irq";
+    ret = _linkg_ethernet_bind_rx_irq();
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
+    pthread_mutex_lock(&g_ethernet.lock);
+    g_ethernet.run_error = 0;
+    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_RUNNING;
+    pthread_mutex_unlock(&g_ethernet.lock);
+
+    phase = "start_monitor";
+    ret = linkg_thread_start(&g_ethernet.thread);
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
+    pthread_mutex_unlock(&g_ethernet.control_lock);
+
+    LINKG_LOG_INFO("Ethernet module started, interface=%s", LINKG_RESOURCE_INTERFACE_ETHERNET);
+
+    return 0;
+
+fail:
+    _linkg_ethernet_set_lifecycle(LINKG_ETHERNET_LIFECYCLE_STOPPED);
+    pthread_mutex_unlock(&g_ethernet.control_lock);
+
+    LINKG_LOG_ERROR("Ethernet module start failed, phase=%s, interface=%s, error=%d",
+                   phase, LINKG_RESOURCE_INTERFACE_ETHERNET, ret);
+
+    return ret;
+}
+
+/**
+ * @brief 停止并回收内部监控线程。调用方必须持有control_lock。
+ */
+static int _linkg_ethernet_stop_locked(void)
 {
     linkg_ethernet_lifecycle_t lifecycle;
+    int ret;
 
-    lifecycle = _linkg_ethernet_get_lifecycle();
+    pthread_mutex_lock(&g_ethernet.lock);
+    lifecycle = g_ethernet.lifecycle;
+
     if (lifecycle == LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED ||
         lifecycle == LINKG_ETHERNET_LIFECYCLE_STOPPED)
     {
+        pthread_mutex_unlock(&g_ethernet.lock);
         return 0;
     }
 
-    if (lifecycle != LINKG_ETHERNET_LIFECYCLE_RUNNING)
+    if (lifecycle != LINKG_ETHERNET_LIFECYCLE_RUNNING &&
+        lifecycle != LINKG_ETHERNET_LIFECYCLE_ERROR &&
+        lifecycle != LINKG_ETHERNET_LIFECYCLE_STOPPING)
     {
+        pthread_mutex_unlock(&g_ethernet.lock);
         return -EBUSY;
     }
 
-    _linkg_ethernet_set_lifecycle(LINKG_ETHERNET_LIFECYCLE_STOPPING);
+    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_STOPPING;
+    pthread_mutex_unlock(&g_ethernet.lock);
 
-    // 保持当前行为，停止模块时不主动关闭系统Ethernet接口。
+    ret = linkg_thread_stop(&g_ethernet.thread);
+    if (ret != 0)
+    {
+        /* 未确认线程已退出时保留STOPPING，允许后续再次尝试回收。 */
+        LINKG_LOG_ERROR("Ethernet monitor stop failed, error=%d", ret);
+        return ret;
+    }
+
     _linkg_ethernet_set_lifecycle(LINKG_ETHERNET_LIFECYCLE_STOPPED);
 
+    // 保持当前行为，停止模块时不主动关闭系统Ethernet接口。
     LINKG_LOG_INFO("Ethernet module stopped");
 
     return 0;
 }
 
 /**
- * @brief 反初始化Ethernet模块。
+ * @brief 停止Ethernet模块。
+ */
+int linkg_ethernet_stop(void)
+{
+    int ret;
+
+    pthread_mutex_lock(&g_ethernet.control_lock);
+    ret = _linkg_ethernet_stop_locked();
+    pthread_mutex_unlock(&g_ethernet.control_lock);
+
+    return ret;
+}
+
+/**
+ * @brief 反初始化Ethernet模块及内部监控线程对象。
  */
 int linkg_ethernet_deinit(void)
 {
     int ret;
 
-    ret = linkg_ethernet_stop();
+    pthread_mutex_lock(&g_ethernet.control_lock);
+
+    ret = _linkg_ethernet_stop_locked();
     if (ret != 0)
     {
+        pthread_mutex_unlock(&g_ethernet.control_lock);
         return ret;
     }
 
     pthread_mutex_lock(&g_ethernet.lock);
-
     if (g_ethernet.lifecycle == LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED)
     {
         pthread_mutex_unlock(&g_ethernet.lock);
+        pthread_mutex_unlock(&g_ethernet.control_lock);
         return 0;
     }
-
-    memset(&g_ethernet.config, 0, sizeof(g_ethernet.config));
-    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED;
-
     pthread_mutex_unlock(&g_ethernet.lock);
+
+    linkg_thread_deinit(&g_ethernet.thread);
+
+    pthread_mutex_lock(&g_ethernet.lock);
+    memset(&g_ethernet.config, 0, sizeof(g_ethernet.config));
+    g_ethernet.run_error = 0;
+    g_ethernet.lifecycle = LINKG_ETHERNET_LIFECYCLE_UNINITIALIZED;
+    pthread_mutex_unlock(&g_ethernet.lock);
+    pthread_mutex_unlock(&g_ethernet.control_lock);
 
     LINKG_LOG_INFO("Ethernet module deinitialized");
 

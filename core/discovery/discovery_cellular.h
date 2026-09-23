@@ -18,6 +18,10 @@ int linkg_discovery_cellular_quiesce(void);
 int linkg_discovery_cellular_stop(void);
 int linkg_discovery_cellular_deinit(void);
 
+/****************************** 网络通知 ******************************/
+
+int linkg_discovery_cellular_notify_network_changed(void);
+
 #ifdef __cplusplus
 }
 #endif

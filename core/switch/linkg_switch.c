@@ -369,9 +369,7 @@ int linkg_switch_start(void)
     }
 
     // user_data仅作为当前运行代际的不透明整数cookie，从不解引用。
-    ret = linkg_transport_register_handler(LINKG_TRANSPORT_TYPE_SWITCH,
-                                           linkg_switch_transport_receive,
-                                           (void *)token);
+    ret = linkg_transport_register_handler(LINKG_TRANSPORT_TYPE_SWITCH, linkg_switch_transport_receive, (void *)token);
     if (ret != 0)
     {
         pthread_mutex_lock(&g_switch.lock);
