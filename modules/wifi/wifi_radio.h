@@ -23,6 +23,10 @@ int  wifi_radio_start(const wifi_runtime_t *runtime, uint64_t now_ms);
 int  wifi_radio_stop(void);
 void wifi_radio_deinit(void);
 
+/****************************** 动态配置 ******************************/
+
+int wifi_radio_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate, const wifi_runtime_t *runtime, uint64_t now_ms);
+
 /****************************** 运行状态同步 ******************************/
 
 int  wifi_radio_sync_runtime(const wifi_runtime_t *runtime, uint64_t now_ms);

@@ -196,13 +196,19 @@ static int _linkg_wifi_apply_link_event(const wifi_runtime_event_t *event, uint6
 {
     int ret;
 
+    pthread_mutex_lock(&g_wifi.lock);
+
     ret = wifi_runtime_apply_event(&g_wifi.runtime, event, now_ms);
     if (ret != 0)
     {
+        pthread_mutex_unlock(&g_wifi.lock);
         return ret;
     }
 
     ret = wifi_radio_sync_runtime(&g_wifi.runtime, now_ms);
+
+    pthread_mutex_unlock(&g_wifi.lock);
+
     if (ret != 0)
     {
         WIFI_WARN("synchronize radio state after STA link event failed, event=%d, error=%d",
@@ -266,7 +272,12 @@ static int _linkg_wifi_recover_sta_service(void)
         return ret;
     }
 
+    pthread_mutex_lock(&g_wifi.lock);
+
     sync_ret = wifi_radio_sync_runtime(&g_wifi.runtime, now_ms);
+
+    pthread_mutex_unlock(&g_wifi.lock);
+
     if (sync_ret != 0)
     {
         WIFI_WARN("synchronize radio state before STA service recovery failed, error=%d",
@@ -289,7 +300,11 @@ static int _linkg_wifi_recover_sta_service(void)
 
     now_ms = linkg_time_elapsed_ms();
 
+    pthread_mutex_lock(&g_wifi.lock);
+
     wifi_radio_notify_reapplied(&g_wifi.runtime, now_ms);
+
+    pthread_mutex_unlock(&g_wifi.lock);
 
     ret = _linkg_wifi_apply_recovery_event(WIFI_RUNTIME_EVENT_RECOVERY_SUCCEEDED,
                                             WIFI_RUNTIME_RECOVERY_REASON_NONE,
@@ -300,7 +315,11 @@ static int _linkg_wifi_recover_sta_service(void)
         return ret;
     }
 
+    pthread_mutex_lock(&g_wifi.lock);
+
     sync_ret = wifi_radio_sync_runtime(&g_wifi.runtime, now_ms);
+
+    pthread_mutex_unlock(&g_wifi.lock);
     if (sync_ret != 0)
     {
         WIFI_WARN("synchronize radio state after STA service recovery failed, error=%d",
@@ -402,7 +421,12 @@ static uint64_t _linkg_wifi_get_runtime_deadline(void)
     uint64_t radio_deadline;
     uint64_t monitor_deadline;
 
+    pthread_mutex_lock(&g_wifi.lock);
+
     radio_deadline = wifi_radio_get_deadline();
+
+    pthread_mutex_unlock(&g_wifi.lock);
+
 
     if (g_wifi.role != LINKG_DEVICE_ROLE_STA)
     {
@@ -487,7 +511,12 @@ static void _linkg_wifi_process_radio(uint64_t now_ms)
 {
     int ret;
 
+    pthread_mutex_lock(&g_wifi.lock);
+
     ret = wifi_radio_process(&g_wifi.runtime, now_ms);
+
+    pthread_mutex_unlock(&g_wifi.lock);
+
     if (ret != 0)
     {
         /**
@@ -1270,6 +1299,82 @@ int linkg_wifi_deinit(void)
     WIFI_INFO("module deinitialized");
 
     return 0;
+}
+
+/****************************** 动态配置 ******************************/
+
+/**
+ * @brief 动态修改窄带速率控制模式和固定速率档位。
+ */
+int linkg_wifi_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate)
+{
+    linkg_wifi_narrow_mode_t old_mode;
+    uint16_t                 old_rate;
+    uint64_t                 now_ms;
+    int                      ret;
+
+    if (mode != LINKG_WIFI_NARROW_MODE_FIXED && mode != LINKG_WIFI_NARROW_MODE_ADAPTIVE)
+    {
+        return -EINVAL;
+    }
+
+    if (mode == LINKG_WIFI_NARROW_MODE_FIXED && rate > LINKG_WIFI_NARROW_RATE_MAX)
+    {
+        return -ERANGE;
+    }
+
+    if (mode == LINKG_WIFI_NARROW_MODE_ADAPTIVE)
+    {
+        rate = 0U;
+    }
+
+    pthread_mutex_lock(&g_wifi.lock);
+
+    if (g_wifi.lifecycle != LINKG_WIFI_LIFECYCLE_RUNNING)
+    {
+        ret = g_wifi.lifecycle == LINKG_WIFI_LIFECYCLE_UNINITIALIZED ? -ENODEV : -EBUSY;
+        goto out;
+    }
+
+    if (!g_wifi.config.enabled || g_wifi.config.wideband.work_mode != LINKG_WIFI_WORK_MODE_NARROW)
+    {
+        ret = -EOPNOTSUPP;
+        goto out;
+    }
+
+    old_mode = g_wifi.config.wideband.narrow_params.mode;
+    old_rate = g_wifi.config.wideband.narrow_params.manual_rate;
+
+    if (old_mode == mode && (mode == LINKG_WIFI_NARROW_MODE_ADAPTIVE || old_rate == rate))
+    {
+        ret = 0;
+        goto out;
+    }
+
+    now_ms = linkg_time_elapsed_ms();
+
+    ret = wifi_radio_set_narrow_config(mode, rate, &g_wifi.runtime, now_ms);
+    if (ret != 0)
+    {
+        goto out;
+    }
+
+    ret = wifi_status_set_narrow_config(mode, rate);
+    if (ret != 0)
+    {
+        WIFI_ERROR("update WiFi narrow status config failed, error=%d", ret);
+        goto out;
+    }
+
+    g_wifi.config.wideband.narrow_params.mode        = mode;
+    g_wifi.config.wideband.narrow_params.manual_rate = rate;
+
+    WIFI_INFO("narrow configuration updated, mode=%d, rate=%u", (int)mode, (unsigned int)rate);
+
+out:
+    pthread_mutex_unlock(&g_wifi.lock);
+
+    return ret;
 }
 
 /****************************** 状态读取 ******************************/

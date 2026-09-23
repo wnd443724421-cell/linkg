@@ -37,6 +37,13 @@ int wifi_status_start(void);
 int wifi_status_stop(void);
 int wifi_status_deinit(void);
 
+/****************************** 动态配置 ******************************/
+
+/**
+ * @brief 更新窄带速率控制模式和固定速率目标。
+ */
+int wifi_status_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate);
+
 /****************************** 状态读取 ******************************/
 
 int wifi_status_get_info(wifi_status_info_t *info);

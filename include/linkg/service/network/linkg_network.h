@@ -1,3 +1,4 @@
+
 /**
  * @file linkg_network.h
  * @brief LinkG网络服务接口
@@ -24,12 +25,29 @@ typedef enum
     LINKG_NETWORK_STATE_FAILED             // 网络模块运行失败
 } linkg_network_state_t;
 
-/****************************** 生命周期 ******************************/
+/****************************** 整体生命周期 ******************************/
 
 int linkg_network_init(linkg_packet_pool_t *packet_pool);
 int linkg_network_start(void);
 int linkg_network_stop(void);
 int linkg_network_deinit(void);
+
+/****************************** WiFi配置 ******************************/
+
+int linkg_network_set_wifi_config(const linkg_wifi_config_t *config);
+int linkg_network_set_wifi_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate);
+
+/****************************** WiFi生命周期 ******************************/
+
+int linkg_network_restart_wifi(void);
+
+/****************************** Cellular配置 ******************************/
+
+int linkg_network_set_cellular_config(const linkg_cellular_config_t *config);
+
+/****************************** Cellular生命周期 ******************************/
+
+int linkg_network_restart_cellular(void);
 
 /****************************** 状态查询 ******************************/
 

@@ -666,6 +666,180 @@ void wifi_radio_deinit(void)
     memset(&g_wifi_radio, 0, sizeof(g_wifi_radio));
 }
 
+/**
+ * @brief 动态设置窄带速率控制模式和固定速率档位。
+ *
+ * @note ADAPTIVE模式忽略rate，FIXED模式要求rate为有效档位。
+ *       调用方必须保证本函数与Radio运行维护串行执行。
+ */
+int wifi_radio_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate, const wifi_runtime_t *runtime, uint64_t now_ms)
+{
+    linkg_wifi_narrow_mode_t old_mode;
+    uint16_t                 old_rate;
+    int                      rollback_ret;
+    int                      ret;
+
+    if (!g_wifi_radio.initialized || !g_wifi_radio.started)
+    {
+        return -ENODEV;
+    }
+
+    if (runtime == NULL || runtime->role != g_wifi_radio.config.role)
+    {
+        return -EINVAL;
+    }
+
+    if (!_wifi_radio_narrow_enabled())
+    {
+        return -EOPNOTSUPP;
+    }
+
+    if (mode != LINKG_WIFI_NARROW_MODE_FIXED && mode != LINKG_WIFI_NARROW_MODE_ADAPTIVE)
+    {
+        return -EINVAL;
+    }
+
+    if (mode == LINKG_WIFI_NARROW_MODE_FIXED && rate > LINKG_WIFI_NARROW_RATE_MAX)
+    {
+        return -ERANGE;
+    }
+
+    old_mode = g_wifi_radio.config.narrow_mode;
+    old_rate = g_wifi_radio.config.target_rate_level;
+
+    /****************************** 自适应模式 ******************************/
+
+    if (mode == LINKG_WIFI_NARROW_MODE_ADAPTIVE)
+    {
+        if (old_mode == LINKG_WIFI_NARROW_MODE_ADAPTIVE)
+        {
+            g_wifi_radio.config.target_rate_level = 0U;
+            return 0;
+        }
+
+        ret = _wifi_radio_apply_auto_rate();
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        g_wifi_radio.config.narrow_mode         = LINKG_WIFI_NARROW_MODE_ADAPTIVE;
+        g_wifi_radio.config.target_rate_level   = 0U;
+        g_wifi_radio.state                      = WIFI_RADIO_STATE_IDLE;
+        g_wifi_radio.mismatch_count             = 0U;
+        g_wifi_radio.rate_repair_failure_count  = 0U;
+
+        if (g_wifi_radio.config.role == LINKG_DEVICE_ROLE_AP)
+        {
+            _wifi_radio_schedule(now_ms, WIFI_RADIO_CHECK_INTERVAL_MS);
+        }
+        else
+        {
+            g_wifi_radio.next_check_ms = 0U;
+        }
+
+        WIFI_INFO("narrow rate mode changed to adaptive");
+
+        return 0;
+    }
+
+    /****************************** 固定速率模式 ******************************/
+
+    if (old_mode == LINKG_WIFI_NARROW_MODE_FIXED && old_rate == rate)
+    {
+        return 0;
+    }
+
+    /* STA未连接时保持自动速率，待后续关联成功后再锁定固定档位。 */
+    if (g_wifi_radio.config.role == LINKG_DEVICE_ROLE_STA)
+    {
+        if (runtime->link_state == WIFI_RUNTIME_LINK_DISCONNECTED)
+        {
+            if (g_wifi_radio.state != WIFI_RADIO_STATE_AUTO)
+            {
+                ret = _wifi_radio_apply_auto_rate();
+                if (ret != 0)
+                {
+                    return ret;
+                }
+            }
+
+            g_wifi_radio.config.narrow_mode       = LINKG_WIFI_NARROW_MODE_FIXED;
+            g_wifi_radio.config.target_rate_level = rate;
+            g_wifi_radio.state                    = WIFI_RADIO_STATE_AUTO;
+            g_wifi_radio.mismatch_count           = 0U;
+            g_wifi_radio.rate_repair_failure_count= 0U;
+            g_wifi_radio.next_check_ms            = 0U;
+
+            WIFI_INFO("STA fixed narrow target updated while disconnected, rate=%u", (unsigned int)rate);
+
+            return 0;
+        }
+
+        if (runtime->link_state != WIFI_RUNTIME_LINK_CONNECTED)
+        {
+            return -EBUSY;
+        }
+
+        /* STA仍处于连接后的稳定等待阶段，更新目标但不提前锁档。 */
+        if (g_wifi_radio.state == WIFI_RADIO_STATE_STABILIZING)
+        {
+            g_wifi_radio.config.narrow_mode       = LINKG_WIFI_NARROW_MODE_FIXED;
+            g_wifi_radio.config.target_rate_level = rate;
+            g_wifi_radio.mismatch_count           = 0U;
+            g_wifi_radio.rate_repair_failure_count = 0U;
+
+            WIFI_INFO("STA fixed narrow target updated during stabilization, rate=%u", (unsigned int)rate);
+
+            return 0;
+        }
+    }
+
+    /* AP或已连接且不在稳定等待阶段的STA，立即应用指定固定档位。 */
+    ret = wifi_driver_set_narrow_auto_rate(false);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = wifi_driver_set_narrow_rate_level((uint8_t)rate);
+    if (ret != 0)
+    {
+        /* 第二步失败，恢复修改前的模式及固定档位。 */
+        if (old_mode == LINKG_WIFI_NARROW_MODE_FIXED)
+        {
+            rollback_ret = wifi_driver_set_narrow_auto_rate(false);
+            if (rollback_ret == 0)
+            {
+                rollback_ret = wifi_driver_set_narrow_rate_level((uint8_t)old_rate);
+            }
+        }
+        else
+        {
+            rollback_ret = _wifi_radio_apply_auto_rate();
+        }
+
+        if (rollback_ret != 0)
+        {
+            WIFI_WARN("restore previous narrow configuration failed, error=%d", rollback_ret);
+            _wifi_radio_schedule(now_ms, WIFI_RADIO_CHECK_INTERVAL_MS);
+        }
+
+        return ret;
+    }
+
+    g_wifi_radio.config.narrow_mode        = LINKG_WIFI_NARROW_MODE_FIXED;
+    g_wifi_radio.config.target_rate_level  = rate;
+    g_wifi_radio.state                     = WIFI_RADIO_STATE_COOLDOWN;
+    g_wifi_radio.rate_repair_failure_count = 0U;
+
+    _wifi_radio_schedule(now_ms, WIFI_RADIO_REAPPLY_COOLDOWN_MS);
+
+    WIFI_INFO("fixed narrow rate applied, target=%u", (unsigned int)rate);
+
+    return 0;
+}
+
 /****************************** 运行状态同步 ******************************/
 
 /**

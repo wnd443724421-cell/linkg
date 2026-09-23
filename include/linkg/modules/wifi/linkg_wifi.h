@@ -27,6 +27,10 @@ int linkg_wifi_run(linkg_thread_t *owner_thread);
 int linkg_wifi_stop(void);
 int linkg_wifi_deinit(void);
 
+/****************************** 动态配置 ******************************/
+
+int linkg_wifi_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate);
+
 /****************************** 状态读取 ******************************/
 
 int linkg_wifi_get_status(linkg_wifi_status_snapshot_t *snapshot);

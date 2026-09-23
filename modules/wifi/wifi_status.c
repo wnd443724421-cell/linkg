@@ -724,6 +724,12 @@ static void _wifi_status_record_success(const linkg_wifi_status_snapshot_t *snap
 
     _wifi_status_merge_snapshot(&g_wifi_status.info.snapshot, snapshot, g_wifi_status.config.role);
 
+    if (g_wifi_status.config.work_mode == LINKG_WIFI_WORK_MODE_NARROW)
+    {
+        g_wifi_status.info.snapshot.local.radio.params.narrow.mode                  = g_wifi_status.config.narrow_mode;
+        g_wifi_status.info.snapshot.local.radio.params.narrow.configured_rate_level = g_wifi_status.config.configured_rate_level;
+    }
+
     g_wifi_status.info.valid           = true;
     g_wifi_status.info.generation++;
     g_wifi_status.info.last_attempt_ms = updated_ms;
@@ -1197,6 +1203,46 @@ int wifi_status_deinit(void)
     pthread_mutex_unlock(&g_wifi_status.lock);
 
     WIFI_STATUS_DEBUG("status module deinitialized");
+
+    return 0;
+}
+
+/**
+ * @brief 更新窄带速率控制模式和固定速率目标。
+ */
+int wifi_status_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate)
+{
+    if (mode != LINKG_WIFI_NARROW_MODE_FIXED && mode != LINKG_WIFI_NARROW_MODE_ADAPTIVE)
+    {
+        return -EINVAL;
+    }
+
+    if (mode == LINKG_WIFI_NARROW_MODE_FIXED && rate > LINKG_WIFI_NARROW_RATE_MAX)
+    {
+        return -ERANGE;
+    }
+
+    pthread_mutex_lock(&g_wifi_status.lock);
+
+    if (!g_wifi_status.initialized)
+    {
+        pthread_mutex_unlock(&g_wifi_status.lock);
+        return -ENODEV;
+    }
+
+    if (g_wifi_status.config.work_mode != LINKG_WIFI_WORK_MODE_NARROW)
+    {
+        pthread_mutex_unlock(&g_wifi_status.lock);
+        return -EOPNOTSUPP;
+    }
+
+    g_wifi_status.config.narrow_mode           = mode;
+    g_wifi_status.config.configured_rate_level = mode == LINKG_WIFI_NARROW_MODE_FIXED ? rate : 0U;
+
+    g_wifi_status.info.snapshot.local.radio.params.narrow.mode                  = g_wifi_status.config.narrow_mode;
+    g_wifi_status.info.snapshot.local.radio.params.narrow.configured_rate_level = g_wifi_status.config.configured_rate_level;
+
+    pthread_mutex_unlock(&g_wifi_status.lock);
 
     return 0;
 }
