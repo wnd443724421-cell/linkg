@@ -63,8 +63,8 @@
 #define DMA_DESC_TX                     256                                       // 默认TX DMA描述符数量
 #define BUDGET                          (dma_desc_rx / 4)                         // NAPI默认轮询预算
 #define TX_THRESH                       (dma_desc_tx / 4)                         // TX环队列唤醒阈值
-#define TX_COAL_FRAMES_DEFAULT          8                                         // 默认TX完成中断聚合帧数
-#define TX_COAL_TIMER_MS                10                                        // TX回收兜底定时器周期，单位毫秒
+#define TX_COAL_FRAMES_DEFAULT          4                                         // 默认TX完成中断聚合帧数
+#define TX_COAL_TIMER_MS                4                                         // TX回收兜底定时器周期，单位毫秒
 #define RX_COAL_FRAMES_LOW              1                                         // RX低流量模式每次中断帧数
 #define RX_COAL_FRAMES_HIGH             8                                         // RX高流量模式中断聚合帧数
 #define RX_COAL_PPS_HIGH                3200                                      // RX切换HIGH模式PPS阈值
@@ -1732,6 +1732,7 @@ static void geth_tx_err(struct geth_priv *priv)
     priv->tx_dirty = 0;
     priv->tx_clean = 0;
     priv->tx_count_frames = 0;
+    netdev_tx_reset_queue(netdev_get_tx_queue(priv->ndev, 0));
     sunxi_start_tx(priv->base, priv->dma_tx_phy);
 
     priv->ndev->stats.tx_errors++;
@@ -2349,6 +2350,8 @@ static int geth_open(struct net_device *ndev)
     priv->tx_count_frames = 0;
 
     // 初始RX ring全部按照每包产生完成中断配置。
+
+    netdev_tx_reset_queue(netdev_get_tx_queue(ndev, 0));
     geth_rx_refill(ndev);
 
     memset(&priv->xstats, 0, sizeof(struct geth_extra_stats));
@@ -2457,6 +2460,7 @@ static void geth_tx_complete(struct geth_priv *priv)
     struct sk_buff *skb = NULL;
     struct dma_desc *desc = NULL;
     int tx_stat;
+    unsigned int tx_packets = 0, tx_bytes = 0;
 
     spin_lock(&priv->tx_lock);
 
@@ -2503,7 +2507,13 @@ static void geth_tx_complete(struct geth_priv *priv)
             continue;
         }
 
+        tx_packets++;
+ 		tx_bytes += skb->len;
         dev_kfree_skb(skb);
+    }
+	if (likely(tx_packets))
+    {
+		netdev_tx_completed_queue(netdev_get_tx_queue(priv->ndev, 0), tx_packets, tx_bytes);
     }
 
     // TX环恢复足够空间后重新启动上层发送队列。
@@ -2696,7 +2706,7 @@ static netdev_tx_t geth_xmit(struct sk_buff *skb, struct net_device *ndev)
     dma_wmb();
     // 最后提交首描述符，使DMA能够开始处理完整帧。
     desc_set_own(first);
-
+    netdev_tx_sent_queue(netdev_get_tx_queue(ndev, 0), skb->len);
     spin_unlock(&priv->tx_lock);
 
     // TX环空间不足时停止上层发送队列。
@@ -2901,7 +2911,7 @@ static int geth_rx(struct geth_priv *priv, int limit)
 static int geth_poll(struct napi_struct *napi, int budget)
 {
     struct geth_priv *priv = container_of(napi, struct geth_priv, napi);
-    int work_done;
+    int work_done = 0;
 
     // 回收已经完成发送的TX描述符。
     geth_tx_complete(priv);
@@ -3271,6 +3281,25 @@ static const struct ethtool_ops geth_ethtool_ops =
 /****************************** 硬件资源 ******************************/
 
 /**
+ * @brief 获取PHY 25MHz时钟，兼容新旧设备树时钟名称。
+ *
+ * 新设备树使用标准名称phy25m，旧Linux 5.4绑定可能仍使用ephy。
+ * 仅在phy25m不存在时回退到ephy，其他错误保持原样返回。
+ */
+static struct clk *geth_get_phy25m_clk(struct device_node *np)
+{
+    struct clk *clk;
+
+    clk = of_clk_get_by_name(np, "phy25m");
+    if (IS_ERR(clk) && PTR_ERR(clk) == -ENOENT)
+    {
+        clk = of_clk_get_by_name(np, "ephy");
+    }
+
+    return clk;
+}
+
+/**
  * @brief 获取并初始化GMAC平台硬件资源。
  */
 static int geth_hw_init(struct platform_device *pdev)
@@ -3358,10 +3387,10 @@ static int geth_hw_init(struct platform_device *pdev)
 
     if (INT_PHY == priv->phy_ext)
     {
-        priv->ephy_clk = of_clk_get_by_name(np, "ephy");
+        priv->ephy_clk = geth_get_phy25m_clk(np);
         if (unlikely(IS_ERR_OR_NULL(priv->ephy_clk)))
         {
-            pr_err("Get ephy clock failed!\n");
+            pr_err("Get phy25m/ephy clock failed!\n");
             ret = -EINVAL;
             goto clk_err;
         }
@@ -3370,10 +3399,10 @@ static int geth_hw_init(struct platform_device *pdev)
     {
         if (!of_property_read_u32(np, "use_ephy25m", &(priv->use_ephy_clk)) && priv->use_ephy_clk)
         {
-            priv->ephy_clk = of_clk_get_by_name(np, "ephy");
+            priv->ephy_clk = geth_get_phy25m_clk(np);
             if (unlikely(IS_ERR_OR_NULL(priv->ephy_clk)))
             {
-                pr_err("Get ephy clk failed!\n");
+                pr_err("Get phy25m/ephy clk failed!\n");
                 ret = -EINVAL;
                 goto clk_err;
             }

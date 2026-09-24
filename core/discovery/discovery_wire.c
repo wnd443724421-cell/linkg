@@ -29,8 +29,7 @@ static void _linkg_discovery_wire_write_u16(uint8_t *buffer, uint16_t value)
  */
 static uint16_t _linkg_discovery_wire_read_u16(const uint8_t *buffer)
 {
-    return ((uint16_t)buffer[0] << 8) |
-           (uint16_t)buffer[1];
+    return ((uint16_t)buffer[0] << 8) | (uint16_t)buffer[1];
 }
 
 /**
@@ -49,10 +48,7 @@ static void _linkg_discovery_wire_write_u32(uint8_t *buffer, uint32_t value)
  */
 static uint32_t _linkg_discovery_wire_read_u32(const uint8_t *buffer)
 {
-    return ((uint32_t)buffer[0] << 24) |
-           ((uint32_t)buffer[1] << 16) |
-           ((uint32_t)buffer[2] << 8) |
-           (uint32_t)buffer[3];
+    return ((uint32_t)buffer[0] << 24) | ((uint32_t)buffer[1] << 16) | ((uint32_t)buffer[2] << 8) | (uint32_t)buffer[3];
 }
 
 /**
@@ -75,14 +71,9 @@ static void _linkg_discovery_wire_write_u64(uint8_t *buffer, uint64_t value)
  */
 static uint64_t _linkg_discovery_wire_read_u64(const uint8_t *buffer)
 {
-    return ((uint64_t)buffer[0] << 56) |
-           ((uint64_t)buffer[1] << 48) |
-           ((uint64_t)buffer[2] << 40) |
-           ((uint64_t)buffer[3] << 32) |
-           ((uint64_t)buffer[4] << 24) |
-           ((uint64_t)buffer[5] << 16) |
-           ((uint64_t)buffer[6] << 8) |
-           (uint64_t)buffer[7];
+    return ((uint64_t)buffer[0] << 56) | ((uint64_t)buffer[1] << 48) | ((uint64_t)buffer[2] << 40) |
+           ((uint64_t)buffer[3] << 32) | ((uint64_t)buffer[4] << 24) | ((uint64_t)buffer[5] << 16) |
+           ((uint64_t)buffer[6] << 8) | (uint64_t)buffer[7];
 }
 
 /****************************** 端点编解码 ******************************/
@@ -437,9 +428,7 @@ int linkg_discovery_wire_encode_sta_report(const linkg_discovery_report_t *repor
         return ret;
     }
 
-    ret = linkg_discovery_wire_encode_report(report,
-                                             &buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE],
-                                             capacity - LINKG_DISCOVERY_WIRE_HEADER_SIZE);
+    ret = linkg_discovery_wire_encode_report(report, &buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE], capacity - LINKG_DISCOVERY_WIRE_HEADER_SIZE);
     if (ret != 0)
     {
         return ret;
@@ -475,8 +464,7 @@ int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t lengt
         return ret;
     }
 
-    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC ||
-        header.version != LINKG_DISCOVERY_WIRE_VERSION ||
+    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC || header.version != LINKG_DISCOVERY_WIRE_VERSION ||
         header.type != LINKG_DISCOVERY_MESSAGE_STA_REPORT)
     {
         return -EPROTO;
@@ -494,9 +482,7 @@ int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t lengt
         return -EMSGSIZE;
     }
 
-    return linkg_discovery_wire_decode_report(&buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE],
-                                              header.payload_length,
-                                              report);
+    return linkg_discovery_wire_decode_report(&buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE], header.payload_length, report);
 }
 
 /****************************** AP同步报文 ******************************/
@@ -526,13 +512,12 @@ int linkg_discovery_wire_encode_ap_sync(const linkg_discovery_ap_sync_t *sync, u
 
     *length = 0U;
 
-    if (sync->node_count > LINKG_NODE_PEER_MAX)
+    if (sync->node_count > LINKG_RESOURCE_NETWORK_STA_MAX)
     {
         return -EINVAL;
     }
 
-    payload_length = LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE +
-                     sync->node_count * LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE;
+    payload_length = LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE + sync->node_count * LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE;
 
     packet_length = LINKG_DISCOVERY_WIRE_HEADER_SIZE + payload_length;
 
@@ -613,8 +598,7 @@ int linkg_discovery_wire_decode_ap_sync(const uint8_t *buffer, uint32_t length, 
         return ret;
     }
 
-    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC ||
-        header.version != LINKG_DISCOVERY_WIRE_VERSION ||
+    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC || header.version != LINKG_DISCOVERY_WIRE_VERSION ||
         header.type != LINKG_DISCOVERY_MESSAGE_AP_SYNC)
     {
         return -EPROTO;
@@ -625,8 +609,7 @@ int linkg_discovery_wire_decode_ap_sync(const uint8_t *buffer, uint32_t length, 
         return -EMSGSIZE;
     }
 
-    expected_packet_length = LINKG_DISCOVERY_WIRE_HEADER_SIZE +
-                             (uint32_t)header.payload_length;
+    expected_packet_length = LINKG_DISCOVERY_WIRE_HEADER_SIZE + (uint32_t)header.payload_length;
 
     if (length != expected_packet_length)
     {
@@ -637,9 +620,7 @@ int linkg_discovery_wire_decode_ap_sync(const uint8_t *buffer, uint32_t length, 
 
     offset = LINKG_DISCOVERY_WIRE_HEADER_SIZE;
 
-    ret = linkg_discovery_wire_decode_report(&buffer[offset],
-                                             LINKG_DISCOVERY_WIRE_REPORT_SIZE,
-                                             &sync->ap);
+    ret = linkg_discovery_wire_decode_report(&buffer[offset], LINKG_DISCOVERY_WIRE_REPORT_SIZE, &sync->ap);
     if (ret != 0)
     {
         return ret;
@@ -653,13 +634,12 @@ int linkg_discovery_wire_decode_ap_sync(const uint8_t *buffer, uint32_t length, 
     sync->node_count = _linkg_discovery_wire_read_u32(&buffer[offset]);
     offset += sizeof(uint32_t);
 
-    if (sync->node_count > LINKG_NODE_PEER_MAX)
+    if (sync->node_count > LINKG_RESOURCE_NETWORK_STA_MAX)
     {
         return -EPROTO;
     }
 
-    expected_payload_length = LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE +
-                              sync->node_count * LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE;
+    expected_payload_length = LINKG_DISCOVERY_WIRE_AP_SYNC_BASE_SIZE + sync->node_count * LINKG_DISCOVERY_WIRE_TOPOLOGY_NODE_SIZE;
 
     if ((uint32_t)header.payload_length != expected_payload_length)
     {
@@ -765,8 +745,7 @@ int linkg_discovery_wire_decode_peer_leave(const uint8_t *buffer, uint32_t lengt
         return ret;
     }
 
-    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC ||
-        header.version != LINKG_DISCOVERY_WIRE_VERSION ||
+    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC || header.version != LINKG_DISCOVERY_WIRE_VERSION ||
         header.type != LINKG_DISCOVERY_MESSAGE_PEER_LEAVE)
     {
         return -EPROTO;

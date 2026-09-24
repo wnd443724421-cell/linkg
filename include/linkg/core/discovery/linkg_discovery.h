@@ -35,6 +35,11 @@ int linkg_discovery_deinit(void);
 int linkg_discovery_get_network_node_count(uint32_t *count);
 int linkg_discovery_get_topology_snapshot(linkg_discovery_topology_snapshot_t *snapshot);
 
+/****************************** 网络状态通知 ******************************/
+
+int linkg_discovery_notify_wifi_network_changed(void);
+int linkg_discovery_notify_cellular_network_changed(void);
+
 #ifdef __cplusplus
 }
 #endif

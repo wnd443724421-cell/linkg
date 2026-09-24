@@ -15,20 +15,13 @@
 #include <string.h>
 
 #include "linkg_config.h"
-#include "linkg_link.h"
-#include "linkg_link_manager.h"
 #include "linkg_log.h"
-#include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
 
 #include "discovery_cellular.h"
 #include "discovery_internal.h"
 #include "discovery_wifi.h"
-
-/****************************** 运行策略 ******************************/
-
-#define LINKG_DISCOVERY_SIGNALING_BOOTSTRAP_ENABLED false // 公网信令Bootstrap尚未实现，当前Cellular依赖Wi-Fi发现建立初始Peer
 
 /****************************** 内部类型 ******************************/
 
@@ -58,22 +51,6 @@ static void _linkg_discovery_record_first_error(int *first_error, int error)
     {
         *first_error = error;
     }
-}
-
-/**
- * @brief 判断指定Discovery Access当前是否具备启动条件。
- *
- * Wi-Fi Discovery是独立控制面，只依赖Wi-Fi接口存在，不依赖Wi-Fi数据Link；
- * Cellular Discovery仍依赖对应业务Link存在。
- */
-static bool _linkg_discovery_access_available(linkg_link_access_t access)
-{
-    if (access == LINKG_LINK_ACCESS_WIFI)
-    {
-        return linkg_network_interface_exists(LINKG_RESOURCE_INTERFACE_WIFI);
-    }
-
-    return linkg_link_manager_get_id(access) != LINKG_LINK_ID_INVALID;
 }
 
 /**
@@ -372,8 +349,8 @@ static int _linkg_discovery_stop_core(void)
     pthread_mutex_unlock(&g_discovery.lock);
 
     /**
-     * Core仍保持running，已经冻结的Channel仍保留Socket和注册状态。
-     * Cellular send_leave因此仍可通过Core查询当前Peer目标。
+     * Core仍保持running，冻结后的Channel保留Socket和注册状态。
+     * send_leave可以继续使用本Session的本机状态及已知Peer目标。
      */
     if (leave_ready)
     {
@@ -464,10 +441,9 @@ static int _linkg_discovery_deinit_core(void)
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 初始化Discovery模块及当前配置启用的内部Channel。
+ * @brief 初始化Discovery Core及配置启用的Channel。
  *
- * Channel是否建立初始化资源由links配置决定；
- * 初始化阶段不创建Discovery Session，也不访问实际网络接口。
+ * 不创建Discovery Session，不访问网络接口，也不要求Wi-Fi先于Cellular就绪。
  */
 int linkg_discovery_init(void)
 {
@@ -481,17 +457,6 @@ int linkg_discovery_init(void)
     if (ret != 0)
     {
         return ret;
-    }
-
-    /**
-     * 当前没有公网信令Bootstrap，Cellular只能在Wi-Fi先发现Peer以后工作。
-     * 未来接入信令服务器后，只需将SIGNALING_BOOTSTRAP标志切换为true即可解除该依赖。
-     */
-    if (links.cellular.enabled &&
-        !LINKG_DISCOVERY_SIGNALING_BOOTSTRAP_ENABLED &&
-        !links.wifi.enabled)
-    {
-        return -EINVAL;
     }
 
     ret = _linkg_discovery_init_core();
@@ -548,18 +513,15 @@ fail_core:
 }
 
 /**
- * @brief 启动Discovery模块及当前可用的Discovery Channel。
+ * @brief 启动Discovery Core及配置启用的Channel Worker。
  *
- * Wi-Fi Discovery作为独立控制面，只要求Wi-Fi接入已启用且接口存在；
- * Cellular Discovery仍要求Cellular业务Link存在。当前无公网信令时，
- * Cellular启动还要求Wi-Fi Discovery已经具备Bootstrap条件。
+ * Core先建立新Session，再启动各自的Worker；不等待wlan0、usb0或业务Link。
+ * 接口、地址及Socket由各Channel Worker在运行期间独立检测并建立。
  */
 int linkg_discovery_start(void)
 {
-    bool cellular_available;
     bool cellular_enabled;
     bool cellular_started;
-    bool wifi_available;
     bool wifi_enabled;
     bool wifi_started;
     int  cleanup_ret;
@@ -573,17 +535,7 @@ int linkg_discovery_start(void)
 
     _linkg_discovery_get_channel_enabled(&wifi_enabled, &cellular_enabled);
 
-    wifi_available     = wifi_enabled && _linkg_discovery_access_available(LINKG_LINK_ACCESS_WIFI);
-    cellular_available = cellular_enabled && _linkg_discovery_access_available(LINKG_LINK_ACCESS_CELLULAR);
-
-    if (cellular_enabled &&
-        !LINKG_DISCOVERY_SIGNALING_BOOTSTRAP_ENABLED &&
-        !wifi_available)
-    {
-        return -ENODEV;
-    }
-
-    if (!wifi_available && !cellular_available)
+    if (!wifi_enabled && !cellular_enabled)
     {
         return -ENODEV;
     }
@@ -597,7 +549,7 @@ int linkg_discovery_start(void)
     wifi_started     = false;
     cellular_started = false;
 
-    if (wifi_available)
+    if (wifi_enabled)
     {
         ret = linkg_discovery_wifi_start();
         if (ret != 0)
@@ -608,7 +560,7 @@ int linkg_discovery_start(void)
         wifi_started = true;
     }
 
-    if (cellular_available)
+    if (cellular_enabled)
     {
         ret = linkg_discovery_cellular_start();
         if (ret != 0)
@@ -829,6 +781,7 @@ int linkg_discovery_deinit(void)
  */
 int linkg_discovery_get_network_node_count(uint32_t *count)
 {
+    int unlock_ret;
     int ret;
 
     if (count == NULL)
@@ -869,20 +822,14 @@ int linkg_discovery_get_network_node_count(uint32_t *count)
     ret = 0;
 
 out:
+    unlock_ret = pthread_mutex_unlock(&g_discovery.lock);
+    if (ret == 0 && unlock_ret != 0)
     {
-        int unlock_ret;
-
-        unlock_ret = pthread_mutex_unlock(&g_discovery.lock);
-        if (unlock_ret != 0)
-        {
-            return -unlock_ret;
-        }
+        ret = -unlock_ret;
     }
 
     return ret;
 }
-
-/****************************** 状态查询 ******************************/
 
 /**
  * @brief 获取STA当前应用的AP远端拓扑快照。
@@ -939,4 +886,22 @@ out:
     }
 
     return ret;
+}
+
+/****************************** 网络状态通知 ******************************/
+
+/**
+ * @brief 通知Wi-Fi Discovery检查网络状态。
+ */
+int linkg_discovery_notify_wifi_network_changed(void)
+{
+    return linkg_discovery_wifi_notify_network_changed();
+}
+
+/**
+ * @brief 通知Cellular Discovery检查网络状态。
+ */
+int linkg_discovery_notify_cellular_network_changed(void)
+{
+    return linkg_discovery_cellular_notify_network_changed();
 }

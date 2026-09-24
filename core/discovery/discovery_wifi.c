@@ -263,11 +263,7 @@ static int _linkg_discovery_wifi_open_socket(void)
         goto fail;
     }
 
-    ret = setsockopt(socket_fd,
-                     SOL_SOCKET,
-                     SO_BINDTODEVICE,
-                     LINKG_RESOURCE_INTERFACE_WIFI,
-                     strlen(LINKG_RESOURCE_INTERFACE_WIFI));
+    ret = setsockopt(socket_fd, SOL_SOCKET, SO_BINDTODEVICE, LINKG_RESOURCE_INTERFACE_WIFI, strlen(LINKG_RESOURCE_INTERFACE_WIFI));
     if (ret != 0)
     {
         ret = -errno;
@@ -490,14 +486,14 @@ static int _linkg_discovery_wifi_send_to(const struct sockaddr_in *destination, 
 static int _linkg_discovery_wifi_send_ap_sync(uint64_t now_us, bool broadcast_due)
 {
     linkg_discovery_wifi_sta_address_t targets[LINKG_NODE_PEER_MAX];
-    uint8_t                        buffer[LINKG_DISCOVERY_WIRE_AP_SYNC_MAX_SIZE];
-    linkg_discovery_ap_sync_t      sync;
-    struct sockaddr_in            broadcast;
-    uint32_t                      length;
-    uint32_t                      count;
-    uint32_t                      index;
-    int                           first_error;
-    int                           ret;
+    uint8_t                            buffer[LINKG_DISCOVERY_WIRE_AP_SYNC_MAX_SIZE];
+    linkg_discovery_ap_sync_t          sync;
+    struct sockaddr_in                 broadcast;
+    uint32_t                           length;
+    uint32_t                           count;
+    uint32_t                           index;
+    int                                first_error;
+    int                                ret;
 
     memset(&sync, 0, sizeof(sync));
     memset(buffer, 0, sizeof(buffer));
@@ -665,6 +661,7 @@ static int _linkg_discovery_wifi_send_leave(const linkg_discovery_leave_t *leave
 
     return first_error;
 }
+
 /****************************** Wire接收 ******************************/
 
 /** @brief AP接收有效STA状态后学习其Wi-Fi控制地址。 */
@@ -682,18 +679,23 @@ static void _linkg_discovery_wifi_handle_sta_report(const uint8_t *buffer, uint3
     }
 
     ret = linkg_discovery_channel_handle_peer_report(LINKG_LINK_ACCESS_WIFI, &report, now_us);
-    if (ret != 0)
+    if (ret == LINKG_DISCOVERY_REPORT_IGNORED)
+    {
+        return;
+    }
+
+    if (ret < 0)
     {
         LINKG_LOG_WARN("DISCOVERY-WIFI: STA report rejected, node=%u session=%llu revision=%llu error=%d",
-                       (unsigned int)report.node.node_id,
-                       (unsigned long long)report.session_id,
-                       (unsigned long long)report.revision,
-                       ret);
+                    (unsigned int)report.node.node_id,
+                    (unsigned long long)report.session_id,
+                    (unsigned long long)report.revision, ret);
         return;
     }
 
     _linkg_discovery_wifi_learn_sta(&report, source, now_us);
 }
+
 
 /** @brief STA接收AP Sync，Core接受后更新AP的Wi-Fi控制地址。 */
 static void _linkg_discovery_wifi_handle_ap_sync(const uint8_t *buffer, uint32_t length, const struct sockaddr_in *source, uint64_t now_us)
@@ -711,13 +713,17 @@ static void _linkg_discovery_wifi_handle_ap_sync(const uint8_t *buffer, uint32_t
     }
 
     ret = linkg_discovery_channel_handle_ap_sync(LINKG_LINK_ACCESS_WIFI, &sync, now_us);
-    if (ret != 0)
+    if (ret == LINKG_DISCOVERY_REPORT_IGNORED)
+    {
+        return;
+    }
+
+    if (ret < 0)
     {
         LINKG_LOG_WARN("DISCOVERY-WIFI: AP sync rejected, node=%u session=%llu revision=%llu error=%d",
-                       (unsigned int)sync.ap.node.node_id,
-                       (unsigned long long)sync.ap.session_id,
-                       (unsigned long long)sync.ap.revision,
-                       ret);
+                    (unsigned int)sync.ap.node.node_id,
+                    (unsigned long long)sync.ap.session_id,
+                    (unsigned long long)sync.ap.revision, ret);
         return;
     }
 
@@ -909,21 +915,23 @@ static int _linkg_discovery_wifi_poll_timeout(uint64_t now_us)
     return (int)delay_ms;
 }
 
-/** @brief 周期发送，已知STA优先单播，广播只负责新节点发现。 */
+/** @brief 周期发送；AP广播附带的单播同步刷新下一次心跳时间。 */
 static void _linkg_discovery_wifi_process_periodic(uint64_t now_us)
 {
     bool report_due;
     bool broadcast_due;
     int ret;
 
-    report_due = now_us >= g_discovery_wifi.next_report_us;
+    report_due    = now_us >= g_discovery_wifi.next_report_us;
     broadcast_due = g_discovery_wifi.role == LINKG_DEVICE_ROLE_AP && now_us >= g_discovery_wifi.next_broadcast_us;
+
     if (!report_due && !broadcast_due)
     {
         return;
     }
 
     ret = 0;
+
     if (g_discovery_wifi.role == LINKG_DEVICE_ROLE_AP)
     {
         ret = _linkg_discovery_wifi_send_ap_sync(now_us, broadcast_due);
@@ -945,13 +953,20 @@ static void _linkg_discovery_wifi_process_periodic(uint64_t now_us)
         {
             LINKG_LOG_WARN("DISCOVERY-WIFI: peer aging failed, error=%d", ret);
         }
+    }
+
+    /* AP本轮无论由单播周期还是广播周期触发，都已经执行过单播。 */
+    if (report_due || broadcast_due)
+    {
         g_discovery_wifi.next_report_us = now_us + LINKG_DISCOVERY_WIFI_REPORT_INTERVAL_US;
     }
+
     if (broadcast_due)
     {
         g_discovery_wifi.next_broadcast_us = now_us + LINKG_DISCOVERY_WIFI_BROADCAST_INTERVAL_US;
     }
 }
+
 /****************************** Channel运行资源 ******************************/
 
 /** @brief Wi-Fi接口就绪后创建Socket并注册Core Channel。 */
@@ -1181,10 +1196,10 @@ static int _linkg_discovery_wifi_run(linkg_thread_t *thread)
                 LINKG_LOG_WARN("DISCOVERY-WIFI: read interface failed, error=%d", ready);
                 last_retry_error = ready;
             }
-            ready = 0;
         }
 
-        if (active && (ready == 0 || ifindex != g_discovery_wifi.bound_ifindex || ipv4.s_addr != g_discovery_wifi.bound_ipv4.s_addr))
+
+        if (active && (ready == 0 || (ready > 0 && (ifindex != g_discovery_wifi.bound_ifindex || ipv4.s_addr != g_discovery_wifi.bound_ipv4.s_addr))))
         {
             if (!linkg_thread_is_running(thread))
             {

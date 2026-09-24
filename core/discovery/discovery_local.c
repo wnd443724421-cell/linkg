@@ -26,13 +26,9 @@
 
 static pthread_mutex_t g_discovery_local_refresh_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/****************************** 内部接口 ******************************/
+/****************************** 版本与Endpoint辅助 ******************************/
 
-/**
- * @brief 推进本机Discovery状态版本。
- *
- * 调用方必须持有Discovery状态锁。
- */
+/** @brief 推进本机Report版本；调用方必须持有Discovery状态锁。 */
 static int _linkg_discovery_advance_local_revision_locked(void)
 {
     if (g_discovery.local_report.revision == UINT64_MAX)
@@ -45,9 +41,7 @@ static int _linkg_discovery_advance_local_revision_locked(void)
     return 0;
 }
 
-/**
- * @brief 判断两个Discovery Path Endpoint是否相同。
- */
+/** @brief 按地址族、地址及端口比较Endpoint，不比较sockaddr填充字节。 */
 static bool _linkg_discovery_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right)
 {
     const struct sockaddr_in  *left_ipv4;
@@ -117,9 +111,9 @@ static bool _linkg_discovery_endpoint_equal(const linkg_path_endpoint_t *left, c
     return false;
 }
 
-/**
- * @brief 生成新的Discovery会话标识。
- */
+/****************************** 会话标识 ******************************/
+
+/** @brief 使用系统随机源生成非零Discovery Session ID。 */
 static int _linkg_discovery_generate_session_id(uint64_t *session_id)
 {
     uint8_t *buffer;
@@ -163,12 +157,11 @@ static int _linkg_discovery_generate_session_id(uint64_t *session_id)
     return 0;
 }
 
+/****************************** 数据Endpoint采集 ******************************/
+
 /**
- * @brief 准备本机Wi-Fi数据端点。
- *
- * @return 1表示当前Endpoint有效；
- *         0表示当前Endpoint明确未就绪；
- *         负值表示本次Endpoint状态查询失败。
+ * @brief 采集本机Wi-Fi数据Endpoint；不依赖Wi-Fi Discovery Channel是否运行。
+ * @return 1有效；0明确未就绪；负值表示本次状态查询失败。
  */
 static int _linkg_discovery_prepare_wifi_endpoint(linkg_path_endpoint_t *endpoint)
 {
@@ -218,6 +211,11 @@ static int _linkg_discovery_prepare_wifi_endpoint(linkg_path_endpoint_t *endpoin
         return ret;
     }
 
+    if (!linkg_network_ipv4_address_valid(&wifi_address))
+    {
+        return 0;
+    }
+
     address = (struct sockaddr_in *)&endpoint->address;
 
     address->sin_family = AF_INET;
@@ -230,11 +228,8 @@ static int _linkg_discovery_prepare_wifi_endpoint(linkg_path_endpoint_t *endpoin
 }
 
 /**
- * @brief 准备本机Cellular数据端点。
- *
- * @return 1表示当前Endpoint有效；
- *         0表示当前Endpoint明确未就绪；
- *         负值表示本次Endpoint状态查询失败。
+ * @brief 采集本机Cellular数据Endpoint；独立于Wi-Fi数据Path和控制面。
+ * @return 1有效；0明确未就绪；负值表示本次状态查询失败。
  */
 static int _linkg_discovery_prepare_cellular_endpoint(linkg_path_endpoint_t *endpoint)
 {
@@ -295,62 +290,13 @@ static int _linkg_discovery_prepare_cellular_endpoint(linkg_path_endpoint_t *end
     return 1;
 }
 
-/**
- * @brief 准备本机Discovery初始数据端点。
- *
- * Discovery控制面允许在没有任何数据Path时建立会话。
- * 初始Endpoint查询失败只表示该Path当前不可发布，不阻止Discovery启动；
- * 后续周期刷新会在Endpoint出现或变化时推进revision并动态发布。
- */
-static int _linkg_discovery_prepare_initial_endpoints(linkg_discovery_report_t *report)
-{
-    linkg_path_endpoint_t wifi_endpoint;
-    linkg_path_endpoint_t cellular_endpoint;
-    int                   wifi_state;
-    int                   cellular_state;
+/****************************** 本机Session ******************************/
 
-    if (report == NULL)
-    {
-        return -EINVAL;
-    }
-
-    memset(&wifi_endpoint, 0, sizeof(wifi_endpoint));
-    memset(&cellular_endpoint, 0, sizeof(cellular_endpoint));
-
-    memset(&report->wifi_endpoint, 0, sizeof(report->wifi_endpoint));
-    memset(&report->cellular_endpoint, 0, sizeof(report->cellular_endpoint));
-
-    report->path_flags &= (uint8_t)~LINKG_DISCOVERY_PATH_VALID_MASK;
-
-    wifi_state = _linkg_discovery_prepare_wifi_endpoint(&wifi_endpoint);
-    if (wifi_state > 0)
-    {
-        report->wifi_endpoint = wifi_endpoint;
-        report->path_flags |= LINKG_DISCOVERY_PATH_WIFI_VALID;
-    }
-
-    cellular_state = _linkg_discovery_prepare_cellular_endpoint(&cellular_endpoint);
-    if (cellular_state > 0)
-    {
-        report->cellular_endpoint = cellular_endpoint;
-        report->path_flags |= LINKG_DISCOVERY_PATH_CELLULAR_VALID;
-    }
-
-    return 0;
-}
-
-/****************************** 本机状态 ******************************/
-
-/**
- * @brief 构建本机Discovery完整初始状态。
- *
- * 每次构建均创建新的Discovery运行会话；数据Path可以暂时全部不可用，
- * 后续由Endpoint刷新流程动态加入并推进revision。
- */
+/** @brief 创建本机Session初始Report；不探测网络，Endpoint在运行期动态发布。 */
 int _linkg_discovery_build_local_report(linkg_discovery_report_t *report)
 {
     const linkg_node_info_t *local_node;
-    int                      ret;
+    int ret;
 
     if (report == NULL)
     {
@@ -367,12 +313,6 @@ int _linkg_discovery_build_local_report(linkg_discovery_report_t *report)
 
     report->node = *local_node;
 
-    ret = _linkg_discovery_prepare_initial_endpoints(report);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
     ret = _linkg_discovery_generate_session_id(&report->session_id);
     if (ret != 0)
     {
@@ -384,12 +324,11 @@ int _linkg_discovery_build_local_report(linkg_discovery_report_t *report)
     return 0;
 }
 
+/****************************** 运行期Endpoint刷新 ******************************/
+
 /**
- * @brief 刷新本机当前Discovery数据端点。
- *
- * Wi-Fi和Cellular状态独立采集。明确无有效Endpoint时清除对应Path，
- * 本次状态查询失败时保留最近一次已发布状态。任意一个或多个Path
- * 实际变化时仅推进一次revision。
+ * @brief 独立刷新Wi-Fi与Cellular数据Endpoint。
+ * 明确未就绪时撤销对应Path；查询失败保留旧状态；每轮实际变化只推进一次revision。
  */
 int _linkg_discovery_refresh_local_endpoints(void)
 {
@@ -516,11 +455,9 @@ int _linkg_discovery_refresh_local_endpoints(void)
     return 0;
 }
 
-/**
- * @brief 构造本机主动注销状态。
- *
- * 调用方必须持有Discovery状态锁。
- */
+/****************************** 主动离开 ******************************/
+
+/** @brief 构造本机LEAVE状态；调用方必须持有Discovery状态锁。 */
 int _linkg_discovery_build_local_leave_locked(linkg_discovery_leave_t *leave)
 {
     if (leave == NULL)

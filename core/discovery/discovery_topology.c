@@ -358,14 +358,9 @@ int _linkg_discovery_build_ap_sync_locked(linkg_discovery_ap_sync_t *sync)
         return -EPERM;
     }
 
-    /**
-     * Topology版本0仅表示尚未建立过AP拓扑版本。
-     * AP在尚无已注册STA时也可能周期广播AP_SYNC用于新STA发现，
-     * 因此首个空Topology快照同样需要合法的非零版本。
-     */
     if (g_discovery.topology_revision == 0U)
     {
-        _linkg_discovery_advance_topology_revision_locked();
+        return -EINVAL;
     }
 
     memset(sync, 0, sizeof(*sync));
@@ -429,12 +424,12 @@ int _linkg_discovery_handle_ap_sync_locked(linkg_link_access_t access, const lin
     }
 
     /**
-     * Peer Report处理STALE时返回成功，因此再次确认当前在线Direct AP
-     * 确实属于这个AP Session，避免已经关闭的旧Session继续下发Topology。
+     * Peer Report已接受后再次确认当前在线Direct AP属于本次Session；
+     * 不属于当前AP Session时通知Channel忽略，禁止学习旧控制地址。
      */
     if (!_linkg_discovery_ap_session_online_locked(&sync->ap))
     {
-        return 0;
+        return LINKG_DISCOVERY_REPORT_IGNORED;
     }
 
     /**

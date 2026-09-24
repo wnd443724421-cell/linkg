@@ -1,6 +1,6 @@
 /**
  * @file discovery_peer.c
- * @brief LinkG设备发现直接Peer状态实现
+ * @brief LinkG设备发现直接Peer状态管理与事件处理
  * @author Dawn
  * @version 1.0.0
  * @date 2026-08-30
@@ -27,12 +27,12 @@
  */
 static const char *_linkg_discovery_access_name(uint32_t index)
 {
-    if (index == 0U)
+    if (index == LINKG_DISCOVERY_ACCESS_INDEX_WIFI)
     {
         return "wifi";
     }
 
-    if (index == 1U)
+    if (index == LINKG_DISCOVERY_ACCESS_INDEX_CELLULAR)
     {
         return "cellular";
     }
@@ -193,8 +193,7 @@ static bool _linkg_discovery_peer_has_active_liveness_locked(const linkg_discove
 
     for (index = 0U; index < LINKG_NODE_PATH_MAX; index++)
     {
-        if (peer->liveness[index].registered &&
-            peer->liveness[index].active)
+        if (peer->liveness[index].registered && peer->liveness[index].active)
         {
             return true;
         }
@@ -240,9 +239,10 @@ static void _linkg_discovery_mark_liveness_seen_locked(linkg_discovery_peer_t *p
 }
 
 /**
- * @brief 老化Peer各Discovery Access存活状态并返回本轮失效Access集合。
+ * @brief 老化Peer各Discovery Access并收集待清理业务Path。
  *
- * 返回值按Discovery内部Access索引置位，仅表示本轮从active变为inactive的Access。
+ * 活动Access超时后转为inactive；清理失败的inactive Access继续入选，
+ * 直到对应Path注销成功，避免只在失效当轮尝试一次。
  * 调用方必须持有Discovery状态锁。
  */
 static uint32_t _linkg_discovery_age_liveness_locked(linkg_discovery_peer_t *peer, uint64_t now_us)
@@ -262,27 +262,27 @@ static uint32_t _linkg_discovery_age_liveness_locked(linkg_discovery_peer_t *pee
     {
         liveness = &peer->liveness[index];
 
-        if (!liveness->registered || !liveness->active)
+        if (!liveness->registered)
         {
             continue;
         }
 
-        if (now_us < liveness->last_seen_us)
+        if (liveness->active)
         {
-            continue;
+            if (now_us < liveness->last_seen_us ||
+                now_us - liveness->last_seen_us < LINKG_DISCOVERY_LIVENESS_TIMEOUT_US)
+            {
+                continue;
+            }
+
+            LINKG_LOG_INFO("DISCOVERY: access expired, node=%u access=%s age_ms=%llu",
+                           (unsigned int)peer->report.node.node_id, _linkg_discovery_access_name(index),
+                           (unsigned long long)((now_us - liveness->last_seen_us) / 1000ULL));
+
+            liveness->active = false;
         }
 
-        if (now_us - liveness->last_seen_us < LINKG_DISCOVERY_LIVENESS_TIMEOUT_US)
-        {
-            continue;
-        }
-
-        LINKG_LOG_WARN("DISCOVERY: liveness expired, peer=%u access=%s age_ms=%llu",
-               (unsigned int)peer->report.node.node_id,
-               _linkg_discovery_access_name(index),
-               (unsigned long long)((now_us - liveness->last_seen_us) / 1000ULL));
-
-        liveness->active = false;
+        /* inactive且仍registered表示Path清理尚未确认成功。 */
         expired_mask |= (1U << index);
     }
 
@@ -292,11 +292,11 @@ static uint32_t _linkg_discovery_age_liveness_locked(linkg_discovery_peer_t *pee
 /****************************** Access失效 ******************************/
 
 /**
- * @brief 注销Peer本轮刚失效的业务Path。
+ * @brief 注销Peer已失效且尚未完成清理的业务Path。
  *
  * 调用方必须持有Discovery状态锁。
  */
-static int _linkg_discovery_unregister_expired_paths_locked(linkg_discovery_peer_t *peer, uint32_t expired_mask)
+static int _linkg_discovery_cleanup_expired_paths_locked(linkg_discovery_peer_t *peer, uint32_t expired_mask)
 {
     linkg_link_access_t access;
     uint32_t            index;
@@ -329,7 +329,11 @@ static int _linkg_discovery_unregister_expired_paths_locked(linkg_discovery_peer
         }
 
         ret = _linkg_discovery_unregister_access_path_locked(peer, access);
-        if (ret != 0 && first_error == 0)
+        if (ret == 0)
+        {
+            memset(&peer->liveness[index], 0, sizeof(peer->liveness[index]));
+        }
+        else if (first_error == 0)
         {
             first_error = ret;
         }
@@ -371,19 +375,29 @@ int _linkg_discovery_deactivate_access_locked(linkg_link_access_t access, uint64
             continue;
         }
 
-        memset(&peer->liveness[access_index], 0, sizeof(peer->liveness[access_index]));
-
         if (!peer->online)
         {
+            memset(&peer->liveness[access_index], 0, sizeof(peer->liveness[access_index]));
             continue;
         }
+
+        peer->liveness[access_index].active = false;
 
         if (_linkg_discovery_peer_has_active_liveness_locked(peer))
         {
             ret = _linkg_discovery_unregister_access_path_locked(peer, access);
-            if (ret != 0 && first_error == 0)
+            if (ret == 0)
             {
-                first_error = ret;
+                memset(&peer->liveness[access_index], 0, sizeof(peer->liveness[access_index]));
+            }
+            else
+            {
+                /* 保留待清理标记，后续老化继续重试。 */
+                peer->liveness[access_index].registered = true;
+                if (first_error == 0)
+                {
+                    first_error = ret;
+                }
             }
 
             continue;
@@ -439,13 +453,20 @@ static int _linkg_discovery_validate_peer_relation_locked(const linkg_discovery_
 /****************************** Peer事件 ******************************/
 
 /**
- * @brief 根据当前Peer状态分类完整Report事件。
+ * @brief 根据Peer当前Session和Revision分类完整Report事件。
+ *
+ * 优先过滤上一次已替代Session的迟到报文，不刷新其Access存活状态。
  */
 static linkg_discovery_peer_event_t _linkg_discovery_classify_peer_report(const linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
 {
     if (peer == NULL)
     {
         return LINKG_DISCOVERY_PEER_EVENT_NEW;
+    }
+
+    if (peer->previous_session_id != 0U && report->session_id == peer->previous_session_id)
+    {
+        return LINKG_DISCOVERY_PEER_EVENT_STALE;
     }
 
     if (report->session_id != peer->report.session_id)
@@ -471,14 +492,16 @@ static linkg_discovery_peer_event_t _linkg_discovery_classify_peer_report(const 
 /**
  * @brief 处理直接Peer新的Discovery Session。
  *
- * 清理旧Session关联的Path、Send Plan及Transport状态后，
- * 提交新Session完整Report；当前Access运行资源由事件处理层重新建立。
+ * 清理旧Session关联的运行资源后记录旧Session ID并提交新Report。
+ * 清理失败时保留旧Report且保持旧Session关闭，等待后续新Report重试；
+ * 当前Access运行资源由事件处理层重新建立。
  *
  * 调用方必须持有Discovery状态锁。
  */
 static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
 {
-    int ret;
+    uint64_t old_session_id;
+    int      ret;
 
     if (peer == NULL || report == NULL || !peer->used || !peer->online)
     {
@@ -495,6 +518,7 @@ static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, co
         return -EINVAL;
     }
 
+    old_session_id = peer->report.session_id;
     peer->session_closed = true;
 
     ret = _linkg_discovery_reset_peer_session_locked(peer);
@@ -503,8 +527,13 @@ static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, co
         return ret;
     }
 
-    peer->report = *report;
-    peer->session_closed = false;
+    peer->previous_session_id = old_session_id;
+    peer->report              = *report;
+    peer->session_closed      = false;
+
+    LINKG_LOG_INFO("DISCOVERY: peer session changed, node=%u old=%llu new=%llu",
+                   (unsigned int)report->node.node_id,
+                   (unsigned long long)old_session_id, (unsigned long long)report->session_id);
 
     return 0;
 }
@@ -524,6 +553,7 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
     linkg_discovery_peer_event_t event;
     linkg_discovery_peer_t      *peer;
     uint32_t                     access_index;
+    uint64_t                     old_session_id;
     int                          ret;
 
     ret = _linkg_discovery_access_index(access, &access_index);
@@ -564,29 +594,23 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
                 }
             }
 
+            /* 注册函数会覆盖Report，需预先保存离线Tombstone的旧Session ID。 */
+            old_session_id = peer->used ? peer->report.session_id : 0U;
+
             ret = _linkg_discovery_register_peer_locked(peer, access, report);
             if (ret != 0)
             {
-                LINKG_LOG_WARN("DISCOVERY: peer register failed, node=%u access=%s session=%llu revision=%llu error=%d",
-                   (unsigned int)report->node.node_id,
-                   _linkg_discovery_access_name(access_index),
-                   (unsigned long long)report->session_id,
-                   (unsigned long long)report->revision,
-                   ret);
                 return ret;
             }
 
-            LINKG_LOG_INFO("DISCOVERY: peer online, node=%u access=%s session=%llu revision=%llu",
-               (unsigned int)report->node.node_id,
-               _linkg_discovery_access_name(access_index),
-               (unsigned long long)report->session_id,
-               (unsigned long long)report->revision);
+            if (old_session_id != 0U && old_session_id != report->session_id)
+            {
+                peer->previous_session_id = old_session_id;
+            }
 
             peer->session_closed = false;
-
             _linkg_discovery_clear_peer_liveness_locked(peer);
             _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
-
             return 0;
 
         case LINKG_DISCOVERY_PEER_EVENT_REFRESH:
@@ -624,13 +648,14 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
             ret = _linkg_discovery_refresh_peer_locked(peer, access, report);
             if (ret == -EBUSY)
             {
+                /* 本轮运行资源暂不可用，后续同版本Report可重试。 */
                 return 0;
             }
 
-            return 0;
+            return ret;
 
         case LINKG_DISCOVERY_PEER_EVENT_STALE:
-            return 0;
+            return LINKG_DISCOVERY_REPORT_IGNORED;
 
         case LINKG_DISCOVERY_PEER_EVENT_INVALID:
         default:
@@ -712,7 +737,7 @@ int _linkg_discovery_handle_peer_leave_locked(const linkg_discovery_leave_t *lea
 /**
  * @brief 老化直接Peer存活状态并回收过期Tombstone。
  *
- * 单个Access超时仅关闭对应存活状态并注销对应Path；
+ * 单个Access超时仅关闭对应存活状态并注销对应Path，失败后继续重试；
  * 全部Access均失效后Peer离线。
  * 离线Peer保留Tombstone用于过滤迟到旧状态，过期后再释放槽位。
  *
@@ -745,7 +770,7 @@ int _linkg_discovery_age_peers_locked(uint64_t now_us)
             {
                 if (expired_mask != 0U)
                 {
-                    ret = _linkg_discovery_unregister_expired_paths_locked(peer, expired_mask);
+                    ret = _linkg_discovery_cleanup_expired_paths_locked(peer, expired_mask);
                     if (ret != 0 && first_error == 0)
                     {
                         first_error = ret;
@@ -754,8 +779,6 @@ int _linkg_discovery_age_peers_locked(uint64_t now_us)
 
                 continue;
             }
-
-            LINKG_LOG_WARN("DISCOVERY: all liveness expired, peer=%u, unregistering runtime resources", (unsigned int)peer->report.node.node_id);
 
             ret = _linkg_discovery_unregister_peer_locked(peer, now_us);
             if (ret != 0 && first_error == 0)

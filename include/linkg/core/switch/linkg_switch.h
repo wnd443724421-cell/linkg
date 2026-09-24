@@ -43,6 +43,10 @@ int linkg_switch_start(void);
 int linkg_switch_stop(void);
 int linkg_switch_deinit(void);
 
+/****************************** 运行控制 ******************************/
+
+int linkg_switch_wakeup(void);
+
 /****************************** 计划管理 ******************************/
 
 int linkg_switch_set_plan(uint8_t peer_node_id, const linkg_send_plan_t *plan);

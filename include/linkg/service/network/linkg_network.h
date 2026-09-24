@@ -1,4 +1,3 @@
-
 /**
  * @file linkg_network.h
  * @brief LinkG网络服务接口
@@ -7,7 +6,11 @@
 #ifndef LINKG_NETWORK_H
 #define LINKG_NETWORK_H
 
+#include <stdint.h>
+
+#include "linkg_cellular_config.h"
 #include "linkg_packet_pool.h"
+#include "linkg_wifi_config.h"
 
 #ifdef __cplusplus
 extern "C" {

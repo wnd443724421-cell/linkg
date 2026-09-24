@@ -989,6 +989,7 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
     while (linkg_thread_is_running(thread))
     {
         ready = _linkg_discovery_cellular_read_interface(&ipv6, &ifindex);
+
         if (ready < 0)
         {
             if (ready != last_retry_error)
@@ -996,22 +997,23 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
                 LINKG_LOG_WARN("DISCOVERY-CELLULAR: read interface failed, error=%d", ready);
                 last_retry_error = ready;
             }
-            ready = 0;
         }
 
-        if (active && (ready == 0 || ifindex != g_discovery_cellular.bound_ifindex ||
-            memcmp(&ipv6, &g_discovery_cellular.bound_ipv6, sizeof(ipv6)) != 0))
+        if (active && (ready == 0 || (ready > 0 && (ifindex != g_discovery_cellular.bound_ifindex || memcmp(&ipv6, &g_discovery_cellular.bound_ipv6, sizeof(ipv6)) != 0))))
         {
             if (!linkg_thread_is_running(thread))
             {
                 break;
             }
+
             LINKG_LOG_WARN("DISCOVERY-CELLULAR: IPv6/interface changed, rebuilding channel");
+
             ret = _linkg_discovery_cellular_deactivate();
             if (ret != 0)
             {
                 return ret;
             }
+
             active = false;
         }
 

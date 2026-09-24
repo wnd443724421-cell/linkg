@@ -591,3 +591,53 @@ int linkg_switch_end_maintenance(linkg_link_access_t access)
 {
     return linkg_switch_maintenance_end(access);
 }
+
+/****************************** 运行控制 ******************************/
+
+/**
+ * @brief 请求Switch Worker立即执行一次STA链路切换策略检查。
+ *
+ * 多次未处理的请求合并为一次，不改变原有250ms周期。
+ */
+int linkg_switch_wakeup(void)
+{
+    int ret;
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (!g_switch.initialized)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENODEV;
+    }
+
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
+    if (g_switch.role != LINKG_DEVICE_ROLE_STA)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    if (g_switch.policy_check_pending)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    g_switch.policy_check_pending = true;
+
+    ret = linkg_thread_wakeup(&g_switch.thread);
+    if (ret != 0)
+    {
+        g_switch.policy_check_pending = false;
+    }
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    return ret;
+}

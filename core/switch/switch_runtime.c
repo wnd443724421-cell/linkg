@@ -23,6 +23,7 @@
 #include "switch_plan.h"
 #include "switch_report.h"
 #include "switch_maintenance.h"
+#include "switch_policy.h"
 
 /****************************** 内部辅助 ******************************/
 
@@ -164,6 +165,37 @@ static void _linkg_switch_runtime_process_observation(uint64_t now_us)
     }
 }
 
+/**
+ * @brief 执行STA当前到期的链路切换策略检查。
+ */
+static void _linkg_switch_runtime_process_policy(uint64_t now_us)
+{
+    uint64_t deadline_us;
+    bool     due;
+    int      ret;
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    due = false;
+
+    if (g_switch.initialized &&
+        g_switch.running &&
+        g_switch.role == LINKG_DEVICE_ROLE_STA)
+    {
+        deadline_us = linkg_switch_policy_next_deadline_locked();
+        due         = deadline_us <= now_us;
+    }
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    if (!due)
+    {
+        return;
+    }
+
+    ret = linkg_switch_policy_process(now_us);
+    _linkg_switch_runtime_log_error("policy check", ret);
+}
 
 /**
  * @brief 执行AP当前到期的一轮Wi-Fi质量上报。
@@ -266,6 +298,7 @@ static void _linkg_switch_runtime_process_maintenance(uint64_t now_us)
 static void _linkg_switch_runtime_process_due(uint64_t now_us)
 {
     _linkg_switch_runtime_process_observation(now_us);
+    _linkg_switch_runtime_process_policy(now_us);
     _linkg_switch_runtime_process_report(now_us);
     _linkg_switch_runtime_process_plan(now_us);
     _linkg_switch_runtime_process_maintenance(now_us);
@@ -293,7 +326,7 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
         return 0;
     }
 
-     deadline_us = UINT64_MAX;
+    deadline_us = UINT64_MAX;
 
     if (g_switch.role == LINKG_DEVICE_ROLE_STA)
     {
@@ -301,6 +334,12 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
             g_switch.next_observation_us < deadline_us)
         {
             deadline_us = g_switch.next_observation_us;
+        }
+
+        candidate_us = linkg_switch_policy_next_deadline_locked();
+        if (candidate_us < deadline_us)
+        {
+            deadline_us = candidate_us;
         }
 
         candidate_us = linkg_switch_plan_next_deadline_locked();

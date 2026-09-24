@@ -28,6 +28,10 @@ extern "C" {
 #define LINKG_DISCOVERY_LIVENESS_TIMEOUT_US       10000000ULL // 路径存活超时时间，10s
 #define LINKG_DISCOVERY_PEER_TOMBSTONE_TIMEOUT_US 15000000ULL // Peer离线记录保留时间，15s
 
+/****************************** Report处理结果 ******************************/
+
+#define LINKG_DISCOVERY_REPORT_IGNORED  1 // 旧Report或已关闭Session，安全忽略
+
 typedef enum
 {
     LINKG_DISCOVERY_PEER_EVENT_INVALID = 0,  // 无效事件
@@ -55,6 +59,7 @@ typedef struct
     bool                       route_cleanup_pending;         // Peer虚拟路由是否等待继续清理
     linkg_discovery_report_t   report;                        // 最近接受的完整Peer状态
     linkg_discovery_liveness_t liveness[LINKG_NODE_PATH_MAX]; // 各物理Access存活状态
+    uint64_t                   previous_session_id;           // 上一次已被替代的Discovery Session ID
     uint64_t                   offline_since_us;              // Peer进入离线状态时间
 } linkg_discovery_peer_t;
 

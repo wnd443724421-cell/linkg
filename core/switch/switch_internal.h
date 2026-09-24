@@ -90,6 +90,8 @@ typedef struct
     uint32_t                                 next_maintenance_message_id;  // 下一Maintenance事务消息编号基线
     uint64_t                                 next_observation_us;          // STA下一轮观测刷新时间
     uint64_t                                 next_report_us;               // AP下一轮质量上报时间
+    uint64_t                                 next_policy_us;               // STA下一轮切换策略检查时间
+    bool                                     policy_check_pending;         // 是否存在待执行的立即策略检查
     bool                                     worker_tid_valid;             // Worker线程标识当前是否有效
     bool                                     handler_registered;           // SWITCH Transport Handler是否已注册
     bool                                     initialized;                  // 模块是否已经初始化
