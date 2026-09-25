@@ -17,6 +17,7 @@
 #include "network_manager.h"
 #include "linkg_discovery.h"
 #include "linkg_log.h"
+#include "linkg_switch.h"
 
 /****************************** 内部辅助 ******************************/
 
@@ -124,6 +125,12 @@ int _linkg_network_wifi_start(void)
     if (ret != 0)
     {
         LINKG_LOG_WARN("notify Wi-Fi Discovery failed, error=%d", ret);
+    }
+
+    ret = linkg_switch_end_maintenance(LINKG_LINK_ACCESS_WIFI);
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("end Wi-Fi maintenance failed, error=%d", ret);
     }
 
     return 0;

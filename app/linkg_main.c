@@ -33,6 +33,7 @@
 #include "linkg_tun.h"
 #include "linkg_udhcp.h"
 #include "linkg_web.h"
+#include "linkg_os.h"
 
 /****************************** 应用资源 ******************************/
 
@@ -966,6 +967,15 @@ int main(void)
     {
         LINKG_LOG_WARN("add file log output failed, continue with console output");
     }
+
+    ret = linkg_os_set_user_password("root", "root");
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize system password failed: %d", ret);
+        linkg_log_deinit();
+        return EXIT_FAILURE;
+    }
+
 
     ret = linkg_lifecycle_init();
     if (ret != 0)

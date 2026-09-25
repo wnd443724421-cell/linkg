@@ -149,13 +149,13 @@ static int _linkg_wifi_apply_interface_runtime(void)
         return ret;
     }
 
-    ret = wifi_driver_set_napi_state(false);
+    ret = wifi_driver_set_low_latency(true);
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = wifi_driver_set_low_latency(true);
+    ret = wifi_driver_set_napi_state(false);
     if (ret != 0)
     {
         return ret;

@@ -30,6 +30,10 @@ int  linkg_os_run(const char *file, ...) LINKG_OS_SENTINEL;
 void linkg_os_run_ignore(const char *file, ...) LINKG_OS_SENTINEL;
 int  linkg_os_shellf(const char *format, ...) LINKG_OS_PRINTF(1, 2);
 
+/****************************** 系统管理 ******************************/
+
+int linkg_os_set_user_password(const char *username, const char *password);
+
 /****************************** 进程管理 ******************************/
 
 int linkg_os_spawn(pid_t *process_id, const char *file, ...) LINKG_OS_SENTINEL;

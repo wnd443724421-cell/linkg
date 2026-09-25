@@ -24,6 +24,8 @@
 #include "network_internal.h"
 #include "network_manager.h"
 #include "network_wifi.h"
+#include "linkg_wifi.h"
+#include "linkg_switch.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -558,12 +560,38 @@ int linkg_network_deinit(void)
  */
 int linkg_network_restart_wifi(void)
 {
+    bool maintenance_started;
+    int  ret;
+
     if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
     {
         return -ENODEV;
     }
 
-    return _linkg_network_wifi_restart();
+    maintenance_started = false;
+
+    ret = linkg_switch_begin_maintenance(LINKG_LINK_ACCESS_WIFI);
+    if (ret == 0)
+    {
+        maintenance_started = true;
+    }
+    else if (ret != -EALREADY)
+    {
+        return ret;
+    }
+
+    ret = _linkg_network_wifi_restart();
+    if (ret != 0)
+    {
+        if (maintenance_started)
+        {
+            (void)linkg_switch_end_maintenance(LINKG_LINK_ACCESS_WIFI);
+        }
+
+        return ret;
+    }
+
+    return 0;
 }
 
 /**

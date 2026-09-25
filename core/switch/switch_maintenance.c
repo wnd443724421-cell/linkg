@@ -883,7 +883,9 @@ int linkg_switch_maintenance_begin(linkg_link_access_t access)
 
 
 /**
- * @brief 结束本机指定Access维护并启动全部当前直接Peer的END确认流程。
+ * @brief 结束本机指定Access维护并启动END确认流程。
+ *
+ * 当前不存在本机Maintenance时视为已经结束，直接返回成功。
  */
 int linkg_switch_maintenance_end(linkg_link_access_t access)
 {
@@ -932,7 +934,7 @@ int linkg_switch_maintenance_end(linkg_link_access_t access)
     if (!g_switch.local_maintenance.active)
     {
         pthread_mutex_unlock(&g_switch.lock);
-        return -ENOENT;
+        return 0;
     }
 
     if (g_switch.local_maintenance.access != access)

@@ -21,6 +21,9 @@
 #include <signal.h>
 #include <stdint.h>
 #include <sys/prctl.h>
+#include <pthread.h>
+#include <string.h>
+#include <time.h>
 
 #include "linkg_log.h"
 #include "linkg_time.h"
@@ -530,6 +533,153 @@ int  linkg_os_shellf(const char *format, ...)
     return _run_argv("/bin/sh", argv, false);
 }
 
+/****************************** 系统管理 ******************************/
+
+/**
+ * @brief 设置Linux系统用户密码。
+ */
+int linkg_os_set_user_password(const char *username, const char *password)
+{
+    FILE *fp;
+    const unsigned char *p;
+    sigset_t sigpipe_mask;
+    sigset_t old_mask;
+    sigset_t pending;
+    struct timespec timeout = {0, 0};
+    size_t username_length;
+    size_t password_length;
+    int had_pending;
+    int write_failed;
+    int status;
+    int ret;
+
+    if (username == NULL || password == NULL)
+    {
+        return -EINVAL;
+    }
+
+    username_length = strlen(username);
+    password_length = strlen(password);
+
+    if (username_length == 0U || username_length > 255U || password_length == 0U || password_length > 1024U)
+    {
+        LINKG_LOG_ERROR("OS: Invalid username or password length");
+        return -EINVAL;
+    }
+
+    /* 用户名只允许常见的Linux账户字符。 */
+    for (p = (const unsigned char *)username; *p != '\0'; p++)
+    {
+        if ((*p >= 'a' && *p <= 'z') ||
+            (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') ||
+            *p == '_' || *p == '-' || *p == '.')
+        {
+            continue;
+        }
+
+        LINKG_LOG_ERROR("OS: Invalid username format");
+        return -EINVAL;
+    }
+
+    /* 密码禁止控制字符，避免破坏chpasswd输入格式。 */
+    for (p = (const unsigned char *)password; *p != '\0'; p++)
+    {
+        if (*p < 0x20U || *p == 0x7FU)
+        {
+            LINKG_LOG_ERROR("OS: Invalid password format");
+            return -EINVAL;
+        }
+    }
+
+    fp = popen("chpasswd", "w");
+    if (fp == NULL)
+    {
+        LINKG_LOG_ERROR("OS: Failed to run chpasswd: %s", strerror(errno));
+        return -EIO;
+    }
+
+    /**
+     * 防止chpasswd提前退出时，向管道写入数据触发SIGPIPE，
+     * 导致整个LinkG进程意外终止。
+     */
+    sigemptyset(&sigpipe_mask);
+    sigaddset(&sigpipe_mask, SIGPIPE);
+
+    ret = pthread_sigmask(SIG_BLOCK, &sigpipe_mask, &old_mask);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("OS: Failed to block SIGPIPE: %s", strerror(ret));
+        pclose(fp);
+        return -ret;
+    }
+
+    sigpending(&pending);
+    had_pending = sigismember(&pending, SIGPIPE);
+
+    write_failed = fprintf(fp, "%s:%s\n", username, password) < 0;
+
+    if (!write_failed && fflush(fp) == EOF)
+    {
+        write_failed = 1;
+    }
+
+    status = pclose(fp);
+
+    /**
+     * 只消费本次管道写入新产生的SIGPIPE，
+     * 避免恢复原始信号掩码时递送给LinkG。
+     */
+    if (!had_pending)
+    {
+        if (sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1)
+        {
+            do
+            {
+                ret = sigtimedwait(&sigpipe_mask, NULL, &timeout);
+            } while (ret < 0 && errno == EINTR);
+        }
+    }
+
+    ret = pthread_sigmask(SIG_SETMASK, &old_mask, NULL);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("OS: Failed to restore SIGPIPE mask: %s", strerror(ret));
+        return -ret;
+    }
+
+    if (write_failed)
+    {
+        LINKG_LOG_ERROR("OS: Failed to write password to chpasswd");
+        return -EIO;
+    }
+
+    if (status == -1)
+    {
+        LINKG_LOG_ERROR("OS: Failed to wait for chpasswd");
+        return -EIO;
+    }
+
+    if (!WIFEXITED(status))
+    {
+        LINKG_LOG_ERROR("OS: chpasswd terminated abnormally");
+        return -EIO;
+    }
+
+    if (WEXITSTATUS(status) != 0)
+    {
+        LINKG_LOG_ERROR("OS: chpasswd failed: exit=%d", WEXITSTATUS(status));
+        return -EIO;
+    }
+
+    LINKG_LOG_INFO("OS: Password updated for user: %s", username);
+
+    return 0;
+}
+
+
+/****************************** 进程管理 ******************************/
+
 /**
  * @brief 异步启动外部程序。
  */
@@ -544,8 +694,6 @@ int  linkg_os_spawn(pid_t *process_id, const char *file, ...)
 
     return result;
 }
-
-/****************************** 进程管理 ******************************/
 
 /**
  * @brief 检查子进程是否仍在运行。

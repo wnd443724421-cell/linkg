@@ -1457,7 +1457,7 @@ int32_t wal_net_device_ioctl(oal_net_device_stru *net_dev, oal_ifreq_stru *ifr, 
     }
 #if (_PRE_OS_VERSION_WIN32 != _PRE_OS_VERSION)
     /* atcmdsrv 通过ioctl下发命令，上层适配+2 */
-    if (cmd == (WAL_SIOCDEVPRIVATE + 2)) {
+    if (cmd == (WAL_SIOCDEVPRIVATE + 2)ChatGPT - linkg-core) {
 #ifdef PLATFORM_DEBUG_ENABLE
         if (mpxx_get_os_build_variant() == MPXX_OS_BUILD_VARIANT_ROOT) {
             wal_wake_lock();
