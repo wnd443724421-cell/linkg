@@ -1,0 +1,363 @@
+<div class="page switch-status-page">
+
+    <div class="page-header switch-status-page-header">
+        <div>
+            <h1 class="page-title">切换状态</h1>
+            <p class="page-description">查看发送计划、链路质量和维护事务</p>
+        </div>
+
+        <div class="switch-status-refresh">
+            <span id="switchStatusRefreshIndicator" class="switch-status-refresh-dot"></span>
+            <span id="switchStatusRefreshText" class="switch-status-refresh-text">正在读取状态…</span>
+            <button id="switchStatusRefreshButton" class="switch-status-refresh-button" type="button">立即刷新</button>
+        </div>
+    </div>
+
+    <!-- 运行概况 -->
+    <section class="page-card switch-status-section">
+        <div class="page-card-header">
+            <h2 class="page-card-title">运行概况</h2>
+            <span class="switch-status-card-note">页面每约 1 s 刷新</span>
+        </div>
+
+        <div class="switch-status-summary-grid">
+            <div class="switch-status-summary-item">
+                <span class="switch-status-summary-label">设备角色</span>
+                <span id="switchStatusRole" class="switch-status-summary-value is-primary">--</span>
+            </div>
+
+            <div class="switch-status-summary-item">
+                <span class="switch-status-summary-label">运行状态</span>
+                <span id="switchStatusOverall" class="switch-status-summary-value">--</span>
+            </div>
+
+            <div class="switch-status-summary-item">
+                <span class="switch-status-summary-label">直连节点</span>
+                <span id="switchStatusPeerSummary" class="switch-status-summary-value">--</span>
+            </div>
+
+            <div class="switch-status-summary-item">
+                <span class="switch-status-summary-label">当前发送计划</span>
+                <span id="switchStatusPlanSummary" class="switch-status-summary-value is-compact">--</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- 本机维护状态 -->
+    <section class="page-card switch-status-section">
+        <div class="page-card-header">
+            <h2 class="page-card-title">本机维护状态</h2>
+            <span id="switchStatusLocalMaintenanceBadge" class="switch-status-badge is-neutral">--</span>
+        </div>
+
+        <div class="switch-status-detail-grid is-four-columns">
+            <div class="switch-status-detail-item">
+                <span class="switch-status-detail-label">状态</span>
+                <span id="switchStatusLocalMaintenanceState" class="switch-status-detail-value">--</span>
+            </div>
+
+            <div class="switch-status-detail-item">
+                <span class="switch-status-detail-label">维护接入</span>
+                <span id="switchStatusLocalMaintenanceAccess" class="switch-status-detail-value">--</span>
+            </div>
+
+            <div class="switch-status-detail-item">
+                <span class="switch-status-detail-label">事务编号</span>
+                <span id="switchStatusLocalMaintenanceId" class="switch-status-detail-value">--</span>
+            </div>
+
+            <div class="switch-status-detail-item">
+                <span class="switch-status-detail-label">持续时间</span>
+                <span id="switchStatusLocalMaintenanceDuration" class="switch-status-detail-value">--</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- STA角色状态 -->
+    <div id="switchStatusStaSection" hidden>
+
+        <section class="page-card switch-status-section">
+            <div class="page-card-header">
+                <h2 class="page-card-title">连接与发送计划</h2>
+                <span id="switchStatusStaObservationBadge" class="switch-status-badge is-neutral">--</span>
+            </div>
+
+            <div class="switch-status-detail-grid">
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">直连 AP 节点</span>
+                    <span id="switchStatusStaPeerNode" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">观测更新时间</span>
+                    <span id="switchStatusStaObservationAge" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">发送模式</span>
+                    <span id="switchStatusStaPlanMode" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">主链路</span>
+                    <span id="switchStatusStaPlanPrimary" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">备用链路</span>
+                    <span id="switchStatusStaPlanSecondary" class="switch-status-detail-value">--</span>
+                </div>
+            </div>
+        </section>
+
+        <div class="switch-status-link-grid switch-status-section">
+            <section class="page-card switch-status-link-card">
+                <div class="page-card-header">
+                    <h2 class="page-card-title">Wi-Fi 业务链路</h2>
+                    <span id="switchStatusStaWifiBadge" class="switch-status-badge is-neutral">--</span>
+                </div>
+
+                <div class="switch-status-link-card-body">
+                    <span class="switch-status-link-label">Path 状态</span>
+                    <span id="switchStatusStaWifiAvailability" class="switch-status-link-value">--</span>
+                    <span id="switchStatusStaWifiAge" class="switch-status-link-meta">--</span>
+                </div>
+            </section>
+
+            <section class="page-card switch-status-link-card">
+                <div class="page-card-header">
+                    <h2 class="page-card-title">5G 备用链路</h2>
+                    <span id="switchStatusStaCellularBadge" class="switch-status-badge is-neutral">--</span>
+                </div>
+
+                <div class="switch-status-link-card-body">
+                    <span class="switch-status-link-label">Path 状态</span>
+                    <span id="switchStatusStaCellularAvailability" class="switch-status-link-value">--</span>
+                    <span id="switchStatusStaCellularAge" class="switch-status-link-meta">--</span>
+                </div>
+            </section>
+        </div>
+
+        <section class="page-card switch-status-section">
+            <div class="page-card-header">
+                <h2 class="page-card-title">Wi-Fi 无线状态</h2>
+                <span id="switchStatusStaWifiStatisticsAge" class="switch-status-card-note">--</span>
+            </div>
+
+            <div class="switch-status-detail-grid is-four-columns">
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">关联状态</span>
+                    <span id="switchStatusStaWifiConnected" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">信号强度</span>
+                    <span id="switchStatusStaWifiRssi" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">噪声</span>
+                    <span id="switchStatusStaWifiNoise" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">最近活动</span>
+                    <span id="switchStatusStaWifiInactive" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">TX PHY</span>
+                    <span id="switchStatusStaWifiTxPhy" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">RX PHY</span>
+                    <span id="switchStatusStaWifiRxPhy" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">工作模式</span>
+                    <span id="switchStatusStaWifiWorkMode" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">带宽</span>
+                    <span id="switchStatusStaWifiBandwidth" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">速率控制</span>
+                    <span id="switchStatusStaWifiNarrowMode" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">速率档位</span>
+                    <span id="switchStatusStaWifiRateLevel" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">温度</span>
+                    <span id="switchStatusStaWifiTemperature" class="switch-status-detail-value">--</span>
+                </div>
+            </div>
+        </section>
+
+        <div class="switch-status-quality-grid switch-status-section">
+            <section class="page-card">
+                <div class="page-card-header">
+                    <h2 class="page-card-title">Wi-Fi Path 流量</h2>
+                    <span class="switch-status-card-note">统计窗口约 250 ms</span>
+                </div>
+
+                <div class="switch-status-detail-grid">
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">发送速率</span>
+                        <span id="switchStatusStaTrafficTxRate" class="switch-status-detail-value">--</span>
+                    </div>
+
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">接收速率</span>
+                        <span id="switchStatusStaTrafficRxRate" class="switch-status-detail-value">--</span>
+                    </div>
+
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">发送包速率</span>
+                        <span id="switchStatusStaTrafficTxPps" class="switch-status-detail-value">--</span>
+                    </div>
+
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">接收包速率</span>
+                        <span id="switchStatusStaTrafficRxPps" class="switch-status-detail-value">--</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="page-card">
+                <div class="page-card-header">
+                    <h2 class="page-card-title">Wi-Fi 包缺口率</h2>
+                    <span class="switch-status-card-note">统计窗口约 250 ms</span>
+                </div>
+
+                <div class="switch-status-detail-grid">
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">上行缺口率</span>
+                        <span id="switchStatusStaUplinkLoss" class="switch-status-detail-value">--</span>
+                    </div>
+
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">上行样本数</span>
+                        <span id="switchStatusStaUplinkSamples" class="switch-status-detail-value">--</span>
+                    </div>
+
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">下行缺口率</span>
+                        <span id="switchStatusStaDownlinkLoss" class="switch-status-detail-value">--</span>
+                    </div>
+
+                    <div class="switch-status-detail-item">
+                        <span class="switch-status-detail-label">下行样本数</span>
+                        <span id="switchStatusStaDownlinkSamples" class="switch-status-detail-value">--</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <section class="page-card switch-status-section">
+            <div class="page-card-header">
+                <h2 class="page-card-title">Wi-Fi 业务探测</h2>
+                <span class="switch-status-card-note">各业务约 1 s 探测一次</span>
+            </div>
+
+            <div class="page-table-wrap">
+                <table class="page-table switch-status-probe-table" aria-label="三类业务链路探测状态">
+                    <thead>
+                        <tr>
+                            <th>业务类别</th>
+                            <th>可达状态</th>
+                            <th>往返时延</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>实时业务</td>
+                            <td id="switchStatusProbeRealtimeState">--</td>
+                            <td id="switchStatusProbeRealtimeRtt">--</td>
+                        </tr>
+                        <tr>
+                            <td>视频业务</td>
+                            <td id="switchStatusProbeVideoState">--</td>
+                            <td id="switchStatusProbeVideoRtt">--</td>
+                        </tr>
+                        <tr>
+                            <td>普通数据</td>
+                            <td id="switchStatusProbeDataState">--</td>
+                            <td id="switchStatusProbeDataRtt">--</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="page-card switch-status-section">
+            <div class="page-card-header">
+                <h2 class="page-card-title">对端维护状态</h2>
+                <span id="switchStatusRemoteMaintenanceBadge" class="switch-status-badge is-neutral">--</span>
+            </div>
+
+            <div class="switch-status-detail-grid is-four-columns">
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">状态</span>
+                    <span id="switchStatusRemoteMaintenanceState" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">维护接入</span>
+                    <span id="switchStatusRemoteMaintenanceAccess" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">事务编号</span>
+                    <span id="switchStatusRemoteMaintenanceId" class="switch-status-detail-value">--</span>
+                </div>
+
+                <div class="switch-status-detail-item">
+                    <span class="switch-status-detail-label">持续时间</span>
+                    <span id="switchStatusRemoteMaintenanceDuration" class="switch-status-detail-value">--</span>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- AP角色状态 -->
+    <div id="switchStatusApSection" hidden>
+        <section class="page-card switch-status-section">
+            <div class="page-card-header">
+                <h2 class="page-card-title">直连 STA 状态</h2>
+                <span id="switchStatusApPeerCount" class="switch-status-card-note">--</span>
+            </div>
+
+            <div class="page-table-wrap">
+                <table class="page-table switch-status-peer-table" aria-label="AP直连STA切换状态">
+                    <thead>
+                        <tr>
+                            <th>节点</th>
+                            <th>发送计划</th>
+                            <th>Wi-Fi Path</th>
+                            <th>5G Path</th>
+                            <th>Wi-Fi 上行缺口（约 250 ms）</th>
+                            <th>对端维护</th>
+                            <th>状态更新时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="switchStatusApPeersBody">
+                        <tr>
+                            <td colspan="7" class="switch-status-table-empty">正在读取直连 STA…</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+</div>
