@@ -2,9 +2,8 @@
     "use strict";
 
     const WIFI_REFRESH_INTERVAL_MS = 2000;
-    // 与wifi_platform_internal.h同名宏保持一致：1为调试信道，发布产品改为0。
-    const LINKG_WIFI_ENABLE_EXTENDED_CHANNELS = 1;
     const WIFI_RELEASE_CHANNELS = [149, 153, 157, 161, 165];
+    const WIFI_FALLBACK_CHANNEL = 149;
     const WIFI_CHANNELS = [
         36, 40, 44, 48, 52, 56, 60, 64,
         100, 104, 108, 112, 116, 120, 124, 128,
@@ -20,6 +19,7 @@
     let configBusy = false;
     let saving = false;
     let configData = null;
+    let extendedChannelsEnabled = false;
 
     /****************************** 页面辅助 ******************************/
 
@@ -444,7 +444,7 @@
     function channelAllowed(channel, workMode, bandwidth)
     {
         if (!WIFI_CHANNELS.includes(channel) ||
-            (LINKG_WIFI_ENABLE_EXTENDED_CHANNELS === 0 &&
+            (!extendedChannelsEnabled &&
              !WIFI_RELEASE_CHANNELS.includes(channel)))
         {
             return false;
@@ -499,7 +499,7 @@
         select.value = selected == null ? "" : String(selected);
         setText("wifiApChannelHint", selected == null ?
                 "原信道不适用于当前模式或发布范围，请重新选择" :
-                (LINKG_WIFI_ENABLE_EXTENDED_CHANNELS === 0 ?
+                (!extendedChannelsEnabled ?
                  "发布信道 149–165；165 仅支持 10/20 MHz" :
                  "调试信道；165 仅支持 10/20 MHz"));
     }
@@ -551,7 +551,6 @@
             button.disabled = open;
             if (open)
             {
-                input.value = "";
                 setPasswordVisibility(role, false);
             }
             else if (input.value === "" && original != null && original.security === "wpa2-psk")
@@ -639,6 +638,11 @@
                 throw new Error("当前信道与工作模式或带宽不兼容");
             }
         }
+        else if (!channelAllowed(wifi.ap.channel, wifi.wideband.work_mode,
+                                 wifi.wideband.wide_params.ap_bandwidth))
+        {
+            wifi.ap.channel = WIFI_FALLBACK_CHANNEL;
+        }
 
         return {
             path_enabled: field("wifiPathEnabled").checked,
@@ -675,6 +679,7 @@
             }
 
             configData = response.data;
+            extendedChannelsEnabled = response.data.extended_channels === true;
             populateConfig();
             setConfigMessage("修改配置后点击保存", "");
         }
@@ -733,6 +738,7 @@
             configData = {
                 role: configData.role,
                 path_enabled: param.path_enabled,
+                extended_channels: extendedChannelsEnabled,
                 wifi: param.wifi
             };
             populateConfig();
