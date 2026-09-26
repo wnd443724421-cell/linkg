@@ -40,7 +40,7 @@
 #define WIFI_WPA_CTRL_REPLY_MAX   64U                                                      // 控制命令响应最大长度
 #define WIFI_WPA_STATUS_REPLY_MAX 1024U                                                    // STATUS响应最大长度
 #define WIFI_WPA_SCAN_COMMAND_MAX 48U                                                      // SCAN命令最大长度
-#define WIFI_WPA_START_WAIT_MS    3000U                                                    // wpa_supplicant就绪等待时间
+#define WIFI_WPA_START_WAIT_MS    30000U                                                   // wpa_supplicant就绪等待时间
 
 /****************************** 全局状态 ******************************/
 

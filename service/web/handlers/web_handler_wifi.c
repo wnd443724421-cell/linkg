@@ -37,7 +37,7 @@
 #define LINKG_WEB_WIFI_STATUS_MAX_AGE_MS 2400U // 允许三个Wi-Fi状态采集周期
 #define LINKG_WEB_WIFI_PROBE_MAX_AGE_MS  3000U // 周期Probe超过三个发送周期后不展示RTT
 
-/****************************** 内部辅助 ******************************/
+/****************************** 配置辅助 ******************************/
 
 /**
  * @brief 将设备角色转换为Web协议字符串。
@@ -48,12 +48,10 @@ static const char *_linkg_web_wifi_role_string(linkg_device_role_t role)
     {
         return "ap";
     }
-
     if (role == LINKG_DEVICE_ROLE_STA)
     {
         return "sta";
     }
-
     return NULL;
 }
 
@@ -66,7 +64,6 @@ static int _linkg_web_wifi_json_error(int error)
     {
         return -ENOMEM;
     }
-
     return -EINVAL;
 }
 
@@ -77,20 +74,16 @@ static bool _linkg_web_wifi_config_equal(const linkg_config_t *left, const linkg
 {
     const linkg_wifi_config_t *left_wifi;
     const linkg_wifi_config_t *right_wifi;
-
     if (left == NULL || right == NULL)
     {
         return false;
     }
-
     if (left->paths.wifi.enabled != right->paths.wifi.enabled)
     {
         return false;
     }
-
     left_wifi  = &left->links.wifi;
     right_wifi = &right->links.wifi;
-
     return left_wifi->enabled == right_wifi->enabled &&
            strcmp(left_wifi->ap.ssid, right_wifi->ap.ssid) == 0 &&
            strcmp(left_wifi->ap.password, right_wifi->ap.password) == 0 &&
@@ -112,23 +105,18 @@ static bool _linkg_web_wifi_config_equal(const linkg_config_t *left, const linkg
 static bool _linkg_web_wifi_narrow_only_changed(const linkg_config_t *old_config, const linkg_config_t *new_config)
 {
     linkg_config_t temp;
-
     if (old_config == NULL || new_config == NULL)
     {
         return false;
     }
-
     if (old_config->links.wifi.wideband.work_mode != LINKG_WIFI_WORK_MODE_NARROW ||
         new_config->links.wifi.wideband.work_mode != LINKG_WIFI_WORK_MODE_NARROW)
     {
         return false;
     }
-
     temp = *old_config;
-
     temp.links.wifi.wideband.narrow_params.mode        = new_config->links.wifi.wideband.narrow_params.mode;
     temp.links.wifi.wideband.narrow_params.manual_rate = new_config->links.wifi.wideband.narrow_params.manual_rate;
-
     return _linkg_web_wifi_config_equal(&temp, new_config);
 }
 
@@ -142,14 +130,11 @@ static int _linkg_web_wifi_restore_config(const linkg_config_t *config, bool res
 {
     int first_error;
     int ret;
-
     if (config == NULL)
     {
         return -EINVAL;
     }
-
     first_error = 0;
-
     if (restore_network)
     {
         if (dynamic_only)
@@ -161,29 +146,25 @@ static int _linkg_web_wifi_restore_config(const linkg_config_t *config, bool res
         {
             ret = linkg_network_set_wifi_config(&config->links.wifi);
         }
-
         if (ret != 0)
         {
             first_error = ret;
         }
     }
-
     ret = linkg_config_save(config, NULL);
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
     }
-
     ret = linkg_config_replace(config);
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
     }
-
     return first_error;
 }
 
-/****************************** 请求处理 ******************************/
+/****************************** 配置请求处理 ******************************/
 
 /**
  * @brief 处理Wi-Fi配置查询。
@@ -194,65 +175,52 @@ int _linkg_web_handler_wifi_config_get(const cJSON *param, char **response)
     const char    *role;
     cJSON         *data;
     int            ret;
-
     (void)param;
-
     if (response == NULL)
     {
         return -EINVAL;
     }
-
     *response = NULL;
-
     ret = linkg_config_create_snapshot(&config);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_GET, "获取全局配置失败", response);
     }
-
     role = _linkg_web_wifi_role_string(config.device.role);
     if (role == NULL)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_GET, "设备角色无效", response);
     }
-
     data = cJSON_CreateObject();
     if (data == NULL)
     {
         return -ENOMEM;
     }
-
     ret = linkg_json_add_string(data, "role", role);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_bool(data, "path_enabled", config.paths.wifi.enabled);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_bool(data, "extended_channels",
                               linkg_wifi_channel_valid(LINKG_WIFI_WORK_MODE_NARROW, 36U));
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_wifi_config_to_json(data, "wifi", &config.links.wifi);
     if (ret != 0)
     {
         cJSON_Delete(data);
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_GET, "构造WiFi配置失败", response);
     }
-
     return _linkg_web_response_success(LINKG_WEB_CMD_WIFI_CONFIG_GET, data, NULL, response);
-
 error:
     cJSON_Delete(data);
-
     return _linkg_web_wifi_json_error(ret);
 }
 
@@ -270,45 +238,36 @@ int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
     bool           restore_network;
     int            restore_ret;
     int            ret;
-
     if (param == NULL || response == NULL)
     {
         return -EINVAL;
     }
-
     *response = NULL;
-
     ret = linkg_config_create_snapshot(&old_config);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "获取当前配置失败", response);
     }
-
     new_config = old_config;
-
     ret = linkg_json_get_bool(param, "path_enabled", &new_config.paths.wifi.enabled);
     if (ret != LINKG_JSON_OK)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "WiFi路径配置无效", response);
     }
-
     ret = linkg_json_get_object(param, "wifi", &wifi);
     if (ret != LINKG_JSON_OK)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "WiFi配置无效", response);
     }
-
     ret = linkg_wifi_config_parse(new_config.device.role, wifi, &new_config.links.wifi);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "WiFi配置校验失败", response);
     }
-
     if (!new_config.links.wifi.enabled)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "WiFi模块必须保持启用", response);
     }
-
     if (_linkg_web_wifi_config_equal(&old_config, &new_config))
     {
         data = cJSON_CreateObject();
@@ -316,39 +275,32 @@ int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
         {
             return -ENOMEM;
         }
-
         ret = linkg_json_add_string(data, "apply", "none");
         if (ret != LINKG_JSON_OK)
         {
             cJSON_Delete(data);
             return _linkg_web_wifi_json_error(ret);
         }
-
         return _linkg_web_response_success(LINKG_WEB_CMD_WIFI_CONFIG_SET, data, NULL, response);
     }
-
     dynamic_only    = _linkg_web_wifi_narrow_only_changed(&old_config, &new_config);
     restore_network = false;
     error_message   = NULL;
-
     ret = linkg_config_save(&new_config, NULL);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "保存WiFi配置失败", response);
     }
-
     ret = linkg_config_replace(&new_config);
     if (ret != 0)
     {
         error_message = "更新全局配置失败";
         goto rollback;
     }
-
     if (dynamic_only)
     {
         restore_network = true;
-        ret = linkg_network_set_wifi_narrow_config(new_config.links.wifi.wideband.narrow_params.mode,
-                                                   new_config.links.wifi.wideband.narrow_params.manual_rate);
+        ret = linkg_network_set_wifi_narrow_config(new_config.links.wifi.wideband.narrow_params.mode, new_config.links.wifi.wideband.narrow_params.manual_rate);
         if (ret != 0)
         {
             error_message = "动态更新WiFi配置失败";
@@ -363,9 +315,7 @@ int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
             error_message = "更新Network WiFi配置失败";
             goto rollback;
         }
-
         restore_network = true;
-
         ret = linkg_network_restart_wifi();
         if (ret != 0)
         {
@@ -373,22 +323,18 @@ int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
             goto rollback;
         }
     }
-
     data = cJSON_CreateObject();
     if (data == NULL)
     {
         return -ENOMEM;
     }
-
     ret = linkg_json_add_string(data, "apply", dynamic_only ? "dynamic" : "restart");
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(data);
         return _linkg_web_wifi_json_error(ret);
     }
-
     return _linkg_web_response_success(LINKG_WEB_CMD_WIFI_CONFIG_SET, data, NULL, response);
-
 rollback:
     restore_ret = _linkg_web_wifi_restore_config(&old_config, restore_network, dynamic_only);
     if (restore_ret != 0)
@@ -396,7 +342,6 @@ rollback:
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET,
                                          "WiFi配置更新失败，恢复原配置也失败", response);
     }
-
     return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, error_message, response);
 }
 
@@ -411,17 +356,14 @@ static const char *_linkg_web_wifi_interface_state_string(linkg_wifi_interface_s
     {
         return "down";
     }
-
     if (state == LINKG_WIFI_INTERFACE_STATE_READY)
     {
         return "ready";
     }
-
     if (state == LINKG_WIFI_INTERFACE_STATE_CONNECTED)
     {
         return "connected";
     }
-
     return "unknown";
 }
 
@@ -434,12 +376,10 @@ static const char *_linkg_web_wifi_work_mode_string(linkg_wifi_work_mode_t mode)
     {
         return "narrow";
     }
-
     if (mode == LINKG_WIFI_WORK_MODE_WIDE)
     {
         return "wide";
     }
-
     return "unknown";
 }
 
@@ -452,12 +392,10 @@ static const char *_linkg_web_wifi_narrow_mode_string(linkg_wifi_narrow_mode_t m
     {
         return "fixed";
     }
-
     if (mode == LINKG_WIFI_NARROW_MODE_ADAPTIVE)
     {
         return "adaptive";
     }
-
     return "unknown";
 }
 
@@ -470,11 +408,10 @@ static const char *_linkg_web_wifi_peer_state_string(linkg_wifi_peer_state_t sta
     {
         return "connected";
     }
-
     return "disconnected";
 }
 
-/****************************** 状态JSON辅助 ******************************/
+/****************************** 状态通用辅助 ******************************/
 
 /**
  * @brief 判断采集数据是否仍在允许的显示时间内。
@@ -495,12 +432,10 @@ static int _linkg_web_wifi_status_add_uint64(cJSON *object, const char *key, uin
     {
         return LINKG_JSON_ERR_PARAM;
     }
-
     if (cJSON_AddNumberToObject(object, key, (double)value) == NULL)
     {
         return LINKG_JSON_ERR_MEMORY;
     }
-
     return LINKG_JSON_OK;
 }
 
@@ -511,18 +446,15 @@ static int _linkg_web_wifi_status_add_counter(cJSON *object, const char *key, ui
 {
     char text[32];
     int  written;
-
     if (object == NULL || key == NULL)
     {
         return LINKG_JSON_ERR_PARAM;
     }
-
     written = snprintf(text, sizeof(text), "%" PRIu64, value);
     if (written < 0 || (size_t)written >= sizeof(text))
     {
         return LINKG_JSON_ERR_PARAM;
     }
-
     return linkg_json_add_string(object, key, text);
 }
 
@@ -532,10 +464,8 @@ static int _linkg_web_wifi_status_add_counter(cJSON *object, const char *key, ui
 static int _linkg_web_wifi_status_add_mac(cJSON *object, const char *key, const uint8_t mac[LINKG_WIFI_MAC_LENGTH])
 {
     char text[18];
-
     (void)snprintf(text, sizeof(text), "%02X:%02X:%02X:%02X:%02X:%02X",
                    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
     return linkg_json_add_string(object, key, text);
 }
 
@@ -546,56 +476,48 @@ static int _linkg_web_wifi_status_add_driver(cJSON *object, const linkg_wifi_pee
 {
     cJSON *driver;
     int    ret;
-
     driver = cJSON_CreateObject();
     if (driver == NULL)
     {
         return LINKG_JSON_ERR_MEMORY;
     }
-
     ret = _linkg_web_wifi_status_add_counter(driver, "tx_bytes", peer->driver_tx_bytes);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = _linkg_web_wifi_status_add_counter(driver, "rx_bytes", peer->driver_rx_bytes);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = _linkg_web_wifi_status_add_counter(driver, "tx_packets", peer->driver_tx_packets);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = _linkg_web_wifi_status_add_counter(driver, "rx_packets", peer->driver_rx_packets);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = _linkg_web_wifi_status_add_counter(driver, "tx_failed", peer->driver_tx_failed);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_object(object, "driver", driver);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     return LINKG_JSON_OK;
-
 error:
     cJSON_Delete(driver);
-
     return ret;
 }
+
+/****************************** Probe状态辅助 ******************************/
 
 /**
  * @brief 将Wi-Fi MAC对应到当前已注册的业务Path节点。
@@ -614,32 +536,26 @@ static int _linkg_web_wifi_status_peer_node_id(const uint8_t mac[LINKG_WIFI_MAC_
     uint32_t                   host_address;
     int                        socket_fd;
     int                        ret;
-
     if (mac == NULL || node_id == NULL)
     {
         return -EINVAL;
     }
-
     link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
     if (link_id == LINKG_LINK_ID_INVALID)
     {
         return -ENOENT;
     }
-
     ret = linkg_node_get_path_endpoints(link_id, endpoints, LINKG_NODE_PEER_MAX, &count);
     if (ret != 0)
     {
         return ret;
     }
-
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0)
     {
         return -errno;
     }
-
     ret = -ENOENT;
-
     for (index = 0U; index < count; index++)
     {
         address = (const struct sockaddr_in *)&endpoints[index].address;
@@ -647,11 +563,9 @@ static int _linkg_web_wifi_status_peer_node_id(const uint8_t mac[LINKG_WIFI_MAC_
         {
             continue;
         }
-
         memset(&arp, 0, sizeof(arp));
         memcpy(&arp.arp_pa, address, sizeof(arp.arp_pa));
         (void)snprintf(arp.arp_dev, sizeof(arp.arp_dev), "%s", LINKG_RESOURCE_INTERFACE_WIFI);
-
         if (ioctl(socket_fd, SIOCGARP, &arp) != 0 ||
             (arp.arp_flags & ATF_COM) == 0 ||
             arp.arp_ha.sa_family != ARPHRD_ETHER ||
@@ -659,72 +573,115 @@ static int _linkg_web_wifi_status_peer_node_id(const uint8_t mac[LINKG_WIFI_MAC_
         {
             continue;
         }
-
         host_address = ntohl(address->sin_addr.s_addr);
         *node_id     = (uint8_t)(host_address & 0xFFU);
         ret          = 0;
         break;
     }
-
     (void)close(socket_fd);
+    return ret;
+}
+
+/**
+ * @brief 判断周期Probe结果是否仍在允许的展示时间内。
+ */
+static bool _linkg_web_wifi_probe_is_fresh(const linkg_path_probe_class_snapshot_t *probe, uint64_t now_us)
+{
+    if (probe == NULL || probe->updated_us == 0U || probe->updated_us > now_us)
+    {
+        return false;
+    }
+
+    return now_us - probe->updated_us <= (uint64_t)LINKG_WEB_WIFI_PROBE_MAX_AGE_MS * 1000U;
+}
+
+/**
+ * @brief 将单个业务类别的周期Probe状态加入JSON对象。
+ */
+static int _linkg_web_wifi_status_add_probe_class(cJSON *object, const char *key, const linkg_path_probe_class_snapshot_t *probe, uint64_t now_us)
+{
+    cJSON *class_object;
+    bool   valid;
+    bool   reachable;
+    int    ret;
+
+    if (object == NULL || key == NULL)
+    {
+        return LINKG_JSON_ERR_PARAM;
+    }
+
+    valid     = probe != NULL && probe->valid && _linkg_web_wifi_probe_is_fresh(probe, now_us);
+    reachable = valid && probe->reachable;
+
+    class_object = cJSON_CreateObject();
+    if (class_object == NULL)
+    {
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    ret = linkg_json_add_bool(class_object, "valid", valid);
+    if (ret == LINKG_JSON_OK)
+    {
+        ret = linkg_json_add_bool(class_object, "reachable", reachable);
+    }
+
+    if (ret == LINKG_JSON_OK && reachable)
+    {
+        ret = linkg_json_add_uint32(class_object, "rtt_us", probe->rtt_us);
+    }
+
+    if (ret == LINKG_JSON_OK)
+    {
+        ret = linkg_json_add_object(object, key, class_object);
+    }
+
+    if (ret != LINKG_JSON_OK)
+    {
+        cJSON_Delete(class_object);
+    }
 
     return ret;
 }
 
 /**
- * @brief 将数据业务的周期Probe RTT加入对端状态。
+ * @brief 构造Wi-Fi Path三业务类别周期Probe状态JSON。
  */
-static int _linkg_web_wifi_status_add_rtt(cJSON *object, const linkg_wifi_peer_status_t *peer)
+static int _linkg_web_wifi_status_build_probe(const linkg_wifi_peer_status_t *peer, bool *data_rtt_valid, uint32_t *data_rtt_us, cJSON **out)
 {
-    linkg_path_probe_peer_snapshot_t  snapshot;
-    const linkg_path_probe_class_snapshot_t *probe;
-    uint64_t                          now_us;
-    uint8_t                           node_id;
-    bool                              valid;
-    int                               ret;
+    linkg_path_probe_peer_snapshot_t        snapshot;
+    const linkg_path_probe_class_snapshot_t *data_probe;
+    const linkg_path_probe_path_snapshot_t *path;
+    cJSON                                  *object;
+    uint64_t                                now_us;
+    uint8_t                                 node_id;
+    int                                     ret;
 
-    valid = false;
+    if (peer == NULL || data_rtt_valid == NULL || data_rtt_us == NULL || out == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *data_rtt_valid = false;
+    *data_rtt_us    = 0U;
+    *out            = NULL;
+    path            = NULL;
 
     if (peer->state == LINKG_WIFI_PEER_STATE_CONNECTED &&
         _linkg_web_wifi_status_peer_node_id(peer->mac, &node_id) == 0 &&
         linkg_path_probe_get_peer_snapshot(node_id, &snapshot) == 0 &&
         snapshot.wifi.active)
     {
-        probe  = &snapshot.wifi.classes[LINKG_TRANSPORT_CLASS_DATA];
-        now_us = linkg_time_monotonic_us();
-        valid  = probe->valid && probe->reachable &&
-                 probe->updated_us <= now_us &&
-                 now_us - probe->updated_us <=
-                     (uint64_t)LINKG_WEB_WIFI_PROBE_MAX_AGE_MS * 1000U;
-
-        if (valid)
-        {
-            ret = linkg_json_add_uint32(object, "rtt_us", probe->rtt_us);
-            if (ret != LINKG_JSON_OK)
-            {
-                return ret;
-            }
-        }
+        path = &snapshot.wifi;
     }
 
-    return linkg_json_add_bool(object, "rtt_valid", valid);
-}
-
-/**
- * @brief 构造对端运行状态JSON。
- */
-static int _linkg_web_wifi_status_build_peer(const linkg_wifi_peer_status_t *peer, uint64_t now_ms, cJSON **out)
-{
-    cJSON *object;
-    bool   statistics_valid;
-    int    ret;
-
-    if (peer == NULL || out == NULL || !peer->valid)
+    now_us     = linkg_time_monotonic_us();
+    data_probe = path != NULL ? &path->classes[LINKG_TRANSPORT_CLASS_DATA] : NULL;
+    *data_rtt_valid = data_probe != NULL && data_probe->valid && data_probe->reachable &&
+                      _linkg_web_wifi_probe_is_fresh(data_probe, now_us);
+    if (*data_rtt_valid)
     {
-        return -EINVAL;
+        *data_rtt_us = data_probe->rtt_us;
     }
-
-    *out = NULL;
 
     object = cJSON_CreateObject();
     if (object == NULL)
@@ -732,46 +689,114 @@ static int _linkg_web_wifi_status_build_peer(const linkg_wifi_peer_status_t *pee
         return -ENOMEM;
     }
 
+    ret = _linkg_web_wifi_status_add_probe_class(
+        object, "realtime",
+        path != NULL ? &path->classes[LINKG_TRANSPORT_CLASS_REALTIME] : NULL,
+        now_us);
+    if (ret == LINKG_JSON_OK)
+    {
+        ret = _linkg_web_wifi_status_add_probe_class(
+            object, "video",
+            path != NULL ? &path->classes[LINKG_TRANSPORT_CLASS_VIDEO] : NULL,
+            now_us);
+    }
+
+    if (ret == LINKG_JSON_OK)
+    {
+        ret = _linkg_web_wifi_status_add_probe_class(
+            object, "data",
+            path != NULL ? &path->classes[LINKG_TRANSPORT_CLASS_DATA] : NULL,
+            now_us);
+    }
+
+    if (ret != LINKG_JSON_OK)
+    {
+        cJSON_Delete(object);
+        return _linkg_web_wifi_json_error(ret);
+    }
+
+    *out = object;
+
+    return 0;
+}
+
+/****************************** 状态JSON构造 ******************************/
+
+/**
+ * @brief 构造对端运行状态JSON。
+ */
+static int _linkg_web_wifi_status_build_peer(const linkg_wifi_peer_status_t *peer, uint64_t now_ms, cJSON **out)
+{
+    cJSON   *object;
+    cJSON   *probe;
+    uint32_t data_rtt_us;
+    bool     statistics_valid;
+    bool     data_rtt_valid;
+    int      ret;
+    if (peer == NULL || out == NULL || !peer->valid)
+    {
+        return -EINVAL;
+    }
+    *out = NULL;
+    object = cJSON_CreateObject();
+    if (object == NULL)
+    {
+        return -ENOMEM;
+    }
     statistics_valid = peer->state == LINKG_WIFI_PEER_STATE_CONNECTED &&
                        peer->statistics_valid &&
                        _linkg_web_wifi_status_is_fresh(peer->statistics_updated_ms, now_ms);
-
     ret = _linkg_web_wifi_status_add_mac(object, "mac", peer->mac);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
-    ret = _linkg_web_wifi_status_add_rtt(object, peer);
+    probe = NULL;
+    ret = _linkg_web_wifi_status_build_probe(peer, &data_rtt_valid, &data_rtt_us, &probe);
+    if (ret != 0)
+    {
+        cJSON_Delete(object);
+        return ret;
+    }
+    ret = linkg_json_add_object(object, "probe", probe);
+    if (ret != LINKG_JSON_OK)
+    {
+        cJSON_Delete(probe);
+        goto error;
+    }
+    if (data_rtt_valid)
+    {
+        ret = linkg_json_add_uint32(object, "rtt_us", data_rtt_us);
+        if (ret != LINKG_JSON_OK)
+        {
+            goto error;
+        }
+    }
+    ret = linkg_json_add_bool(object, "rtt_valid", data_rtt_valid);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_string(object, "state", _linkg_web_wifi_peer_state_string(peer->state));
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_bool(object, "statistics_valid", statistics_valid);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_uint32(object, "connected_time_s", peer->connected_time_s);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = _linkg_web_wifi_status_add_uint64(object, "updated_ms", peer->updated_ms);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     if (statistics_valid)
     {
         ret = linkg_json_add_int(object, "rssi_dbm", peer->rssi_dbm);
@@ -779,45 +804,36 @@ static int _linkg_web_wifi_status_build_peer(const linkg_wifi_peer_status_t *pee
         {
             goto error;
         }
-
         ret = linkg_json_add_uint32(object, "tx_rate_kbps", peer->tx_rate_kbps);
         if (ret != LINKG_JSON_OK)
         {
             goto error;
         }
-
         ret = linkg_json_add_uint32(object, "rx_rate_kbps", peer->rx_rate_kbps);
         if (ret != LINKG_JSON_OK)
         {
             goto error;
         }
-
         ret = linkg_json_add_uint32(object, "inactive_ms", peer->inactive_ms);
         if (ret != LINKG_JSON_OK)
         {
             goto error;
         }
-
         ret = _linkg_web_wifi_status_add_uint64(object, "statistics_updated_ms", peer->statistics_updated_ms);
         if (ret != LINKG_JSON_OK)
         {
             goto error;
         }
-
         ret = _linkg_web_wifi_status_add_driver(object, peer);
         if (ret != LINKG_JSON_OK)
         {
             goto error;
         }
     }
-
     *out = object;
-
     return 0;
-
 error:
     cJSON_Delete(object);
-
     return _linkg_web_wifi_json_error(ret);
 }
 
@@ -829,44 +845,36 @@ static int _linkg_web_wifi_status_build_radio(const linkg_wifi_radio_status_t *r
     cJSON *object;
     cJSON *mode_params;
     int    ret;
-
     if (radio == NULL || out == NULL)
     {
         return -EINVAL;
     }
-
     *out = NULL;
-
     object = cJSON_CreateObject();
     if (object == NULL)
     {
         return -ENOMEM;
     }
-
     ret = linkg_json_add_string(object, "work_mode", _linkg_web_wifi_work_mode_string(radio->work_mode));
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_uint32(object, "frequency_mhz", radio->frequency_mhz);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_uint16(object, "channel", radio->channel);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_bool(object, "noise_valid", radio->noise_valid);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     if (radio->noise_valid)
     {
         ret = linkg_json_add_int(object, "noise_dbm", radio->noise_dbm);
@@ -875,14 +883,12 @@ static int _linkg_web_wifi_status_build_radio(const linkg_wifi_radio_status_t *r
             goto error;
         }
     }
-
     mode_params = cJSON_CreateObject();
     if (mode_params == NULL)
     {
         ret = LINKG_JSON_ERR_MEMORY;
         goto error;
     }
-
     if (radio->work_mode == LINKG_WIFI_WORK_MODE_NARROW)
     {
         ret = linkg_json_add_string(mode_params, "mode", _linkg_web_wifi_narrow_mode_string(radio->params.narrow.mode));
@@ -915,20 +921,15 @@ static int _linkg_web_wifi_status_build_radio(const linkg_wifi_radio_status_t *r
     {
         ret = LINKG_JSON_ERR_PARAM;
     }
-
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(mode_params);
         goto error;
     }
-
     *out = object;
-
     return 0;
-
 error:
     cJSON_Delete(object);
-
     return _linkg_web_wifi_json_error(ret);
 }
 
@@ -940,44 +941,36 @@ static int _linkg_web_wifi_status_build_local(const linkg_wifi_local_status_t *l
     cJSON *object;
     cJSON *radio;
     int    ret;
-
     if (local == NULL || out == NULL)
     {
         return -EINVAL;
     }
-
     *out = NULL;
-
     object = cJSON_CreateObject();
     if (object == NULL)
     {
         return -ENOMEM;
     }
-
     ret = linkg_json_add_string(object, "interface_state", _linkg_web_wifi_interface_state_string(local->interface_state));
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = _linkg_web_wifi_status_add_mac(object, "mac", local->mac);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = _linkg_web_wifi_status_add_uint64(object, "updated_ms", local->updated_ms);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_bool(object, "chip_temperature_valid", local->chip_temperature_valid);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     if (local->chip_temperature_valid)
     {
         ret = linkg_json_add_int(object, "chip_temperature_c", local->chip_temperature_c);
@@ -986,7 +979,6 @@ static int _linkg_web_wifi_status_build_local(const linkg_wifi_local_status_t *l
             goto error;
         }
     }
-
     radio = NULL;
     ret = _linkg_web_wifi_status_build_radio(&local->radio, &radio);
     if (ret != 0)
@@ -994,21 +986,16 @@ static int _linkg_web_wifi_status_build_local(const linkg_wifi_local_status_t *l
         cJSON_Delete(object);
         return ret;
     }
-
     ret = linkg_json_add_object(object, "radio", radio);
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(radio);
         goto error;
     }
-
     *out = object;
-
     return 0;
-
 error:
     cJSON_Delete(object);
-
     return _linkg_web_wifi_json_error(ret);
 }
 
@@ -1025,14 +1012,11 @@ static int _linkg_web_wifi_status_build_ap(const linkg_wifi_ap_status_t *ap, uin
     uint8_t index;
     bool    truncated;
     int     ret;
-
     if (ap == NULL || out == NULL)
     {
         return -EINVAL;
     }
-
     *out = NULL;
-
     object = cJSON_CreateObject();
     peers  = cJSON_CreateArray();
     if (object == NULL || peers == NULL)
@@ -1041,18 +1025,15 @@ static int _linkg_web_wifi_status_build_ap(const linkg_wifi_ap_status_t *ap, uin
         cJSON_Delete(peers);
         return -ENOMEM;
     }
-
     peer_count      = 0U;
     connected_count = 0U;
     truncated       = ap->peers_truncated || ap->peer_count > LINKG_WIFI_AP_PEER_MAX;
-
     for (index = 0U; index < ap->peer_count && index < LINKG_WIFI_AP_PEER_MAX; index++)
     {
         if (!ap->peers[index].valid)
         {
             continue;
         }
-
         peer = NULL;
         ret  = _linkg_web_wifi_status_build_peer(&ap->peers[index], now_ms, &peer);
         if (ret != 0)
@@ -1061,7 +1042,6 @@ static int _linkg_web_wifi_status_build_ap(const linkg_wifi_ap_status_t *ap, uin
             cJSON_Delete(object);
             return ret;
         }
-
         if (!cJSON_AddItemToArray(peers, peer))
         {
             cJSON_Delete(peer);
@@ -1069,46 +1049,37 @@ static int _linkg_web_wifi_status_build_ap(const linkg_wifi_ap_status_t *ap, uin
             cJSON_Delete(object);
             return -ENOMEM;
         }
-
         peer_count++;
         if (ap->peers[index].state == LINKG_WIFI_PEER_STATE_CONNECTED)
         {
             connected_count++;
         }
     }
-
     ret = linkg_json_add_bool(object, "peers_truncated", truncated);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_uint16(object, "peer_count", peer_count);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_uint16(object, "connected_count", connected_count);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_json_add_array(object, "peers", peers);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     *out = object;
-
     return 0;
-
 error:
     cJSON_Delete(peers);
     cJSON_Delete(object);
-
     return _linkg_web_wifi_json_error(ret);
 }
 
@@ -1120,20 +1091,16 @@ static int _linkg_web_wifi_status_build_sta(const linkg_wifi_sta_status_t *sta, 
     cJSON *object;
     cJSON *peer;
     int    ret;
-
     if (sta == NULL || out == NULL)
     {
         return -EINVAL;
     }
-
     *out = NULL;
-
     object = cJSON_CreateObject();
     if (object == NULL)
     {
         return -ENOMEM;
     }
-
     if (!sta->peer.valid)
     {
         if (cJSON_AddNullToObject(object, "peer") == NULL)
@@ -1141,11 +1108,9 @@ static int _linkg_web_wifi_status_build_sta(const linkg_wifi_sta_status_t *sta, 
             cJSON_Delete(object);
             return -ENOMEM;
         }
-
         *out = object;
         return 0;
     }
-
     peer = NULL;
     ret = _linkg_web_wifi_status_build_peer(&sta->peer, now_ms, &peer);
     if (ret != 0)
@@ -1153,7 +1118,6 @@ static int _linkg_web_wifi_status_build_sta(const linkg_wifi_sta_status_t *sta, 
         cJSON_Delete(object);
         return ret;
     }
-
     ret = linkg_json_add_object(object, "peer", peer);
     if (ret != LINKG_JSON_OK)
     {
@@ -1161,13 +1125,11 @@ static int _linkg_web_wifi_status_build_sta(const linkg_wifi_sta_status_t *sta, 
         cJSON_Delete(object);
         return _linkg_web_wifi_json_error(ret);
     }
-
     *out = object;
-
     return 0;
 }
 
-/****************************** 请求处理 ******************************/
+/****************************** 状态请求处理 ******************************/
 
 /**
  * @brief 处理Wi-Fi运行状态查询。
@@ -1185,73 +1147,59 @@ int _linkg_web_handler_wifi_status_get(const cJSON *param, char **response)
     uint64_t                     now_ms;
     bool                         available;
     int                          ret;
-
     (void)param;
-
     if (response == NULL)
     {
         return -EINVAL;
     }
-
     *response = NULL;
-
     ret = linkg_config_create_snapshot(&config);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_STATUS_GET, "获取全局配置失败", response);
     }
-
     data = cJSON_CreateObject();
     if (data == NULL)
     {
         return -ENOMEM;
     }
-
     ret = linkg_json_add_bool(data, "path_enabled", config.paths.wifi.enabled);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     if (!config.paths.wifi.enabled)
     {
         return _linkg_web_response_success(LINKG_WEB_CMD_WIFI_STATUS_GET, data, NULL, response);
     }
-
     role = _linkg_web_wifi_role_string(config.device.role);
     if (role == NULL)
     {
         cJSON_Delete(data);
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_STATUS_GET, "设备角色无效", response);
     }
-
     ret = linkg_json_add_string(data, "role", role);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     ret = linkg_wifi_get_status(&snapshot);
     now_ms = linkg_time_elapsed_ms();
     available = ret == 0 && _linkg_web_wifi_status_is_fresh(snapshot.local.updated_ms, now_ms);
-
     ret = linkg_json_add_bool(data, "available", available);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     if (!available)
     {
         return _linkg_web_response_success(LINKG_WEB_CMD_WIFI_STATUS_GET, data, NULL, response);
     }
-
     ret = linkg_json_add_bool(data, "partial", snapshot.partial);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
-
     local = NULL;
     ret = _linkg_web_wifi_status_build_local(&snapshot.local, &local);
     if (ret != 0)
@@ -1259,14 +1207,12 @@ int _linkg_web_handler_wifi_status_get(const cJSON *param, char **response)
         cJSON_Delete(data);
         return ret;
     }
-
     ret = linkg_json_add_object(data, "local", local);
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(local);
         goto error;
     }
-
     role_status = NULL;
     if (snapshot.local.role == LINKG_DEVICE_ROLE_AP)
     {
@@ -1281,24 +1227,19 @@ int _linkg_web_handler_wifi_status_get(const cJSON *param, char **response)
         cJSON_Delete(data);
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_STATUS_GET, "WiFi运行角色无效", response);
     }
-
     if (ret != 0)
     {
         cJSON_Delete(data);
         return ret;
     }
-
     ret = linkg_json_add_object(data, role, role_status);
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(role_status);
         goto error;
     }
-
     return _linkg_web_response_success(LINKG_WEB_CMD_WIFI_STATUS_GET, data, NULL, response);
-
 error:
     cJSON_Delete(data);
-
     return _linkg_web_wifi_json_error(ret);
 }

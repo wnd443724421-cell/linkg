@@ -965,6 +965,300 @@ int linkg_json_add_array(cJSON *parent, const char *key, cJSON *child)
 
 /****************************** JSON序列化 ******************************/
 
+#define LINKG_JSON_PRETTY_INDENT        "    "
+#define LINKG_JSON_PRETTY_INDENT_LENGTH 4U
+
+typedef struct
+{
+    char   *data;
+    size_t  capacity;
+    size_t  length;
+} json_pretty_writer_t;
+
+static bool _json_pretty_is_whitespace(char value)
+{
+    return value == ' ' || value == '\t' || value == '\n' || value == '\r';
+}
+
+/**
+ * @brief 向格式化输出写入字节；data为NULL时仅累计所需长度。
+ */
+static int _json_pretty_append(json_pretty_writer_t *writer, const char *data, size_t length)
+{
+    if (writer == NULL || (data == NULL && length != 0U))
+    {
+        return LINKG_JSON_ERR_PARAM;
+    }
+
+    if (length > SIZE_MAX - writer->length)
+    {
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    if (writer->data != NULL)
+    {
+        if (writer->length + length > writer->capacity)
+        {
+            return LINKG_JSON_ERR_BUFFER_SMALL;
+        }
+
+        if (length != 0U)
+        {
+            memcpy(writer->data + writer->length, data, length);
+        }
+    }
+
+    writer->length += length;
+
+    return LINKG_JSON_OK;
+}
+
+static int _json_pretty_append_char(json_pretty_writer_t *writer, char value)
+{
+    return _json_pretty_append(writer, &value, 1U);
+}
+
+static int _json_pretty_append_indent(json_pretty_writer_t *writer, size_t depth)
+{
+    size_t i;
+    int    ret;
+
+    if (depth > SIZE_MAX / LINKG_JSON_PRETTY_INDENT_LENGTH)
+    {
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    for (i = 0U; i < depth; i++)
+    {
+        ret = _json_pretty_append(writer, LINKG_JSON_PRETTY_INDENT, LINKG_JSON_PRETTY_INDENT_LENGTH);
+        if (ret != LINKG_JSON_OK)
+        {
+            return ret;
+        }
+    }
+
+    return LINKG_JSON_OK;
+}
+
+static size_t _json_pretty_next_non_whitespace(const char *text, size_t offset)
+{
+    while (text[offset] != '\0' && _json_pretty_is_whitespace(text[offset]))
+    {
+        offset++;
+    }
+
+    return offset;
+}
+
+static size_t _json_pretty_previous_non_whitespace(const char *text, size_t offset)
+{
+    while (offset > 0U)
+    {
+        offset--;
+
+        if (!_json_pretty_is_whitespace(text[offset]))
+        {
+            return offset;
+        }
+    }
+
+    return SIZE_MAX;
+}
+
+static int _json_pretty_format_pass(const char *compact, json_pretty_writer_t *writer)
+{
+    bool   escaped;
+    bool   in_string;
+    char   opening;
+    char   closing;
+    char   value;
+    size_t depth;
+    size_t index;
+    size_t neighbor;
+    int    ret;
+
+    if (compact == NULL || writer == NULL)
+    {
+        return LINKG_JSON_ERR_PARAM;
+    }
+
+    escaped   = false;
+    in_string = false;
+    depth     = 0U;
+
+    for (index = 0U; compact[index] != '\0'; index++)
+    {
+        value = compact[index];
+
+        if (in_string)
+        {
+            ret = _json_pretty_append_char(writer, value);
+            if (ret != LINKG_JSON_OK)
+            {
+                return ret;
+            }
+
+            if (escaped)
+            {
+                escaped = false;
+            }
+            else if (value == '\\')
+            {
+                escaped = true;
+            }
+            else if (value == '"')
+            {
+                in_string = false;
+            }
+
+            continue;
+        }
+
+        if (value == '"')
+        {
+            in_string = true;
+            ret       = _json_pretty_append_char(writer, value);
+        }
+        else if (value == '{' || value == '[')
+        {
+            closing  = value == '{' ? '}' : ']';
+            neighbor = _json_pretty_next_non_whitespace(compact, index + 1U);
+            ret      = _json_pretty_append_char(writer, value);
+
+            if (ret == LINKG_JSON_OK && compact[neighbor] != closing)
+            {
+                if (depth == SIZE_MAX)
+                {
+                    return LINKG_JSON_ERR_MEMORY;
+                }
+
+                depth++;
+                ret = _json_pretty_append_char(writer, '\n');
+                if (ret == LINKG_JSON_OK)
+                {
+                    ret = _json_pretty_append_indent(writer, depth);
+                }
+            }
+        }
+        else if (value == '}' || value == ']')
+        {
+            opening  = value == '}' ? '{' : '[';
+            neighbor = _json_pretty_previous_non_whitespace(compact, index);
+
+            if (neighbor == SIZE_MAX)
+            {
+                return LINKG_JSON_ERR_PARSE;
+            }
+
+            if (compact[neighbor] != opening)
+            {
+                if (depth == 0U)
+                {
+                    return LINKG_JSON_ERR_PARSE;
+                }
+
+                depth--;
+                ret = _json_pretty_append_char(writer, '\n');
+                if (ret == LINKG_JSON_OK)
+                {
+                    ret = _json_pretty_append_indent(writer, depth);
+                }
+            }
+            else
+            {
+                ret = LINKG_JSON_OK;
+            }
+
+            if (ret == LINKG_JSON_OK)
+            {
+                ret = _json_pretty_append_char(writer, value);
+            }
+        }
+        else if (value == ',')
+        {
+            ret = _json_pretty_append(writer, ",\n", 2U);
+            if (ret == LINKG_JSON_OK)
+            {
+                ret = _json_pretty_append_indent(writer, depth);
+            }
+        }
+        else if (value == ':')
+        {
+            ret = _json_pretty_append(writer, ": ", 2U);
+        }
+        else if (_json_pretty_is_whitespace(value))
+        {
+            ret = LINKG_JSON_OK;
+        }
+        else
+        {
+            ret = _json_pretty_append_char(writer, value);
+        }
+
+        if (ret != LINKG_JSON_OK)
+        {
+            return ret;
+        }
+    }
+
+    if (in_string || escaped || depth != 0U)
+    {
+        return LINKG_JSON_ERR_PARSE;
+    }
+
+    return _json_pretty_append_char(writer, '\n');
+}
+
+static int _json_pretty_format(const char *compact, char **out)
+{
+    json_pretty_writer_t counter;
+    json_pretty_writer_t writer;
+    char                *formatted;
+    int                  ret;
+
+    if (compact == NULL || out == NULL)
+    {
+        return LINKG_JSON_ERR_PARAM;
+    }
+
+    *out = NULL;
+
+    memset(&counter, 0, sizeof(counter));
+
+    ret = _json_pretty_format_pass(compact, &counter);
+    if (ret != LINKG_JSON_OK)
+    {
+        return ret;
+    }
+
+    if (counter.length == SIZE_MAX)
+    {
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    formatted = cJSON_malloc(counter.length + 1U);
+    if (formatted == NULL)
+    {
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    writer.data     = formatted;
+    writer.capacity = counter.length;
+    writer.length   = 0U;
+
+    ret = _json_pretty_format_pass(compact, &writer);
+    if (ret != LINKG_JSON_OK || writer.length != counter.length)
+    {
+        cJSON_free(formatted);
+        return ret != LINKG_JSON_OK ? ret : LINKG_JSON_ERR_PARSE;
+    }
+
+    formatted[writer.length] = '\0';
+    *out                     = formatted;
+
+    return LINKG_JSON_OK;
+}
+
 /**
  * @brief 生成紧凑JSON字符串。
  *
@@ -1000,14 +1294,15 @@ int linkg_json_print_unformatted(const cJSON *root, char **out)
 }
 
 /**
- * @brief 生成格式化JSON字符串。
+ * @brief 生成4空格缩进、数组逐项换行且末尾带换行的JSON字符串。
  *
  * @note 成功返回的字符串必须使用linkg_json_string_free释放。
  */
 int linkg_json_print_formatted(const cJSON *root, char **out)
 {
+    char *compact;
     char *string;
-    int ret;
+    int   ret;
 
     if (root == NULL || out == NULL)
     {
@@ -1022,10 +1317,19 @@ int linkg_json_print_formatted(const cJSON *root, char **out)
         return ret;
     }
 
-    string = cJSON_Print(root);
-    if (string == NULL)
+    compact = cJSON_PrintUnformatted(root);
+    if (compact == NULL)
     {
         return LINKG_JSON_ERR_MEMORY;
+    }
+
+    ret = _json_pretty_format(compact, &string);
+
+    cJSON_free(compact);
+
+    if (ret != LINKG_JSON_OK)
+    {
+        return ret;
     }
 
     *out = string;

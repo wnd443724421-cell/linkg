@@ -195,6 +195,32 @@
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+.wifi-peer-probes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-top: 1px solid var(--linkg-color-border-light);
+}
+.wifi-peer-probes > div {
+    min-width: 0;
+    padding: 9px 14px;
+}
+.wifi-peer-probes > div + div { border-left: 1px solid var(--linkg-color-border-light); }
+.wifi-peer-probes span {
+    display: block;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+}
+.wifi-peer-probes strong {
+    display: block;
+    margin-top: 3px;
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.wifi-peer-probes strong.is-unreachable { color: var(--linkg-color-danger); }
 .wifi-peer-extra {
     display: flex;
     flex-wrap: wrap;
@@ -240,10 +266,11 @@
 }
 .wifi-peers.is-single .wifi-peer-head { grid-column: 1 / -1; }
 .wifi-peers.is-single .wifi-peer-metrics { grid-column: 1; grid-row: 2; }
-.wifi-peers.is-single .wifi-peer-extra { grid-column: 1; grid-row: 3; }
+.wifi-peers.is-single .wifi-peer-probes { grid-column: 1; grid-row: 3; }
+.wifi-peers.is-single .wifi-peer-extra { grid-column: 1; grid-row: 4; }
 .wifi-peers.is-single .wifi-driver {
     grid-column: 2;
-    grid-row: 2 / 4;
+    grid-row: 2 / 5;
     border-top: 0;
     border-left: 1px solid var(--linkg-color-border-light);
 }

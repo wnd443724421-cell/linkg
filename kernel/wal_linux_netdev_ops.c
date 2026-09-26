@@ -34,6 +34,7 @@
 #include "wal_linux_cfgvendor.h"
 #include "wal_dfx.h"
 #include "wal_radio_status_ioctl.h"
+#include "wal_temperature_ioctl.h"
 #include "wal_tx_flowctrl_ioctl.h"
 
 #if (_PRE_OS_VERSION_LINUX == _PRE_OS_VERSION)
@@ -1359,6 +1360,57 @@ OAL_STATIC int32_t wal_radio_status_ioctl(oal_net_device_stru *net_dev, oal_ifre
     return OAL_SUCC;
 }
 
+/****************************** 芯片温度状态扩展 ******************************/
+
+/**
+ * @brief 获取HI1105当前芯片结温。
+ */
+OAL_STATIC int32_t wal_temperature_ioctl(oal_net_device_stru *net_dev, oal_ifreq_stru *ifr)
+{
+    wal_temperature_status_stru request = {0};
+    wal_temperature_status_stru status = {0};
+    int32_t                     temperature_c;
+    int32_t                     ret;
+
+    if (net_dev == NULL || ifr == NULL || ifr->ifr_data == NULL)
+    {
+        return -OAL_EFAUL;
+    }
+
+    if (oal_copy_from_user(&request, ifr->ifr_data, sizeof(request)) != 0)
+    {
+        return -OAL_EFAUL;
+    }
+
+    if (request.version != WAL_TEMPERATURE_ABI_VERSION ||
+        request.struct_size != sizeof(request))
+    {
+        return -OAL_EINVAL;
+    }
+
+#if ((defined(_PRE_WLAN_EXPORT)) && (defined(_PRE_WLAN_NARROW_BAND)))
+    ret = wal_ioctl_get_tsensor_val(net_dev, &temperature_c);
+    if (ret != OAL_SUCC)
+    {
+        return ret;
+    }
+#else
+    return -OAL_EINVAL;
+#endif
+
+    status.version       = WAL_TEMPERATURE_ABI_VERSION;
+    status.struct_size   = sizeof(status);
+    status.temperature_c = temperature_c;
+
+    if (oal_copy_to_user(ifr->ifr_data, &status, sizeof(status)) != 0)
+    {
+        return -OAL_EFAUL;
+    }
+
+    return OAL_SUCC;
+}
+
+
 /****************************** 发送流控状态扩展 ******************************/
 
 /**
@@ -1437,7 +1489,8 @@ int32_t wal_net_device_ioctl(oal_net_device_stru *net_dev, oal_ifreq_stru *ifr, 
                          "{dfr_process_status[%d]!}",
                          g_st_dfr_info.bit_device_reset_process_flag);
 
-        if (cmd == WAL_TX_FLOWCTRL_IOCTL)
+        if (cmd == WAL_TX_FLOWCTRL_IOCTL ||
+            cmd == WAL_TEMPERATURE_IOCTL)
         {
             return -OAL_EAGAIN;
         }
@@ -1457,7 +1510,7 @@ int32_t wal_net_device_ioctl(oal_net_device_stru *net_dev, oal_ifreq_stru *ifr, 
     }
 #if (_PRE_OS_VERSION_WIN32 != _PRE_OS_VERSION)
     /* atcmdsrv 通过ioctl下发命令，上层适配+2 */
-    if (cmd == (WAL_SIOCDEVPRIVATE + 2)ChatGPT - linkg-core) {
+    if (cmd == (WAL_SIOCDEVPRIVATE + 2)) {
 #ifdef PLATFORM_DEBUG_ENABLE
         if (mpxx_get_os_build_variant() == MPXX_OS_BUILD_VARIANT_ROOT) {
             wal_wake_lock();
@@ -1484,6 +1537,11 @@ int32_t wal_net_device_ioctl(oal_net_device_stru *net_dev, oal_ifreq_stru *ifr, 
 
     if (cmd == WAL_RADIO_STATUS_IOCTL) {
         return wal_radio_status_ioctl(net_dev, ifr);
+    }
+
+    if (cmd == WAL_TEMPERATURE_IOCTL)
+    {
+        return wal_temperature_ioctl(net_dev, ifr);
     }
 
     if (cmd == WAL_TX_FLOWCTRL_IOCTL)

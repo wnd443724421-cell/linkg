@@ -1,0 +1,164 @@
+<div class="page cellular-page">
+    <div class="page-header cellular-page-header">
+        <div>
+            <h1 class="page-title">5G</h1>
+            <p class="page-description">查看蜂窝网络、信号与三类业务链路状态，应用当前 5G 配置</p>
+        </div>
+        <div class="cellular-refresh">
+            <span id="cellularRefreshDot" class="cellular-refresh-dot"></span>
+            <span id="cellularRefreshText">正在读取状态…</span>
+            <button id="cellularRefreshButton" type="button">刷新</button>
+        </div>
+    </div>
+
+    <section class="page-card cellular-section">
+        <div class="page-card-header">
+            <h2 class="page-card-title">运行状态</h2>
+            <span class="cellular-card-note">约每 2 秒更新</span>
+        </div>
+        <div id="cellularStatusEmpty" class="cellular-empty" aria-live="polite">
+            <strong id="cellularStatusEmptyTitle">正在读取 5G 状态…</strong>
+            <span id="cellularStatusEmptyText">请稍候</span>
+        </div>
+        <div id="cellularStatusBody" hidden>
+            <div class="cellular-summary">
+                <div class="cellular-summary-item">
+                    <span class="cellular-label">SIM 状态</span>
+                    <strong id="cellularSimState">--</strong>
+                </div>
+                <div class="cellular-summary-item">
+                    <span class="cellular-label">网络注册</span>
+                    <strong id="cellularRegistration">--</strong>
+                </div>
+                <div class="cellular-summary-item">
+                    <span class="cellular-label">当前制式</span>
+                    <strong id="cellularNetworkType">--</strong>
+                </div>
+                <div class="cellular-summary-item">
+                    <span class="cellular-label">互联网</span>
+                    <strong id="cellularInternet">--</strong>
+                </div>
+            </div>
+
+            <div class="cellular-status-grid">
+                <div class="cellular-status-block">
+                    <h3>移动网络</h3>
+                    <dl class="cellular-detail-list">
+                        <div><dt>运营商</dt><dd id="cellularOperator">--</dd></div>
+                        <div><dt>PLMN</dt><dd id="cellularPlmn">--</dd></div>
+                        <div><dt>网络模式</dt><dd id="cellularNetworkMode">--</dd></div>
+                        <div><dt>频段</dt><dd id="cellularBand">--</dd></div>
+                    </dl>
+                </div>
+                <div class="cellular-status-block">
+                    <h3>信号与地址</h3>
+                    <dl class="cellular-detail-list">
+                        <div>
+                            <dt>RSRP（信号强度）</dt>
+                            <dd id="cellularRsrp">--</dd>
+                        </div>
+                        <div>
+                            <dt>RSRQ（信号质量）</dt>
+                            <dd id="cellularRsrq">--</dd>
+                        </div>
+                        <div>
+                            <dt>SINR（信噪比）</dt>
+                            <dd id="cellularSinr">--</dd>
+                        </div>
+                        <div><dt>IPv4</dt><dd id="cellularIpv4" class="is-address">--</dd></div>
+                        <div><dt>IPv6</dt><dd id="cellularIpv6" class="is-address">--</dd></div>
+                    </dl>
+                </div>
+            </div>
+
+            <div class="cellular-peers-head">
+                <div>
+                    <h3>链路探测</h3>
+                    <p>分别显示实时、视频与数据业务的当前往返时延</p>
+                </div>
+                <span id="cellularPeersMeta">--</span>
+            </div>
+            <div id="cellularPeers" class="cellular-peers"></div>
+        </div>
+    </section>
+
+    <section class="page-card cellular-section">
+        <div class="page-card-header">
+            <h2 class="page-card-title">5G 配置</h2>
+            <span class="cellular-config-note">配置变更会重新连接蜂窝网络</span>
+        </div>
+        <form id="cellularConfigForm" class="cellular-config-form" novalidate>
+            <div class="cellular-toggle-grid">
+                <div class="cellular-toggle-row">
+                    <div>
+                        <strong>5G 模块</strong>
+                        <p>控制蜂窝接入模块是否初始化</p>
+                    </div>
+                    <label class="cellular-switch">
+                        <input id="cellularModuleEnabled" type="checkbox" disabled>
+                        <span class="cellular-switch-track" aria-hidden="true"></span>
+                        <span class="cellular-switch-label">启用模块</span>
+                    </label>
+                </div>
+                <div class="cellular-toggle-row">
+                    <div>
+                        <strong>LinkG 5G Path</strong>
+                        <p>模块启用后，可让 LinkG 使用蜂窝链路传输</p>
+                    </div>
+                    <label class="cellular-switch">
+                        <input id="cellularPathEnabled" type="checkbox" disabled>
+                        <span class="cellular-switch-track" aria-hidden="true"></span>
+                        <span class="cellular-switch-label">启用链路</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="cellular-form-body">
+                <div class="cellular-form-grid">
+                    <label class="cellular-field">
+                        <span>网络模式</span>
+                        <select id="cellularNetworkModeInput" disabled>
+                            <option value="auto">自动选择 4G / 5G</option>
+                            <option value="4g">仅 4G LTE</option>
+                            <option value="5g">仅 5G NR SA</option>
+                        </select>
+                        <small>优先使用自动模式，覆盖条件不足时可锁定制式</small>
+                    </label>
+                    <label class="cellular-field">
+                        <span>APN</span>
+                        <input id="cellularApn" type="text" maxlength="100" autocomplete="off" disabled
+                            spellcheck="false" placeholder="留空自动选择">
+                        <small>可留空；仅支持字母、数字、点和短横线</small>
+                    </label>
+                    <div class="cellular-field">
+                        <label for="cellularPin">SIM PIN</label>
+                        <div class="cellular-password-wrap">
+                            <input id="cellularPin" type="password" maxlength="8" inputmode="numeric" disabled
+                                pattern="[0-9]*" autocomplete="new-password" placeholder="未配置">
+                            <button id="cellularPinToggle" class="cellular-password-toggle" type="button" disabled
+                                aria-label="显示 SIM PIN" aria-controls="cellularPin" aria-pressed="false">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M2.25 12s3.5-6 9.75-6 9.75 6 9.75 6-3.5 6-9.75 6-9.75-6-9.75-6Z"></path>
+                                    <circle cx="12" cy="12" r="2.5"></circle>
+                                    <path class="cellular-eye-slash" d="M4 4l16 16"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <small>可留空；非空时必须为 4–8 位数字</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cellular-form-footer">
+                <span id="cellularConfigMessage" class="cellular-config-message" aria-live="polite">正在读取配置…</span>
+                <div class="cellular-form-actions">
+                    <button id="cellularResetButton" class="cellular-button cellular-button-secondary"
+                        type="button" disabled>还原</button>
+                    <button id="cellularApplyButton" class="cellular-button cellular-button-primary"
+                        type="submit" disabled>应用配置</button>
+                </div>
+            </div>
+        </form>
+    </section>
+</div>

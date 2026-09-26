@@ -20,13 +20,16 @@ extern "C" {
 
 typedef enum
 {
-    LINKG_WEB_CMD_INVALID            = 0,    // 无效命令
-    LINKG_WEB_CMD_HEADER_GET         = 1001, // 获取Web固定头部状态
-    LINKG_WEB_CMD_OVERVIEW_GET       = 1002, // 获取概览界面的参数
-    LINKG_WEB_CMD_SWITCH_STATUS_GET  = 1003, // 获取Switch运行状态
-    LINKG_WEB_CMD_WIFI_CONFIG_GET    = 1004, // 获取WiFi配置
-    LINKG_WEB_CMD_WIFI_CONFIG_SET    = 1005, // 设置WiFi配置
-    LINKG_WEB_CMD_WIFI_STATUS_GET    = 1006  // 获取WiFi运行状态
+    LINKG_WEB_CMD_INVALID              = 0,    // 无效命令
+    LINKG_WEB_CMD_HEADER_GET           = 1001, // 获取Web固定头部状态
+    LINKG_WEB_CMD_OVERVIEW_GET         = 1002, // 获取概览界面的参数
+    LINKG_WEB_CMD_SWITCH_STATUS_GET    = 1003, // 获取Switch运行状态
+    LINKG_WEB_CMD_WIFI_CONFIG_GET      = 1004, // 获取WiFi配置
+    LINKG_WEB_CMD_WIFI_CONFIG_SET      = 1005, // 设置WiFi配置
+    LINKG_WEB_CMD_WIFI_STATUS_GET      = 1006, // 获取WiFi运行状态
+    LINKG_WEB_CMD_CELLULAR_CONFIG_GET  = 1007, // 获取蜂窝网络配置
+    LINKG_WEB_CMD_CELLULAR_CONFIG_SET  = 1008, // 设置蜂窝网络配置
+    LINKG_WEB_CMD_CELLULAR_STATUS_GET  = 1009  // 获取蜂窝网络运行状态
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -58,6 +61,10 @@ int _linkg_web_handler_switch_status_get(const cJSON *param, char **response);
 int _linkg_web_handler_wifi_config_get(const cJSON *param, char **response);
 int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response);
 int _linkg_web_handler_wifi_status_get(const cJSON *param, char **response);
+
+int _linkg_web_handler_cellular_config_get(const cJSON *param, char **response);
+int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response);
+int _linkg_web_handler_cellular_status_get(const cJSON *param, char **response);
 
 #ifdef __cplusplus
 }

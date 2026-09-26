@@ -33,7 +33,7 @@
 #define LINKG_ETHERNET_MONITOR_INTERVAL_MS       500          // 链路状态检查周期
 #define LINKG_ETHERNET_ANNOUNCE_COUNT            2U           // 每次地址变化的ARP宣告次数
 #define LINKG_ETHERNET_ANNOUNCE_INTERVAL_US      2000000ULL   // 两次ARP宣告间隔
-#define LINKG_ETHERNET_RX_IRQ_CPU_ID             0U           // Ethernet接收IRQ固定CPU编号
+#define LINKG_ETHERNET_IRQ_CPU_ID                0U           // Ethernet接收IRQ固定CPU编号
 #define LINKG_ETHERNET_IRQ_LINE_MAX              512U         // /proc/interrupts单行缓冲区长度
 #define LINKG_ETHERNET_DEVICE_NAME_MAX           128U         // Ethernet平台设备名称缓冲区长度
 #define LINKG_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U          // IRQ affinity写入值缓冲区长度
@@ -292,7 +292,7 @@ static int _linkg_ethernet_bind_rx_irq(void)
         return ret;
     }
 
-    ret = _linkg_ethernet_set_irq_cpu(irq, LINKG_ETHERNET_RX_IRQ_CPU_ID);
+    ret = _linkg_ethernet_set_irq_cpu(irq, LINKG_ETHERNET_IRQ_CPU_ID );
     if (ret != 0)
     {
         return ret;
@@ -301,7 +301,7 @@ static int _linkg_ethernet_bind_rx_irq(void)
     LINKG_LOG_INFO("Ethernet RX IRQ bound, interface=%s, irq=%u, cpu=%u",
                    LINKG_RESOURCE_INTERFACE_ETHERNET,
                    irq,
-                   LINKG_ETHERNET_RX_IRQ_CPU_ID);
+                   LINKG_ETHERNET_IRQ_CPU_ID );
 
     return 0;
 }

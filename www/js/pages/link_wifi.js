@@ -10,7 +10,7 @@
         132, 136, 140, 144, 149, 153, 157, 161,
         165, 184, 188, 192, 196
     ];
-    const WIFI_ALLOWED_TEXT = /^[A-Za-z0-9!@#$%^&*()\-_=+.,:;?]+$/;
+    const WIFI_ALLOWED_TEXT = /^[A-Za-z0-9!@#$%^&*()_=+.,:;?-]+$/;
 
     let mounted = false;
     let sessionSerial = 0;
@@ -247,20 +247,59 @@
         return (rttUs / 1000000).toFixed(2) + " 秒";
     }
 
+    function formatProbeRtt(probe)
+    {
+        if (probe == null || probe.valid !== true)
+        {
+            return "--";
+        }
+
+        if (probe.reachable !== true)
+        {
+            return "不可达";
+        }
+
+        return formatRtt(probe.rtt_us);
+    }
+
+    function appendProbe(parent, label, probe)
+    {
+        const item = document.createElement("div");
+
+        appendText(item, "span", "", label);
+        appendText(item, "strong", probe != null && probe.valid === true &&
+                   probe.reachable !== true ? "is-unreachable" : "",
+                   formatProbeRtt(probe));
+        parent.appendChild(item);
+    }
+
     function createPeerCard(peer)
     {
         const card = document.createElement("article");
         const head = document.createElement("div");
         const metrics = document.createElement("div");
+        const probeMetrics = document.createElement("div");
         const extra = document.createElement("div");
         const driver = document.createElement("div");
         const state = peer.state === "connected";
         const detailed = peer.statistics_valid === true;
         const driverData = detailed && peer.driver != null ? peer.driver : {};
+        const probes = peer.probe != null ? peer.probe : {};
+        let dataProbe = probes.data;
+
+        if (dataProbe == null && peer.rtt_valid === true)
+        {
+            dataProbe = {
+                valid: true,
+                reachable: true,
+                rtt_us: peer.rtt_us
+            };
+        }
 
         card.className = "wifi-peer";
         head.className = "wifi-peer-head";
         metrics.className = "wifi-peer-metrics";
+        probeMetrics.className = "wifi-peer-probes";
         extra.className = "wifi-peer-extra";
         driver.className = "wifi-driver";
 
@@ -273,9 +312,10 @@
         appendMetric(metrics, "TX PHY", detailed ? formatRate(peer.tx_rate_kbps) : "--");
         appendMetric(metrics, "RX PHY", detailed ? formatRate(peer.rx_rate_kbps) : "--");
 
-        appendText(extra, "span", "", "数据 RTT ");
-        appendText(extra.lastChild, "b", "",
-                   peer.rtt_valid === true ? formatRtt(peer.rtt_us) : "--");
+        appendProbe(probeMetrics, "实时 RTT", probes.realtime);
+        appendProbe(probeMetrics, "视频 RTT", probes.video);
+        appendProbe(probeMetrics, "数据 RTT", dataProbe);
+
         appendText(extra, "span", "", "连接时长 ");
         appendText(extra.lastChild, "b", "", formatDuration(peer.connected_time_s));
         appendText(extra, "span", "", "最近活动 ");
@@ -291,6 +331,7 @@
 
         card.appendChild(head);
         card.appendChild(metrics);
+        card.appendChild(probeMetrics);
         card.appendChild(extra);
         card.appendChild(driver);
 
@@ -617,6 +658,11 @@
         target.security = field(prefix + "Security").value;
         target.password = target.security === "open" ? "" : passwordInput;
 
+        if (target.security !== "open" && target.security !== "wpa2-psk")
+        {
+            throw new Error("Wi-Fi 安全模式无效");
+        }
+
         if (!validAscii(target.ssid, 1, 32))
         {
             throw new Error("SSID 需为 1–32 个允许的 ASCII 字符，不能包含空格");
@@ -681,7 +727,7 @@
             configData = response.data;
             extendedChannelsEnabled = response.data.extended_channels === true;
             populateConfig();
-            setConfigMessage("修改配置后点击保存", "");
+            setConfigMessage("修改配置后点击应用", "");
         }
         catch (error)
         {
@@ -724,7 +770,7 @@
 
         saving = true;
         updateSaveButtons();
-        setConfigMessage("正在保存配置…", "");
+        setConfigMessage("正在应用配置…", "");
 
         try
         {
@@ -733,6 +779,14 @@
             if (!mounted || session !== sessionSerial)
             {
                 return;
+            }
+
+            if (response.data == null ||
+                (response.data.apply !== "none" &&
+                 response.data.apply !== "dynamic" &&
+                 response.data.apply !== "restart"))
+            {
+                throw new Error("Wi-Fi 配置响应数据无效");
             }
 
             configData = {
@@ -744,10 +798,10 @@
             populateConfig();
 
             setConfigMessage(
-                response.data != null && response.data.apply === "restart" ?
-                "配置已保存，Wi-Fi 正在重启" :
-                (response.data != null && response.data.apply === "dynamic" ?
-                 "配置已保存，速率参数已动态更新" : "配置已保存"),
+                response.data.apply === "restart" ?
+                "配置已应用，Wi-Fi 正在重启" :
+                (response.data.apply === "dynamic" ?
+                 "配置已应用，速率参数已动态更新" : "当前配置无需变更"),
                 "is-success"
             );
             handleRefreshClick();
@@ -756,7 +810,7 @@
         {
             if (mounted && session === sessionSerial)
             {
-                setConfigMessage("保存失败：" + error.message, "is-error");
+                setConfigMessage("应用失败：" + error.message, "is-error");
             }
         }
         finally
