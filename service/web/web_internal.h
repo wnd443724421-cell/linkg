@@ -29,7 +29,9 @@ typedef enum
     LINKG_WEB_CMD_WIFI_STATUS_GET      = 1006, // 获取WiFi运行状态
     LINKG_WEB_CMD_CELLULAR_CONFIG_GET  = 1007, // 获取蜂窝网络配置
     LINKG_WEB_CMD_CELLULAR_CONFIG_SET  = 1008, // 设置蜂窝网络配置
-    LINKG_WEB_CMD_CELLULAR_STATUS_GET  = 1009  // 获取蜂窝网络运行状态
+    LINKG_WEB_CMD_CELLULAR_STATUS_GET  = 1009, // 获取蜂窝网络运行状态
+    LINKG_WEB_CMD_TRAFFIC_CONFIG_GET   = 1010, // 获取业务流量分类规则
+    LINKG_WEB_CMD_TRAFFIC_CONFIG_SET   = 1011  // 设置业务流量分类规则
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -65,6 +67,9 @@ int _linkg_web_handler_wifi_status_get(const cJSON *param, char **response);
 int _linkg_web_handler_cellular_config_get(const cJSON *param, char **response);
 int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response);
 int _linkg_web_handler_cellular_status_get(const cJSON *param, char **response);
+
+int _linkg_web_handler_traffic_config_get(const cJSON *param, char **response);
+int _linkg_web_handler_traffic_config_set(const cJSON *param, char **response);
 
 #ifdef __cplusplus
 }

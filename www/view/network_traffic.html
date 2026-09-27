@@ -1,0 +1,92 @@
+<div class="page traffic-rules-page">
+    <div class="page-header traffic-rules-page-header">
+        <div>
+            <h1 class="page-title">流量规则</h1>
+            <p class="page-description">按协议与端口将业务归类为实时或视频流量，未匹配的流量按普通数据处理</p>
+        </div>
+
+        <button id="trafficRulesReloadButton" class="traffic-rules-reload-button" type="button" disabled>
+            重新读取
+        </button>
+    </div>
+
+    <section class="page-card traffic-rules-section">
+        <div class="page-card-header traffic-rules-card-header">
+            <div>
+                <h2 class="page-card-title">业务分类规则</h2>
+                <p>同一种协议的端口范围不能重叠，TCP 与 UDP 可以使用相同端口范围</p>
+            </div>
+
+            <div class="traffic-rules-card-tools">
+                <span id="trafficRulesCount" class="traffic-rules-count">-- / 16 条</span>
+                <button id="trafficRulesAddButton" class="traffic-rules-add-button" type="button" disabled>
+                    添加规则
+                </button>
+            </div>
+        </div>
+
+        <form id="trafficRulesForm" novalidate>
+            <div id="trafficRulesList" class="traffic-rules-list" aria-busy="true">
+                <div class="traffic-rules-empty">
+                    <strong>正在读取流量规则…</strong>
+                    <span>请稍候</span>
+                </div>
+            </div>
+
+            <div class="traffic-rules-footer">
+                <span id="trafficRulesMessage" class="traffic-rules-message" role="status" aria-live="polite">
+                    正在读取配置…
+                </span>
+
+                <div class="traffic-rules-actions">
+                    <button id="trafficRulesResetButton"
+                        class="traffic-rules-button traffic-rules-button-secondary"
+                        type="button" disabled>还原</button>
+                    <button id="trafficRulesApplyButton"
+                        class="traffic-rules-button traffic-rules-button-primary"
+                        type="submit" disabled>应用配置</button>
+                </div>
+            </div>
+        </form>
+    </section>
+
+    <template id="trafficRuleTemplate">
+        <fieldset class="traffic-rule-row">
+            <legend class="traffic-rule-legend">规则 <span data-role="index">1</span></legend>
+
+            <div class="traffic-rule-fields">
+                <label class="traffic-rule-field">
+                    <span>业务类型</span>
+                    <select data-field="class">
+                        <option value="realtime">实时业务</option>
+                        <option value="video">视频业务</option>
+                    </select>
+                </label>
+
+                <label class="traffic-rule-field">
+                    <span>协议</span>
+                    <select data-field="protocol">
+                        <option value="udp">UDP</option>
+                        <option value="tcp">TCP</option>
+                    </select>
+                </label>
+
+                <label class="traffic-rule-field">
+                    <span>起始端口</span>
+                    <input data-field="start" type="number" min="1" max="65535" step="1"
+                        inputmode="numeric" autocomplete="off" placeholder="1–65535">
+                </label>
+
+                <label class="traffic-rule-field">
+                    <span>结束端口</span>
+                    <input data-field="end" type="number" min="1" max="65535" step="1"
+                        inputmode="numeric" autocomplete="off" placeholder="1–65535">
+                </label>
+
+                <button class="traffic-rule-remove-button" data-action="remove" type="button">删除</button>
+            </div>
+
+            <p class="traffic-rule-error" data-role="error" hidden></p>
+        </fieldset>
+    </template>
+</div>

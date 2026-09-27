@@ -36,6 +36,8 @@ static const linkg_web_command_entry_t g_web_commands[] =
     {LINKG_WEB_CMD_CELLULAR_CONFIG_GET, _linkg_web_handler_cellular_config_get},
     {LINKG_WEB_CMD_CELLULAR_CONFIG_SET, _linkg_web_handler_cellular_config_set},
     {LINKG_WEB_CMD_CELLULAR_STATUS_GET, _linkg_web_handler_cellular_status_get},
+    {LINKG_WEB_CMD_TRAFFIC_CONFIG_GET,  _linkg_web_handler_traffic_config_get},
+    {LINKG_WEB_CMD_TRAFFIC_CONFIG_SET,  _linkg_web_handler_traffic_config_set},
     {LINKG_WEB_CMD_INVALID,             NULL}
 };
 

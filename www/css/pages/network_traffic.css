@@ -1,0 +1,244 @@
+/* 流量规则页面：在 960px 框架内保持规则字段直接对齐，并允许窄屏纵向重排。 */
+.traffic-rules-page { padding-bottom: 8px; }
+.traffic-rules-page [hidden] { display: none !important; }
+.traffic-rules-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+}
+.traffic-rules-section { margin-top: 0; }
+.traffic-rules-reload-button,
+.traffic-rules-add-button,
+.traffic-rules-button,
+.traffic-rule-remove-button {
+    border-radius: var(--linkg-radius-medium);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.traffic-rules-reload-button {
+    min-width: 78px;
+    height: 34px;
+    padding: 0 13px;
+    border: 1px solid var(--linkg-color-border);
+    background: var(--linkg-color-surface);
+    color: var(--linkg-color-text-secondary);
+}
+.traffic-rules-reload-button:hover:not(:disabled) {
+    border-color: var(--linkg-color-primary);
+    color: var(--linkg-color-primary);
+}
+.traffic-rules-card-header { min-height: 66px; }
+.traffic-rules-card-header > div:first-child { min-width: 0; }
+.traffic-rules-card-header p {
+    margin: 3px 0 0;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.traffic-rules-card-tools {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 12px;
+}
+.traffic-rules-count {
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.traffic-rules-add-button {
+    height: 32px;
+    padding: 0 12px;
+    background: var(--linkg-color-primary-soft);
+    color: var(--linkg-color-primary);
+}
+.traffic-rules-add-button:hover:not(:disabled) { color: var(--linkg-color-primary-hover); }
+.traffic-rules-list {
+    min-height: 164px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 20px 20px;
+}
+.traffic-rules-empty {
+    min-height: 126px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 20px;
+    text-align: center;
+}
+.traffic-rules-empty strong {
+    color: var(--linkg-color-text);
+    font-size: 14px;
+    font-weight: 600;
+}
+.traffic-rules-empty span {
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+}
+.traffic-rule-row {
+    min-width: 0;
+    margin: 0;
+    padding: 11px 14px 14px;
+    border: 1px solid var(--linkg-color-border-light);
+    border-radius: var(--linkg-radius-large);
+    background: #fbfcfe;
+}
+.traffic-rule-row.has-error { border-color: rgba(220, 38, 38, 0.48); }
+.traffic-rule-legend {
+    padding: 0 5px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.traffic-rule-fields {
+    display: grid;
+    grid-template-columns:
+        minmax(120px, 1.15fr)
+        minmax(88px, 0.75fr)
+        minmax(104px, 1fr)
+        minmax(104px, 1fr)
+        54px;
+    align-items: end;
+    gap: 12px;
+}
+.traffic-rule-field {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.traffic-rule-field > span {
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+}
+.traffic-rule-field input,
+.traffic-rule-field select {
+    width: 100%;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+    outline: none;
+    background: #fff;
+    color: var(--linkg-color-text);
+    font-size: 13px;
+}
+.traffic-rule-field input {
+    font-variant-numeric: tabular-nums;
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+.traffic-rule-field input::-webkit-inner-spin-button,
+.traffic-rule-field input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+.traffic-rule-field input:focus,
+.traffic-rule-field select:focus {
+    border-color: var(--linkg-color-primary);
+    box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
+}
+.traffic-rule-field input[aria-invalid="true"],
+.traffic-rule-field select[aria-invalid="true"] {
+    border-color: var(--linkg-color-danger);
+    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.08);
+}
+.traffic-rule-field input:disabled,
+.traffic-rule-field select:disabled {
+    background: var(--linkg-color-background);
+    color: var(--linkg-color-text-muted);
+}
+.traffic-rule-remove-button {
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--linkg-color-border);
+    background: #fff;
+    color: var(--linkg-color-text-secondary);
+}
+.traffic-rule-remove-button:hover:not(:disabled) {
+    border-color: rgba(220, 38, 38, 0.45);
+    background: #fff7f7;
+    color: var(--linkg-color-danger);
+}
+.traffic-rule-error {
+    margin: 9px 0 0;
+    color: var(--linkg-color-danger);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.traffic-rules-footer {
+    min-height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--linkg-color-border-light);
+}
+.traffic-rules-message {
+    min-width: 0;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+}
+.traffic-rules-message.is-error { color: var(--linkg-color-danger); }
+.traffic-rules-message.is-success { color: var(--linkg-color-success); }
+.traffic-rules-actions { display: flex; flex: none; gap: 8px; }
+.traffic-rules-button {
+    height: 34px;
+    padding: 0 15px;
+}
+.traffic-rules-button-secondary {
+    border: 1px solid var(--linkg-color-border);
+    background: #fff;
+}
+.traffic-rules-button-secondary:hover:not(:disabled) { background: var(--linkg-color-background); }
+.traffic-rules-button-primary {
+    background: var(--linkg-color-primary);
+    color: #fff;
+}
+.traffic-rules-button-primary:hover:not(:disabled) { background: var(--linkg-color-primary-hover); }
+.traffic-rules-reload-button:focus-visible,
+.traffic-rules-add-button:focus-visible,
+.traffic-rules-button:focus-visible,
+.traffic-rule-remove-button:focus-visible {
+    outline: 2px solid var(--linkg-color-primary);
+    outline-offset: 2px;
+}
+.traffic-rules-reload-button:disabled,
+.traffic-rules-add-button:disabled,
+.traffic-rules-button:disabled,
+.traffic-rule-remove-button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+@media (max-width: 1100px) {
+    .traffic-rules-list,
+    .traffic-rules-footer { padding-right: 16px; padding-left: 16px; }
+    .traffic-rule-fields {
+        grid-template-columns:
+            minmax(112px, 1.1fr)
+            minmax(80px, 0.7fr)
+            minmax(96px, 1fr)
+            minmax(96px, 1fr)
+            54px;
+        gap: 10px;
+    }
+}
+@media (max-width: 920px) {
+    .traffic-rules-page-header { flex-direction: column; gap: 10px; }
+    .traffic-rules-card-header { align-items: flex-start; }
+    .traffic-rule-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .traffic-rule-remove-button { justify-self: start; }
+}
+@media (max-width: 620px) {
+    .traffic-rules-card-header,
+    .traffic-rules-footer { align-items: stretch; flex-direction: column; }
+    .traffic-rules-card-tools { justify-content: space-between; }
+    .traffic-rule-fields { grid-template-columns: minmax(0, 1fr); }
+    .traffic-rules-actions { justify-content: flex-end; }
+}
