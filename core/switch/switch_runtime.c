@@ -19,11 +19,11 @@
 #include "linkg_time.h"
 
 #include "switch_event.h"
+#include "switch_maintenance.h"
 #include "switch_observation.h"
 #include "switch_plan.h"
-#include "switch_report.h"
-#include "switch_maintenance.h"
 #include "switch_policy.h"
+#include "switch_report.h"
 
 /****************************** 内部辅助 ******************************/
 
@@ -39,7 +39,6 @@ static bool _linkg_switch_runtime_expected_error(int error)
            error == -ESTALE ||
            error == -ESHUTDOWN;
 }
-
 
 /**
  * @brief 记录Switch周期任务的非预期错误。
@@ -112,17 +111,31 @@ static void _linkg_switch_runtime_process_events(uint64_t now_us)
 }
 
 /**
- * @brief 执行STA当前到期的一轮Switch观测刷新。
+ * @brief 执行STA当前到期或主动请求的一轮观测与策略处理。
+ *
+ * STA仅存在一个直接AP Peer。
+ *
+ * 正常周期由Observation的250ms周期驱动；
+ * 主动请求允许在正常周期之间额外执行一轮检查，
+ * 但不改变原有Observation周期。
+ *
+ * 只有当前Peer成功刷新Observation后，才允许执行本轮Policy。
  */
-static void _linkg_switch_runtime_process_observation(uint64_t now_us)
+static void _linkg_switch_runtime_process_sta(uint64_t now_us)
 {
-    uint8_t  peer_node_ids[LINKG_SWITCH_PEER_MAX];
-    uint32_t peer_generations[LINKG_SWITCH_PEER_MAX];
-    uint32_t peer_count;
+    uint32_t peer_generation;
     uint32_t index;
+    uint8_t  peer_node_id;
+    bool     periodic_due;
+    bool     immediate_pending;
+    bool     peer_found;
     int      ret;
 
-    peer_count = 0U;
+    peer_node_id     = 0U;
+    peer_generation  = LINKG_SWITCH_PEER_GENERATION_INVALID;
+    periodic_due     = false;
+    immediate_pending= false;
+    peer_found       = false;
 
     pthread_mutex_lock(&g_switch.lock);
 
@@ -134,15 +147,21 @@ static void _linkg_switch_runtime_process_observation(uint64_t now_us)
         return;
     }
 
-    if (g_switch.next_observation_us != 0U &&
-        now_us < g_switch.next_observation_us)
+    periodic_due = g_switch.next_observation_us == 0U || now_us >= g_switch.next_observation_us;
+
+    immediate_pending = g_switch.sta_check_pending;
+
+    if (!periodic_due && !immediate_pending)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return;
     }
 
-    // 周期任务不补跑错过的历史周期，只从本轮重新安排下一次。
-    g_switch.next_observation_us = now_us + LINKG_SWITCH_OBSERVATION_INTERVAL_US;
+    if (periodic_due)
+    {
+        // 周期任务不补跑错过的历史周期，只从本轮重新安排下一次。
+        g_switch.next_observation_us = now_us + LINKG_SWITCH_OBSERVATION_INTERVAL_US;
+    }
 
     for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
     {
@@ -151,44 +170,23 @@ static void _linkg_switch_runtime_process_observation(uint64_t now_us)
             continue;
         }
 
-        peer_node_ids[peer_count]    = g_switch.peers[index].peer_node_id;
-        peer_generations[peer_count] = g_switch.peers[index].generation;
-        peer_count++;
+        peer_node_id    = g_switch.peers[index].peer_node_id;
+        peer_generation = g_switch.peers[index].generation;
+        peer_found      = true;
+        break;
     }
 
     pthread_mutex_unlock(&g_switch.lock);
 
-    for (index = 0U; index < peer_count; index++)
+    if (!peer_found)
     {
-        ret = linkg_switch_observation_refresh(peer_node_ids[index], peer_generations[index], now_us);
-        _linkg_switch_runtime_log_error("observation refresh", ret);
-    }
-}
-
-/**
- * @brief 执行STA当前到期的链路切换策略检查。
- */
-static void _linkg_switch_runtime_process_policy(uint64_t now_us)
-{
-    uint64_t deadline_us;
-    bool     due;
-    int      ret;
-
-    pthread_mutex_lock(&g_switch.lock);
-
-    due = false;
-
-    if (g_switch.initialized &&
-        g_switch.running &&
-        g_switch.role == LINKG_DEVICE_ROLE_STA)
-    {
-        deadline_us = linkg_switch_policy_next_deadline_locked();
-        due         = deadline_us <= now_us;
+        return;
     }
 
-    pthread_mutex_unlock(&g_switch.lock);
+    ret = linkg_switch_observation_refresh(peer_node_id, peer_generation, now_us);
+    _linkg_switch_runtime_log_error("observation refresh", ret);
 
-    if (!due)
+    if (ret != 0)
     {
         return;
     }
@@ -297,8 +295,7 @@ static void _linkg_switch_runtime_process_maintenance(uint64_t now_us)
  */
 static void _linkg_switch_runtime_process_due(uint64_t now_us)
 {
-    _linkg_switch_runtime_process_observation(now_us);
-    _linkg_switch_runtime_process_policy(now_us);
+    _linkg_switch_runtime_process_sta(now_us);
     _linkg_switch_runtime_process_report(now_us);
     _linkg_switch_runtime_process_plan(now_us);
     _linkg_switch_runtime_process_maintenance(now_us);
@@ -334,12 +331,6 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
             g_switch.next_observation_us < deadline_us)
         {
             deadline_us = g_switch.next_observation_us;
-        }
-
-        candidate_us = linkg_switch_policy_next_deadline_locked();
-        if (candidate_us < deadline_us)
-        {
-            deadline_us = candidate_us;
         }
 
         candidate_us = linkg_switch_plan_next_deadline_locked();
@@ -387,7 +378,7 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
 /****************************** 工作线程 ******************************/
 
 /**
- * @brief 调度Switch内部事件、周期观测、质量上报、计划同步及Maintenance事务。
+ * @brief 调度Switch内部事件、STA观测与策略、AP质量上报、计划同步及Maintenance事务。
  */
 void linkg_switch_worker(linkg_thread_t *thread, void *user_data)
 {
@@ -407,8 +398,8 @@ void linkg_switch_worker(linkg_thread_t *thread, void *user_data)
 
     pthread_mutex_unlock(&g_switch.lock);
 
-    descriptor.fd     = linkg_thread_get_wakeup_fd(thread);
-    descriptor.events = POLLIN;
+    descriptor.fd      = linkg_thread_get_wakeup_fd(thread);
+    descriptor.events  = POLLIN;
     descriptor.revents = 0;
 
     failure = 0;

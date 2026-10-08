@@ -8,9 +8,8 @@
 
 #include <stdint.h>
 
-/****************************** 策略检查 ******************************/
+/****************************** 策略处理 ******************************/
 
-int      linkg_switch_policy_process(uint64_t now_us);
-uint64_t linkg_switch_policy_next_deadline_locked(void);
+int linkg_switch_policy_process(uint64_t now_us);
 
 #endif
