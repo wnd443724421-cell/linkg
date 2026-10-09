@@ -34,13 +34,13 @@
 
 typedef struct
 {
-    linkg_switch_observation_t         observation;                  // 最近一次完整切换观测快照
-    linkg_switch_traffic_sampler_t     wifi_traffic_sampler;         // Wi-Fi Path流量采样基线
-    linkg_switch_loss_sampler_t        wifi_downlink_loss_sampler;   // AP到STA下行丢包采样基线
-    linkg_switch_loss_observation_t    remote_wifi_uplink_loss;      // AP上报的STA到AP上行丢包
-    linkg_switch_plan_sync_runtime_t   plan_sync;                    // 当前STA到AP发送计划同步事务
-    uint32_t                           remote_wifi_uplink_report_id; // 最近接收的Wi-Fi上行质量报告编号
-    uint32_t                           next_plan_message_id;         // 下一发送计划同步消息编号基线
+    linkg_switch_observation_t         observation;                    // 最近一次完整切换观测快照
+    linkg_switch_traffic_sampler_t     wifi_traffic_sampler;           // Wi-Fi Path流量采样基线
+    linkg_switch_loss_sampler_t        wifi_downlink_loss_sampler;     // AP到STA下行丢包采样基线
+    linkg_switch_loss_observation_t    remote_wifi_uplink_loss;        // AP上报的STA到AP上行丢包
+    linkg_switch_plan_sync_runtime_t   plan_sync;                      // 当前STA到AP发送计划同步事务
+    uint32_t                           remote_wifi_uplink_report_id;   // 最近接收的Wi-Fi上行质量报告编号
+    uint32_t                           next_plan_message_id;           // 下一发送计划同步消息编号基线
 } linkg_switch_sta_peer_runtime_t;
 
 typedef struct

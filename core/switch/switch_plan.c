@@ -1016,6 +1016,28 @@ int linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_generatio
         return ret;
     }
 
+    /**
+     * 校验Primary对应的Peer Path。
+     */
+    ret = _linkg_switch_plan_validate_path(peer_node_id, plan->primary_link_id);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    /**
+     * Secondary只要有效，就必须存在可用Peer Path。
+     * SINGLE模式也需要校验备用链路。
+     */
+    if (plan->secondary_link_id != LINKG_LINK_ID_INVALID)
+    {
+        ret = _linkg_switch_plan_validate_path(peer_node_id, plan->secondary_link_id);
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+
     pthread_mutex_lock(&g_switch.lock);
 
     if (!g_switch.initialized)

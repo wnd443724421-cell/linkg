@@ -107,6 +107,21 @@ static int _linkg_switch_policy_switch_to_cellular(const linkg_switch_policy_inp
 /****************************** 单链路处理 ******************************/
 
 /**
+ * @brief 请求进入Wi-Fi主链路双发健康检查。
+ *
+ * 当前暂未实现健康检查计划提交。
+ */
+static int _linkg_switch_policy_enter_dual_verify(const linkg_switch_policy_input_t *input, uint64_t now_us)
+{
+    if (input == NULL || now_us == 0U)
+    {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+/**
  * @brief 处理Wi-Fi主链路单发状态。
  */
 static int _linkg_switch_policy_process_wifi_single(const linkg_switch_policy_input_t *input, uint64_t now_us)
