@@ -594,17 +594,40 @@ int linkg_network_restart_wifi(void)
     return 0;
 }
 
-/**
- * @brief 请求Cellular完整重启。
- */
 int linkg_network_restart_cellular(void)
 {
+    bool maintenance_started;
+    int  ret;
+
     if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
     {
         return -ENODEV;
     }
 
-    return _linkg_network_cellular_restart();
+    maintenance_started = false;
+
+    ret = linkg_switch_begin_maintenance(LINKG_LINK_ACCESS_CELLULAR);
+    if (ret == 0)
+    {
+        maintenance_started = true;
+    }
+    else if (ret != -EALREADY)
+    {
+        return ret;
+    }
+
+    ret = _linkg_network_cellular_restart();
+    if (ret != 0)
+    {
+        if (maintenance_started)
+        {
+            (void)linkg_switch_end_maintenance(LINKG_LINK_ACCESS_CELLULAR);
+        }
+
+        return ret;
+    }
+
+    return 0;
 }
 
 /****************************** 状态查询 ******************************/

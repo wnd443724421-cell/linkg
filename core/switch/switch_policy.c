@@ -151,72 +151,6 @@ static linkg_link_access_t _linkg_switch_policy_get_primary_access(const linkg_s
     return LINKG_LINK_ACCESS_NONE;
 }
 
-
-/**
- * @brief 为当前发送计划补充可用备用链路。
- *
- * 仅负责添加Secondary，不改变Primary和发送模式。
- *
- * @return 1表示已更新计划，0表示无需更新，负值表示失败。
- */
-static int _linkg_switch_policy_update_backup(const linkg_switch_policy_input_t *input, uint64_t now_us)
-{
-    linkg_send_plan_t plan;
-    uint32_t          backup_link_id;
-    int               ret;
-
-    if (input == NULL || now_us == 0U)
-    {
-        return -EINVAL;
-    }
-
-    if (input->plan.mode != LINKG_SEND_MODE_SINGLE ||
-        input->plan.secondary_link_id != LINKG_LINK_ID_INVALID)
-    {
-        return 0;
-    }
-
-    backup_link_id = LINKG_LINK_ID_INVALID;
-
-    // 当前WiFi为主链路，检查5G备用链路。
-    if (input->plan.primary_link_id == input->observation.wifi.link_id &&
-        input->observation.wifi.available &&
-        input->observation.cellular.available &&
-        !input->wifi_blocked &&
-        !input->cellular_blocked)
-    {
-        backup_link_id = input->observation.cellular.link_id;
-    }
-    // 当前Cellular为主链路，检查WiFi备用链路。
-    else if (input->plan.primary_link_id == input->observation.cellular.link_id &&
-             input->observation.cellular.available &&
-             input->observation.wifi.available &&
-             !input->cellular_blocked &&
-             !input->wifi_blocked &&
-             (!input->observation.wifi.radio.valid ||
-              input->observation.wifi.radio.connected))
-    {
-        backup_link_id = input->observation.wifi.link_id;
-    }
-
-    if (backup_link_id == LINKG_LINK_ID_INVALID ||
-        backup_link_id == input->plan.primary_link_id)
-    {
-        return 0;
-    }
-
-    plan = input->plan;
-    plan.secondary_link_id = backup_link_id;
-
-    ret = linkg_switch_plan_commit_local(
-        input->peer_node_id,
-        input->peer_generation,
-        &plan,
-        now_us);
-
-    return ret == 0 ? 1 : ret;
-}
-
 /****************************** 策略处理 ******************************/
 
 /**
@@ -245,12 +179,6 @@ int linkg_switch_policy_process(uint64_t now_us)
     if (!_linkg_switch_policy_input_valid(&input))
     {
         return 0;
-    }
-
-    ret = _linkg_switch_policy_update_backup(&input, now_us);
-    if (ret != 0)
-    {
-        return ret < 0 ? ret : 0;
     }
 
     primary_access = _linkg_switch_policy_get_primary_access(&input);

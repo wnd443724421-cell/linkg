@@ -48,6 +48,8 @@ static const char *_linkg_discovery_access_name(linkg_link_access_t access)
  */
 static uint32_t _linkg_discovery_report_link_id(const linkg_discovery_report_t *report, linkg_link_access_t access)
 {
+    linkg_link_t *link;
+
     if (report == NULL)
     {
         return LINKG_LINK_ID_INVALID;
@@ -59,21 +61,26 @@ static uint32_t _linkg_discovery_report_link_id(const linkg_discovery_report_t *
         {
             return LINKG_LINK_ID_INVALID;
         }
-
-        return linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
     }
-
-    if (access == LINKG_LINK_ACCESS_CELLULAR)
+    else if (access == LINKG_LINK_ACCESS_CELLULAR)
     {
         if ((report->path_flags & LINKG_DISCOVERY_PATH_CELLULAR_VALID) == 0U)
         {
             return LINKG_LINK_ID_INVALID;
         }
-
-        return linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
+    }
+    else
+    {
+        return LINKG_LINK_ID_INVALID;
     }
 
-    return LINKG_LINK_ID_INVALID;
+    link = linkg_link_manager_get_by_access(access);
+    if (link == NULL || !linkg_link_is_running(link))
+    {
+        return LINKG_LINK_ID_INVALID;
+    }
+
+    return linkg_link_get_id(link);
 }
 
 /**
@@ -119,7 +126,7 @@ int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t 
         return -EINVAL;
     }
 
-    link_id = linkg_link_manager_get_id(access);
+    link_id = _linkg_discovery_report_link_id(report, access);
     if (link_id == LINKG_LINK_ID_INVALID)
     {
         return 0;
@@ -128,11 +135,7 @@ int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t 
     ret = linkg_node_register_path(report->node.node_id, link_id, endpoint);
     if (ret != 0)
     {
-        LINKG_LOG_WARN("DISCOVERY: access path register failed, node=%u access=%s link=%u error=%d",
-                       (unsigned int)report->node.node_id,
-                       _linkg_discovery_access_name(access),
-                       link_id,
-                       ret);
+        LINKG_LOG_WARN("DISCOVERY: register path failed, node=%u, link=%u, access=%d, error=%d", (unsigned int)report->node.node_id, link_id, (int)access, ret);
         return ret;
     }
 
@@ -460,8 +463,7 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
     ret = linkg_node_register_peer(&report->node);
     if (ret != 0)
     {
-        LINKG_LOG_WARN("DISCOVERY: peer register failed, node=%u stage=node error=%d",
-                       (unsigned int)report->node.node_id, ret);
+        LINKG_LOG_WARN("DISCOVERY: peer register failed, node=%u stage=node error=%d", (unsigned int)report->node.node_id, ret);
         return ret;
     }
 
@@ -599,8 +601,7 @@ int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
 
     if (first_error == 0)
     {
-        LINKG_LOG_INFO("DISCOVERY: peer session reset complete, node=%u session=%llu",
-                       (unsigned int)node_id, (unsigned long long)peer->report.session_id);
+        LINKG_LOG_INFO("DISCOVERY: peer session reset complete, node=%u session=%llu", (unsigned int)node_id, (unsigned long long)peer->report.session_id);
     }
 
     return first_error;

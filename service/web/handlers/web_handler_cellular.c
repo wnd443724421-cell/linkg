@@ -718,6 +718,15 @@ static int _linkg_web_cellular_status_build_data(const linkg_cellular_data_statu
         return -ENOMEM;
     }
 
+    if (data->pdp_apn_valid && data->pdp_apn[0] != '\0')
+    {
+        ret = linkg_json_add_string(object, "pdp_apn", data->pdp_apn);
+        if (ret != LINKG_JSON_OK)
+        {
+            goto error;
+        }
+    }
+
     if (data->ipv4_valid && inet_ntop(AF_INET, &data->ipv4, address, sizeof(address)) != NULL)
     {
         ret = linkg_json_add_string(object, "ipv4", address);

@@ -740,7 +740,7 @@ static void _linkg_tun_process_read_batch(linkg_transport_class_t traffic_class,
     memset(&context, 0, sizeof(context));
 
     context.traffic_class     = traffic_class;
-    context.policy            = LINKG_SCHEDULER_POLICY_REDUNDANT;
+    context.policy            = LINKG_SCHEDULER_POLICY_DEFAULT;
     context.specified_link_id = LINKG_LINK_ID_INVALID;
 
     ret = linkg_scheduler_submit_batch(&context, g_tun.tx_items, item_count);

@@ -80,10 +80,7 @@ int linkg_link_runtime_create(linkg_link_t *link, const linkg_link_config_t *con
         goto fail_io_lock;
     }
 
-    ret = snprintf(rx_thread_name,
-                   sizeof(rx_thread_name),
-                   "link-rx-%u",
-                   (unsigned int)link->id);
+    ret = snprintf(rx_thread_name, sizeof(rx_thread_name), "rx-%s", link->name);
     if (ret < 0 || (size_t)ret >= sizeof(rx_thread_name))
     {
         ret = -EINVAL;

@@ -86,6 +86,9 @@ typedef struct
     struct in_addr         ipv4;              // 模组当前PDP IPv4地址
     bool                   global_ipv6_valid; // 模组PDP全局IPv6地址是否有效
     struct in6_addr        global_ipv6;       // 模组当前PDP全局IPv6地址
+    bool                   context_valid;     // Owner是否已经选定数据PDP上下文
+    uint8_t                cid;               // 当前选中的数据PDP上下文ID
+    char                   apn[LINKG_CELLULAR_APN_MAX + 1U]; // 当前选中PDP上下文的实际APN
 } cellular_status_pdp_info_t;
 
 /****************************** USB网络设备状态 ******************************/
@@ -191,8 +194,8 @@ int cellular_status_deinit(void);
 
 /****************************** PDP查询目标 ******************************/
 
-int  cellular_status_set_pdp_cid(uint8_t cid);
-void cellular_status_clear_pdp_cid(void);
+int  cellular_status_set_pdp_context(uint8_t cid, const char *apn);
+void cellular_status_clear_pdp_context(void);
 
 /****************************** 定时处理 ******************************/
 

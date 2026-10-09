@@ -18,6 +18,9 @@
 #include "linkg_discovery.h"
 #include "linkg_log.h"
 #include "linkg_switch.h"
+#include "linkg_link_manager.h"
+#include "linkg_node.h"
+#include "linkg_system_resources.h"
 
 /****************************** 内部辅助 ******************************/
 
@@ -159,13 +162,38 @@ int _linkg_network_wifi_run(linkg_thread_t *owner_thread)
 /**
  * @brief 停止Wi-Fi模块运行资源。
  *
- * 停止成功后模块仍处于已初始化状态，后续由deinit释放初始化资源。
+ * 停止旧Link前，先退役所有直接Peer关联的Wi-Fi Path，
+ * 确保旧Link ID仍有效时可以完成TX Queue清理。
  */
 int _linkg_network_wifi_stop(void)
 {
+    uint32_t link_id;
+    uint32_t node_id;
+    int      ret;
+
     if (!_linkg_network_wifi_is_initialized())
     {
         return 0;
+    }
+
+    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+
+    if (link_id != LINKG_LINK_ID_INVALID)
+    {
+        for (node_id = LINKG_RESOURCE_NODE_ID_MIN; node_id <= LINKG_RESOURCE_NODE_ID_MAX; node_id++)
+        {
+            ret = linkg_node_unregister_path((uint8_t)node_id, link_id);
+            if (ret == -ENOENT)
+            {
+                continue;
+            }
+
+            if (ret != 0)
+            {
+                LINKG_LOG_ERROR("retire Wi-Fi path failed, node=%u, link=%u, error=%d", (unsigned int)node_id, link_id, ret);
+                return ret;
+            }
+        }
     }
 
     return linkg_wifi_stop();

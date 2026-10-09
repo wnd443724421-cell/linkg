@@ -25,10 +25,11 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_SWITCH_THREAD_NAME              "linkg-switch"                     // Switch后台线程名称
-#define LINKG_SWITCH_PEER_MAX                 LINKG_RESOURCE_NETWORK_STA_MAX     // 最大直接Peer运行槽位数量
-#define LINKG_SWITCH_PEER_GENERATION_INVALID  0U                                 // 无效Peer运行代际
-#define LINKG_SWITCH_OBSERVATION_INTERVAL_US  250000ULL                          // 默认观测快照刷新周期
+#define LINKG_SWITCH_THREAD_NAME                "linkg-switch"                     // Switch后台线程名称
+#define LINKG_SWITCH_PEER_MAX                   LINKG_RESOURCE_NETWORK_STA_MAX     // 最大直接Peer运行槽位数量
+#define LINKG_SWITCH_PEER_GENERATION_INVALID    0U                                 // 无效Peer运行代际
+#define LINKG_SWITCH_OBSERVATION_INTERVAL_US    250000ULL                          // 默认观测快照刷新周期
+#define LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US 500000ULL                          // 发送计划硬校准周期
 
 /****************************** Peer运行状态 ******************************/
 
@@ -89,6 +90,7 @@ typedef struct
     uint32_t                                 next_peer_generation;         // 下一Peer运行代际编号基线
     uint32_t                                 next_maintenance_message_id;  // 下一Maintenance事务消息编号基线
     uint64_t                                 next_observation_us;          // STA下一轮观测刷新时间
+    uint64_t                                 next_reconcile_us;            // AP/STA下一轮发送计划校准时间
     uint64_t                                 next_report_us;               // AP下一轮质量上报时间
     uint64_t                                 next_policy_us;               // STA下一轮切换策略检查时间
     bool                                     sta_check_pending;            // 是否存在待执行的立即策略检查

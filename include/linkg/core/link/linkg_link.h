@@ -78,8 +78,8 @@ typedef struct
 {
     const char                     *name;              // 链路名称
     linkg_link_access_t             access;            // 链路接入类型
-    uint32_t                        tx_batch_size;      // 单次发送批次最大包数
-    uint32_t                        rx_batch_size;      // 内部接收批次最大包数
+    uint32_t                        tx_batch_size;     // 单次发送批次最大包数
+    uint32_t                        rx_batch_size;     // 内部接收批次最大包数
     linkg_packet_pool_t            *packet_pool;       // 链路接收使用的数据包池
     linkg_link_receive_batch_func_t receive;           // 批量接收处理函数
     void                           *receive_user_data; // 接收处理私有数据

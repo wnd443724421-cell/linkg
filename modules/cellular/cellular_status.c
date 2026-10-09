@@ -1473,14 +1473,21 @@ int cellular_status_deinit(void)
 /****************************** PDP查询目标 ******************************/
 
 /**
- * @brief 设置Owner选定的PDP事实查询目标CID。
+ * @brief 设置Owner选定的PDP上下文身份和事实查询目标。
  */
-int cellular_status_set_pdp_cid(uint8_t cid)
+int cellular_status_set_pdp_context(uint8_t cid, const char *apn)
 {
+    size_t   apn_length;
     uint64_t now_ms;
     int      ret;
 
-    if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX)
+    if (cid < RG255_PDP_CONTEXT_ID_MIN || cid > RG255_PDP_CONTEXT_ID_MAX || apn == NULL)
+    {
+        return -EINVAL;
+    }
+
+    apn_length = strnlen(apn, LINKG_CELLULAR_APN_MAX + 1U);
+    if (apn_length == 0U || apn_length > LINKG_CELLULAR_APN_MAX)
     {
         return -EINVAL;
     }
@@ -1505,17 +1512,23 @@ int cellular_status_set_pdp_cid(uint8_t cid)
         goto unlock;
     }
 
-    if (g_cellular_status.pdp_cid_valid && g_cellular_status.pdp_cid == cid)
+    if (g_cellular_status.pdp_cid_valid &&
+        g_cellular_status.pdp_cid == cid &&
+        g_cellular_status.info.pdp.context_valid &&
+        strcmp(g_cellular_status.info.pdp.apn, apn) == 0)
     {
         ret = 0;
         goto unlock;
     }
 
     _cellular_status_invalidate_pdp_locked();
-    g_cellular_status.pdp_cid          = cid;
-    g_cellular_status.pdp_cid_valid    = true;
-    g_cellular_status.deadlines.pdp_ms = now_ms;
-    ret                                = 0;
+    g_cellular_status.pdp_cid                = cid;
+    g_cellular_status.pdp_cid_valid          = true;
+    g_cellular_status.info.pdp.context_valid = true;
+    g_cellular_status.info.pdp.cid           = cid;
+    memcpy(g_cellular_status.info.pdp.apn, apn, apn_length + 1U);
+    g_cellular_status.deadlines.pdp_ms        = now_ms;
+    ret                                       = 0;
 
 unlock:
     pthread_mutex_unlock(&g_cellular_status.lock);
@@ -1524,9 +1537,9 @@ unlock:
 }
 
 /**
- * @brief 清除PDP事实查询目标并使旧CID缓存失效。
+ * @brief 清除PDP上下文身份和事实查询目标并使旧缓存失效。
  */
-void cellular_status_clear_pdp_cid(void)
+void cellular_status_clear_pdp_context(void)
 {
     pthread_mutex_lock(&g_cellular_status.lock);
 
@@ -1771,6 +1784,12 @@ int cellular_status_get_snapshot(linkg_cellular_status_snapshot_t *snapshot)
     snapshot->data.pdp_valid      = info.pdp.active_meta.confirmed;
     snapshot->data.pdp_active     = info.pdp.active_meta.confirmed && info.pdp.active;
     snapshot->data.pdp_updated_ms = info.pdp.active_meta.updated_ms;
+
+    snapshot->data.pdp_apn_valid = info.pdp.context_valid && info.pdp.apn[0] != '\0';
+    if (snapshot->data.pdp_apn_valid)
+    {
+        memcpy(snapshot->data.pdp_apn, info.pdp.apn, sizeof(snapshot->data.pdp_apn));
+    }
 
     snapshot->data.ipv4_valid = info.host.ipv4_meta.confirmed && info.host.ipv4_valid;
     snapshot->data.ipv4       = info.host.ipv4;

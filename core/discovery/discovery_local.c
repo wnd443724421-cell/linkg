@@ -167,7 +167,7 @@ static int _linkg_discovery_prepare_wifi_endpoint(linkg_path_endpoint_t *endpoin
 {
     struct sockaddr_in *address;
     struct in_addr      wifi_address;
-    uint32_t            link_id;
+    linkg_link_t       *link;
     bool                interface_up;
     int                 ret;
 
@@ -178,8 +178,8 @@ static int _linkg_discovery_prepare_wifi_endpoint(linkg_path_endpoint_t *endpoin
 
     memset(endpoint, 0, sizeof(*endpoint));
 
-    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
-    if (link_id == LINKG_LINK_ID_INVALID)
+    link = linkg_link_manager_get_by_access(LINKG_LINK_ACCESS_WIFI);
+    if (link == NULL || !linkg_link_is_running(link))
     {
         return 0;
     }
@@ -235,7 +235,7 @@ static int _linkg_discovery_prepare_cellular_endpoint(linkg_path_endpoint_t *end
 {
     struct sockaddr_in6 *address;
     struct in6_addr      cellular_address;
-    uint32_t             link_id;
+    linkg_link_t        *link;
     bool                 interface_up;
     int                  ret;
 
@@ -246,8 +246,8 @@ static int _linkg_discovery_prepare_cellular_endpoint(linkg_path_endpoint_t *end
 
     memset(endpoint, 0, sizeof(*endpoint));
 
-    link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
-    if (link_id == LINKG_LINK_ID_INVALID)
+    link = linkg_link_manager_get_by_access(LINKG_LINK_ACCESS_CELLULAR);
+    if (link == NULL || !linkg_link_is_running(link))
     {
         return 0;
     }

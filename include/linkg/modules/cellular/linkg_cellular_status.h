@@ -111,6 +111,9 @@ typedef struct
     struct in6_addr global_ipv6;        // 当前主机蜂窝接口全局IPv6地址
 
     uint64_t        address_updated_ms; // 主机地址状态更新时间
+
+    bool            pdp_apn_valid;      // 当前选中PDP上下文APN是否有效
+    char            pdp_apn[LINKG_CELLULAR_APN_MAX + 1U]; // 当前选中PDP上下文的实际APN
 } linkg_cellular_data_status_t;
 
 /****************************** 状态快照 ******************************/

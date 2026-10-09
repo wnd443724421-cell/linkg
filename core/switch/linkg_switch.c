@@ -125,6 +125,7 @@ static void _linkg_switch_reset_session_locked(void)
     }
 
     g_switch.next_observation_us = 0U;
+    g_switch.next_reconcile_us   = 0U;
     g_switch.next_report_us      = 0U;
     g_switch.sta_check_pending   = false;
 }
@@ -141,6 +142,7 @@ static void _linkg_switch_reset_all_locked(void)
     linkg_switch_event_reset_locked();
 
     g_switch.next_peer_generation         = 0U;
+    g_switch.next_reconcile_us            = 0U;
     g_switch.next_maintenance_message_id  = 0U;
     g_switch.next_observation_us          = 0U;
     g_switch.next_report_us               = 0U;
@@ -347,6 +349,7 @@ int linkg_switch_start(void)
     _linkg_switch_reset_session_locked();
 
     g_switch.next_observation_us = now_us;
+    g_switch.next_reconcile_us   = now_us;
     g_switch.next_report_us      = now_us;
 
     token            = ++g_switch.run_token;
@@ -528,6 +531,7 @@ int linkg_switch_deinit(void)
     linkg_switch_event_reset_locked();
 
     g_switch.next_peer_generation         = 0U;
+    g_switch.next_reconcile_us            = 0U;
     g_switch.next_maintenance_message_id  = 0U;
     g_switch.next_observation_us          = 0U;
     g_switch.next_report_us               = 0U;

@@ -406,8 +406,10 @@
         let local;
         let network;
         let address;
+        let pdpApn;
         let ipv4;
         let ipv6;
+        let pdpApnElement;
         let ipv4Element;
         let ipv6Element;
 
@@ -440,10 +442,13 @@
             throw new Error("5G 状态响应缺少运行数据");
         }
 
+        pdpApn = typeof address.pdp_apn === "string" && address.pdp_apn.length > 0 ?
+            address.pdp_apn : "--";
         ipv4 = typeof address.ipv4 === "string" && address.ipv4.length > 0 ?
             address.ipv4 : "--";
         ipv6 = typeof address.ipv6 === "string" && address.ipv6.length > 0 ?
             address.ipv6 : "--";
+        pdpApnElement = field("cellularPdpApn");
         ipv4Element = field("cellularIpv4");
         ipv6Element = field("cellularIpv6");
 
@@ -465,6 +470,7 @@
                 network.plmn : "--");
         setText("cellularNetworkMode", formatNetworkMode(local.network_mode));
         setText("cellularBand", formatBand(network.band, network.network_type));
+        setText("cellularPdpApn", pdpApn);
         setText("cellularRsrp", formatRsrp(network.rsrp_dbm));
         setText("cellularRsrq",
                 Number.isFinite(network.rsrq_db) ? network.rsrq_db + " dB" : "--");
@@ -472,6 +478,11 @@
                 Number.isFinite(network.sinr_db) ? network.sinr_db + " dB" : "--");
         setText("cellularIpv4", ipv4);
         setText("cellularIpv6", ipv6);
+
+        if (pdpApnElement != null)
+        {
+            pdpApnElement.title = pdpApn === "--" ? "" : pdpApn;
+        }
 
         if (ipv4Element != null)
         {

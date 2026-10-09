@@ -126,7 +126,8 @@
     white-space: nowrap;
     text-overflow: ellipsis;
 }
-.cellular-detail-list dd.is-address {
+.cellular-detail-list dd.is-address,
+.cellular-detail-list dd.is-apn {
     overflow: visible;
     font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
     font-size: 14px;

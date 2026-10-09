@@ -598,7 +598,7 @@ static int _cellular_fsm_handle_sim_removed(cellular_fsm_t *fsm, at_channel_t *c
         cellular_runtime_end_session(&fsm->runtime, now_ms);
     }
 
-    cellular_status_clear_pdp_cid();
+    cellular_status_clear_pdp_context();
     fsm->pdp_action_started    = false;
     fsm->netdev_action_started = false;
 
@@ -825,7 +825,7 @@ int cellular_fsm_sync_sim_session(cellular_fsm_t *fsm, at_channel_t *channel, co
             return ret;
         }
 
-        cellular_status_clear_pdp_cid();
+        cellular_status_clear_pdp_context();
         fsm->pdp_action_started    = false;
         fsm->netdev_action_started = false;
 
@@ -1149,7 +1149,7 @@ static cellular_fsm_step_t _cellular_fsm_state_prepare_pdp(cellular_fsm_t *fsm, 
         return _cellular_fsm_step_fatal(ret);
     }
 
-    ret = cellular_status_set_pdp_cid(selected_cid);
+    ret = cellular_status_set_pdp_context(selected_cid, selected_apn);
     if (ret != 0)
     {
         cellular_runtime_clear_pdp_cid(&fsm->runtime, now_ms);
@@ -1793,7 +1793,7 @@ int cellular_fsm_stop_session(cellular_fsm_t *fsm, at_channel_t *channel, uint64
         cellular_runtime_end_session(&fsm->runtime, now_ms);
     }
 
-    cellular_status_clear_pdp_cid();
+    cellular_status_clear_pdp_context();
     fsm->pdp_action_started    = false;
     fsm->netdev_action_started = false;
     _cellular_fsm_reset_verify(fsm);

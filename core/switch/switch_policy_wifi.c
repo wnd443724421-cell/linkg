@@ -26,24 +26,16 @@ static bool _linkg_switch_policy_cellular_usable(const linkg_switch_policy_input
 {
     const linkg_switch_cellular_observation_t *cellular;
 
-    if (input == NULL)
-    {
-        return false;
-    }
-
-    if (input->cellular_blocked)
+    if (input == NULL || input->cellular_blocked)
     {
         return false;
     }
 
     cellular = &input->observation.cellular;
 
-    if (!cellular->available)
-    {
-        return false;
-    }
-
-    if (cellular->link_id == LINKG_LINK_ID_INVALID)
+    if (!cellular->available ||
+        cellular->link_id == LINKG_LINK_ID_INVALID ||
+        input->plan.secondary_link_id != cellular->link_id)
     {
         return false;
     }
@@ -195,14 +187,14 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
         return 0;
     }
 
-    if (_linkg_switch_policy_wifi_hard_failed(input))
-    {
-        return _linkg_switch_policy_switch_to_cellular(input, now_us);
-    }
-
     if (input->wifi_blocked)
     {
         return 0;
+    }
+    
+    if (_linkg_switch_policy_wifi_hard_failed(input))
+    {
+        return _linkg_switch_policy_switch_to_cellular(input, now_us);
     }
 
     if (input->plan.mode == LINKG_SEND_MODE_SINGLE)

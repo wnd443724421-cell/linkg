@@ -24,6 +24,7 @@
 #include "switch_plan.h"
 #include "switch_policy.h"
 #include "switch_report.h"
+#include "switch_plan_reconcile.h"
 
 /****************************** 内部辅助 ******************************/
 
@@ -291,10 +292,42 @@ static void _linkg_switch_runtime_process_maintenance(uint64_t now_us)
 }
 
 /**
+ * @brief 执行AP/STA当前到期的一轮发送计划硬校准。
+ */
+static void _linkg_switch_runtime_process_reconcile(uint64_t now_us)
+{
+    bool due;
+    int  ret;
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    due = g_switch.initialized &&
+          g_switch.running &&
+          (g_switch.next_reconcile_us == 0U || now_us >= g_switch.next_reconcile_us);
+
+    if (due)
+    {
+        // 不补跑历史周期，只安排下一轮校准。
+        g_switch.next_reconcile_us = now_us + LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US;
+    }
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    if (!due)
+    {
+        return;
+    }
+
+    ret = linkg_switch_plan_reconcile_process(now_us);
+    _linkg_switch_runtime_log_error("plan reconcile", ret);
+}
+
+/**
  * @brief 执行当前所有已经到期的Switch周期任务。
  */
 static void _linkg_switch_runtime_process_due(uint64_t now_us)
 {
+    _linkg_switch_runtime_process_reconcile(now_us);
     _linkg_switch_runtime_process_sta(now_us);
     _linkg_switch_runtime_process_report(now_us);
     _linkg_switch_runtime_process_plan(now_us);
@@ -304,7 +337,7 @@ static void _linkg_switch_runtime_process_due(uint64_t now_us)
 /**
  * @brief 将最近Switch截止时间转换为poll毫秒超时。
  *
- * 返回-1表示当前没有定时任务，可无限等待eventfd。
+ * 返回-1表示没有定时任务，可以无限等待eventfd。
  */
 static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
 {
@@ -352,6 +385,17 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
     if (candidate_us < deadline_us)
     {
         deadline_us = candidate_us;
+    }
+
+    // AP/STA统一的500ms发送计划校准任务。
+    if (g_switch.next_reconcile_us == 0U)
+    {
+        return 0;
+    }
+
+    if (g_switch.next_reconcile_us < deadline_us)
+    {
+        deadline_us = g_switch.next_reconcile_us;
     }
 
     if (deadline_us == UINT64_MAX)
