@@ -17,6 +17,15 @@
 extern "C" {
 #endif
 
+/****************************** 可用性类型 ******************************/
+
+typedef enum
+{
+    LINKG_CELLULAR_AVAILABLE_DATA = 0, // 本机Cellular IPv6数据通道就绪
+    LINKG_CELLULAR_AVAILABLE_IPV4,     // IPv4公网可达
+    LINKG_CELLULAR_AVAILABLE_IPV6      // IPv6公网可达
+} linkg_cellular_available_type_t;
+
 /****************************** 生命周期 ******************************/
 
 int linkg_cellular_init(const linkg_cellular_config_t *config, bool path_enabled, linkg_packet_pool_t *packet_pool);
@@ -28,7 +37,7 @@ int linkg_cellular_deinit(void);
 /****************************** 状态读取 ******************************/
 
 int linkg_cellular_get_status(linkg_cellular_status_snapshot_t *snapshot);
-int linkg_cellular_get_internet_available(bool *available);
+int linkg_cellular_get_internet_available(linkg_cellular_available_type_t type, bool *available);
 
 #ifdef __cplusplus
 }

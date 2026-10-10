@@ -46,7 +46,8 @@ typedef struct
     bool                             wifi_path_available;         // 当前Peer Wi-Fi Path是否存在且Link运行
     bool                             wifi_path_stats_valid;       // Wi-Fi Path累计统计是否有效
     bool                             wifi_rx_stats_valid;         // Wi-Fi接收累计统计是否有效
-    bool                             cellular_internet_available; // Cellular公网状态是否可用
+    bool                             cellular_data_ready;         // Cellular IPv6数据通道是否就绪
+    bool                             cellular_ipv6_reachable;     // Cellular IPv6公网是否可达
     bool                             cellular_path_available;     // 当前Peer Cellular Path是否存在且Link运行
 } linkg_switch_observation_raw_t;
 
@@ -307,19 +308,31 @@ static void _linkg_switch_observation_collect_wifi_path(uint8_t peer_node_id, li
 }
 
 /**
- * @brief 读取Cellular公网可用状态及当前Peer Cellular Path。
+ * @brief 读取Cellular数据通道、IPv6公网状态及当前Peer Cellular Path。
  */
 static void _linkg_switch_observation_collect_cellular(uint8_t peer_node_id, linkg_switch_observation_raw_t *raw, int *first_error)
 {
-    bool internet_available;
+    bool data_ready;
+    bool ipv6_internet_available;
     int  ret;
 
-    internet_available = false;
+    data_ready              = false;
+    ipv6_internet_available = false;
 
-    ret = linkg_cellular_get_internet_available(&internet_available);
+    ret = linkg_cellular_get_internet_available(LINKG_CELLULAR_AVAILABLE_DATA, &data_ready);
     if (ret == 0)
     {
-        raw->cellular_internet_available = internet_available;
+        raw->cellular_data_ready = data_ready;
+    }
+    else
+    {
+        _linkg_switch_observation_record_error(ret, first_error);
+    }
+
+    ret = linkg_cellular_get_internet_available(LINKG_CELLULAR_AVAILABLE_IPV6, &ipv6_internet_available);
+    if (ret == 0)
+    {
+        raw->cellular_ipv6_reachable = ipv6_internet_available;
     }
     else
     {
@@ -567,7 +580,7 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
     _linkg_switch_observation_build_probe(raw, &observation.wifi);
 
     observation.wifi.available     = raw->wifi_path_available;
-    observation.cellular.available = raw->cellular_internet_available && raw->cellular_path_available;
+    observation.cellular.available = raw->cellular_data_ready && raw->cellular_ipv6_reachable && raw->cellular_path_available;
 
     pthread_mutex_lock(&g_switch.lock);
 

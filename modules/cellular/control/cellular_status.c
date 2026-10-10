@@ -822,15 +822,22 @@ static void _cellular_status_refresh_expected_network(at_channel_t *channel, cel
 }
 
 /**
- * @brief 刷新RG255 USB网络设备连接状态事实。
+ * @brief 刷新RG255 USB网络设备状态并识别连接身份变化。
  */
 static bool _cellular_status_refresh_netdev(at_channel_t *channel, cellular_status_info_t *info, uint64_t now_ms)
 {
-    rg255_netdev_status_t status;
-    bool                  previous_connected;
-    int                   ret;
+    rg255_netdev_status_t        status;
+    cellular_status_netdev_mode_t previous_mode;
+    uint8_t                      previous_cid;
+    bool                         previous_connected;
+    bool                         connection_changed;
+    int                          ret;
 
-    previous_connected = info->netdev.state.meta.confirmed && info->netdev.state.connected;
+    previous_connected = info->netdev.state.meta.confirmed &&
+                         info->netdev.state.meta.last_error == 0 &&
+                         info->netdev.state.connected;
+    previous_mode = info->netdev.state.mode;
+    previous_cid  = info->netdev.state.cid;
 
     memset(&status, 0, sizeof(status));
     status.type = RG255_NETDEV_TYPE_UNKNOWN;
@@ -855,9 +862,17 @@ static bool _cellular_status_refresh_netdev(at_channel_t *channel, cellular_stat
         return false;
     }
 
-    return !previous_connected ||
-        !info->netdev.expected_ipv4.meta.confirmed ||
-        !info->netdev.expected_ipv6.meta.confirmed;
+    connection_changed = !previous_connected ||
+                         previous_cid != status.cid ||
+                         previous_mode != info->netdev.state.mode;
+    if (connection_changed)
+    {
+        _cellular_status_clear_expected_network(info, now_ms);
+        return true;
+    }
+
+    return !info->netdev.expected_ipv4.meta.confirmed ||
+           !info->netdev.expected_ipv6.meta.confirmed;
 }
 
 /****************************** Host网络状态采集 ******************************/
@@ -1048,34 +1063,17 @@ static bool _cellular_status_refresh_host_ipv4_netmask(cellular_status_info_t *i
 }
 
 /**
- * @brief 刷新Linux蜂窝接口当前数据会话对应的Global IPv6地址事实。
+ * @brief 刷新Linux蜂窝接口当前实际的Global IPv6地址事实。
  */
 static bool _cellular_status_refresh_host_ipv6(cellular_status_info_t *info, uint64_t now_ms)
 {
-    const cellular_status_expected_ipv6_info_t *expected;
-    struct in6_addr                             address;
-    int                                         ret;
-
-    expected = &info->netdev.expected_ipv6;
+    struct in6_addr address;
+    int             ret;
 
     memset(&address, 0, sizeof(address));
 
-    if (expected->meta.confirmed &&
-        expected->meta.last_error == 0 &&
-        expected->valid)
-    {
-        ret = linkg_network_interface_get_global_ipv6_in_prefix(
-            LINKG_RESOURCE_INTERFACE_CELLULAR,
-            &expected->prefix,
-            expected->prefix_length,
-            &address);
-    }
-    else
-    {
-        ret = linkg_network_interface_get_global_ipv6(
-            LINKG_RESOURCE_INTERFACE_CELLULAR,
-            &address);
-    }
+    // Host实际地址不应被模组期望前缀过滤；RA/SLAAC结果以Linux接口事实为准。
+    ret = linkg_network_interface_get_global_ipv6(LINKG_RESOURCE_INTERFACE_CELLULAR, &address);
 
     if (_cellular_status_host_interface_absent(ret))
     {
@@ -1421,7 +1419,7 @@ unlock:
 }
 
 /**
- * @brief 停止蜂窝状态事实模块并释放借用AT通道。
+ * @brief 停止蜂窝状态事实模块并使当前设备会话快照失效。
  */
 int cellular_status_stop(void)
 {
@@ -1438,6 +1436,7 @@ int cellular_status_stop(void)
     g_cellular_status.pdp_cid       = 0U;
     g_cellular_status.pdp_cid_valid = false;
     memset(&g_cellular_status.deadlines, 0, sizeof(g_cellular_status.deadlines));
+    _cellular_status_info_init(&g_cellular_status.info);
 
     pthread_mutex_unlock(&g_cellular_status.lock);
 
@@ -1474,6 +1473,8 @@ int cellular_status_deinit(void)
 
 /**
  * @brief 设置Owner选定的PDP上下文身份和事实查询目标。
+ *
+ * @note 允许空APN表示未显式指定APN，具体APN选择和配置由FSM负责。
  */
 int cellular_status_set_pdp_context(uint8_t cid, const char *apn)
 {
@@ -1487,7 +1488,7 @@ int cellular_status_set_pdp_context(uint8_t cid, const char *apn)
     }
 
     apn_length = strnlen(apn, LINKG_CELLULAR_APN_MAX + 1U);
-    if (apn_length == 0U || apn_length > LINKG_CELLULAR_APN_MAX)
+    if (apn_length > LINKG_CELLULAR_APN_MAX)
     {
         return -EINVAL;
     }
@@ -1692,7 +1693,7 @@ int cellular_status_process(uint64_t now_ms, cellular_status_refresh_mask_t requ
 /****************************** 状态读取 ******************************/
 
 /**
- * @brief 获取当前蜂窝内部完整事实快照。
+ * @brief 获取当前已启动设备会话的完整事实快照。
  */
 int cellular_status_get_info(cellular_status_info_t *info)
 {
@@ -1711,6 +1712,12 @@ int cellular_status_get_info(cellular_status_info_t *info)
         goto unlock;
     }
 
+    if (!g_cellular_status.started)
+    {
+        ret = -ENETDOWN;
+        goto unlock;
+    }
+
     *info = g_cellular_status.info;
     ret   = 0;
 
@@ -1721,12 +1728,19 @@ unlock:
 }
 
 /**
- * @brief 将内部完整事实投影为对外蜂窝运行状态快照。
+ * @brief 将内部最新确认事实投影为对外蜂窝运行状态快照。
  */
 int cellular_status_get_snapshot(linkg_cellular_status_snapshot_t *snapshot)
 {
     cellular_status_info_t info;
     uint64_t               address_updated_ms;
+    bool                   network_mode_current;
+    bool                   sim_current;
+    bool                   registration_current;
+    bool                   radio_current;
+    bool                   pdp_current;
+    bool                   ipv4_current;
+    bool                   ipv6_current;
     int                    ret;
 
     if (snapshot == NULL)
@@ -1747,42 +1761,50 @@ int cellular_status_get_snapshot(linkg_cellular_status_snapshot_t *snapshot)
 
     memset(snapshot, 0, sizeof(*snapshot));
 
+    network_mode_current = info.local.network_mode_meta.confirmed && info.local.network_mode_meta.last_error == 0;
+    sim_current          = info.local.sim_meta.confirmed && info.local.sim_meta.last_error == 0;
+    registration_current = info.network.registration_meta.confirmed && info.network.registration_meta.last_error == 0;
+    radio_current        = info.network.radio_meta.confirmed && info.network.radio_meta.last_error == 0;
+    pdp_current          = info.pdp.active_meta.confirmed && info.pdp.active_meta.last_error == 0;
+    ipv4_current         = info.host.ipv4_meta.confirmed && info.host.ipv4_meta.last_error == 0;
+    ipv6_current         = info.host.ipv6_meta.confirmed && info.host.ipv6_meta.last_error == 0;
+
     snapshot->partial = info.partial;
 
-    snapshot->local.network_mode = info.local.network_mode_meta.confirmed
+    snapshot->local.network_mode = network_mode_current
         ? info.local.network_mode
         : LINKG_CELLULAR_NETWORK_MODE_UNKNOWN;
-    snapshot->local.sim_state = info.local.sim_meta.confirmed
+    snapshot->local.sim_state = sim_current
         ? info.local.sim_state
         : LINKG_CELLULAR_SIM_STATE_UNKNOWN;
     snapshot->local.network_mode_updated_ms = info.local.network_mode_meta.updated_ms;
     snapshot->local.sim_updated_ms          = info.local.sim_meta.updated_ms;
 
-    snapshot->network.registration = info.network.registration_meta.confirmed
+    snapshot->network.registration = registration_current
         ? info.network.registration
         : LINKG_CELLULAR_REGISTRATION_STATE_UNKNOWN;
     snapshot->network.registration_updated_ms = info.network.registration_meta.updated_ms;
 
-    snapshot->network.network_type = info.network.radio_meta.confirmed
+    snapshot->network.network_type = radio_current
         ? info.network.network_type
         : LINKG_CELLULAR_NETWORK_TYPE_UNKNOWN;
     snapshot->network.network_type_updated_ms = info.network.radio_meta.updated_ms;
 
-    snapshot->network.serving_cell.valid      = info.network.radio_meta.confirmed && info.network.serving_cell_valid;
-    snapshot->network.serving_cell.plmn_valid = info.network.radio_meta.confirmed && info.network.plmn_valid;
+    snapshot->network.serving_cell.valid      = radio_current && info.network.serving_cell_valid;
+    snapshot->network.serving_cell.plmn_valid = radio_current && info.network.plmn_valid;
     memcpy(snapshot->network.serving_cell.mcc, info.network.mcc, sizeof(snapshot->network.serving_cell.mcc));
     memcpy(snapshot->network.serving_cell.mnc, info.network.mnc, sizeof(snapshot->network.serving_cell.mnc));
     snapshot->network.serving_cell.band       = info.network.band;
     snapshot->network.serving_cell.rsrp_dbm   = info.network.rsrp_dbm;
-    snapshot->network.serving_cell.rsrp_valid = info.network.rsrp_valid;
+    snapshot->network.serving_cell.rsrp_valid = radio_current && info.network.rsrp_valid;
     snapshot->network.serving_cell.rsrq_db    = info.network.rsrq_db;
-    snapshot->network.serving_cell.rsrq_valid = info.network.rsrq_valid;
+    snapshot->network.serving_cell.rsrq_valid = radio_current && info.network.rsrq_valid;
     snapshot->network.serving_cell.sinr_db    = info.network.sinr_db;
-    snapshot->network.serving_cell.sinr_valid = info.network.sinr_valid;
+    snapshot->network.serving_cell.sinr_valid = radio_current && info.network.sinr_valid;
     snapshot->network.serving_cell.updated_ms = info.network.radio_meta.updated_ms;
 
-    snapshot->data.pdp_valid      = info.pdp.active_meta.confirmed;
-    snapshot->data.pdp_active     = info.pdp.active_meta.confirmed && info.pdp.active;
+    snapshot->data.pdp_valid      = pdp_current;
+    snapshot->data.pdp_active     = pdp_current && info.pdp.active;
     snapshot->data.pdp_updated_ms = info.pdp.active_meta.updated_ms;
 
     snapshot->data.pdp_apn_valid = info.pdp.context_valid && info.pdp.apn[0] != '\0';
@@ -1791,10 +1813,10 @@ int cellular_status_get_snapshot(linkg_cellular_status_snapshot_t *snapshot)
         memcpy(snapshot->data.pdp_apn, info.pdp.apn, sizeof(snapshot->data.pdp_apn));
     }
 
-    snapshot->data.ipv4_valid = info.host.ipv4_meta.confirmed && info.host.ipv4_valid;
+    snapshot->data.ipv4_valid = ipv4_current && info.host.ipv4_valid;
     snapshot->data.ipv4       = info.host.ipv4;
 
-    snapshot->data.global_ipv6_valid = info.host.ipv6_meta.confirmed && info.host.global_ipv6_valid;
+    snapshot->data.global_ipv6_valid = ipv6_current && info.host.global_ipv6_valid;
     snapshot->data.global_ipv6       = info.host.global_ipv6;
 
     address_updated_ms = _cellular_status_pair_updated_ms(&info.host.ipv4_meta, &info.host.ipv6_meta);

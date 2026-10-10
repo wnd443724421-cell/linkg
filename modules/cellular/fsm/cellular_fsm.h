@@ -33,14 +33,10 @@ typedef struct
 
 typedef struct
 {
-    cellular_runtime_t             runtime;                // Owner唯一运行状态
+    cellular_runtime_t             runtime;                // Owner唯一连接状态机运行上下文
     cellular_status_refresh_mask_t requested_refresh;      // Owner下一轮需要强制确认的状态事实
-    bool                           pdp_action_started;     // 当前SIM会话是否执行过PDP激活动作
-    bool                           netdev_action_started;  // 当前SIM会话是否执行过QNETDEV启动动作
-    bool                           online_verify_active;   // ONLINE状态是否正在执行公网健康复核
-    bool                           verify_ipv4_done;       // 当前验证轮次IPv4是否已经通过
-    bool                           verify_ipv6_done;       // 当前验证轮次IPv6是否已经通过
-    uint32_t                       verify_failure_count;   // 当前地址族连续公网探测失败次数
+    bool                           pdp_action_started;     // 当前SIM会话是否发起过PDP激活动作
+    bool                           netdev_action_started;  // 当前SIM会话是否发起过QNETDEV启动动作
 } cellular_fsm_t;
 
 /****************************** 生命周期 ******************************/

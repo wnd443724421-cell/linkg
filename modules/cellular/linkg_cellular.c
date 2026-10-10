@@ -21,26 +21,20 @@
 #include "linkg_link_manager.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
-#include "linkg_uart.h"
 
 #include "at_channel.h"
-#include "rg255_cmd.h"
-#include "rg255_query.h"
 
 #include "cellular_internal.h"
 #include "cellular_fsm.h"
+#include "cellular_health.h"
+#include "cellular_modem.h"
 #include "cellular_monitor.h"
 #include "cellular_status.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_AT_DEVICE                   "/dev/ttyUSB1" // RG255 AT控制串口设备
-#define LINKG_CELLULAR_AT_BAUDRATE                 115200         // RG255 AT串口波特率
-#define LINKG_CELLULAR_AT_READY_TIMEOUT_MS         30000U         // AT通道整体就绪等待时间
-#define LINKG_CELLULAR_AT_READY_RETRY_MS           500U           // AT通道就绪失败重试间隔
-#define LINKG_CELLULAR_MODEM_RESTART_SETTLE_MS     2000U          // CFUN重启后首次重新探测等待时间
-#define LINKG_CELLULAR_POLL_DESCRIPTOR_MAX         2U             // Owner循环最大poll描述符数量
-#define LINKG_CELLULAR_LINK_NAME                   "cellular"     // 蜂窝业务链路名称
+#define LINKG_CELLULAR_POLL_DESCRIPTOR_MAX 2U         // Owner循环最大poll描述符数量
+#define LINKG_CELLULAR_LINK_NAME           "cellular" // 蜂窝业务链路名称
 
 /****************************** 内部类型 ******************************/
 
@@ -57,21 +51,24 @@ typedef enum
 
 typedef struct
 {
-    pthread_mutex_t            lock;                   // 模块状态锁，保护生命周期和AT通道引用
+    pthread_mutex_t            lock;                   // 模块状态锁，保护模块生命周期
 
     linkg_cellular_config_t    config;                 // 蜂窝模块配置副本
     cellular_fsm_t             fsm;                    // network-cell Owner连接状态机
 
-    at_channel_t              *channel;                // RG255 AT通道，模块持有对象所有权
     linkg_link_t               *link;                   // 蜂窝业务Link，由蜂窝模块创建并拥有
 
     linkg_cellular_lifecycle_t lifecycle;              // 蜂窝模块生命周期
     int                        last_error;             // 最近一次不可恢复生命周期错误
     bool                       monitor_initialized;    // Monitor软件资源是否已经初始化
     bool                       status_initialized;     // Status软件资源是否已经初始化
+    bool                       health_initialized;     // Health软件资源是否已初始化
     bool                       monitor_started;        // Monitor是否已经注册URC回调
     bool                       status_started;         // Status是否已经借用当前AT通道
-    bool                       internet_available;     // 当前蜂窝数据链是否已通过公网验证
+    bool                       health_started;         // Health后台检测线程是否已启动
+    bool                       data_ready;              // 本机Cellular IPv6数据通道是否已完成建链
+    bool                       ipv4_internet_available; // IPv4公网健康检测结果
+    bool                       ipv6_internet_available; // IPv6公网健康检测结果
 } linkg_cellular_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -154,28 +151,41 @@ static void _linkg_cellular_reset_context_locked(void)
     memset(&g_cellular.config, 0, sizeof(g_cellular.config));
     memset(&g_cellular.fsm, 0, sizeof(g_cellular.fsm));
 
-    g_cellular.channel                = NULL;
-    g_cellular.link                   = NULL;
-    g_cellular.lifecycle              = LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED;
-    g_cellular.last_error             = 0;
-    g_cellular.monitor_initialized    = false;
-    g_cellular.status_initialized     = false;
-    g_cellular.monitor_started        = false;
-    g_cellular.status_started         = false;
-    g_cellular.internet_available     = false;
+    g_cellular.link                    = NULL;
+    g_cellular.lifecycle               = LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED;
+    g_cellular.last_error              = 0;
+    g_cellular.monitor_initialized     = false;
+    g_cellular.status_initialized      = false;
+    g_cellular.health_initialized      = false;
+    g_cellular.monitor_started         = false;
+    g_cellular.status_started          = false;
+    g_cellular.health_started          = false;
+    g_cellular.data_ready              = false;
+    g_cellular.ipv4_internet_available = false;
+    g_cellular.ipv6_internet_available = false;
 }
 
 /**
- * @brief 发布当前蜂窝公网可用状态。
+ * @brief 发布本机Cellular IPv6数据通道就绪状态。
+ *
+ * @note 仅记录FSM建链结果，不代表IPv4或IPv6公网探测成功。
  */
-static void _linkg_cellular_publish_internet_state(void)
+static void _linkg_cellular_publish_data_ready(void)
 {
-    bool available;
+    cellular_health_info_t info;
+    bool                   ready;
+    int                    ret;
 
-    available = cellular_runtime_online(&g_cellular.fsm.runtime);
+    ready = cellular_runtime_online(&g_cellular.fsm.runtime);
+    cellular_health_set_online(ready);
+
+    memset(&info, 0, sizeof(info));
+    ret = cellular_health_get_info(&info);
 
     pthread_mutex_lock(&g_cellular.lock);
-    g_cellular.internet_available = available;
+    g_cellular.data_ready              = ready;
+    g_cellular.ipv4_internet_available = ready && ret == 0 && info.ipv4_valid && info.ipv4_available;
+    g_cellular.ipv6_internet_available = ready && ret == 0 && info.ipv6_valid && info.ipv6_available;
     pthread_mutex_unlock(&g_cellular.lock);
 }
 
@@ -185,33 +195,25 @@ static void _linkg_cellular_publish_internet_state(void)
 static void _linkg_cellular_set_lifecycle(linkg_cellular_lifecycle_t lifecycle, int error)
 {
     pthread_mutex_lock(&g_cellular.lock);
+
     g_cellular.lifecycle  = lifecycle;
     g_cellular.last_error = error;
+    if (lifecycle != LINKG_CELLULAR_LIFECYCLE_RUNNING)
+    {
+        g_cellular.data_ready              = false;
+        g_cellular.ipv4_internet_available = false;
+        g_cellular.ipv6_internet_available = false;
+    }
+
     pthread_mutex_unlock(&g_cellular.lock);
 }
 
 /**
- * @brief 获取当前AT通道借用引用。
+ * @brief 获取Modem管理模块持有的AT通道借用引用。
  */
 static at_channel_t *_linkg_cellular_get_channel(void)
 {
-    at_channel_t *channel;
-
-    pthread_mutex_lock(&g_cellular.lock);
-    channel = g_cellular.channel;
-    pthread_mutex_unlock(&g_cellular.lock);
-
-    return channel;
-}
-
-/**
- * @brief 发布当前模块持有的AT通道对象。
- */
-static void _linkg_cellular_set_channel(at_channel_t *channel)
-{
-    pthread_mutex_lock(&g_cellular.lock);
-    g_cellular.channel = channel;
-    pthread_mutex_unlock(&g_cellular.lock);
+    return cellular_modem_get_channel();
 }
 
 /**
@@ -238,432 +240,6 @@ static void _linkg_cellular_log_connected(const cellular_status_info_t *info)
     }
 
     CELLULAR_INFO("data link connected, ipv4=%s, ipv6=%s", ipv4_text, ipv6_text);
-}
-
-/**
- * @brief 销毁当前模块持有的AT通道对象。
- */
-static void _linkg_cellular_destroy_channel(void)
-{
-    at_channel_t *channel;
-
-    pthread_mutex_lock(&g_cellular.lock);
-    channel            = g_cellular.channel;
-    g_cellular.channel = NULL;
-    pthread_mutex_unlock(&g_cellular.lock);
-
-    if (channel != NULL)
-    {
-        at_channel_destroy(channel);
-    }
-}
-
-/****************************** AT通道启动 ******************************/
-
-/**
- * @brief 初始化RG255 AT控制串口参数。
- */
-static void _linkg_cellular_make_uart_config(uart_config_t *config)
-{
-    memset(config, 0, sizeof(*config));
-
-    config->baudrate        = LINKG_CELLULAR_AT_BAUDRATE;
-    config->data_bits       = 8;
-    config->stop_bits       = 1;
-    config->parity          = 'N';
-    config->hw_flow_control = false;
-    config->exclusive       = true;
-}
-
-/**
- * @brief 对已经可通信的RG255应用基础AT运行参数。
- */
-static int _linkg_cellular_apply_at_baseline(at_channel_t *channel)
-{
-    int ret;
-
-    ret = rg255_cmd_set_echo(channel, false);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = rg255_cmd_enable_cmee(channel);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    return rg255_cmd_disable_sleep(channel);
-}
-
-/**
- * @brief 创建AT通道并等待RG255进入可执行命令状态。
- */
-static int _linkg_cellular_create_ready_channel(at_channel_t **out)
-{
-    uart_config_t config;
-    at_channel_t *channel;
-    uint64_t      started_ms;
-    uint64_t      now_ms;
-    unsigned int  attempt;
-    int           error;
-    int           ret;
-
-    if (out == NULL)
-    {
-        return -EINVAL;
-    }
-
-    *out       = NULL;
-    started_ms = linkg_time_elapsed_ms();
-    attempt    = 0U;
-    error      = -ETIMEDOUT;
-
-    _linkg_cellular_make_uart_config(&config);
-
-    for (;;)
-    {
-        attempt++;
-
-        errno   = 0;
-        channel = at_channel_create(LINKG_CELLULAR_AT_DEVICE, &config);
-
-        if (channel == NULL)
-        {
-            error = errno != 0 ? -errno : -EIO;
-
-            CELLULAR_DEBUG("AT channel create failed, device=%s, attempt=%u, error=%d", LINKG_CELLULAR_AT_DEVICE, attempt, error);
-        }
-        else
-        {
-            ret = at_channel_start(channel);
-            if (ret != 0)
-            {
-                CELLULAR_DEBUG("AT channel start failed, attempt=%u, error=%d", attempt, ret);
-            }
-
-            if (ret == 0)
-            {
-                ret = rg255_cmd_test(channel);
-                if (ret != 0)
-                {
-                    CELLULAR_DEBUG("RG255 AT probe failed, attempt=%u, error=%d", attempt, ret);
-                }
-            }
-
-            if (ret == 0)
-            {
-                ret = _linkg_cellular_apply_at_baseline(channel);
-                if (ret != 0)
-                {
-                    CELLULAR_DEBUG("RG255 AT baseline failed, attempt=%u, error=%d", attempt, ret);
-                }
-            }
-
-            if (ret == 0)
-            {
-                now_ms = linkg_time_elapsed_ms();
-                *out   = channel;
-
-                CELLULAR_INFO("AT channel ready, device=%s, attempts=%u, elapsed_ms=%llu", LINKG_CELLULAR_AT_DEVICE, attempt, (unsigned long long)(now_ms - started_ms));
-
-                return 0;
-            }
-
-            error = ret;
-            at_channel_destroy(channel);
-        }
-
-        now_ms = linkg_time_elapsed_ms();
-
-        if (now_ms - started_ms >= LINKG_CELLULAR_AT_READY_TIMEOUT_MS)
-        {
-            CELLULAR_WARN("AT channel ready timeout, device=%s, attempts=%u, elapsed_ms=%llu, error=%d", LINKG_CELLULAR_AT_DEVICE, attempt, (unsigned long long)(now_ms - started_ms), error);
-
-            return error;
-        }
-
-        ret = linkg_time_sleep_ms(LINKG_CELLULAR_AT_READY_RETRY_MS);
-        if (ret != 0)
-        {
-            return ret;
-        }
-    }
-}
-
-/****************************** 持久配置 ******************************/
-
-/**
- * @brief 返回项目硬件要求的SIM插入有效电平。
- */
-static rg255_sim_insert_level_t _linkg_cellular_required_sim_insert_level(void)
-{
-    return LINKG_RESOURCE_CELLULAR_SIM_INSERT_ACTIVE_HIGH ? RG255_SIM_INSERT_LEVEL_HIGH : RG255_SIM_INSERT_LEVEL_LOW;
-}
-
-/**
- * @brief 检查并按需收敛RG255持久运行配置。
- *
- * @note apply为true时允许修正不一致配置；apply为false时只验证，
- *       任一配置不满足LinkG要求立即返回-EPROTO。
- */
-static int _linkg_cellular_converge_persistent_config(at_channel_t *channel, bool apply, bool *changed)
-{
-    rg255_sim_detect_config_t     sim_detect;
-    rg255_sim_status_urc_t        sim_urc;
-    linkg_cellular_network_mode_t network_mode;
-    rg255_network_card_mode_t     card_mode;
-    rg255_sim_insert_level_t      insert_level;
-    rg255_usbnet_mode_t           usbnet_mode;
-    bool                          local_changed;
-    int                           ret;
-
-    if (channel == NULL || changed == NULL)
-    {
-        return -EINVAL;
-    }
-
-    local_changed = false;
-    insert_level  = _linkg_cellular_required_sim_insert_level();
-
-    ret = rg255_query_usbnet_mode(channel, &usbnet_mode);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("query persistent config failed, item=usbnet, error=%d", ret);
-        return ret;
-    }
-
-    if (usbnet_mode != RG255_USBNET_MODE_ECM)
-    {
-        if (!apply)
-        {
-            CELLULAR_DEBUG("persistent config verification failed, item=usbnet, current=%d, expected=%d", (int)usbnet_mode, (int)RG255_USBNET_MODE_ECM);
-            return -EPROTO;
-        }
-
-        ret = rg255_cmd_set_usbnet(channel, RG255_USBNET_MODE_ECM);
-        if (ret != 0)
-        {
-            CELLULAR_DEBUG("update persistent config failed, item=usbnet, old=%d, new=%d, error=%d", (int)usbnet_mode, (int)RG255_USBNET_MODE_ECM, ret);
-            return ret;
-        }
-
-        CELLULAR_INFO("persistent config updated, item=usbnet, old=%d, new=%d", (int)usbnet_mode, (int)RG255_USBNET_MODE_ECM);
-        local_changed = true;
-    }
-
-    ret = rg255_query_network_card_mode(channel, &card_mode);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("query persistent config failed, item=network_card, error=%d", ret);
-        return ret;
-    }
-
-    if (card_mode != RG255_NETWORK_CARD_MODE_NIC)
-    {
-        if (!apply)
-        {
-            CELLULAR_DEBUG("persistent config verification failed, item=network_card, current=%d, expected=%d", (int)card_mode, (int)RG255_NETWORK_CARD_MODE_NIC);
-            return -EPROTO;
-        }
-
-        ret = rg255_cmd_set_network_card_mode(channel, RG255_NETWORK_CARD_MODE_NIC);
-        if (ret != 0)
-        {
-            CELLULAR_DEBUG("update persistent config failed, item=network_card, old=%d, new=%d, error=%d", (int)card_mode, (int)RG255_NETWORK_CARD_MODE_NIC, ret);
-            return ret;
-        }
-
-        CELLULAR_INFO("persistent config updated, item=network_card, old=%d, new=%d", (int)card_mode, (int)RG255_NETWORK_CARD_MODE_NIC);
-        local_changed = true;
-    }
-
-    ret = rg255_query_network_mode(channel, &network_mode);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("query persistent config failed, item=network_mode, error=%d", ret);
-        return ret;
-    }
-
-    if (network_mode != g_cellular.config.network_mode)
-    {
-        if (!apply)
-        {
-            CELLULAR_DEBUG("persistent config verification failed, item=network_mode, current=%d, expected=%d", (int)network_mode, (int)g_cellular.config.network_mode);
-            return -EPROTO;
-        }
-
-        ret = rg255_cmd_set_network_mode(channel, g_cellular.config.network_mode);
-        if (ret != 0)
-        {
-            CELLULAR_DEBUG("update persistent config failed, item=network_mode, old=%d, new=%d, error=%d", (int)network_mode, (int)g_cellular.config.network_mode, ret);
-            return ret;
-        }
-
-        CELLULAR_INFO("persistent config updated, item=network_mode, old=%d, new=%d", (int)network_mode, (int)g_cellular.config.network_mode);
-        local_changed = true;
-    }
-
-    memset(&sim_detect, 0, sizeof(sim_detect));
-
-    ret = rg255_query_sim_detect(channel, &sim_detect);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("query persistent config failed, item=sim_detect, error=%d", ret);
-        return ret;
-    }
-
-    if (!sim_detect.enabled || sim_detect.insert_level != insert_level)
-    {
-        if (!apply)
-        {
-            CELLULAR_DEBUG("persistent config verification failed, item=sim_detect, enabled=%d, level=%d, expected_enabled=1, expected_level=%d", sim_detect.enabled ? 1 : 0, (int)sim_detect.insert_level, (int)insert_level);
-            return -EPROTO;
-        }
-
-        ret = rg255_cmd_set_sim_detect(channel, true, insert_level);
-        if (ret != 0)
-        {
-            CELLULAR_DEBUG("update persistent config failed, item=sim_detect, enabled=%d, level=%d, expected_level=%d, error=%d", sim_detect.enabled ? 1 : 0, (int)sim_detect.insert_level, (int)insert_level, ret);
-            return ret;
-        }
-
-        CELLULAR_INFO("persistent config updated, item=sim_detect, old_enabled=%d, old_level=%d, new_enabled=1, new_level=%d", sim_detect.enabled ? 1 : 0, (int)sim_detect.insert_level, (int)insert_level);
-        local_changed = true;
-    }
-
-    memset(&sim_urc, 0, sizeof(sim_urc));
-
-    ret = rg255_query_sim_status_urc(channel, &sim_urc);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("query persistent config failed, item=sim_status_urc, error=%d", ret);
-        return ret;
-    }
-
-    if (!sim_urc.enabled)
-    {
-        if (!apply)
-        {
-            CELLULAR_DEBUG("persistent config verification failed, item=sim_status_urc, current=0, expected=1");
-            return -EPROTO;
-        }
-
-        ret = rg255_cmd_set_sim_status_urc(channel, true);
-        if (ret != 0)
-        {
-            CELLULAR_DEBUG("update persistent config failed, item=sim_status_urc, old=0, new=1, error=%d", ret);
-            return ret;
-        }
-
-        CELLULAR_INFO("persistent config updated, item=sim_status_urc, old=0, new=1");
-        local_changed = true;
-    }
-
-    *changed = *changed || local_changed;
-
-    return 0;
-}
-
-/**
- * @brief 完成持久配置收敛并在必要时只重启RG255一次。
- */
-static int _linkg_cellular_prepare_persistent_config(at_channel_t **channel)
-{
-    at_channel_t *replacement;
-    bool          changed;
-    int           ret;
-
-    if (channel == NULL || *channel == NULL)
-    {
-        return -EINVAL;
-    }
-
-    changed = false;
-
-    ret = _linkg_cellular_converge_persistent_config(*channel, true, &changed);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (!changed)
-    {
-        CELLULAR_INFO("persistent config verified, restart_required=0");
-        return 0;
-    }
-
-    CELLULAR_INFO("persistent config changed, restarting modem");
-
-    ret = rg255_cmd_restart(*channel);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    at_channel_destroy(*channel);
-    *channel = NULL;
-
-    ret = linkg_time_sleep_ms(LINKG_CELLULAR_MODEM_RESTART_SETTLE_MS);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    replacement = NULL;
-    ret = _linkg_cellular_create_ready_channel(&replacement);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    changed = false;
-    ret = _linkg_cellular_converge_persistent_config(replacement, false, &changed);
-    if (ret != 0)
-    {
-        at_channel_destroy(replacement);
-        return ret;
-    }
-
-    *channel = replacement;
-
-    CELLULAR_INFO("persistent config verified after modem restart");
-
-    return 0;
-}
-
-/**
- * @brief 开启最终AT通道上的运行期异步状态上报。
- */
-static int _linkg_cellular_enable_runtime_urcs(at_channel_t *channel)
-{
-    int ret;
-
-    ret = rg255_cmd_set_eps_registration_urc(channel, true);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("enable EPS registration URC failed, error=%d", ret);
-        return ret;
-    }
-
-    ret = rg255_cmd_set_5g_registration_urc(channel, true);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("enable 5GS registration URC failed, error=%d", ret);
-        return ret;
-    }
-
-    ret = rg255_cmd_set_signal_urc(channel, true);
-    if (ret != 0)
-    {
-        CELLULAR_DEBUG("enable signal URC failed, error=%d", ret);
-        return ret;
-    }
-
-    CELLULAR_DEBUG("runtime URCs enabled");
-
-    return 0;
 }
 
 /****************************** 状态调度 ******************************/
@@ -861,7 +437,12 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
         }
 
         session_result = cellular_fsm_sync_sim_session(&g_cellular.fsm, _linkg_cellular_get_channel(), &events, &info, now_ms);
-        _linkg_cellular_publish_internet_state();
+        if (session_result > 0)
+        {
+            cellular_health_reset_session();
+        }
+
+        _linkg_cellular_publish_data_ready();
         if (session_result < 0)
         {
             return session_result;
@@ -880,7 +461,7 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
         {
             case CELLULAR_RUNTIME_STEP_DONE:
                 ret = cellular_fsm_enter(&g_cellular.fsm, step.next_state, now_ms);
-                _linkg_cellular_publish_internet_state();
+                _linkg_cellular_publish_data_ready();
                 if (ret != 0)
                 {
                     return ret;
@@ -895,7 +476,7 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
 
             case CELLULAR_RUNTIME_STEP_FAILED:
                 ret = cellular_fsm_handle_failure(&g_cellular.fsm, _linkg_cellular_get_channel(), step.error, now_ms);
-                _linkg_cellular_publish_internet_state();
+                _linkg_cellular_publish_data_ready();
                 if (ret != 0)
                 {
                     return ret;
@@ -910,6 +491,8 @@ static int _linkg_cellular_owner_loop(linkg_thread_t *owner_thread)
             default:
                 break;
         }
+
+        _linkg_cellular_publish_data_ready();
 
         ret = _linkg_cellular_poll_owner(owner_thread, linkg_time_elapsed_ms());
         if (ret != 0)
@@ -966,6 +549,18 @@ static int _linkg_cellular_stop_runtime(void)
     int first_error;
     int ret;
 
+    cellular_health_set_online(false);
+    if (g_cellular.health_started)
+    {
+        ret = cellular_health_stop();
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        g_cellular.health_started = false;
+    }
+
     if (g_cellular.link != NULL)
     {
         ret = linkg_link_stop(g_cellular.link);
@@ -1006,9 +601,9 @@ static int _linkg_cellular_stop_runtime(void)
         g_cellular.monitor_started = false;
     }
 
-    _linkg_cellular_destroy_channel();
+    cellular_modem_stop();
     cellular_fsm_reset(&g_cellular.fsm, linkg_time_elapsed_ms());
-    _linkg_cellular_publish_internet_state();
+    _linkg_cellular_publish_data_ready();
 
     return first_error;
 }
@@ -1077,6 +672,12 @@ int linkg_cellular_init(const linkg_cellular_config_t *config, bool path_enabled
         goto fail;
     }
 
+    ret = cellular_health_init();
+    if (ret != 0)
+    {
+        goto fail_modules;
+    }
+
     if (path_enabled)
     {
         ret = _linkg_cellular_create_link(packet_pool, &link);
@@ -1103,6 +704,7 @@ int linkg_cellular_init(const linkg_cellular_config_t *config, bool path_enabled
     g_cellular.link                = link;
     g_cellular.monitor_initialized = true;
     g_cellular.status_initialized  = true;
+    g_cellular.health_initialized  = true;
     g_cellular.lifecycle           = LINKG_CELLULAR_LIFECYCLE_INITIALIZED;
     g_cellular.last_error          = 0;
 
@@ -1114,6 +716,7 @@ int linkg_cellular_init(const linkg_cellular_config_t *config, bool path_enabled
     return 0;
 
 fail_modules:
+    cellular_health_deinit();
     cleanup_ret = cellular_status_deinit();
     if (cleanup_ret != 0)
     {
@@ -1133,9 +736,9 @@ fail:
 }
 
 /**
- * @brief 启动AT通道、收敛一次性Modem配置并建立运行期监控。
+ * @brief 启动RG255模组并建立蜂窝连接状态机的运行环境。
  *
- * @note 本接口不等待SIM、网络注册、PDP、Host地址或公网验证完成。
+ * @note 本接口不等待SIM、网络注册、PDP或Host就绪，公网检测由后续健康模块负责。
  */
 int linkg_cellular_start(void)
 {
@@ -1168,24 +771,20 @@ int linkg_cellular_start(void)
 
     CELLULAR_INFO("module starting");
 
-    channel = NULL;
-
-    ret = _linkg_cellular_create_ready_channel(&channel);
+    ret = cellular_modem_start(&g_cellular.config);
     if (ret != 0)
     {
         goto fail;
     }
 
-    ret = _linkg_cellular_prepare_persistent_config(&channel);
-    if (ret != 0)
+    channel = cellular_modem_get_channel();
+    if (channel == NULL)
     {
-        goto fail_channel;
+        ret = -EIO;
+        goto fail_modem;
     }
 
-    _linkg_cellular_set_channel(channel);
-    channel = NULL;
-
-    ret = cellular_monitor_start(_linkg_cellular_get_channel());
+    ret = cellular_monitor_start(channel);
     if (ret != 0)
     {
         goto fail_runtime;
@@ -1194,13 +793,13 @@ int linkg_cellular_start(void)
     g_cellular.monitor_started = true;
     CELLULAR_DEBUG("monitor started");
 
-    ret = _linkg_cellular_enable_runtime_urcs(_linkg_cellular_get_channel());
+    ret = cellular_modem_enable_runtime_urcs();
     if (ret != 0)
     {
         goto fail_runtime;
     }
 
-    ret = cellular_status_start(_linkg_cellular_get_channel());
+    ret = cellular_status_start(channel);
     if (ret != 0)
     {
         goto fail_runtime;
@@ -1209,10 +808,19 @@ int linkg_cellular_start(void)
     g_cellular.status_started = true;
     CELLULAR_DEBUG("status started");
 
+    ret = cellular_health_start();
+    if (ret != 0)
+    {
+        goto fail_runtime;
+    }
+
+    g_cellular.health_started = true;
+    CELLULAR_DEBUG("health started");
+
     cellular_fsm_reset(&g_cellular.fsm, linkg_time_elapsed_ms());
 
     ret = cellular_fsm_enter(&g_cellular.fsm, CELLULAR_RUNTIME_STATE_WAIT_SIM, linkg_time_elapsed_ms());
-    _linkg_cellular_publish_internet_state();
+    _linkg_cellular_publish_data_ready();
     if (ret != 0)
     {
         goto fail_runtime;
@@ -1235,9 +843,11 @@ int linkg_cellular_start(void)
 
 fail_runtime:
     cleanup_ret = _linkg_cellular_stop_runtime();
-    if (ret == 0)
+    if (cleanup_ret != 0)
     {
-        ret = cleanup_ret;
+        _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_FAILED, cleanup_ret);
+        CELLULAR_ERROR("module start cleanup failed, start_error=%d, cleanup_error=%d", ret, cleanup_ret);
+        return cleanup_ret;
     }
 
     _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_INITIALIZED, ret);
@@ -1245,8 +855,8 @@ fail_runtime:
 
     return ret;
 
-fail_channel:
-    at_channel_destroy(channel);
+fail_modem:
+    cellular_modem_stop();
 
 fail:
     _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_INITIALIZED, ret);
@@ -1257,11 +867,13 @@ fail:
 
 /**
  * @brief 在network-cell线程中运行蜂窝连接和维护状态机。
+ *
+ * @note 异常退出只记录模块失败；运行期资源由上层Network Worker统一回收。
  */
 int linkg_cellular_run(linkg_thread_t *owner_thread)
 {
     linkg_cellular_lifecycle_t lifecycle;
-    int                        ret;
+    int                       ret;
 
     if (owner_thread == NULL)
     {
@@ -1274,83 +886,89 @@ int linkg_cellular_run(linkg_thread_t *owner_thread)
 
     if (lifecycle != LINKG_CELLULAR_LIFECYCLE_RUNNING)
     {
-        if (lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED)
-        {
-            return -ENODEV;
-        }
-
-        return -ENETDOWN;
+        return lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED ? -ENODEV : -ENETDOWN;
     }
 
     CELLULAR_DEBUG("owner loop started");
 
     ret = _linkg_cellular_owner_loop(owner_thread);
-    if (ret != 0 && linkg_thread_is_running(owner_thread))
-    {
-        _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_FAILED, ret);
-        CELLULAR_WARN("owner loop failed, error=%d", ret);
-    }
-    else
+    if (!linkg_thread_is_running(owner_thread))
     {
         CELLULAR_DEBUG("owner loop stopped");
+        return ret;
     }
+
+    if (ret == 0)
+    {
+        ret = -EIO;
+    }
+
+    _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_FAILED, ret);
+    CELLULAR_WARN("owner loop failed, error=%d", ret);
 
     return ret;
 }
 
 /**
- * @brief 停止蜂窝运行状态机及全部运行期资源。
+ * @brief 停止蜂窝连接控制面及运行期资源。
+ *
+ * @note 由Network Worker在Owner运行循环退出后调用，不与FSM执行并发。
  */
 int linkg_cellular_stop(void)
 {
     linkg_cellular_lifecycle_t lifecycle;
-    int                        ret;
+    int                       ret;
 
     pthread_mutex_lock(&g_cellular.lock);
     lifecycle = g_cellular.lifecycle;
 
-    if (lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED)
+    if (lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED ||
+        lifecycle == LINKG_CELLULAR_LIFECYCLE_INITIALIZED)
     {
         pthread_mutex_unlock(&g_cellular.lock);
         return 0;
     }
 
-    if (lifecycle == LINKG_CELLULAR_LIFECYCLE_INITIALIZED)
+    if (lifecycle == LINKG_CELLULAR_LIFECYCLE_INITIALIZING ||
+        lifecycle == LINKG_CELLULAR_LIFECYCLE_STARTING ||
+        lifecycle == LINKG_CELLULAR_LIFECYCLE_STOPPING)
     {
         pthread_mutex_unlock(&g_cellular.lock);
-        return 0;
+        return -EBUSY;
     }
 
-    g_cellular.lifecycle = LINKG_CELLULAR_LIFECYCLE_STOPPING;
+    g_cellular.lifecycle               = LINKG_CELLULAR_LIFECYCLE_STOPPING;
+    g_cellular.data_ready              = false;
+    g_cellular.ipv4_internet_available = false;
+    g_cellular.ipv6_internet_available = false;
 
     pthread_mutex_unlock(&g_cellular.lock);
 
     CELLULAR_INFO("module stopping");
 
     ret = _linkg_cellular_stop_runtime();
-
-    _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_INITIALIZED, ret);
-
-    if (ret == 0)
+    if (ret != 0)
     {
-        CELLULAR_INFO("module stopped");
-    }
-    else
-    {
+        _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_FAILED, ret);
         CELLULAR_WARN("module stopped with cleanup error=%d", ret);
+        return ret;
     }
 
-    return ret;
+    _linkg_cellular_set_lifecycle(LINKG_CELLULAR_LIFECYCLE_INITIALIZED, 0);
+    CELLULAR_INFO("module stopped");
+
+    return 0;
 }
 
 /**
  * @brief 反初始化蜂窝模块并释放全部软件资源。
+ *
+ * @note 只有全部必要清理成功后才恢复UNINITIALIZED，失败时保留上下文以供重试。
  */
 int linkg_cellular_deinit(void)
 {
     linkg_cellular_lifecycle_t lifecycle;
     linkg_link_t              *link;
-    int                        first_error;
     int                        ret;
 
     pthread_mutex_lock(&g_cellular.lock);
@@ -1360,6 +978,13 @@ int linkg_cellular_deinit(void)
     if (lifecycle == LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED)
     {
         return 0;
+    }
+
+    if (lifecycle == LINKG_CELLULAR_LIFECYCLE_INITIALIZING ||
+        lifecycle == LINKG_CELLULAR_LIFECYCLE_STARTING ||
+        lifecycle == LINKG_CELLULAR_LIFECYCLE_STOPPING)
+    {
+        return -EBUSY;
     }
 
     if (lifecycle != LINKG_CELLULAR_LIFECYCLE_INITIALIZED)
@@ -1390,36 +1015,37 @@ int linkg_cellular_deinit(void)
         pthread_mutex_unlock(&g_cellular.lock);
     }
 
-    first_error = 0;
+    if (g_cellular.health_initialized)
+    {
+        cellular_health_deinit();
+        g_cellular.health_initialized = false;
+    }
 
     if (g_cellular.status_initialized)
     {
         ret = cellular_status_deinit();
         if (ret != 0)
         {
-            _linkg_cellular_record_first_error(&first_error, ret);
+            CELLULAR_WARN("deinitialize cellular status failed, error=%d", ret);
+            return ret;
         }
+
+        g_cellular.status_initialized = false;
     }
 
     if (g_cellular.monitor_initialized)
     {
         cellular_monitor_deinit();
+        g_cellular.monitor_initialized = false;
     }
 
     pthread_mutex_lock(&g_cellular.lock);
     _linkg_cellular_reset_context_locked();
     pthread_mutex_unlock(&g_cellular.lock);
 
-    if (first_error == 0)
-    {
-        CELLULAR_INFO("module deinitialized");
-    }
-    else
-    {
-        CELLULAR_WARN("module deinitialized with cleanup error=%d", first_error);
-    }
+    CELLULAR_INFO("module deinitialized");
 
-    return first_error;
+    return 0;
 }
 
 /****************************** 状态读取 ******************************/
@@ -1465,9 +1091,12 @@ int linkg_cellular_get_status(linkg_cellular_status_snapshot_t *snapshot)
 }
 
 /**
- * @brief 获取当前蜂窝数据链公网可用状态。
+ * @brief 根据查询类型读取蜂窝数据通道或公网可用状态。
+ *
+ * @note DATA只表示FSM建链就绪，IPV4/IPV6由独立健康检测维护。
+ *       本函数不执行任何网络探测。
  */
-int linkg_cellular_get_internet_available(bool *available)
+int linkg_cellular_get_internet_available(linkg_cellular_available_type_t type, bool *available)
 {
     linkg_cellular_lifecycle_t lifecycle;
 
@@ -1478,12 +1107,36 @@ int linkg_cellular_get_internet_available(bool *available)
 
     *available = false;
 
+    if (type != LINKG_CELLULAR_AVAILABLE_DATA &&
+        type != LINKG_CELLULAR_AVAILABLE_IPV4 &&
+        type != LINKG_CELLULAR_AVAILABLE_IPV6)
+    {
+        return -EINVAL;
+    }
+
     pthread_mutex_lock(&g_cellular.lock);
+
     lifecycle = g_cellular.lifecycle;
 
-    if (lifecycle != LINKG_CELLULAR_LIFECYCLE_UNINITIALIZED && g_cellular.config.enabled)
+    if (lifecycle == LINKG_CELLULAR_LIFECYCLE_RUNNING && g_cellular.config.enabled)
     {
-        *available = lifecycle == LINKG_CELLULAR_LIFECYCLE_RUNNING && g_cellular.internet_available;
+        switch (type)
+        {
+            case LINKG_CELLULAR_AVAILABLE_DATA:
+                *available = g_cellular.data_ready;
+                break;
+
+            case LINKG_CELLULAR_AVAILABLE_IPV4:
+                *available = g_cellular.ipv4_internet_available;
+                break;
+
+            case LINKG_CELLULAR_AVAILABLE_IPV6:
+                *available = g_cellular.ipv6_internet_available;
+                break;
+
+            default:
+                break;
+        }
     }
 
     pthread_mutex_unlock(&g_cellular.lock);

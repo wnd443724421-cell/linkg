@@ -991,7 +991,7 @@ int _linkg_web_handler_cellular_status_get(const cJSON *param, char **response)
 
     if (config.links.cellular.enabled)
     {
-        ret = linkg_cellular_get_internet_available(&internet_available);
+        ret = linkg_cellular_get_internet_available(LINKG_CELLULAR_AVAILABLE_IPV4, &internet_available);
         if (ret != 0 && ret != -ENODEV)
         {
             cJSON_Delete(data);

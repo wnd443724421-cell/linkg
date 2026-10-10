@@ -645,7 +645,7 @@ static int _linkg_web_overview_get_cellular_info(linkg_web_overview_cellular_inf
     memset(info, 0, sizeof(*info));
     info->network_type = LINKG_CELLULAR_NETWORK_TYPE_UNKNOWN;
 
-    ret = linkg_cellular_get_internet_available(&info->internet_available);
+    ret = linkg_cellular_get_internet_available(LINKG_CELLULAR_AVAILABLE_IPV4, &info->internet_available);
     if (ret != 0 && ret != -ENODEV)
     {
         return ret;
