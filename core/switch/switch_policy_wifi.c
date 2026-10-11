@@ -191,7 +191,7 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
     {
         return 0;
     }
-    
+
     if (_linkg_switch_policy_wifi_hard_failed(input))
     {
         return _linkg_switch_policy_switch_to_cellular(input, now_us);
@@ -209,3 +209,6 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
 
     return 0;
 }
+
+
+
