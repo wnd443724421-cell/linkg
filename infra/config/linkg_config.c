@@ -31,16 +31,19 @@
 
 typedef struct
 {
-    pthread_rwlock_t lock;        // 全局配置读写锁
-    linkg_config_t   current;     // 当前生效配置
-    bool             initialized; // 是否已经加载配置
+    pthread_rwlock_t lock;              // 全局配置读写锁
+    pthread_mutex_t  file_lock;         // 用户配置文件写入互斥锁
+    linkg_config_t   current;           // 当前生效配置
+    bool             initialized;       // 是否已经加载配置
+    bool             restore_committed; // 按键恢复成功后禁止本进程再次保存用户配置
 } linkg_config_context_t;
 
 /****************************** 全局上下文 ******************************/
 
 static linkg_config_context_t g_config =
 {
-    .lock = PTHREAD_RWLOCK_INITIALIZER // 全局配置读写锁初始值
+    .lock      = PTHREAD_RWLOCK_INITIALIZER, // 全局配置读写锁
+    .file_lock = PTHREAD_MUTEX_INITIALIZER   // 配置文件写入锁
 };
 
 /****************************** 错误处理 ******************************/
@@ -389,6 +392,11 @@ void linkg_config_deinit(void)
     g_config.initialized = false;
 
     pthread_rwlock_unlock(&g_config.lock);
+
+    // 全部业务模块停止后，允许下一个应用生命周期重新保存配置。
+    pthread_mutex_lock(&g_config.file_lock);
+    g_config.restore_committed = false;
+    pthread_mutex_unlock(&g_config.file_lock);
 }
 
 /****************************** 配置获取 ******************************/
@@ -603,8 +611,6 @@ int linkg_config_replace(const linkg_config_t *config)
 
 /****************************** 配置持久化 ******************************/
 
-/****************************** 配置持久化 ******************************/
-
 /**
  * @brief 保存当前配置到用户配置文件。
  */
@@ -663,11 +669,22 @@ int linkg_config_save(const linkg_config_t *config)
         return config_json_parse_error(ret);
     }
 
+    pthread_mutex_lock(&g_config.file_lock);
+
+    if (g_config.restore_committed)
+    {
+        pthread_mutex_unlock(&g_config.file_lock);
+        linkg_json_string_free(content);
+        LINKG_LOG_WARN("CONFIG: save rejected, factory restore is committed");
+        return CONFIG_ERR_FILE;
+    }
+
     ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
                                       content,
                                       strlen(content),
                                       LINKG_CONFIG_FILE_MODE);
 
+    pthread_mutex_unlock(&g_config.file_lock);
     linkg_json_string_free(content);
 
     if (ret != 0)
@@ -683,9 +700,29 @@ int linkg_config_save(const linkg_config_t *config)
 /**
  * @brief 将出厂默认配置恢复到用户配置文件。
  *
- * 不修改当前内存配置，成功后调用方需要请求重启。
+ * 不修改当前内存配置。恢复成功后禁止普通保存，调用方应请求系统重启。
+ * 开机配置损坏的自动恢复不走本接口，因此不影响启动后的正常保存。
  */
 int linkg_config_restore_factory(void)
 {
-    return _config_restore_factory_file(NULL);
+    int ret;
+
+    pthread_mutex_lock(&g_config.file_lock);
+
+    if (g_config.restore_committed)
+    {
+        pthread_mutex_unlock(&g_config.file_lock);
+        return CONFIG_OK;
+    }
+
+    // 先等待已经开始的Web保存完成，再原子恢复出厂配置。
+    ret = _config_restore_factory_file(NULL);
+    if (ret == CONFIG_OK)
+    {
+        g_config.restore_committed = true;
+    }
+
+    pthread_mutex_unlock(&g_config.file_lock);
+
+    return ret;
 }

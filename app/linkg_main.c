@@ -16,6 +16,7 @@
 
 #include "linkg_config.h"
 #include "linkg_discovery.h"
+#include "linkg_gpio_manager.h"
 #include "linkg_lifecycle.h"
 #include "linkg_link_manager.h"
 #include "linkg_log.h"
@@ -51,6 +52,7 @@ typedef struct
 {
     linkg_packet_pool_t packet_pool;                 // 全局共享Packet Pool
     bool                config_loaded;               // 全局配置是否已经加载
+    bool                gpio_initialized;            // GPIO Manager是否已经初始化
     bool                packet_pool_initialized;     // Packet Pool是否已经初始化
     bool                network_initialized;         // Network Service是否已经初始化
     bool                link_manager_initialized;    // Link Manager是否已经初始化
@@ -65,6 +67,7 @@ typedef struct
     bool                probe_initialized;           // Path Probe模块是否已经初始化
     bool                udhcp_initialized;           // UDHCP模块是否已经初始化
     bool                web_initialized;             // Web模块是否已经初始化
+    bool                gpio_started;                // GPIO Manager是否进入过start生命周期
     bool                network_started;             // Network Service是否进入过start生命周期
     bool                switch_started;              // Switch模块是否进入过start生命周期
     bool                tun_started;                 // TUN模块是否进入过start生命周期
@@ -75,6 +78,7 @@ typedef struct
     bool                udhcp_started;               // UDHCP模块是否进入过start生命周期
     bool                web_started;                 // Web模块是否进入过start生命周期
 } linkg_app_context_t;
+
 /****************************** 全局上下文 ******************************/
 
 static linkg_app_context_t g_app;
@@ -87,6 +91,7 @@ static linkg_app_context_t g_app;
 static bool _linkg_app_has_initialized_modules(void)
 {
     return g_app.config_loaded ||
+           g_app.gpio_initialized ||
            g_app.packet_pool_initialized ||
            g_app.network_initialized ||
            g_app.link_manager_initialized ||
@@ -108,7 +113,8 @@ static bool _linkg_app_has_initialized_modules(void)
  */
 static bool _linkg_app_has_started_modules(void)
 {
-    return g_app.network_started ||
+    return g_app.gpio_started ||
+           g_app.network_started ||
            g_app.switch_started ||
            g_app.tun_started ||
            g_app.route_started ||
@@ -179,6 +185,16 @@ static int _linkg_app_init(void)
         LINKG_LOG_ERROR("create configuration snapshot failed, error=%d", ret);
         return ret;
     }
+
+    // GPIO只依赖配置和基础设施，优先初始化以供后续模块使用。
+    ret = linkg_gpio_manager_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize GPIO Manager failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.gpio_initialized = true;
 
     memset(&packet_pool_config, 0, sizeof(packet_pool_config));
 
@@ -342,13 +358,14 @@ static int _linkg_app_init(void)
  * @brief 启动全部具有运行态的应用模块。
  *
  * 启动顺序严格按照运行依赖建立：
- * Network -> TUN -> Route -> NAT -> Switch -> Discovery -> Probe -> UDHCP -> Web。
+ * Network -> TUN -> Route -> NAT -> Switch -> Discovery -> Probe -> UDHCP -> GPIO -> Web。
  */
 static int _linkg_app_start(void)
 {
     int ret;
 
     if (!g_app.config_loaded ||
+        !g_app.gpio_initialized ||
         !g_app.packet_pool_initialized ||
         !g_app.network_initialized ||
         !g_app.link_manager_initialized ||
@@ -480,6 +497,16 @@ static int _linkg_app_start(void)
         return ret;
     }
 
+    // GPIO Worker在网络及Discovery启动后运行，避免查询尚未启动的状态模块。
+    g_app.gpio_started = true;
+
+    ret = linkg_gpio_manager_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start GPIO Manager failed, error=%d", ret);
+        return ret;
+    }
+
     /**
      * Web最后启动。
      * 此时所有业务模块已经进入运行态，Web请求可以安全查询和修改运行状态。
@@ -523,6 +550,19 @@ static int _linkg_app_stop(void)
         }
 
         g_app.web_started = false;
+    }
+
+    // GPIO Worker先于Network和Discovery停止，防止继续读取其状态。
+    if (g_app.gpio_started)
+    {
+        ret = linkg_gpio_manager_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop GPIO Manager failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.gpio_started = false;
     }
 
     /**
@@ -855,6 +895,18 @@ static int _linkg_app_deinit(void)
         }
 
         g_app.packet_pool_initialized = false;
+    }
+
+    if (g_app.gpio_initialized)
+    {
+        ret = linkg_gpio_manager_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize GPIO Manager failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.gpio_initialized = false;
     }
 
     if (g_app.config_loaded)
