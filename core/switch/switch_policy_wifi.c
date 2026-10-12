@@ -99,18 +99,35 @@ static int _linkg_switch_policy_switch_to_cellular(const linkg_switch_policy_inp
 /****************************** 单链路处理 ******************************/
 
 /**
- * @brief 请求进入Wi-Fi主链路双发健康检查。
- *
- * 当前暂未实现健康检查计划提交。
+ * @brief 将Wi-Fi主链路发送计划切换为双链路冗余。
  */
 static int _linkg_switch_policy_enter_dual_verify(const linkg_switch_policy_input_t *input, uint64_t now_us)
 {
+    linkg_send_plan_t plan;
+
     if (input == NULL || now_us == 0U)
     {
         return -EINVAL;
     }
 
-    return 0;
+    if (input->plan.mode == LINKG_SEND_MODE_REDUNDANT)
+    {
+        return 0;
+    }
+
+    if (input->plan.mode != LINKG_SEND_MODE_SINGLE ||
+        input->plan.primary_link_id == LINKG_LINK_ID_INVALID ||
+        input->plan.secondary_link_id == LINKG_LINK_ID_INVALID ||
+        input->plan.primary_link_id == input->plan.secondary_link_id)
+    {
+        return -EINVAL;
+    }
+
+    plan      = input->plan;
+    plan.mode = LINKG_SEND_MODE_REDUNDANT;
+    plan.primary_link_id   = LINKG_LINK_ACCESS_WIFI;
+    plan.secondary_link_id = LINKG_LINK_ACCESS_CELLULAR;
+    return linkg_switch_plan_commit_local(input->peer_node_id, input->peer_generation, &plan, now_us);
 }
 
 /**
@@ -130,7 +147,7 @@ static int _linkg_switch_policy_process_wifi_single(const linkg_switch_policy_in
 
     if (loss_state == LINKG_SWITCH_POLICY_LOSS_NONE)
     {
-        return 0;
+        return _linkg_switch_policy_enter_dual_verify(input, now_us);
     }
 
     if (loss_state == LINKG_SWITCH_POLICY_LOSS_BAD)

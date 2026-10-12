@@ -16,9 +16,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "config_internal.h"
 #include "linkg_file.h"
 #include "linkg_json.h"
+#include "linkg_log.h"
+
+#include "config_internal.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -229,46 +231,151 @@ static int _config_parse_json(const cJSON *root, linkg_config_t *out)
     return CONFIG_OK;
 }
 
-/****************************** 生命周期 ******************************/
+/****************************** 配置文件读取 ******************************/
 
 /**
- * @brief 加载全局配置。
+ * @brief 读取、解析并校验指定配置文件。
+ *
+ * 成功后由调用方持有content，需要使用free释放。
+ * 失败时content保持NULL，不修改调用方的有效配置。
  */
-int linkg_config_load(const char *path)
+static int _config_read_validated_file(const char *path, linkg_config_t *config, char **content, size_t *length)
 {
-    linkg_config_t temp;
-    const char    *actual_path;
-    char          *content;
-    cJSON         *root;
-    int            ret;
+    cJSON  *root;
+    char   *buffer;
+    size_t  file_length;
+    int     ret;
 
-    actual_path = path != NULL ? path : LINKG_CONFIG_DEFAULT_PATH;
+    if (path == NULL || config == NULL || content == NULL || length == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
 
-    ret = linkg_file_read_all(actual_path, LINKG_CONFIG_FILE_MAX, &content, NULL);
+    *content = NULL;
+    *length  = 0U;
+
+    buffer      = NULL;
+    root        = NULL;
+    file_length = 0U;
+
+    ret = linkg_file_read_all(path, LINKG_CONFIG_FILE_MAX, &buffer, &file_length);
     if (ret != 0)
     {
         return _config_error_from_file(ret);
     }
 
-    ret = linkg_json_parse(content, &root);
+    if (file_length == 0U || memchr(buffer, '\0', file_length) != NULL)
+    {
+        free(buffer);
+        return CONFIG_ERR_PARSE;
+    }
 
-    free(content);
-
+    ret = linkg_json_parse(buffer, &root);
     if (ret != LINKG_JSON_OK)
     {
+        free(buffer);
         return config_json_parse_error(ret);
     }
 
-    ret = _config_parse_json(root, &temp);
+    ret = _config_parse_json(root, config);
 
     cJSON_Delete(root);
 
     if (ret != CONFIG_OK)
     {
+        free(buffer);
         return ret;
     }
 
-    return linkg_config_replace(&temp);
+    *content = buffer;
+    *length  = file_length;
+
+    return CONFIG_OK;
+}
+
+/****************************** 出厂文件恢复 ******************************/
+
+/**
+ * @brief 校验出厂配置并原子恢复用户文件。
+ *
+ * restored允许为NULL；成功时可返回本次恢复的配置快照。
+ * 不修改当前全局配置，调用方自行决定是否重启或加载。
+ */
+static int _config_restore_factory_file(linkg_config_t *restored)
+{
+    linkg_config_t temp;
+    char          *content;
+    size_t         length;
+    int            ret;
+
+    content = NULL;
+    length  = 0U;
+
+    ret = _config_read_validated_file(LINKG_CONFIG_FACTORY_PATH, &temp, &content, &length);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
+                                      content,
+                                      length,
+                                      LINKG_CONFIG_FILE_MODE);
+
+    free(content);
+
+    if (ret != 0)
+    {
+        return _config_error_from_file(ret);
+    }
+
+    if (restored != NULL)
+    {
+        *restored = temp;
+    }
+
+    return CONFIG_OK;
+}
+
+/****************************** 生命周期 ******************************/
+
+/**
+ * @brief 加载用户配置，加载失败时自动恢复出厂配置。
+ */
+int linkg_config_load(void)
+{
+    linkg_config_t config;
+    char          *content;
+    size_t         length;
+    int            ret;
+
+    content = NULL;
+    length  = 0U;
+
+    ret = _config_read_validated_file(LINKG_CONFIG_USER_PATH, &config, &content, &length);
+
+    free(content);
+
+    if (ret != CONFIG_OK)
+    {
+        if (ret == CONFIG_ERR_MEMORY)
+        {
+            return ret;
+        }
+
+        LINKG_LOG_WARN("CONFIG: user configuration invalid, error=%d, restoring factory defaults", ret);
+
+        ret = _config_restore_factory_file(&config);
+        if (ret != CONFIG_OK)
+        {
+            LINKG_LOG_ERROR("CONFIG: factory configuration restore failed, error=%d", ret);
+            return ret;
+        }
+
+        LINKG_LOG_WARN("CONFIG: factory configuration restored successfully");
+    }
+
+    return linkg_config_replace(&config);
 }
 
 /**
@@ -496,15 +603,16 @@ int linkg_config_replace(const linkg_config_t *config)
 
 /****************************** 配置持久化 ******************************/
 
+/****************************** 配置持久化 ******************************/
+
 /**
- * @brief 保存全局配置。
+ * @brief 保存当前配置到用户配置文件。
  */
-int linkg_config_save(const linkg_config_t *config, const char *path)
+int linkg_config_save(const linkg_config_t *config)
 {
-    const char *actual_path;
-    cJSON      *root;
-    char       *content;
-    int         ret;
+    cJSON *root;
+    char  *content;
+    int    ret;
 
     if (config == NULL)
     {
@@ -516,8 +624,6 @@ int linkg_config_save(const linkg_config_t *config, const char *path)
     {
         return ret;
     }
-
-    actual_path = path != NULL ? path : LINKG_CONFIG_DEFAULT_PATH;
 
     root = cJSON_CreateObject();
     if (root == NULL)
@@ -557,7 +663,10 @@ int linkg_config_save(const linkg_config_t *config, const char *path)
         return config_json_parse_error(ret);
     }
 
-    ret = linkg_file_write_all_atomic(actual_path, content, strlen(content), LINKG_CONFIG_FILE_MODE);
+    ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
+                                      content,
+                                      strlen(content),
+                                      LINKG_CONFIG_FILE_MODE);
 
     linkg_json_string_free(content);
 
@@ -567,4 +676,16 @@ int linkg_config_save(const linkg_config_t *config, const char *path)
     }
 
     return CONFIG_OK;
+}
+
+/****************************** 配置恢复 ******************************/
+
+/**
+ * @brief 将出厂默认配置恢复到用户配置文件。
+ *
+ * 不修改当前内存配置，成功后调用方需要请求重启。
+ */
+int linkg_config_restore_factory(void)
+{
+    return _config_restore_factory_file(NULL);
 }

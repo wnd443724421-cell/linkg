@@ -272,6 +272,23 @@ static void _linkg_transport_tx_restore_packets(const linkg_transport_tx_item_t 
 /****************************** 协议状态 ******************************/
 
 /**
+ * @brief 按Transport类型分配当前Peer/Class的下一跳发送序号。
+ *
+ * @note 调用方必须持有当前Peer/Class的tx_order_lock。
+ */
+static uint32_t _linkg_transport_tx_next_sequence(linkg_transport_peer_class_t *peer_class, linkg_transport_type_t type)
+{
+    if (type == LINKG_TRANSPORT_TYPE_USER_DATA)
+    {
+        peer_class->tx_user_sequence++;
+        return peer_class->tx_user_sequence;
+    }
+
+    peer_class->tx_control_sequence++;
+    return peer_class->tx_control_sequence;
+}
+
+/**
  * @brief 分配下一个Transport分片Packet编号。
  *
  * @note 调用方必须持有g_transport.lock。
@@ -387,8 +404,7 @@ static int _linkg_transport_tx_encode_normal(const linkg_transport_tx_item_t *it
 
     packet = item->packet;
 
-    peer_class->tx_sequence++;
-    sequence = peer_class->tx_sequence;
+    sequence = _linkg_transport_tx_next_sequence(peer_class, item->type);
 
     packet->flags &= ~LINKG_PACKET_FLAG_TX_GROUP_MASK;
 
@@ -425,11 +441,8 @@ static int _linkg_transport_tx_encode_fragmented(const linkg_transport_tx_item_t
     tail_packet  = state->tail_packet;
     tail_length  = state->original_data_length - LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE;
 
-    peer_class->tx_sequence++;
-    first_sequence = peer_class->tx_sequence;
-
-    peer_class->tx_sequence++;
-    tail_sequence = peer_class->tx_sequence;
+    first_sequence = _linkg_transport_tx_next_sequence(peer_class, item->type);
+    tail_sequence  = _linkg_transport_tx_next_sequence(peer_class, item->type);
 
     first_packet->data_length = LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE;
     first_packet->flags       = (state->original_flags & ~LINKG_PACKET_FLAG_TX_GROUP_MASK) | LINKG_PACKET_FLAG_TX_GROUP_FIRST;
@@ -791,7 +804,8 @@ static int _linkg_transport_tx_send_chunk(const linkg_transport_tx_context_t *co
     linkg_transport_tx_frame_batch_t frame_batch;
     linkg_transport_tx_state_t       states[LINKG_TRANSPORT_TX_BATCH_MAX];
     linkg_transport_peer_class_t    *peer_class;
-    uint32_t                         sequence_start;
+    uint32_t                         user_sequence_start;
+    uint32_t                         control_sequence_start;
     uint32_t                         success_count;
     int                              accepted_frames;
     int                              ret;
@@ -822,12 +836,14 @@ static int _linkg_transport_tx_send_chunk(const linkg_transport_tx_context_t *co
         return ret;
     }
 
-    sequence_start = peer_class->tx_sequence;
+    user_sequence_start    = peer_class->tx_user_sequence;
+    control_sequence_start = peer_class->tx_control_sequence;
 
     ret = _linkg_transport_tx_encode_batch(items, states, count, peer_class, &frame_batch);
     if (ret != 0)
     {
-        peer_class->tx_sequence = sequence_start;
+        peer_class->tx_user_sequence    = user_sequence_start;
+        peer_class->tx_control_sequence = control_sequence_start;
 
         _linkg_transport_tx_restore_packets(items, states, count);
         pthread_mutex_unlock(&peer_class->tx_order_lock);
@@ -844,7 +860,8 @@ static int _linkg_transport_tx_send_chunk(const linkg_transport_tx_context_t *co
      */
     if (accepted_frames == 0)
     {
-        peer_class->tx_sequence = sequence_start;
+        peer_class->tx_user_sequence    = user_sequence_start;
+        peer_class->tx_control_sequence = control_sequence_start;
     }
 
     _linkg_transport_tx_record_stats(peer_class, &frame_batch, frame_results);
@@ -978,8 +995,12 @@ int linkg_transport_send(const linkg_transport_tx_context_t *context, const link
 int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, const linkg_transport_forward_item_t *items, uint32_t count, int *results)
 {
     linkg_packet_t               *packets[LINKG_TRANSPORT_FORWARD_BATCH_MAX];
+    linkg_transport_type_t        types[LINKG_TRANSPORT_FORWARD_BATCH_MAX];
+    linkg_transport_header_t      header;
     linkg_transport_peer_class_t *peer_class;
-    uint32_t                      sequence_start;
+    uint32_t                      user_sequence_start;
+    uint32_t                      control_sequence_start;
+    uint32_t                      sequence;
     uint32_t                      index;
     int                           accepted_count;
     int                           ret;
@@ -1013,6 +1034,14 @@ int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, c
         {
             return -EINVAL;
         }
+
+        ret = linkg_transport_wire_decode(items[index].packet, &header);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        types[index] = (linkg_transport_type_t)header.type;
     }
 
     ret = _linkg_transport_tx_acquire_forward_state(context, &peer_class);
@@ -1021,18 +1050,19 @@ int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, c
         return ret;
     }
 
-    sequence_start = peer_class->tx_sequence;
+    user_sequence_start    = peer_class->tx_user_sequence;
+    control_sequence_start = peer_class->tx_control_sequence;
 
     for (index = 0U; index < count; index++)
     {
         packets[index] = items[index].packet;
+        sequence       = _linkg_transport_tx_next_sequence(peer_class, types[index]);
 
-        peer_class->tx_sequence++;
-
-        ret = linkg_transport_wire_update_sequence(packets[index], peer_class->tx_sequence);
+        ret = linkg_transport_wire_update_sequence(packets[index], sequence);
         if (ret != 0)
         {
-            peer_class->tx_sequence = sequence_start;
+            peer_class->tx_user_sequence    = user_sequence_start;
+            peer_class->tx_control_sequence = control_sequence_start;
             pthread_mutex_unlock(&peer_class->tx_order_lock);
             return ret;
         }
@@ -1042,7 +1072,8 @@ int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, c
 
     if (accepted_count == 0)
     {
-        peer_class->tx_sequence = sequence_start;
+        peer_class->tx_user_sequence    = user_sequence_start;
+        peer_class->tx_control_sequence = control_sequence_start;
     }
 
     _linkg_transport_tx_record_forward_stats(peer_class, items, count, results);

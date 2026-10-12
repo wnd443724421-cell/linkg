@@ -208,7 +208,7 @@ static int _linkg_web_traffic_restore_config(const linkg_config_t *config)
 
     first_error = 0;
 
-    ret = linkg_config_save(config, NULL);
+    ret = linkg_config_save(config);
     if (ret != 0)
     {
         first_error = ret;
@@ -365,7 +365,7 @@ int _linkg_web_handler_traffic_config_set(const cJSON *param, char **response)
      * 即使save返回失败，也不能假定正式配置文件没有变化。
      * 原子保存可能已经完成rename，仅在父目录fsync阶段失败。
      */
-    ret = linkg_config_save(&new_config, NULL);
+    ret = linkg_config_save(&new_config);
     if (ret != 0)
     {
         error_message = "保存流量规则失败";

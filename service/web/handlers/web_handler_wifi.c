@@ -151,7 +151,7 @@ static int _linkg_web_wifi_restore_config(const linkg_config_t *config, bool res
             first_error = ret;
         }
     }
-    ret = linkg_config_save(config, NULL);
+    ret = linkg_config_save(config);
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
@@ -286,7 +286,7 @@ int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
     dynamic_only    = _linkg_web_wifi_narrow_only_changed(&old_config, &new_config);
     restore_network = false;
     error_message   = NULL;
-    ret = linkg_config_save(&new_config, NULL);
+    ret = linkg_config_save(&new_config);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "保存WiFi配置失败", response);

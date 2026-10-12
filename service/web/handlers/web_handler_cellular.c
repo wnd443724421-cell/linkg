@@ -94,7 +94,7 @@ static int _linkg_web_cellular_restore_config(const linkg_config_t *config, bool
         }
     }
 
-    ret = linkg_config_save(config, NULL);
+    ret = linkg_config_save(config);
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
@@ -881,7 +881,7 @@ int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response)
     restore_network = false;
     error_message   = NULL;
 
-    ret = linkg_config_save(&new_config, NULL);
+    ret = linkg_config_save(&new_config);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_CELLULAR_CONFIG_SET, "保存蜂窝网络配置失败", response);

@@ -15,6 +15,8 @@
 #include "linkg_node.h"
 #include "linkg_system_resources.h"
 
+#include "transport_reorder.h"
+
 /****************************** 模块状态 ******************************/
 
 linkg_transport_context_t g_transport;
@@ -179,9 +181,11 @@ static void _linkg_transport_reset_peer_classes(linkg_transport_peer_t *peer, bo
     {
         peer_class = &peer->classes[class_index];
 
-        peer_class->tx_sequence = 0U;
+        peer_class->tx_user_sequence    = 0U;
+        peer_class->tx_control_sequence = 0U;
 
-        linkg_transport_window_reset(&peer_class->rx_window);
+        linkg_transport_window_reset(&peer_class->rx_user_window);
+        linkg_transport_window_reset(&peer_class->rx_control_window);
 
         if (clear_stats)
         {
@@ -257,8 +261,15 @@ static int _linkg_transport_reset_peer_caches(uint8_t peer_node_id)
 
     first_error = 0;
 
-    ret = linkg_transport_reassembly_reset_peer(peer_node_id);
+    // 清理Reorder并等待该Peer已开始的交付完成，之后才能清理重组缓存。
+    ret = linkg_transport_reorder_reset_peer(peer_node_id);
     if (ret != 0)
+    {
+        first_error = ret;
+    }
+
+    ret = linkg_transport_reassembly_reset_peer(peer_node_id);
+    if (ret != 0 && first_error == 0)
     {
         first_error = ret;
     }
@@ -450,13 +461,22 @@ int linkg_transport_init(void)
         }
     }
 
-    ret = linkg_link_manager_register_receive_handler(linkg_transport_receive_batch, NULL);
+    ret = linkg_transport_reorder_runtime_init(linkg_transport_rx_emit_reordered);
     if (ret != 0)
     {
         goto fail_forward_pair;
     }
 
+    ret = linkg_link_manager_register_receive_handler(linkg_transport_receive_batch, NULL);
+    if (ret != 0)
+    {
+        goto fail_reorder;
+    }
+
     return 0;
+
+fail_reorder:
+    (void)linkg_transport_reorder_runtime_deinit();
 
 fail_forward_pair:
     if (g_transport.local_role == LINKG_DEVICE_ROLE_AP)
@@ -491,6 +511,11 @@ int linkg_transport_deinit(void)
         return 0;
     }
 
+    if (linkg_transport_reorder_is_worker_thread())
+    {
+        return -EDEADLK;
+    }
+
     ret = pthread_mutex_lock(&g_transport.lock);
     if (ret != 0)
     {
@@ -506,6 +531,12 @@ int linkg_transport_deinit(void)
     pthread_mutex_unlock(&g_transport.lock);
 
     ret = linkg_link_manager_unregister_receive_handler();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_transport_reorder_runtime_deinit();
     if (ret != 0)
     {
         return ret;
@@ -637,6 +668,11 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
         return -ENODEV;
     }
 
+    if (linkg_transport_reorder_is_worker_thread())
+    {
+        return -EDEADLK;
+    }
+
     if (!_linkg_transport_node_id_valid(peer_node_id))
     {
         return -EINVAL;
@@ -711,6 +747,11 @@ int linkg_transport_unregister_peer(uint8_t peer_node_id)
     if (!g_transport.initialized)
     {
         return -ENODEV;
+    }
+
+    if (linkg_transport_reorder_is_worker_thread())
+    {
+        return -EDEADLK;
     }
 
     if (!_linkg_transport_node_id_valid(peer_node_id))

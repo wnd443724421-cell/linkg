@@ -59,6 +59,25 @@ extern "C" {
 #define LINKG_RESOURCE_INTERFACE_ETHERNET  "eth0"   // 以太网接口
 #define LINKG_RESOURCE_INTERFACE_LOOPBACK  "lo"     // 本机回环接口
 
+/****************************** GPIO硬件资源 ******************************/
+
+#define LINKG_RESOURCE_GPIO_SBUS_SWITCH          "PD16" // SBUS通路切换控制
+#define LINKG_RESOURCE_GPIO_LED_RUN              "PD1"  // 系统运行LED
+
+#define LINKG_RESOURCE_GPIO_WIFI_RSSI_BLUE       "PD9"  // Wi-Fi RSSI蓝灯
+#define LINKG_RESOURCE_GPIO_WIFI_RSSI_GREEN      "PD6"  // Wi-Fi RSSI绿灯
+#define LINKG_RESOURCE_GPIO_WIFI_RSSI_RED        "PD5"  // Wi-Fi RSSI红灯
+
+#define LINKG_RESOURCE_GPIO_CELLULAR_RSSI_BLUE   "PD13" // 蜂窝RSSI蓝灯
+#define LINKG_RESOURCE_GPIO_CELLULAR_RSSI_GREEN  "PD14" // 蜂窝RSSI绿灯
+#define LINKG_RESOURCE_GPIO_CELLULAR_RSSI_RED    "PD15" // 蜂窝RSSI红灯
+
+#define LINKG_RESOURCE_GPIO_UART_ENABLE          "PD21" // 串口接收使能
+#define LINKG_RESOURCE_GPIO_RESET_KEY            "PD8"  // 长按复位按键
+
+#define LINKG_RESOURCE_GPIO_HWID1                "PB8"  // 硬件版本识别位1
+#define LINKG_RESOURCE_GPIO_HWID2                "PB9"  // 硬件版本识别位2
+
 /****************************** 蜂窝硬件 ******************************/
 
 #define LINKG_RESOURCE_CELLULAR_SIM_INSERT_ACTIVE_HIGH true // SIM_DET高电平表示SIM插入

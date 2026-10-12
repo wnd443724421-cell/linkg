@@ -29,12 +29,12 @@ extern "C"
 #define LINKG_TRANSPORT_FRAGMENT_COUNT_MAX          2U                                                                 // 当前协议最大分片数量
 #define LINKG_TRANSPORT_REASSEMBLY_SET_COUNT        64U                                                                // 本机重组缓存组数
 #define LINKG_TRANSPORT_REASSEMBLY_WAYS             2U                                                                 // 本机重组缓存组相联路数
-#define LINKG_TRANSPORT_REASSEMBLY_TTL_US           20000ULL                                                           // 不完整数据包最大保留时间
+#define LINKG_TRANSPORT_REASSEMBLY_TTL_US           60000ULL                                                           // 不完整数据包最大保留时间
 #define LINKG_TRANSPORT_REASSEMBLY_GC_INTERVAL_US   5000ULL                                                            // 本机重组缓存清理周期
 #define LINKG_TRANSPORT_RX_WINDOW_WORDS             (LINKG_TRANSPORT_RX_WINDOW_BITS / 64U)                             // 接收窗口位图字数量
 #define LINKG_TRANSPORT_FORWARD_PAIR_SET_COUNT      32U                                                                // 中继分片配对缓存组数
 #define LINKG_TRANSPORT_FORWARD_PAIR_WAYS           2U                                                                 // 中继分片配对组相联路数
-#define LINKG_TRANSPORT_FORWARD_PAIR_TTL_US         20000ULL                                                           // 中继不完整分片组最大保留时间
+#define LINKG_TRANSPORT_FORWARD_PAIR_TTL_US         60000ULL                                                           // 中继不完整分片组最大保留时间
 #define LINKG_TRANSPORT_FORWARD_PAIR_GC_INTERVAL_US 5000ULL                                                            // 中继分片配对缓存清理周期
 
 /****************************** 接收窗口 ******************************/
@@ -59,10 +59,12 @@ typedef struct
 
 typedef struct
 {
-    pthread_mutex_t               tx_order_lock; // 当前Peer当前Class发送顺序保护锁
-    linkg_transport_rx_window_t   rx_window;     // 当前Peer当前Class接收去重窗口
-    linkg_transport_class_stats_t stats;         // 当前Peer当前Class累计统计
-    uint32_t                      tx_sequence;   // 当前Peer当前Class逐跳发送序列号
+    pthread_mutex_t               tx_order_lock;      // 当前Peer当前Class发送顺序保护锁
+    linkg_transport_rx_window_t   rx_user_window;     // 用户业务数据接收去重窗口
+    linkg_transport_rx_window_t   rx_control_window;  // 内部控制数据接收去重窗口
+    linkg_transport_class_stats_t stats;              // 当前Peer当前Class累计统计
+    uint32_t                      tx_user_sequence;   // 用户业务数据发送序列号
+    uint32_t                      tx_control_sequence;// 内部控制数据发送序列号
 } linkg_transport_peer_class_t;
 
 typedef struct

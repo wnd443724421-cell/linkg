@@ -15,9 +15,10 @@
 extern "C" {
 #endif
 
-/****************************** 配置常量 ******************************/
+/****************************** 配置路径 ******************************/
 
-#define LINKG_CONFIG_DEFAULT_PATH "/app/current/config/linkgDefault.json" // 默认用户配置文件
+#define LINKG_CONFIG_FACTORY_PATH "/app/current/config/linkgDefault.json" // 出厂默认配置文件
+#define LINKG_CONFIG_USER_PATH    "/app/current/config/linkgUser.json"    // 用户运行配置文件
 
 /****************************** 类型定义 ******************************/
 
@@ -31,7 +32,7 @@ typedef struct
 
 /****************************** 生命周期 ******************************/
 
-int  linkg_config_load(const char *path);
+int  linkg_config_load(void);
 void linkg_config_deinit(void);
 
 /****************************** 配置获取 ******************************/
@@ -50,7 +51,11 @@ int linkg_config_replace(const linkg_config_t *config);
 
 /****************************** 配置持久化 ******************************/
 
-int linkg_config_save(const linkg_config_t *config, const char *path);
+int linkg_config_save(const linkg_config_t *config);
+
+/****************************** 配置恢复 ******************************/
+
+int linkg_config_restore_factory(void);
 
 #ifdef __cplusplus
 }

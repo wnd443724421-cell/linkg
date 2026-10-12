@@ -162,7 +162,7 @@ static int _linkg_app_init(void)
         return -EALREADY;
     }
 
-    ret = linkg_config_load(NULL);
+    ret = linkg_config_load();
     if (ret != 0)
     {
         LINKG_LOG_ERROR("load configuration failed, error=%d", ret);
