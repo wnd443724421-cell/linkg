@@ -140,6 +140,17 @@ configure_project()
         -DCMAKE_BUILD_TYPE=Release
     )
 
+    # 启用ccache编译缓存，支持删除构建目录后复用编译结果。
+    local ccache_program
+
+    ccache_program="$(command -v ccache || true)"
+
+    if [[ -n "${ccache_program}" ]]
+    then
+        cmake_arguments+=("-DCMAKE_C_COMPILER_LAUNCHER=${ccache_program}")
+        print_info "已启用ccache编译缓存: ${ccache_program}"
+    fi
+
     if [[ "${ARCHITECTURE}" == "arm" ]]
     then
         prepare_arm_environment
