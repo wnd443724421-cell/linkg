@@ -542,7 +542,6 @@ static linkg_gpio_led_level_t _linkg_gpio_query_cellular_level(uint64_t now_ms)
     linkg_cellular_status_snapshot_t snapshot;
     linkg_cellular_config_t          config;
     bool                            data_ready;
-    bool                            ipv4_available;
     bool                            ipv6_available;
     int                             ret;
 
@@ -558,17 +557,10 @@ static linkg_gpio_led_level_t _linkg_gpio_query_cellular_level(uint64_t now_ms)
     }
 
     data_ready      = false;
-    ipv4_available  = false;
     ipv6_available  = false;
 
     ret = linkg_cellular_get_internet_available(LINKG_CELLULAR_AVAILABLE_DATA, &data_ready);
     if (ret != 0 || !data_ready)
-    {
-        return LINKG_GPIO_LED_RED_BLINK;
-    }
-
-    ret = linkg_cellular_get_internet_available(LINKG_CELLULAR_AVAILABLE_IPV4, &ipv4_available);
-    if (ret != 0)
     {
         return LINKG_GPIO_LED_RED_BLINK;
     }
@@ -578,9 +570,6 @@ static linkg_gpio_led_level_t _linkg_gpio_query_cellular_level(uint64_t now_ms)
     {
         return LINKG_GPIO_LED_RED_BLINK;
     }
-
-    // 已获取IPv4健康状态，仅IPv6决定蜂窝指示灯是否进入故障闪烁。
-    (void)ipv4_available;
 
     memset(&snapshot, 0, sizeof(snapshot));
     ret = linkg_cellular_get_status(&snapshot);

@@ -367,7 +367,7 @@ static void _linkg_wifi_tx_log_flowctrl_blocked_locked(linkg_wifi_tx_t *tx, cons
     tx->last_flowctrl_log_us = now_us;
     blocked_us               = now_us >= tx->flowctrl_blocked_since_us ? now_us - tx->flowctrl_blocked_since_us : 0U;
 
-    WIFI_WARN("TX流控阻塞，blocked_ms=%llu status_valid=%u driver_allowed=%u new_off=%u off_count=%u driver_queue_vo_vi_be=%u/%u/%u wait_queue_rt_video_data=%u/%u/%u read_us=%llu",
+    WIFI_DEBUG("TX流控阻塞，blocked_ms=%llu status_valid=%u driver_allowed=%u new_off=%u off_count=%u driver_queue_vo_vi_be=%u/%u/%u wait_queue_rt_video_data=%u/%u/%u read_us=%llu",
               (unsigned long long)(blocked_us / 1000ULL),
               sample->status_valid ? 1U : 0U,
               sample->driver_tx_allowed ? 1U : 0U,
@@ -380,6 +380,7 @@ static void _linkg_wifi_tx_log_flowctrl_blocked_locked(linkg_wifi_tx_t *tx, cons
               linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_VIDEO]),
               linkg_wifi_tx_queue_count(tx->queues[LINKG_WIFI_TRAFFIC_DATA]),
               (unsigned long long)sample->read_us);
+    (void)blocked_us;
 }
 
 /**
@@ -400,7 +401,7 @@ static void _linkg_wifi_tx_log_flowctrl_recovered_locked(linkg_wifi_tx_t *tx, co
     now_us     = linkg_time_monotonic_us();
     blocked_us = now_us >= tx->flowctrl_blocked_since_us ? now_us - tx->flowctrl_blocked_since_us : 0U;
 
-    WIFI_INFO("TX流控恢复，blocked_ms=%llu off_count=%u driver_queue_vo_vi_be=%u/%u/%u wait_queue_rt_video_data=%u/%u/%u",
+    WIFI_DEBUG("TX流控恢复，blocked_ms=%llu off_count=%u driver_queue_vo_vi_be=%u/%u/%u wait_queue_rt_video_data=%u/%u/%u",
               (unsigned long long)(blocked_us / 1000ULL),
               sample->flowctrl_off_count,
               sample->vo_queue_length,
@@ -413,6 +414,7 @@ static void _linkg_wifi_tx_log_flowctrl_recovered_locked(linkg_wifi_tx_t *tx, co
     tx->flowctrl_blocked          = false;
     tx->flowctrl_blocked_since_us = 0U;
     tx->last_flowctrl_log_us      = 0U;
+    (void)blocked_us;
 }
 
 /**

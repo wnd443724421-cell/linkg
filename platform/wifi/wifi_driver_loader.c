@@ -29,6 +29,26 @@
 /****************************** 内部辅助 ******************************/
 
 /**
+ * @brief 判断是否使用进口PA硬件资源。
+ */
+static bool _wifi_driver_is_imported_hardware(uint8_t hardware_id)
+{
+    if (hardware_id == WIFI_DRIVER_HARDWARE_ID_IMPORTED)
+    {
+        return true;
+    }
+
+#if WIFI_DRIVER_ENABLE_LQ10_COMPAT
+    if (hardware_id == WIFI_DRIVER_HARDWARE_ID_LQ10)
+    {
+        return true;
+    }
+#endif
+
+    return false;
+}
+
+/**
  * @brief 检查指定内核模块是否已经加载。
  */
 static bool _wifi_driver_module_loaded(const char *module_name)
@@ -117,7 +137,7 @@ static int _wifi_driver_load_module(const char *module_path, const char *module_
 }
 
 /**
- * @brief 根据PB8/PB9编码选择固定的硬件固件目录名称。
+ * @brief 根据硬件版本选择固件目录名称。
  */
 static int _wifi_driver_firmware_target(uint8_t hardware_id, const char **target)
 {
@@ -126,20 +146,18 @@ static int _wifi_driver_firmware_target(uint8_t hardware_id, const char **target
         return -EINVAL;
     }
 
-    switch (hardware_id)
+    *target = NULL;
+
+    if (hardware_id == WIFI_DRIVER_HARDWARE_ID_DOMESTIC)
     {
-        case WIFI_DRIVER_HARDWARE_ID_DOMESTIC:
-            *target = WIFI_DRIVER_FIRMWARE_DOMESTIC_TARGET;
-            return 0;
-
-        case WIFI_DRIVER_HARDWARE_ID_IMPORTED:
-            *target = WIFI_DRIVER_FIRMWARE_IMPORTED_TARGET;
-            return 0;
-
-        default:
-            *target = NULL;
-            return -EINVAL;
+        *target = WIFI_DRIVER_FIRMWARE_DOMESTIC_TARGET;
     }
+    else if (_wifi_driver_is_imported_hardware(hardware_id))
+    {
+        *target = WIFI_DRIVER_FIRMWARE_IMPORTED_TARGET;
+    }
+
+    return *target != NULL ? 0 : -EINVAL;
 }
 
 /**
@@ -503,7 +521,7 @@ int wifi_driver_prepare_firmware(uint8_t hardware_id)
 /****************************** INI配置 ******************************/
 
 /**
- * @brief 获取指定硬件版本和工作模式的INI相对链接目标。
+ * @brief 根据硬件版本和工作模式选择INI文件。
  */
 static int _wifi_driver_ini_target(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode, const char **target)
 {
@@ -525,7 +543,7 @@ static int _wifi_driver_ini_target(uint8_t hardware_id, linkg_wifi_work_mode_t w
             *target = WIFI_DRIVER_DOMESTIC_WIDE_INI_TARGET;
         }
     }
-    else if (hardware_id == WIFI_DRIVER_HARDWARE_ID_IMPORTED)
+    else if (_wifi_driver_is_imported_hardware(hardware_id))
     {
         if (work_mode == LINKG_WIFI_WORK_MODE_NARROW)
         {

@@ -19,6 +19,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "linkg_config.h"
 #include "linkg_file.h"
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
@@ -37,6 +38,12 @@
 #define LINKG_ETHERNET_IRQ_LINE_MAX              512U         // /proc/interrupts单行缓冲区长度
 #define LINKG_ETHERNET_DEVICE_NAME_MAX           128U         // Ethernet平台设备名称缓冲区长度
 #define LINKG_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U          // IRQ affinity写入值缓冲区长度
+
+#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_0        0x02U        // 本地管理单播地址，bit0=0、bit1=1
+#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_1        0x4CU        // 'L'
+#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_2        0x47U        // 'G'
+#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_3        0x00U        // 固定前缀
+#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_4        0x00U        // 固定前缀
 
 /****************************** 类型定义 ******************************/
 
@@ -93,6 +100,126 @@ static void _linkg_ethernet_set_lifecycle(linkg_ethernet_lifecycle_t lifecycle)
     pthread_mutex_lock(&g_ethernet.lock);
     g_ethernet.lifecycle = lifecycle;
     pthread_mutex_unlock(&g_ethernet.lock);
+}
+
+/****************************** MAC配置 ******************************/
+
+/**
+ * @brief 根据LinkG节点ID生成局部管理单播MAC地址。
+ *
+ * 同一二层广播域内要求node_id唯一。不同组网的相同node_id不能保证MAC唯一。
+ */
+static int _linkg_ethernet_build_mac(uint8_t node_id, uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
+{
+    if (mac == NULL ||
+        node_id < LINKG_RESOURCE_NODE_ID_MIN ||
+        node_id > LINKG_RESOURCE_NODE_ID_MAX)
+    {
+        return -EINVAL;
+    }
+
+    mac[0] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_0;
+    mac[1] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_1;
+    mac[2] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_2;
+    mac[3] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_3;
+    mac[4] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_4;
+    mac[5] = node_id;
+
+    return 0;
+}
+
+/**
+ * @brief 核对当前Ethernet MAC，不匹配时设置为当前节点的确定性MAC。
+ *
+ * 如果当前MAC匹配，则完全不触碰接口状态，避免影响现有SSH连接。
+ * 如果MAC不匹配，则在必要时临时关闭接口，设置及复核MAC后恢复原UP状态。
+ * MAC属于内核网卡运行状态，停止或反初始化LinkG时不得恢复旧MAC。
+ */
+static int _linkg_ethernet_prepare_mac(void)
+{
+    linkg_network_config_t config;
+    uint8_t                expected[LINKG_NETWORK_MAC_ADDRESS_LENGTH];
+    uint8_t                current[LINKG_NETWORK_MAC_ADDRESS_LENGTH];
+    bool                   was_up;
+    int                    restore_ret;
+    int                    ret;
+
+    ret = linkg_config_get_network(&config);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _linkg_ethernet_build_mac(config.node_id, expected);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("Ethernet invalid node ID for MAC, node=%u, error=%d", (unsigned int)config.node_id, ret);
+        return ret;
+    }
+
+    ret = linkg_network_interface_get_mac(LINKG_RESOURCE_INTERFACE_ETHERNET, current);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (memcmp(current, expected, sizeof(expected)) == 0)
+    {
+        return 0;
+    }
+
+    ret = linkg_network_interface_is_up(LINKG_RESOURCE_INTERFACE_ETHERNET, &was_up);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (was_up)
+    {
+        ret = linkg_network_interface_set_up(LINKG_RESOURCE_INTERFACE_ETHERNET, false);
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+
+    ret = linkg_network_interface_set_mac(LINKG_RESOURCE_INTERFACE_ETHERNET, expected);
+    if (ret == 0)
+    {
+        ret = linkg_network_interface_get_mac(LINKG_RESOURCE_INTERFACE_ETHERNET, current);
+        if (ret == 0 && memcmp(current, expected, sizeof(expected)) != 0)
+        {
+            ret = -EIO;
+        }
+    }
+
+    if (was_up)
+    {
+        restore_ret = linkg_network_interface_set_up(LINKG_RESOURCE_INTERFACE_ETHERNET, true);
+        if (restore_ret != 0)
+        {
+            LINKG_LOG_ERROR("Ethernet restore interface UP failed, error=%d", restore_ret);
+            if (ret == 0)
+            {
+                ret = restore_ret;
+            }
+        }
+    }
+
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("Ethernet set MAC failed, node=%u, error=%d", (unsigned int)config.node_id, ret);
+        return ret;
+    }
+
+    LINKG_LOG_INFO("Ethernet MAC updated, interface=%s, node=%u, mac=%02x:%02x:%02x:%02x:%02x:%02x",
+                   LINKG_RESOURCE_INTERFACE_ETHERNET,
+                   (unsigned int)config.node_id,
+                   (unsigned int)expected[0], (unsigned int)expected[1],
+                   (unsigned int)expected[2], (unsigned int)expected[3],
+                   (unsigned int)expected[4], (unsigned int)expected[5]);
+
+    return 0;
 }
 
 /****************************** IRQ绑定 ******************************/
@@ -611,6 +738,13 @@ int linkg_ethernet_start(void)
 
     phase = "wait_interface";
     ret = linkg_network_interface_wait(LINKG_RESOURCE_INTERFACE_ETHERNET, LINKG_ETHERNET_INTERFACE_WAIT_TIMEOUT_MS);
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
+    phase = "prepare_mac";
+    ret = _linkg_ethernet_prepare_mac();
     if (ret != 0)
     {
         goto fail;
