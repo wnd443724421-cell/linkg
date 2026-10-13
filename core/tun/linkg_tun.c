@@ -33,6 +33,7 @@
 #include "linkg_time.h"
 #include "linkg_transport.h"
 #include "linkg_tun_uapi.h"
+#include "tun_driver_loader.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -1173,6 +1174,7 @@ int linkg_tun_start(void)
     linkg_network_ipv4_config_t virtual_network;
     int                         fd;
     int                         stop_ret;
+    int                         unload_ret;
     int                         ret;
 
     if (!g_tun.initialized)
@@ -1190,6 +1192,12 @@ int linkg_tun_start(void)
     {
         pthread_mutex_unlock(&g_tun.lock);
         return -EALREADY;
+    }
+
+    if (g_tun.fd >= 0 || linkg_thread_is_started(&g_tun.read_thread))
+    {
+        pthread_mutex_unlock(&g_tun.lock);
+        return -EBUSY;
     }
 
     pthread_mutex_unlock(&g_tun.lock);
@@ -1222,24 +1230,33 @@ int linkg_tun_start(void)
         return ret;
     }
 
+    /* 驱动必须先于/dev/net/tun打开，避免系统自动加载错误版本。 */
+    ret = tun_driver_load();
+    if (ret != 0)
+    {
+        goto fail_driver;
+    }
+
     fd = _linkg_tun_open();
     if (fd < 0)
     {
-        return fd;
+        ret = fd;
+        goto fail_driver;
     }
 
     ret = _linkg_tun_set_kernel_traffic_config(fd, &network_config.traffic);
     if (ret != 0)
     {
         (void)_linkg_tun_close_fd(fd);
-        return ret;
+        goto fail_driver;
     }
 
     ret = pthread_mutex_lock(&g_tun.lock);
     if (ret != 0)
     {
+        ret = -ret;
         (void)_linkg_tun_close_fd(fd);
-        return -ret;
+        goto fail_driver;
     }
 
     g_tun.fd              = fd;
@@ -1303,6 +1320,14 @@ fail_close:
 
     (void)_linkg_tun_close_fd(fd);
 
+fail_driver:
+    /* 即使驱动装载成功后其他步骤失败，也必须尝试释放模块。 */
+    unload_ret = tun_driver_unload();
+    if (unload_ret != 0)
+    {
+        LINKG_TUN_ERROR("rollback driver unload failed, error=%d", unload_ret);
+    }
+
     return ret;
 }
 
@@ -1328,10 +1353,10 @@ int linkg_tun_stop(void)
     }
 
     thread_started = linkg_thread_is_started(&g_tun.read_thread);
-    if (!g_tun.started && !thread_started)
+    if (!g_tun.started && !thread_started && g_tun.fd < 0)
     {
         pthread_mutex_unlock(&g_tun.lock);
-        return 0;
+        return tun_driver_unload();
     }
 
     g_tun.started = false;
@@ -1378,6 +1403,17 @@ int linkg_tun_stop(void)
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
+    }
+
+    /* 内核模块卸载必须放在读取线程停止、TUN fd关闭之后。 */
+    ret = tun_driver_unload();
+    if (ret != 0)
+    {
+        LINKG_TUN_ERROR("driver unload failed, error=%d", ret);
+        if (first_error == 0)
+        {
+            first_error = ret;
+        }
     }
 
     if (first_error != 0)
@@ -1445,9 +1481,16 @@ int linkg_tun_deinit(void)
         return 0;
     }
 
-    if (g_tun.started || linkg_thread_is_started(&g_tun.read_thread))
+    if (g_tun.started || g_tun.fd >= 0 || linkg_thread_is_started(&g_tun.read_thread))
     {
         return -EBUSY;
+    }
+
+    /* 处理此前停止过程rmmod失败留下的模块，不丢失重试机会。 */
+    ret = tun_driver_unload();
+    if (ret != 0)
+    {
+        return ret;
     }
 
     ret = linkg_transport_unregister_handler(LINKG_TRANSPORT_TYPE_USER_DATA);

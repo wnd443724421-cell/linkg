@@ -330,7 +330,7 @@ static bool _wifi_status_build_peer(const wal_radio_peer_status_stru *raw_peer, 
     }
 
     peer->statistics_valid      = true;
-    peer->rssi_dbm              = raw_peer->rssi_dbm;
+    peer->rssi_dbm              = raw_peer->rssi_dbm > -1 ? 0 : raw_peer->rssi_dbm;
     peer->tx_rate_kbps          = raw_peer->tx_rate_kbps;
     peer->rx_rate_kbps          = raw_peer->rx_rate_kbps;
     peer->driver_tx_bytes       = raw_peer->driver_tx_bytes;

@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "linkg_gpio_manager.h"
 #include "linkg_link_manager.h"
 #include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
@@ -952,6 +953,7 @@ int linkg_wifi_start(void)
     linkg_link_t        *link;
     const char          *phase;
     bool                 driver_was_loaded;
+    uint8_t              hardware_id;
     bool                 ini_changed;
     uint64_t             now_ms;
     int                  cleanup_ret;
@@ -1002,8 +1004,22 @@ int linkg_wifi_start(void)
 
     driver_was_loaded = wifi_driver_is_loaded();
 
+    phase = "read_hardware_id";
+    ret = linkg_gpio_manager_get_hardware_id(&hardware_id);
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
+    phase = "prepare_driver_firmware";
+    ret = wifi_driver_prepare_firmware(hardware_id);
+    if (ret != 0)
+    {
+        goto fail;
+    }
+
     phase = "prepare_driver_ini";
-    ret = wifi_driver_prepare_ini(g_wifi.config.wideband.work_mode, &ini_changed);
+    ret = wifi_driver_prepare_ini(hardware_id, g_wifi.config.wideband.work_mode, &ini_changed);
     if (ret != 0)
     {
         goto fail;

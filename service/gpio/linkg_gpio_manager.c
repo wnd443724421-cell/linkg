@@ -17,7 +17,6 @@
 
 #include "linkg_cellular.h"
 #include "linkg_config.h"
-#include "linkg_discovery.h"
 #include "linkg_gpio.h"
 #include "linkg_lifecycle.h"
 #include "linkg_log.h"
@@ -25,6 +24,7 @@
 #include "linkg_thread.h"
 #include "linkg_time.h"
 #include "linkg_wifi.h"
+#include "linkg_node.h"
 
 /****************************** 调度常量 ******************************/
 
@@ -37,9 +37,12 @@
 
 /****************************** 灯语常量 ******************************/
 
-#define LINKG_GPIO_LED_PERIOD_MS           1000U        // 系统运行灯基础周期
-#define LINKG_GPIO_LED_SLOT_MS             100U         // 系统运行灯单次亮灭时隙
-#define LINKG_GPIO_LED_FAST_PERIOD_MS      200U         // 快速闪烁周期（100ms亮/灭）
+#define LINKG_GPIO_RUN_AP_PERIOD_MS        2000U        // AP运行灯周期：2000ms
+#define LINKG_GPIO_RUN_AP_ON_MS            1500U        // AP运行灯亮1500ms，灭500ms
+#define LINKG_GPIO_RUN_STA_PERIOD_MS       1000U        // STA运行灯周期：1000ms
+#define LINKG_GPIO_RUN_STA_ON_MS           300U         // STA运行灯亮300ms，灭700ms
+#define LINKG_GPIO_LED_SLOT_MS             100U         // 快速闪烁单次亮灯时间
+#define LINKG_GPIO_LED_FAST_PERIOD_MS      200U         // 快速闪烁周期：亮100ms，灭100ms
 
 /****************************** 复位常量 ******************************/
 
@@ -84,7 +87,7 @@ typedef struct
     bool     stable_pressed;       // 消抖后的按下状态
     bool     candidate_pressed;    // 正在等待确认的按键状态
     uint8_t  candidate_count;      // 候选状态连续采样次数
-    bool     blocked_until_release; // 读取失败后禁止本次按压生效
+    bool     blocked_until_release;// 读取失败后禁止本次按压生效
     bool     over_time;            // 持续按下超过最大有效时长
     uint64_t started_ms;           // 确认按下的单调时间戳
 } linkg_gpio_button_t;
@@ -100,7 +103,7 @@ typedef struct
     linux_gpio_t              *reset_key;            // PD8：KEY_1
     linux_gpio_t              *hwid1;                // PB8：硬件版本位1
     linux_gpio_t              *hwid2;                // PB9：硬件版本位2
-    linux_gpio_t              *led_run;              // PD1：运行灯
+    linux_gpio_t              *sys_run;              // PD1：运行灯
     linkg_gpio_rgb_t           wifi;                 // Wi-Fi RSSI RGB
     linkg_gpio_rgb_t           cellular;             // 蜂窝 RSSI RGB
     linkg_gpio_led_level_t     wifi_level;           // Wi-Fi最新灯语
@@ -162,7 +165,7 @@ static void _linkg_gpio_release_locked(void)
     _linkg_gpio_close_pin(&g_gpio.reset_key);
     _linkg_gpio_close_pin(&g_gpio.hwid1);
     _linkg_gpio_close_pin(&g_gpio.hwid2);
-    _linkg_gpio_close_pin(&g_gpio.led_run);
+    _linkg_gpio_close_pin(&g_gpio.sys_run);
     _linkg_gpio_close_pin(&g_gpio.wifi.red);
     _linkg_gpio_close_pin(&g_gpio.wifi.green);
     _linkg_gpio_close_pin(&g_gpio.wifi.blue);
@@ -239,7 +242,7 @@ static int _linkg_gpio_write_run_locked(bool on)
         return 0;
     }
 
-    ret = linux_gpio_write(g_gpio.led_run, !on);
+    ret = linux_gpio_write(g_gpio.sys_run, !on);
     if (ret == 0)
     {
         g_gpio.run_led_on    = on;
@@ -380,35 +383,46 @@ static bool _linkg_gpio_is_fresh(uint64_t updated_ms, uint64_t now_ms, uint64_t 
 
 /**
  * @brief 检查Wi-Fi对端RSSI是否具有有效、未过期的驱动统计。
+ *
+ * RSSI允许为0dBm，但必须确认对端已关联且统计有效。
+ * -127为驱动使用的无效RSSI标记。
  */
 static bool _linkg_gpio_peer_has_rssi(const linkg_wifi_peer_status_t *peer, uint64_t now_ms)
 {
-    return peer != NULL && peer->valid &&
+    return peer != NULL &&
+           peer->valid &&
            peer->state == LINKG_WIFI_PEER_STATE_CONNECTED &&
            peer->statistics_valid &&
            _linkg_gpio_is_fresh(peer->statistics_updated_ms, now_ms, LINKG_GPIO_WIFI_MAX_AGE_MS) &&
-           peer->rssi_dbm > -127 && peer->rssi_dbm < 0;
+           peer->rssi_dbm > -127 &&
+           peer->rssi_dbm < 0;
 }
 
 /****************************** Wi-Fi状态 ******************************/
 
 /**
- * @brief 从Wi-Fi快照和Discovery逻辑拓扑计算当前RSSI灯语。
+ * @brief 根据Node直接对端状态和Wi-Fi运行快照计算RSSI灯语。
  *
- * AP至少存在一台逻辑在线STA才显示RSSI；对关联STA取最低RSSI。
- * 没有对端为红闪，关联但统计无效为红色常亮。
+ * Node负责确认LinkG直接对端是否在线。
+ * Wi-Fi负责确认物理关联状态和RSSI有效性。
+ *
+ * STA使用唯一AP的RSSI。
+ * AP使用当前有效关联STA中的最低RSSI。
+ *
+ * 没有在线对端或Wi-Fi未关联时红色闪烁。
+ * 对端已关联但RSSI统计无效时红色常亮。
  */
 static linkg_gpio_led_level_t _linkg_gpio_query_wifi_level(linkg_device_role_t role, uint64_t now_ms)
 {
-    linkg_discovery_topology_snapshot_t topology;
-    linkg_wifi_status_snapshot_t        snapshot;
-    linkg_wifi_config_t                 config;
-    const linkg_wifi_peer_status_t     *peer;
-    bool                                has_rssi;
-    bool                                wideband;
-    int32_t                             minimum_rssi;
-    size_t                              index;
-    int                                 ret;
+    linkg_wifi_status_snapshot_t   snapshot;
+    linkg_wifi_config_t            config;
+    const linkg_wifi_peer_status_t *peer;
+    uint32_t                       node_peer_count;
+    bool                           has_rssi;
+    bool                           wideband;
+    int32_t                        minimum_rssi;
+    size_t                         index;
+    int                            ret;
 
     ret = linkg_config_get_wifi(&config);
     if (ret != 0)
@@ -422,13 +436,13 @@ static linkg_gpio_led_level_t _linkg_gpio_query_wifi_level(linkg_device_role_t r
     }
 
     memset(&snapshot, 0, sizeof(snapshot));
+
     ret = linkg_wifi_get_status(&snapshot);
     if (ret != 0)
     {
         return LINKG_GPIO_LED_RED_BLINK;
     }
 
-    // 状态线程可能刚刚更新快照，时间必须在读取完成后重新获取。
     now_ms = linkg_time_elapsed_ms();
 
     if (snapshot.local.role != role ||
@@ -437,16 +451,33 @@ static linkg_gpio_led_level_t _linkg_gpio_query_wifi_level(linkg_device_role_t r
         return LINKG_GPIO_LED_RED;
     }
 
-    wideband = snapshot.local.radio.work_mode == LINKG_WIFI_WORK_MODE_WIDE;
     if (snapshot.local.radio.work_mode != LINKG_WIFI_WORK_MODE_WIDE &&
         snapshot.local.radio.work_mode != LINKG_WIFI_WORK_MODE_NARROW)
     {
         return LINKG_GPIO_LED_RED;
     }
 
+    wideband = snapshot.local.radio.work_mode == LINKG_WIFI_WORK_MODE_WIDE;
+
+    // Node模块统一管理AP/STA直接对端的注册与注销。
+    node_peer_count = 0U;
+
+    ret = linkg_node_get_peer_count(&node_peer_count);
+    if (ret != 0)
+    {
+        return LINKG_GPIO_LED_RED;
+    }
+
+    if (node_peer_count == 0U)
+    {
+        return LINKG_GPIO_LED_RED_BLINK;
+    }
+
+    // STA只有一个直接AP，读取其当前物理关联状态和RSSI。
     if (role == LINKG_DEVICE_ROLE_STA)
     {
         peer = &snapshot.role.sta.peer;
+
         if (!peer->valid || peer->state != LINKG_WIFI_PEER_STATE_CONNECTED)
         {
             return LINKG_GPIO_LED_RED_BLINK;
@@ -465,19 +496,20 @@ static linkg_gpio_led_level_t _linkg_gpio_query_wifi_level(linkg_device_role_t r
         return LINKG_GPIO_LED_RED;
     }
 
-    memset(&topology, 0, sizeof(topology));
-    ret = linkg_discovery_get_topology_snapshot(&topology);
-    if (ret != 0 || topology.node_count == 0U || snapshot.role.ap.connected_count == 0U)
+    // AP没有任何物理关联STA，表示当前Wi-Fi不存在连接。
+    if (snapshot.role.ap.connected_count == 0U)
     {
         return LINKG_GPIO_LED_RED_BLINK;
     }
 
+    // AP选取所有有效关联STA中信号最差的RSSI。
     has_rssi     = false;
     minimum_rssi = 0;
 
     for (index = 0U; index < snapshot.role.ap.peer_count && index < LINKG_WIFI_AP_PEER_MAX; index++)
     {
         peer = &snapshot.role.ap.peers[index];
+
         if (!_linkg_gpio_peer_has_rssi(peer, now_ms))
         {
             continue;
@@ -731,27 +763,35 @@ static int _linkg_gpio_apply_level_locked(linkg_gpio_rgb_t *rgb, linkg_gpio_led_
 }
 
 /**
- * @brief 应用AP双闪、STA单闪及长按复位快闪逻辑。
+ * @brief 应用AP长亮短灭、STA短亮长灭及复位按键快闪灯语。
  */
 static int _linkg_gpio_apply_run_led_locked(uint64_t now_ms)
 {
     uint64_t phase_ms;
+    uint32_t period_ms;
+    uint32_t on_ms;
     bool     on;
 
+    // 有效长按期间优先显示复位提示，保持原有100ms快闪。
     if (_linkg_gpio_button_fast_blink_locked(now_ms))
     {
         on = (now_ms % LINKG_GPIO_LED_FAST_PERIOD_MS) < LINKG_GPIO_LED_SLOT_MS;
         return _linkg_gpio_write_run_locked(on);
     }
 
-    phase_ms = (now_ms - g_gpio.led_origin_ms) % LINKG_GPIO_LED_PERIOD_MS;
-
-    on = phase_ms < LINKG_GPIO_LED_SLOT_MS;
     if (g_gpio.role == LINKG_DEVICE_ROLE_AP)
     {
-        on = on || (phase_ms >= 2U * LINKG_GPIO_LED_SLOT_MS &&
-                    phase_ms < 3U * LINKG_GPIO_LED_SLOT_MS);
+        period_ms = LINKG_GPIO_RUN_AP_PERIOD_MS;
+        on_ms     = LINKG_GPIO_RUN_AP_ON_MS;
     }
+    else
+    {
+        period_ms = LINKG_GPIO_RUN_STA_PERIOD_MS;
+        on_ms     = LINKG_GPIO_RUN_STA_ON_MS;
+    }
+
+    phase_ms = (now_ms - g_gpio.led_origin_ms) % period_ms;
+    on       = phase_ms < on_ms;
 
     return _linkg_gpio_write_run_locked(on);
 }
@@ -946,7 +986,7 @@ int linkg_gpio_manager_init(void)
         goto fail;
     }
 
-    ret = _linkg_gpio_open_pin(LINKG_RESOURCE_GPIO_LED_RUN, LINUX_GPIO_DIRECTION_OUTPUT, true, &g_gpio.led_run);
+    ret = _linkg_gpio_open_pin(LINKG_RESOURCE_GPIO_LED_RUN, LINUX_GPIO_DIRECTION_OUTPUT, true, &g_gpio.sys_run);
     if (ret != 0)
     {
         goto fail;

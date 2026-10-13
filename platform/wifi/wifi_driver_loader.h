@@ -1,12 +1,13 @@
 /**
  * @file wifi_driver_loader.h
- * @brief LinkG HI1105 Wi-Fi驱动加载及INI配置接口
+ * @brief LinkG HI1105 Wi-Fi驱动加载及固件、INI资源选择接口
  */
 
 #ifndef WIFI_DRIVER_LOADER_H
 #define WIFI_DRIVER_LOADER_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "linkg_wifi_config.h"
 
@@ -19,13 +20,17 @@ extern "C" {
 bool wifi_driver_is_loaded(void);
 int  wifi_driver_load(void);
 
+/****************************** 固件选择 ******************************/
+
+int wifi_driver_prepare_firmware(uint8_t hardware_id);
+
 /****************************** INI配置 ******************************/
 
-int wifi_driver_prepare_ini(linkg_wifi_work_mode_t work_mode, bool *changed);
-int wifi_driver_update_ini(linkg_wifi_work_mode_t work_mode);
+int wifi_driver_prepare_ini(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode, bool *changed);
+int wifi_driver_update_ini(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif
+#endif // WIFI_DRIVER_LOADER_H
