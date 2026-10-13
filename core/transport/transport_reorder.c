@@ -19,11 +19,11 @@
 /****************************** 模块常量 ******************************/
 
 #define LINKG_TRANSPORT_REORDER_THREAD_NAME       "trans-reorder" // 全局串行交付线程名称
-#define LINKG_TRANSPORT_REORDER_WINDOW_SIZE       64U     // VIDEO/DATA窗口Sequence槽数量
-#define LINKG_TRANSPORT_REORDER_DIRECT_QUEUE_SIZE 64U     // 单Peer/Class即时交付待处理队列容量
-#define LINKG_TRANSPORT_REORDER_BATCH_MAX         32U      // 单次有序交付帧数
-#define LINKG_TRANSPORT_REORDER_TIMEOUT_US        60000ULL // VIDEO/DATA缺口和不完整分片最长等待时间
-#define LINKG_TRANSPORT_REORDER_SERVICE_CYCLE     7U       // 加权业务调度周期，防止高负载REALTIME持续饿死VIDEO/DATA
+#define LINKG_TRANSPORT_REORDER_WINDOW_SIZE       64U             // VIDEO/DATA窗口Sequence槽数量
+#define LINKG_TRANSPORT_REORDER_DIRECT_QUEUE_SIZE 64U             // 单Peer/Class即时交付待处理队列容量
+#define LINKG_TRANSPORT_REORDER_BATCH_MAX         32U             // 单次有序交付帧数
+#define LINKG_TRANSPORT_REORDER_TIMEOUT_US        60000ULL        // VIDEO/DATA缺口和不完整分片最长等待时间
+#define LINKG_TRANSPORT_REORDER_SERVICE_CYCLE     7U              // 加权业务调度周期，防止高负载REALTIME持续饿死VIDEO/DATA
 
 _Static_assert((LINKG_TRANSPORT_REORDER_WINDOW_SIZE & (LINKG_TRANSPORT_REORDER_WINDOW_SIZE - 1U)) == 0U, "reorder window size must be power of two");
 
@@ -31,21 +31,21 @@ _Static_assert((LINKG_TRANSPORT_REORDER_WINDOW_SIZE & (LINKG_TRANSPORT_REORDER_W
 
 typedef struct
 {
-    linkg_transport_reorder_frame_t slots[LINKG_TRANSPORT_REORDER_WINDOW_SIZE];        // 冗余VIDEO/DATA窗口
-    linkg_transport_reorder_frame_t direct[LINKG_TRANSPORT_REORDER_DIRECT_QUEUE_SIZE]; // 冗余REALTIME即时交付队列
-    uint64_t                       wait_start_us;                                      // 当前缺口首次等待起点
-    uint32_t                       expected_sequence;                                  // 下一个应交付的Wire Sequence
-    uint32_t                       last_single_sequence;                               // 单链路阶段已收到的最大Wire Sequence
-    uint32_t                       realtime_highest;                                   // REALTIME最后完成交付的Packet末尾Sequence
-    uint32_t                       direct_head;                                        // 即时队列读下标
-    uint32_t                       direct_count;                                       // 即时队列待交付帧数
-    uint32_t                       slot_count;                                         // 当前重排缓存帧数
-    uint32_t                       peer_epoch;                                         // 当前缓存所属Peer代际
-    uint8_t                        peer_node_id;                                       // 当前缓存所属直接Peer
-    bool                           expected_initialized;                               // 有效expected_sequence
-    bool                           single_initialized;                                 // 有效last_single_sequence
-    bool                           realtime_initialized;                               // 有效realtime_highest
-    bool                           redundant;                                          // 本Class当前使用冗余接收模式
+    linkg_transport_reorder_frame_t slots[LINKG_TRANSPORT_REORDER_WINDOW_SIZE];         // 冗余VIDEO/DATA窗口
+    linkg_transport_reorder_frame_t direct[LINKG_TRANSPORT_REORDER_DIRECT_QUEUE_SIZE];  // 冗余REALTIME即时交付队列
+    uint64_t                        wait_start_us;                                      // 当前缺口首次等待起点
+    uint32_t                        expected_sequence;                                  // 下一个应交付的Wire Sequence
+    uint32_t                        last_single_sequence;                               // 单链路阶段已收到的最大Wire Sequence
+    uint32_t                        realtime_highest;                                   // REALTIME最后完成交付的Packet末尾Sequence
+    uint32_t                        direct_head;                                        // 即时队列读下标
+    uint32_t                        direct_count;                                       // 即时队列待交付帧数
+    uint32_t                        slot_count;                                         // 当前重排缓存帧数
+    uint32_t                        peer_epoch;                                         // 当前缓存所属Peer代际
+    uint8_t                         peer_node_id;                                       // 当前缓存所属直接Peer
+    bool                            expected_initialized;                               // 有效expected_sequence
+    bool                            single_initialized;                                 // 有效last_single_sequence
+    bool                            realtime_initialized;                               // 有效realtime_highest
+    bool                            redundant;                                          // 本Class当前使用冗余接收模式
 } linkg_transport_reorder_class_t;
 
 typedef struct
@@ -917,11 +917,9 @@ bool linkg_transport_reorder_realtime_accept(const linkg_transport_reorder_frame
         return false;
     }
 
-    accepted = !current->realtime_initialized ||
-               _linkg_transport_reorder_before(current->realtime_highest, complete_sequence);
+    accepted = !current->realtime_initialized || _linkg_transport_reorder_before(current->realtime_highest, complete_sequence);
 
-    if (accepted && (!current->realtime_initialized ||
-                     _linkg_transport_reorder_before(current->realtime_highest, complete_sequence)))
+    if (accepted && (!current->realtime_initialized || _linkg_transport_reorder_before(current->realtime_highest, complete_sequence)))
     {
         current->realtime_highest     = complete_sequence;
         current->realtime_initialized = true;
