@@ -8,7 +8,7 @@
 
 当前 Ubuntu 环境中已准备好 ARM GCC；下面路径来自当前工作区，如果工程或工具链位置发生变化，请替换。
 
-~~~bash
+```bash
 cd /home/dawn/project/linkg_v3/linkg-mcu
 
 MCU_CROSS=/home/dawn/project/.codex-mcu-backups/20261014-v2/toolchain/gcc-arm-none-eabi-8-2019-q3-update/bin/arm-none-eabi-
@@ -18,11 +18,11 @@ MCU_CROSS=/home/dawn/project/.codex-mcu-backups/20261014-v2/toolchain/gcc-arm-no
 
 # 增量构建，生成 ELF / HEX / BIN
 make -j4 CROSS_COMPILE="$MCU_CROSS"
-~~~
+```
 
 `MCU_CROSS` 是**编译工具名称前缀**，末尾的 `arm-none-eabi-` 连字符必须保留。变量仅在当前终端会话有效，不需要修改系统 `PATH`。
 
-~~~bash
+```bash
 # 强制全部重新编译
 make -B -j4 CROSS_COMPILE="$MCU_CROSS"
 
@@ -39,7 +39,7 @@ python3 tests/check_firmware.py "$MCU_CROSS"
 
 # 需要时清理 GCC 构建产物和主机测试产物
 make clean
-~~~
+```
 
 `make test` 需要 Ubuntu 宿主 `gcc` 与 AddressSanitizer/UndefinedBehaviorSanitizer；`make check` 需要 Python 3。`check_firmware.py` 应在 ARM GCC 构建生成固件之后运行。`set -o pipefail` 可避免 `tee` 隐藏编译失败的退出状态。
 
@@ -60,7 +60,7 @@ make clean
 
 ## 2. 模块职责与源码目录
 
-~~~text
+```text
 linkg-mcu/
 ├── Core/
 │   ├── Inc/                           主程序、中断及HAL配置声明
@@ -82,9 +82,9 @@ linkg-mcu/
 ├── Makefile
 ├── README.md
 └── ARCHITECTURE.md
-~~~
+```
 
-~~~mermaid
+```mermaid
 flowchart TD
     A["Core/main.c<br/>启动、时钟、主循环"] --> B["service/sbus_bridge.c<br/>模式状态机、FIFO、IWDG"]
     I["Core/stm32l0xx_it.c<br/>IRQ入口"] --> B
@@ -93,7 +93,7 @@ flowchart TD
     G --> H["STM32 HAL / CMSIS"]
     U --> H
     A --> H
-~~~
+```
 
 原则：**MCU 只负责通路切换、UART 电气极性转换、原始字节转发和基本错误恢复**。它不检查 SBUS 25 字节长度、不识别帧头帧尾、不修改通道、不生成替代帧、不按 7.6 ms 定时。协议帧处理、网络抖动缓冲与最终 SBUS 输出调度属于 Linux LinkG。
 
@@ -118,7 +118,7 @@ flowchart TD
 
 ## 4. 系统启动及主循环流程
 
-~~~mermaid
+```mermaid
 flowchart TD
     R["Reset_Handler<br/>初始化数据段、BSS、调用SystemInit"] --> M["main()"]
     M --> H["HAL_Init<br/>启动SysTick时基"]
@@ -130,7 +130,7 @@ flowchart TD
     D -->|是| P["sbus_bridge_process<br/>检查模式、故障、喂狗"]
     P --> W["__WFI 等待中断"]
     W -->|SysTick或UART IRQ| P
-~~~
+```
 
 代码顺序：`HAL_Init() → bsp_gpio_init() → system_clock_configure() → sbus_bridge_init() → while(1){sbus_bridge_process(); __WFI();}`。
 
@@ -149,7 +149,7 @@ flowchart TD
 | `RUNNING` | U16断开、双UART正常工作、RX和错误中断启用 |
 | `FAULT` | UART初始化/运行故障，维持隔离并计划重试 |
 
-~~~mermaid
+```mermaid
 flowchart TD
     I["ISOLATED"] --> M{"PA1 MCU_MODEL = 高？"}
     M -->|否| B["BYPASS<br/>停双UART/四线高阻<br/>PB1置高，U16直通"]
@@ -164,7 +164,7 @@ flowchart TD
     F -->|PA1变低| B
     F -->|PA1仍高，达到重试时间| S
     B -->|PA1变高| S
-~~~
+```
 
 实际控制顺序：
 - **进入桥接：** PB1 低（U16断开）→ 重置/初始化两路 UART → 配置 PA2/PA3/PA9/PA10 为 UART AF → 发布 RUNNING → 启用 RXNE/PE/EIE IRQ。
@@ -176,7 +176,7 @@ flowchart TD
 
 每个方向拥有独立的 **32 字节环形 FIFO**。队列按**源 UART**索引，目标端由 `sbus_bridge_peer()` 决定。
 
-~~~mermaid
+```mermaid
 flowchart LR
     EX["外部SBUS<br/>反相信号"] --> LR["LPUART1 RX<br/>PA3"]
     LR --> F1["FIFO[SBUS]<br/>32字节"]
@@ -187,9 +187,9 @@ flowchart LR
     HR --> F2["FIFO[HOST]<br/>32字节"]
     F2 --> LT["LPUART1 TX<br/>PA2"]
     LT --> EX
-~~~
+```
 
-~~~mermaid
+```mermaid
 flowchart TD
     IRQ["USART2_IRQHandler 或 LPUART1_IRQHandler"] --> RX["sbus_bridge_uart_irq(source)"]
     RX --> READ["bsp_uart_receive<br/>检查硬件PE/FE/NE/ORE<br/>最多从RDR取1字节"]
@@ -205,7 +205,7 @@ flowchart TD
     TX --> TRY{"目标UART TXE就绪？"}
     TRY -->|是| SENT["写TDR后推进tail<br/>tx_bytes++"]
     TRY -->|否| WAIT["保留队首<br/>等待TXE中断"]
-~~~
+```
 
 - **中断入口：** [stm32l0xx_it.c](Core/Src/stm32l0xx_it.c) 的 `LPUART1_IRQHandler` / `USART2_IRQHandler` 调用 `sbus_bridge_uart_irq(port)`；不调用 HAL UART 收发回调。
 - **成功条件：** 目标 TDR 接受字节后才推进队列；TXE 暂时忙时不丢待发队首；队列空时关闭 TXE IRQ。
