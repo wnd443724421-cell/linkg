@@ -28,6 +28,7 @@ int wifi_driver_prepare_firmware(uint8_t hardware_id);
 
 int wifi_driver_prepare_ini(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode, bool *changed);
 int wifi_driver_update_ini(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode);
+int wifi_driver_update_ax_ini(linkg_device_role_t role, linkg_wifi_protocol_t protocol, bool *changed);
 
 #ifdef __cplusplus
 }

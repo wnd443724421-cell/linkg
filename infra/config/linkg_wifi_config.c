@@ -18,12 +18,13 @@
 
 /****************************** 模块常量 ******************************/
 
-#define WIFI_DEFAULT_SSID                "LinkG" // 默认Wi-Fi名称
-#define WIFI_DEFAULT_AP_CHANNEL          149U // 默认AP信道
-#define WIFI_DEFAULT_NARROW_MODE         LINKG_WIFI_NARROW_MODE_FIXED // 默认窄带速率模式
-#define WIFI_DEFAULT_MANUAL_RATE         1U // 默认固定速率档位
+#define WIFI_DEFAULT_SSID                "LinkG"                          // 默认Wi-Fi名称
+#define WIFI_DEFAULT_AP_CHANNEL          149U                             // 默认AP信道
+#define WIFI_DEFAULT_NARROW_MODE         LINKG_WIFI_NARROW_MODE_FIXED     // 默认窄带速率模式
+#define WIFI_DEFAULT_MANUAL_RATE         1U                               // 默认固定速率档位
 #define WIFI_DEFAULT_WIDE_BANDWIDTH      LINKG_WIFI_WIDE_BANDWIDTH_40_MHZ // 默认宽带带宽
-#define WIFI_ENUM_STRING_MAX             16U // 枚举字符串缓冲区
+#define WIFI_DEFAULT_PROTOCOL_MODE       LINKG_WIFI_PROTOCOL_AX           // 默认宽带协议为Wi-Fi 6
+#define WIFI_ENUM_STRING_MAX             16U                              // 枚举字符串缓冲区
 
 /****************************** 基础辅助函数 ******************************/
 
@@ -178,6 +179,58 @@ static int _wifi_narrow_mode_from_string(const char *string, linkg_wifi_narrow_m
     return CONFIG_ERR_VALIDATE;
 }
 
+/**
+ * @brief 将Wi-Fi宽带协议模式转换为字符串。
+ */
+static const char *_wifi_protocol_to_string(linkg_wifi_protocol_t protocol)
+{
+    switch (protocol)
+    {
+        case LINKG_WIFI_PROTOCOL_N:
+            return "n";
+
+        case LINKG_WIFI_PROTOCOL_AC:
+            return "ac";
+
+        case LINKG_WIFI_PROTOCOL_AX:
+            return "ax";
+
+        default:
+            return NULL;
+    }
+}
+
+/**
+ * @brief 将字符串转换为Wi-Fi宽带协议模式。
+ */
+static int _wifi_protocol_from_string(const char *string, linkg_wifi_protocol_t *out)
+{
+    if (string == NULL || out == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    if (strcmp(string, "n") == 0)
+    {
+        *out = LINKG_WIFI_PROTOCOL_N;
+        return CONFIG_OK;
+    }
+
+    if (strcmp(string, "ac") == 0)
+    {
+        *out = LINKG_WIFI_PROTOCOL_AC;
+        return CONFIG_OK;
+    }
+
+    if (strcmp(string, "ax") == 0)
+    {
+        *out = LINKG_WIFI_PROTOCOL_AX;
+        return CONFIG_OK;
+    }
+
+    return CONFIG_ERR_VALIDATE;
+}
+
 /****************************** 默认配置 ******************************/
 
 /**
@@ -245,6 +298,7 @@ static void _wifi_wide_params_set_default(linkg_wifi_wide_params_t *out)
     memset(out, 0, sizeof(*out));
 
     out->ap_bandwidth = WIFI_DEFAULT_WIDE_BANDWIDTH;
+    out->protocol_mode = WIFI_DEFAULT_PROTOCOL_MODE;
 }
 
 /**
@@ -527,6 +581,7 @@ static int _wifi_narrow_params_parse(const cJSON *node, linkg_wifi_narrow_params
 static int _wifi_wide_params_parse(const cJSON *node, linkg_wifi_wide_params_t *out)
 {
     linkg_wifi_wide_params_t temp = {0};
+    char                     protocol[WIFI_ENUM_STRING_MAX];
     int                      ret;
 
     if (node == NULL || out == NULL)
@@ -540,6 +595,18 @@ static int _wifi_wide_params_parse(const cJSON *node, linkg_wifi_wide_params_t *
     }
 
     ret = _wifi_get_wide_bandwidth(node, "ap_bandwidth", &temp.ap_bandwidth);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = linkg_json_get_string(node, "protocol_mode", protocol, sizeof(protocol));
+    if (ret != LINKG_JSON_OK)
+    {
+        return config_json_parse_error(ret);
+    }
+
+    ret = _wifi_protocol_from_string(protocol, &temp.protocol_mode);
     if (ret != CONFIG_OK)
     {
         return ret;
@@ -758,6 +825,25 @@ static int _wifi_wide_params_validate(const linkg_wifi_wide_params_t *config)
     if (!linkg_wifi_wide_bandwidth_valid(config->ap_bandwidth))
     {
         return CONFIG_ERR_VALIDATE;
+    }
+
+    switch (config->protocol_mode)
+    {
+        case LINKG_WIFI_PROTOCOL_N:
+            // 802.11n仅允许20MHz和40MHz。
+            if (config->ap_bandwidth == LINKG_WIFI_WIDE_BANDWIDTH_80_MHZ)
+            {
+                return CONFIG_ERR_VALIDATE;
+            }
+            break;
+
+        case LINKG_WIFI_PROTOCOL_AC:
+        case LINKG_WIFI_PROTOCOL_AX:
+            // 802.11ac/ax允许20MHz、40MHz和80MHz。
+            break;
+
+        default:
+            return CONFIG_ERR_VALIDATE;
     }
 
     return CONFIG_OK;
@@ -979,8 +1065,9 @@ static int _wifi_narrow_params_to_json(cJSON *parent, const char *key, const lin
  */
 static int _wifi_wide_params_to_json(cJSON *parent, const char *key, const linkg_wifi_wide_params_t *config)
 {
-    cJSON *object;
-    int    ret;
+    const char *protocol;
+    cJSON      *object;
+    int         ret;
 
     if (parent == NULL || key == NULL || config == NULL)
     {
@@ -993,6 +1080,12 @@ static int _wifi_wide_params_to_json(cJSON *parent, const char *key, const linkg
         return ret;
     }
 
+    protocol = _wifi_protocol_to_string(config->protocol_mode);
+    if (protocol == NULL)
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
     object = cJSON_CreateObject();
     if (object == NULL)
     {
@@ -1000,6 +1093,11 @@ static int _wifi_wide_params_to_json(cJSON *parent, const char *key, const linkg
     }
 
     ret = linkg_json_add_uint16(object, "ap_bandwidth", (uint16_t)config->ap_bandwidth);
+    if (ret == LINKG_JSON_OK)
+    {
+        ret = linkg_json_add_string(object, "protocol_mode", protocol);
+    }
+
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(object);

@@ -50,7 +50,8 @@ typedef struct
 
 typedef struct
 {
-    linkg_wifi_wide_bandwidth_t bandwidth; // 当前宽带带宽
+    linkg_wifi_wide_bandwidth_t bandwidth;     // 当前宽带带宽
+    linkg_wifi_protocol_t       protocol_mode; // 宽带协议模式：N/AC/AX
 } linkg_wifi_wide_status_t;
 
 typedef struct

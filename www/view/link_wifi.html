@@ -14,7 +14,7 @@
     <section class="page-card wifi-section">
         <div class="page-card-header">
             <h2 class="page-card-title">运行状态</h2>
-            <span class="wifi-card-note">约每 2 秒更新</span>
+            <span id="wifiLocalAge" class="wifi-card-note">约每 2 秒更新</span>
         </div>
         <div id="wifiStatusEmpty" class="wifi-empty" aria-live="polite">
             <strong id="wifiStatusEmptyTitle">正在读取 Wi-Fi 状态…</strong>
@@ -54,10 +54,10 @@
                     <h3>无线参数</h3>
                     <dl class="wifi-detail-list">
                         <div><dt>带宽</dt><dd id="wifiBandwidth">--</dd></div>
+                        <div><dt>协议模式</dt><dd id="wifiProtocolModeStatus">--</dd></div>
                         <div><dt>速率控制</dt><dd id="wifiRateMode">--</dd></div>
                         <div><dt>配置档位</dt><dd id="wifiConfiguredRate">--</dd></div>
                         <div><dt>当前档位</dt><dd id="wifiCurrentRate">--</dd></div>
-                        <div><dt>状态更新</dt><dd id="wifiLocalAge">--</dd></div>
                     </dl>
                 </div>
             </div>
@@ -174,6 +174,15 @@
                                 <option value="20">20 MHz</option>
                                 <option value="40">40 MHz</option>
                                 <option value="80">80 MHz</option>
+                            </select>
+                        </label>
+                        <label id="wifiProtocolModeField" class="wifi-field" hidden>
+                            <span>协议模式</span>
+                            <select id="wifiProtocolMode">
+                                <option value="n">Wi-Fi 4 (802.11n)</option>
+                                <option value="ac">Wi-Fi 5 (802.11ac)</option>
+                                <option value="ax">Wi-Fi 6 (802.11ax)</option>
+                                <option value="auto">自动协商（STA）</option>
                             </select>
                         </label>
                         <label id="wifiNarrowModeField" class="wifi-field" hidden>

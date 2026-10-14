@@ -1,3 +1,4 @@
+
 /**
  * @file linkg_config.h
  * @brief LinkG全局配置管理接口
@@ -10,6 +11,7 @@
 #include "linkg_links_config.h"
 #include "linkg_network_config.h"
 #include "linkg_paths_config.h"
+#include "linkg_uart_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,6 +30,7 @@ typedef struct
     linkg_network_config_t network; // 网络配置
     linkg_links_config_t   links;   // 接入模块配置
     linkg_paths_config_t   paths;   // 逻辑路径配置
+    linkg_uart_config_t    uart;    // 串口及网络路由配置
 } linkg_config_t;
 
 /****************************** 生命周期 ******************************/
@@ -42,6 +45,7 @@ int linkg_config_get_device(linkg_device_config_t *out);
 int linkg_config_get_network(linkg_network_config_t *out);
 int linkg_config_get_links(linkg_links_config_t *out);
 int linkg_config_get_paths(linkg_paths_config_t *out);
+int linkg_config_get_uart(linkg_uart_config_t *out);
 int linkg_config_get_wifi(linkg_wifi_config_t *out);
 int linkg_config_get_cellular(linkg_cellular_config_t *out);
 

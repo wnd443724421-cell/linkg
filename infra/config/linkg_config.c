@@ -91,6 +91,7 @@ static void _config_set_default(linkg_config_t *out)
     linkg_network_config_set_default(&out->network);
     linkg_links_config_set_default(&out->links);
     linkg_paths_config_set_default(&out->paths);
+    linkg_uart_config_set_default(&out->uart);
 }
 
 /****************************** 配置校验 ******************************/
@@ -131,6 +132,12 @@ static int _config_validate(const linkg_config_t *config)
         return ret;
     }
 
+    ret = linkg_uart_config_validate(&config->uart);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
     if (config->paths.wifi.enabled && !config->links.wifi.enabled)
     {
         return CONFIG_ERR_VALIDATE;
@@ -153,6 +160,7 @@ static int _config_parse_json(const cJSON *root, linkg_config_t *out)
 {
     linkg_config_t temp;
     const cJSON   *child;
+    bool           found;
     int            ret;
 
     if (root == NULL || out == NULL)
@@ -221,6 +229,24 @@ static int _config_parse_json(const cJSON *root, linkg_config_t *out)
     if (ret != CONFIG_OK)
     {
         return ret;
+    }
+
+    child = NULL;
+    found = false;
+
+    ret = linkg_json_try_get_array(root, "uart", &child, &found);
+    if (ret != LINKG_JSON_OK)
+    {
+        return config_json_parse_error(ret);
+    }
+
+    if (found)
+    {
+        ret = linkg_uart_config_parse(child, &temp.uart);
+        if (ret != CONFIG_OK)
+        {
+            return ret;
+        }
     }
 
     ret = _config_validate(&temp);
@@ -527,6 +553,31 @@ int linkg_config_get_paths(linkg_paths_config_t *out)
 }
 
 /**
+ * @brief 获取串口配置。
+ */
+int linkg_config_get_uart(linkg_uart_config_t *out)
+{
+    if (out == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    pthread_rwlock_rdlock(&g_config.lock);
+
+    if (!g_config.initialized)
+    {
+        pthread_rwlock_unlock(&g_config.lock);
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    *out = g_config.current.uart;
+
+    pthread_rwlock_unlock(&g_config.lock);
+
+    return CONFIG_OK;
+}
+
+/**
  * @brief 获取Wi-Fi配置。
  */
 int linkg_config_get_wifi(linkg_wifi_config_t *out)
@@ -652,6 +703,11 @@ int linkg_config_save(const linkg_config_t *config)
     if (ret == CONFIG_OK)
     {
         ret = linkg_paths_config_to_json(root, "paths", &config->paths);
+    }
+
+    if (ret == CONFIG_OK)
+    {
+        ret = linkg_uart_config_to_json(root, "uart", &config->uart);
     }
 
     if (ret != CONFIG_OK)

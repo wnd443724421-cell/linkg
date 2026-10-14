@@ -4,6 +4,11 @@
     const WIFI_REFRESH_INTERVAL_MS = 2000;
     const WIFI_RELEASE_CHANNELS = [149, 153, 157, 161, 165];
     const WIFI_FALLBACK_CHANNEL = 149;
+    const WIFI_PROTOCOL_MODES = [
+        {value: "n", label: "Wi-Fi 4 (802.11n)"},
+        {value: "ac", label: "Wi-Fi 5 (802.11ac)"},
+        {value: "ax", label: "Wi-Fi 6 (802.11ax)"}
+    ];
     const WIFI_CHANNELS = [
         36, 40, 44, 48, 52, 56, 60, 64,
         100, 104, 108, 112, 116, 120, 124, 128,
@@ -205,6 +210,7 @@
         setText("wifiStatusEmptyText", description);
         setHidden("wifiStatusEmpty", false);
         setHidden("wifiStatusBody", true);
+        setText("wifiLocalAge", "约每 2 秒更新");
     }
 
     /****************************** 对端状态 ******************************/
@@ -444,6 +450,13 @@
         setText("wifiBandwidth", isNarrow ? "10 MHz" :
                 (isWide && wide != null && Number.isFinite(wide.bandwidth_mhz) &&
                  wide.bandwidth_mhz > 0 ? wide.bandwidth_mhz + " MHz" : "--"));
+        const protocol = isWide && wide != null ? wide.protocol_mode : null;
+        const protocolOption = WIFI_PROTOCOL_MODES.find(function (option) {
+            return option.value === protocol;
+        });
+        setText("wifiProtocolModeStatus", !isWide ? "不适用" :
+                (data.role === "sta" ? "自动协商" :
+                 (protocolOption != null ? protocolOption.label : "--")));
         setText("wifiRateMode", isNarrow ?
                 (narrow != null && narrow.mode === "adaptive" ? "驱动自适应" :
                  (narrow != null && narrow.mode === "fixed" ? "固定档位" : "--")) :
@@ -456,7 +469,7 @@
                  Number.isInteger(narrow.current_rate_level) ?
                  "档位 " + narrow.current_rate_level : "--") : "不适用");
         setText("wifiLocalAge", Number.isFinite(local.updated_ms) &&
-                local.updated_ms > 0 ? "已更新" : "--");
+                local.updated_ms > 0 ? "已更新 · 约每 2 秒更新" : "等待状态更新");
 
         renderPeers(data);
     }
@@ -545,15 +558,71 @@
                  "调试信道；165 仅支持 10/20 MHz"));
     }
 
+    /**
+     * 根据角色和 AP 带宽重建协议列表：80MHz 不提供 Wi-Fi 4。
+     * STA 保留底层自动协商能力，界面不允许修改协议限制。
+     */
+    function updateProtocolOptions(preferred)
+    {
+        const select = field("wifiProtocolMode");
+        const isAp = configData != null && configData.role === "ap";
+        const narrow = field("wifiConfigWorkMode").value === "narrow";
+        const bandwidth = Number(field("wifiWideBandwidth").value);
+        const previous = typeof preferred === "string" ? preferred : select.value;
+        const fragment = document.createDocumentFragment();
+
+        if (!isAp)
+        {
+            const option = document.createElement("option");
+
+            option.value = "auto";
+            option.textContent = "自动协商（Wi-Fi 4/5/6）";
+            fragment.appendChild(option);
+            select.replaceChildren(fragment);
+            select.value = "auto";
+        }
+        else
+        {
+            const available = WIFI_PROTOCOL_MODES.filter(function (mode) {
+                return bandwidth !== 80 || mode.value !== "n";
+            });
+
+            available.forEach(function (mode) {
+                const option = document.createElement("option");
+
+                option.value = mode.value;
+                option.textContent = mode.label;
+                fragment.appendChild(option);
+            });
+
+            select.replaceChildren(fragment);
+            select.value = available.some(function (mode) {
+                return mode.value === previous;
+            }) ? previous : "ax";
+        }
+
+        select.disabled = narrow || !isAp;
+    }
+
+    function updateBandwidthAndProtocol()
+    {
+        updateProtocolOptions();
+        updateChannels();
+    }
+
     function updateModeFields()
     {
         const narrow = field("wifiConfigWorkMode").value === "narrow";
         const adaptive = field("wifiNarrowMode").value === "adaptive";
 
-        setHidden("wifiWideFields", narrow);
+        const isAp = configData != null && configData.role === "ap";
+
+        setHidden("wifiWideFields", narrow || !isAp);
+        setHidden("wifiProtocolModeField", narrow);
         setHidden("wifiNarrowModeField", !narrow);
         setHidden("wifiManualRateField", !narrow || adaptive);
         field("wifiManualRate").disabled = !narrow || adaptive;
+        updateProtocolOptions();
         updateChannels();
     }
 
@@ -627,6 +696,7 @@
         field("wifiManualRate").value = String(wifi.wideband.narrow_params.manual_rate);
         field("wifiWideBandwidth").value = String(wifi.wideband.wide_params.ap_bandwidth);
 
+        updateProtocolOptions(wifi.wideband.wide_params.protocol_mode);
         updateModeFields();
         field("wifiApChannel").value = String(wifi.ap.channel);
         updatePasswordFields();
@@ -652,7 +722,25 @@
         wifi.wideband.work_mode = field("wifiConfigWorkMode").value;
         wifi.wideband.narrow_params.mode = field("wifiNarrowMode").value;
         wifi.wideband.narrow_params.manual_rate = Number(field("wifiManualRate").value);
-        wifi.wideband.wide_params.ap_bandwidth = Number(field("wifiWideBandwidth").value);
+        if (role === "ap")
+        {
+            wifi.wideband.wide_params.ap_bandwidth = Number(field("wifiWideBandwidth").value);
+            wifi.wideband.wide_params.protocol_mode = field("wifiProtocolMode").value;
+
+            if (!WIFI_PROTOCOL_MODES.some(function (mode) {
+                return mode.value === wifi.wideband.wide_params.protocol_mode;
+            }))
+            {
+                throw new Error("Wi-Fi 协议模式无效");
+            }
+
+            if (wifi.wideband.wide_params.ap_bandwidth === 80 &&
+                wifi.wideband.wide_params.protocol_mode === "n")
+            {
+                throw new Error("Wi-Fi 4 不支持 80 MHz，请选择 Wi-Fi 5 或 Wi-Fi 6");
+            }
+        }
+        // STA 的宽带参数是备用 AP 配置，不允许通过 STA 页面改写。
 
         target.ssid = field(prefix + "Ssid").value;
         target.security = field(prefix + "Security").value;
@@ -722,6 +810,15 @@
                 response.data.wifi == null)
             {
                 throw new Error("Wi-Fi 配置响应数据无效");
+            }
+
+            if (response.data.wifi.wideband == null ||
+                response.data.wifi.wideband.wide_params == null ||
+                !WIFI_PROTOCOL_MODES.some(function (mode) {
+                    return mode.value === response.data.wifi.wideband.wide_params.protocol_mode;
+                }))
+            {
+                throw new Error("Wi-Fi 配置缺少有效的 protocol_mode");
             }
 
             configData = response.data;
@@ -947,7 +1044,7 @@
         field("wifiConfigForm").addEventListener("submit", saveConfig);
         field("wifiResetButton").addEventListener("click", resetConfig);
         field("wifiConfigWorkMode").addEventListener("change", updateModeFields);
-        field("wifiWideBandwidth").addEventListener("change", updateChannels);
+        field("wifiWideBandwidth").addEventListener("change", updateBandwidthAndProtocol);
         field("wifiNarrowMode").addEventListener("change", updateModeFields);
         field("wifiApSecurity").addEventListener("change", updatePasswordFields);
         field("wifiStaSecurity").addEventListener("change", updatePasswordFields);
@@ -973,7 +1070,7 @@
         field("wifiConfigForm").removeEventListener("submit", saveConfig);
         field("wifiResetButton").removeEventListener("click", resetConfig);
         field("wifiConfigWorkMode").removeEventListener("change", updateModeFields);
-        field("wifiWideBandwidth").removeEventListener("change", updateChannels);
+        field("wifiWideBandwidth").removeEventListener("change", updateBandwidthAndProtocol);
         field("wifiNarrowMode").removeEventListener("change", updateModeFields);
         field("wifiApSecurity").removeEventListener("change", updatePasswordFields);
         field("wifiStaSecurity").removeEventListener("change", updatePasswordFields);

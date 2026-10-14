@@ -955,6 +955,7 @@ int linkg_wifi_start(void)
     bool                 driver_was_loaded;
     uint8_t              hardware_id;
     bool                 ini_changed;
+    bool                 ax_changed;
     uint64_t             now_ms;
     int                  cleanup_ret;
     int                  ret;
@@ -1023,6 +1024,24 @@ int linkg_wifi_start(void)
     if (ret != 0)
     {
         goto fail;
+    }
+
+    /* 先选定宽带INI，再更新AX掩码；窄带保持原有INI配置。 */
+    if (g_wifi.config.wideband.work_mode == LINKG_WIFI_WORK_MODE_WIDE)
+    {
+        phase = "update_driver_ax_ini";
+        ax_changed = false;
+
+        ret = wifi_driver_update_ax_ini(g_wifi.role,
+                                        g_wifi.config.wideband.wide_params.protocol_mode,
+                                        &ax_changed);
+        if (ret != 0)
+        {
+            goto fail;
+        }
+
+        /* 链接切换或文件内容变化，都需要已加载驱动重新读取INI。 */
+        ini_changed = ini_changed || ax_changed;
     }
 
     phase = "load_driver";

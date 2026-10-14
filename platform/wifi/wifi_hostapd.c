@@ -169,6 +169,73 @@ static const char *_wifi_hostapd_get_template(const linkg_wifi_config_t *config)
 }
 
 /**
+ * @brief 根据AP宽带协议模式更新802.11n/ac/ax使能配置。
+ *
+ * @note 窄带模式沿用独立模板，不修改协议参数。
+ */
+static int _wifi_hostapd_update_protocol(char **content, size_t *length, const linkg_wifi_config_t *config)
+{
+    const char *ac;
+    const char *ax;
+    int         ret;
+
+    if (content == NULL || *content == NULL || length == NULL || config == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (config->wideband.work_mode == LINKG_WIFI_WORK_MODE_NARROW)
+    {
+        return 0;
+    }
+
+    if (config->wideband.work_mode != LINKG_WIFI_WORK_MODE_WIDE)
+    {
+        return -EINVAL;
+    }
+
+    switch (config->wideband.wide_params.protocol_mode)
+    {
+        case LINKG_WIFI_PROTOCOL_N:
+            if (config->wideband.wide_params.ap_bandwidth == LINKG_WIFI_WIDE_BANDWIDTH_80_MHZ)
+            {
+                return -EINVAL;
+            }
+
+            ac = "0";
+            ax = "0";
+            break;
+
+        case LINKG_WIFI_PROTOCOL_AC:
+            ac = "1";
+            ax = "0";
+            break;
+
+        case LINKG_WIFI_PROTOCOL_AX:
+            ac = "1";
+            ax = "1";
+            break;
+
+        default:
+            return -EINVAL;
+    }
+
+    ret = linkg_text_replace_key_value(content, length, "ieee80211n", "1");
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_text_replace_key_value(content, length, "ieee80211ac", ac);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return linkg_text_replace_key_value(content, length, "ieee80211ax", ax);
+}
+
+/**
  * @brief 更新hostapd带宽相关动态参数。
  */
 static int _wifi_hostapd_update_bandwidth(char **content, size_t *length, const linkg_wifi_config_t *config)
@@ -246,7 +313,14 @@ static int _wifi_hostapd_update_bandwidth(char **content, size_t *length, const 
         return -EINVAL;
     }
 
-    return linkg_text_replace_key_value(content, length, "vht_oper_centr_freq_seg0_idx", center_channel);
+    ret = linkg_text_replace_key_value(content, length, "vht_oper_centr_freq_seg0_idx", center_channel);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    // HE80与VHT80使用相同的中心信道，避免主信道变化时HE配置滞后。
+    return linkg_text_replace_key_value(content, length, "he_oper_centr_freq_seg0_idx", center_channel);
 }
 
 /**
@@ -570,6 +644,12 @@ int wifi_hostapd_update_config(const linkg_wifi_config_t *config)
     hardware_mode = config->ap.channel <= 14U ? "g" : "a";
 
     ret = linkg_text_replace_key_value(&content, &length, "hw_mode", hardware_mode);
+    if (ret != 0)
+    {
+        goto cleanup;
+    }
+    
+    ret = _wifi_hostapd_update_protocol(&content, &length, config);
     if (ret != 0)
     {
         goto cleanup;

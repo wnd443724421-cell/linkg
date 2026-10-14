@@ -53,7 +53,8 @@
                     "manual_rate": 4
                 },
                 "wide_params": {
-                    "ap_bandwidth": 40
+                    "ap_bandwidth": 40,
+                    "protocol_mode": "ax"
                 }
             }
         },

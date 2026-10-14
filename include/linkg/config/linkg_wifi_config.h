@@ -59,6 +59,14 @@ typedef enum
     LINKG_WIFI_WIDE_BANDWIDTH_80_MHZ  = 80  // 80MHz
 } linkg_wifi_wide_bandwidth_t;
 
+typedef enum
+{
+    LINKG_WIFI_PROTOCOL_UNKNOWN = 0, // 未知协议模式
+    LINKG_WIFI_PROTOCOL_N,           // Wi-Fi 4，802.11n
+    LINKG_WIFI_PROTOCOL_AC,          // Wi-Fi 5，802.11ac
+    LINKG_WIFI_PROTOCOL_AX           // Wi-Fi 6，802.11ax
+} linkg_wifi_protocol_t;
+
 typedef struct
 {
     char                  ssid[LINKG_WIFI_SSID_MAX + 1U];         // AP热点名称
@@ -83,7 +91,8 @@ typedef struct
 
 typedef struct
 {
-    linkg_wifi_wide_bandwidth_t ap_bandwidth; // AP宽带带宽
+    linkg_wifi_wide_bandwidth_t ap_bandwidth;  // AP宽带带宽
+    linkg_wifi_protocol_t       protocol_mode; // AP宽带协议模式
 } linkg_wifi_wide_params_t;
 
 typedef struct

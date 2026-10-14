@@ -1,0 +1,50 @@
+#include <stdio.h>
+#include "string.h"
+#include "main.h"
+#pragma import(__use_no_semihosting_swi)
+
+extern int  SendChar(int ch); // 声明外部函数，在main文件中定义
+extern int  GetKey(void);
+
+struct __FILE
+{
+  int handle;                 // Add whatever you need here
+};
+FILE __stdout;
+FILE __stdin;
+int fputc(int ch, FILE *f)
+{
+  return (SendChar(ch));
+}
+int fgetc(FILE *f)
+{
+  return (SendChar(GetKey()));
+}
+void _ttywrch(int ch)
+{
+  SendChar (ch);
+}
+int ferror(FILE *f)                              // Your implementation of ferror
+{
+  return EOF;
+}
+void _sys_exit(int return_code)
+{
+label:
+  goto label;           // endless loop
+}
+
+//extern "C"{
+
+int SendChar (int ch)
+{
+  //HAL_UART_Transmit(&huart2,(uint8_t *)&ch,1,1);
+  return (ch);
+}
+int GetKey (void)
+{
+  int ch;
+  //HAL_UART_Receive(&huart1,(uint8_t *)&ch,1,1000);
+  return ch;
+}
+

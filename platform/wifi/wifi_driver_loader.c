@@ -9,6 +9,7 @@
 #include "wifi_driver_loader.h"
 
 #include <errno.h>
+#include <stdlib.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
@@ -18,13 +19,18 @@
 
 #include "linkg_file.h"
 #include "linkg_os.h"
+#include "linkg_text.h"
 
 #include "wifi_platform_internal.h"
 
 /****************************** 模块常量 ******************************/
 
-#define WIFI_DRIVER_MODULE_LINE_MAX              256U // /proc/modules单行缓冲区长度
-#define WIFI_DRIVER_SYMLINK_RETRY_COUNT          16U  // 临时软链接名称冲突重试次数
+#define WIFI_DRIVER_MODULE_LINE_MAX              256U               // /proc/modules单行缓冲区长度
+#define WIFI_DRIVER_SYMLINK_RETRY_COUNT          16U                // 临时软链接名称冲突重试次数
+#define WIFI_DRIVER_AX_INI_KEY                   "11ax_switch_mask" // AX配置键
+#define WIFI_DRIVER_AX_MASK_AP_ENABLED           "0x2B"             // AP开启AX
+#define WIFI_DRIVER_AX_MASK_STA_ONLY             "0x23"             // AP关闭AX，STA保留AX能力
+
 
 /****************************** 内部辅助 ******************************/
 
@@ -632,3 +638,180 @@ int wifi_driver_update_ini(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode
 
     return wifi_driver_prepare_ini(hardware_id, work_mode, &changed);
 }
+
+/**
+ * @brief 根据角色和宽带协议获取目标AX配置值。
+ */
+static int _wifi_driver_ax_mask_value(linkg_device_role_t role, linkg_wifi_protocol_t protocol, const char **value)
+{
+    if (value == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *value = NULL;
+
+    if (role == LINKG_DEVICE_ROLE_STA)
+    {
+        *value = WIFI_DRIVER_AX_MASK_STA_ONLY;
+        return 0;
+    }
+
+    if (role != LINKG_DEVICE_ROLE_AP)
+    {
+        return -EINVAL;
+    }
+
+    switch (protocol)
+    {
+        case LINKG_WIFI_PROTOCOL_N:
+        case LINKG_WIFI_PROTOCOL_AC:
+            *value = WIFI_DRIVER_AX_MASK_STA_ONLY;
+            return 0;
+
+        case LINKG_WIFI_PROTOCOL_AX:
+            *value = WIFI_DRIVER_AX_MASK_AP_ENABLED;
+            return 0;
+
+        default:
+            return -EINVAL;
+    }
+}
+
+/**
+ * @brief 获取活动软链接选中的实际宽带INI路径。
+ *
+ * @note 仅接受国产/进口宽带目标，不允许修改窄带INI。
+ */
+static int _wifi_driver_selected_wide_ini_path(char *path, size_t capacity)
+{
+    char    target[PATH_MAX];
+    ssize_t length;
+
+    if (path == NULL || capacity == 0U)
+    {
+        return -EINVAL;
+    }
+
+    length = readlink(WIFI_DRIVER_ACTIVE_INI_PATH, target, sizeof(target) - 1U);
+    if (length < 0)
+    {
+        return -errno;
+    }
+
+    target[length] = '\0';
+
+    if (strcmp(target, WIFI_DRIVER_IMPORTED_WIDE_INI_TARGET) != 0 &&
+        strcmp(target, WIFI_DRIVER_DOMESTIC_WIDE_INI_TARGET) != 0)
+    {
+        return -EINVAL;
+    }
+
+    return _wifi_driver_join_path(WIFI_DRIVER_INI_DIRECTORY, target, path, capacity);
+}
+
+/**
+ * @brief 更新当前宽带INI内的11ax_switch_mask，并报告内容是否发生变化。
+ *
+ * @note 必须先调用wifi_driver_prepare_ini()选定宽带INI。
+ * @note 仅修改磁盘内容，不执行驱动reload。调用方应在Wi-Fi Owner停止服务后执行。
+ */
+int wifi_driver_update_ax_ini(linkg_device_role_t role, linkg_wifi_protocol_t protocol, bool *changed)
+{
+    struct stat file_stat;
+    const char *value;
+    char        path[PATH_MAX];
+    char       *content;
+    char       *original;
+    size_t      length;
+    size_t      original_length;
+    int         ret;
+
+    if (changed == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *changed = false;
+
+    ret = _wifi_driver_ax_mask_value(role, protocol, &value);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _wifi_driver_selected_wide_ini_path(path, sizeof(path));
+    if (ret != 0)
+    {
+        WIFI_DRIVER_ERROR("wide INI is not selected, error=%d", ret);
+        return ret;
+    }
+
+    if (lstat(path, &file_stat) != 0)
+    {
+        return -errno;
+    }
+
+    if (!S_ISREG(file_stat.st_mode))
+    {
+        return -EINVAL;
+    }
+
+    content = NULL;
+    length  = 0U;
+
+    ret = linkg_file_read_all(path, WIFI_DRIVER_INI_MAX_SIZE, &content, &length);
+    if (ret != 0)
+    {
+        WIFI_DRIVER_ERROR("read wide INI failed, path=%s, error=%d", path, ret);
+        return ret;
+    }
+
+    original_length = length;
+    original = malloc(original_length + 1U);
+    if (original == NULL)
+    {
+        free(content);
+        return -ENOMEM;
+    }
+
+    memcpy(original, content, original_length);
+    original[original_length] = '\0';
+
+    /* 目标键必须存在，缺失直接失败，避免生成不符合预期的驱动INI。 */
+    ret = linkg_text_replace_key_value(&content, &length, WIFI_DRIVER_AX_INI_KEY, value);
+    if (ret != 0)
+    {
+        WIFI_DRIVER_ERROR("replace AX INI key failed, path=%s, error=%d", path, ret);
+        goto cleanup;
+    }
+
+    if (length == original_length && memcmp(content, original, length) == 0)
+    {
+        ret = 0;
+        goto cleanup;
+    }
+
+    if (length > WIFI_DRIVER_INI_MAX_SIZE)
+    {
+        ret = -EFBIG;
+        goto cleanup;
+    }
+
+    /* 不得原子替换WIFI_DRIVER_ACTIVE_INI_PATH，否则会把软链接替换成普通文件。 */
+    ret = linkg_file_write_all_atomic(path, content, length, file_stat.st_mode & 0777U);
+    if (ret != 0)
+    {
+        WIFI_DRIVER_ERROR("write AX INI failed, path=%s, error=%d", path, ret);
+        goto cleanup;
+    }
+
+    *changed = true;
+    WIFI_DRIVER_INFO("AX INI updated, role=%d, protocol=%d, mask=%s, path=%s", (int)role, (int)protocol, value, path);
+
+cleanup:
+    free(original);
+    free(content);
+    return ret;
+}
+

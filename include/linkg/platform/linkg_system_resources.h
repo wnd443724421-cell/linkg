@@ -82,6 +82,12 @@ extern "C" {
 
 #define LINKG_RESOURCE_CELLULAR_SIM_INSERT_ACTIVE_HIGH true // SIM_DET高电平表示SIM插入
 
+/****************************** 串口硬件资源 ******************************/
+
+#define LINKG_RESOURCE_UART0_DEVICE "/dev/ttyS4" // 逻辑串口0
+#define LINKG_RESOURCE_UART1_DEVICE "/dev/ttyS3" // 逻辑串口1
+#define LINKG_RESOURCE_UART2_DEVICE "/dev/ttyS5" // 逻辑串口2
+
 #ifdef __cplusplus
 }
 #endif

@@ -96,7 +96,8 @@ static bool _linkg_web_wifi_config_equal(const linkg_config_t *left, const linkg
            left_wifi->wideband.narrow_params.mode == right_wifi->wideband.narrow_params.mode &&
            left_wifi->wideband.narrow_params.bandwidth == right_wifi->wideband.narrow_params.bandwidth &&
            left_wifi->wideband.narrow_params.manual_rate == right_wifi->wideband.narrow_params.manual_rate &&
-           left_wifi->wideband.wide_params.ap_bandwidth == right_wifi->wideband.wide_params.ap_bandwidth;
+           left_wifi->wideband.wide_params.ap_bandwidth == right_wifi->wideband.wide_params.ap_bandwidth &&
+           left_wifi->wideband.wide_params.protocol_mode == right_wifi->wideband.wide_params.protocol_mode;
 }
 
 /**
@@ -381,6 +382,27 @@ static const char *_linkg_web_wifi_work_mode_string(linkg_wifi_work_mode_t mode)
         return "wide";
     }
     return "unknown";
+}
+
+/**
+ * @brief 将宽带协议模式转换为Web协议字符串。
+ */
+static const char *_linkg_web_wifi_protocol_string(linkg_wifi_protocol_t protocol)
+{
+    switch (protocol)
+    {
+        case LINKG_WIFI_PROTOCOL_N:
+            return "n";
+
+        case LINKG_WIFI_PROTOCOL_AC:
+            return "ac";
+
+        case LINKG_WIFI_PROTOCOL_AX:
+            return "ax";
+
+        default:
+            return "unknown";
+    }
 }
 
 /**
@@ -912,6 +934,10 @@ static int _linkg_web_wifi_status_build_radio(const linkg_wifi_radio_status_t *r
     else if (radio->work_mode == LINKG_WIFI_WORK_MODE_WIDE)
     {
         ret = linkg_json_add_uint16(mode_params, "bandwidth_mhz", (uint16_t)radio->params.wide.bandwidth);
+        if (ret == LINKG_JSON_OK)
+        {
+            ret = linkg_json_add_string(mode_params, "protocol_mode", _linkg_web_wifi_protocol_string(radio->params.wide.protocol_mode));
+        }
         if (ret == LINKG_JSON_OK)
         {
             ret = linkg_json_add_object(object, "wide", mode_params);

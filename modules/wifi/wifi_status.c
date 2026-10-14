@@ -40,6 +40,7 @@ typedef struct
     linkg_device_role_t      role;                  // 当前设备角色
     linkg_wifi_work_mode_t   work_mode;             // 当前宽窄带工作模式
     linkg_wifi_narrow_mode_t narrow_mode;           // 窄带速率控制模式
+    linkg_wifi_protocol_t    protocol_mode;         // AP宽带协议配置，STA未知
     uint16_t                 configured_rate_level; // 固定模式配置速率档位
 } wifi_status_runtime_config_t;
 
@@ -59,7 +60,6 @@ typedef struct
     linkg_wifi_rx_stats_t previous;
     bool                  initialized;
 } wifi_status_link_loss_sample_t;
-
 
 /****************************** 全局上下文 ******************************/
 
@@ -106,6 +106,15 @@ static int _wifi_status_runtime_config_set(wifi_status_runtime_config_t *runtime
 
         runtime->narrow_mode           = config->wideband.narrow_params.mode;
         runtime->configured_rate_level = config->wideband.narrow_params.manual_rate;
+    }
+    else if (runtime->role == LINKG_DEVICE_ROLE_AP)
+    {
+        runtime->protocol_mode = config->wideband.wide_params.protocol_mode;
+    }
+    else
+    {
+        /* STA的11ax能力不等于关联时实际协商的协议。 */
+        runtime->protocol_mode = LINKG_WIFI_PROTOCOL_UNKNOWN;
     }
 
     return 0;
@@ -294,7 +303,8 @@ static void _wifi_status_reset_snapshot(linkg_wifi_status_snapshot_t *snapshot, 
         return;
     }
 
-    snapshot->local.radio.params.wide.bandwidth = LINKG_WIFI_WIDE_BANDWIDTH_UNKNOWN;
+    snapshot->local.radio.params.wide.bandwidth     = LINKG_WIFI_WIDE_BANDWIDTH_UNKNOWN;
+    snapshot->local.radio.params.wide.protocol_mode = runtime->protocol_mode;
 }
 
 /**
