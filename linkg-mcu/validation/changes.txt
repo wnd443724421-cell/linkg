@@ -1,0 +1,36 @@
+ M linkg-mcu/MDK-ARM/soft.uvoptx
+ M linkg-mcu/MDK-ARM/soft.uvprojx
+ M linkg-mcu/MDK-ARM/startup_stm32l031xx.s
+?? linkg-mcu/.gitignore
+?? linkg-mcu/Core/Inc/main.h
+?? linkg-mcu/Core/Inc/stm32l0xx_hal_conf.h
+?? linkg-mcu/Core/Inc/stm32l0xx_it.h
+?? linkg-mcu/Core/Src/main.c
+?? linkg-mcu/Core/Src/stm32l0xx_hal_msp.c
+?? linkg-mcu/Core/Src/stm32l0xx_it.c
+?? linkg-mcu/Core/Src/system_stm32l0xx.c
+?? linkg-mcu/GCC/startup_stm32l031xx.s
+?? linkg-mcu/GCC/stm32l031g6.ld
+?? linkg-mcu/Makefile
+?? linkg-mcu/README.md
+?? linkg-mcu/bsp/bsp_gpio.c
+?? linkg-mcu/bsp/bsp_gpio.h
+?? linkg-mcu/bsp/bsp_uart.c
+?? linkg-mcu/bsp/bsp_uart.h
+?? linkg-mcu/service/sbus_bridge.c
+?? linkg-mcu/service/sbus_bridge.h
+?? linkg-mcu/tests/check_firmware.py
+?? linkg-mcu/tests/check_project.py
+?? linkg-mcu/tests/mocks/stm32l0xx_hal.h
+?? linkg-mcu/tests/test_bridge.c
+?? linkg-mcu/validation/REPORT.md
+?? linkg-mcu/validation/changes.txt
+?? linkg-mcu/validation/checks.log
+?? linkg-mcu/validation/drivers-integrity.log
+?? linkg-mcu/validation/drivers.sha256
+?? linkg-mcu/validation/environment.txt
+?? linkg-mcu/validation/final-audit.log
+?? linkg-mcu/validation/firmware.log
+?? linkg-mcu/validation/gcc-build.log
+?? linkg-mcu/validation/source-sha256.txt
+?? linkg-mcu/validation/standalone-build.log

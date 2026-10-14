@@ -1,0 +1,6 @@
+python3 tests/check_project.py
+PASS: 15 C/H files; 64 function briefs; formatting; 22 Keil inputs; independent paths and source parity
+PASS: git diff --check
+PASS: 946 Drivers files unchanged, no extra driver files
+PASS: pre-existing changes outside linkg-mcu preserved
+PASS: archive rebuilt independently; BIN is byte-identical

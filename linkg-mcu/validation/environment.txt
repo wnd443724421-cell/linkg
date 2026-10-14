@@ -1,0 +1,20 @@
+Client date: 2026-10-14 (Asia/Shanghai)
+Repository: /home/dawn/project/linkg_v3
+Base commit: 09b67b464e12896601ea6389c347682b781548a8
+arm-none-eabi-gcc (GNU Tools for Arm Embedded Processors 8-2019-q3-update) 8.3.1 20190703 (release) [gcc-8-branch revision 273027]
+Copyright (C) 2018 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+thumb/v6-m/nofp
+
+Host compiler:
+gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+
+Keil MDK / ARM Compiler 5/6: no callable installation found on Windows or Ubuntu.
+Toolchain archive already existed in Tina SDK. Temporary extraction explicitly authorized by the user.
+No package manager, sudo, PATH change, network download or flash operation used.

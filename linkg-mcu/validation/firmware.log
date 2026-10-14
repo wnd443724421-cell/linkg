@@ -1,0 +1,8 @@
+PASS: ARMv6-M Thumb image, 48 vectors, initial SP, IRQ entries, data/BSS/stack bounds, no undefined/dynamic/protocol symbols
+Flash image: 7956 / 32768 bytes
+Static RAM: data 12 + BSS 492 = 504 / 8192 bytes
+Reserved stack: 1024 bytes; gap before stack: 6664 bytes
+The linker memory-region report shows RAM 100% because .stack is placed at the top of RAM; it is not static data usage.
+SHA256 linkg_mcu_v2.elf: af2b828d58c226d980f8a569e32e86862646eb0155a156d1ac755c7d2dda1416
+SHA256 linkg_mcu_v2.bin: 36ab48c1ea86e09091571495fc50ed227474ff6da6d2204ef88ff124d4b867c4
+SHA256 linkg_mcu_v2.hex: 31e9642d00218f4d9f4a769d908899f56262e3285d8fc926c6cf03937d517d00

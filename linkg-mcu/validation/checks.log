@@ -1,0 +1,5 @@
+gcc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/mocks -Ibsp -Iservice service/sbus_bridge.c tests/test_bridge.c -o build/tests/test_bridge
+./build/tests/test_bridge
+PASS: 7 bridge tests; 20000 ordered bytes; overflow, errors, switching, retries and watchdog
+python3 tests/check_project.py
+PASS: 15 C/H files; 64 function briefs; formatting; 22 Keil inputs; independent paths and source parity
