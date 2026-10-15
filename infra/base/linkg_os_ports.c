@@ -247,8 +247,9 @@ int linkg_os_reserve_local_ports(void)
     uint8_t bitmap[LINKG_OS_PORTS_BITMAP_SIZE] = {0};
     char    existing[LINKG_OS_PORTS_TEXT_SIZE];
     char    updated[LINKG_OS_PORTS_TEXT_SIZE];
-    bool    changed;
-    int     ret;
+    uint32_t port;
+    bool     changed;
+    int      ret;
 
     ret = _linkg_os_ports_read(existing, sizeof(existing));
     if (ret != 0)
@@ -298,7 +299,7 @@ int linkg_os_reserve_local_ports(void)
         return ret;
     }
 
-    for (uint32_t port = LINKG_RESOURCE_PORT_RESERVED_START; port <= LINKG_RESOURCE_PORT_RESERVED_END; port++)
+    for (port = LINKG_RESOURCE_PORT_RESERVED_START; port <= LINKG_RESOURCE_PORT_RESERVED_END; port++)
     {
         if (!_linkg_os_port_test(bitmap, port))
         {
@@ -306,7 +307,7 @@ int linkg_os_reserve_local_ports(void)
         }
     }
 
-    for (uint32_t port = LINKG_RESOURCE_NAT_SNAT_PORT_START; port <= LINKG_RESOURCE_NAT_SNAT_PORT_END; port++)
+    for (port = LINKG_RESOURCE_NAT_SNAT_PORT_START; port <= LINKG_RESOURCE_NAT_SNAT_PORT_END; port++)
     {
         if (!_linkg_os_port_test(bitmap, port))
         {
