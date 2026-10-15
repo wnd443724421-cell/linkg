@@ -30,6 +30,7 @@ static struct termios       g_test_termios;          // 模拟termios回读值
 static int                  g_test_serial_get_error; // TIOCGSERIAL错误注入
 static int                  g_test_serial_sets;      // TIOCSSERIAL调用次数
 static int                  g_test_write_step;       // 部分写入步骤
+static bool                 g_test_preserve_hw;      // 模拟USB WWAN保留硬件termios字段
 
 ssize_t __real_write(int fd, const void *buffer, size_t length);
 
@@ -108,9 +109,23 @@ int __wrap_tcgetattr(int fd, struct termios *termios_p)
  */
 int __wrap_tcsetattr(int fd, int optional_actions, const struct termios *termios_p)
 {
+    struct termios previous;
+    tcflag_t       hardware_mask;
+
     assert(fd == 42);
     assert(optional_actions == TCSANOW);
+
+    previous = g_test_termios;
     g_test_termios = *termios_p;
+
+    if (g_test_preserve_hw)
+    {
+        hardware_mask = CBAUD | CBAUDEX | CSIZE | CSTOPB | PARENB | PARODD | CMSPAR | CRTSCTS;
+        g_test_termios.c_cflag = (g_test_termios.c_cflag & ~hardware_mask) | (previous.c_cflag & hardware_mask);
+        g_test_termios.c_ispeed = previous.c_ispeed;
+        g_test_termios.c_ospeed = previous.c_ospeed;
+    }
+
     return 0;
 }
 
@@ -157,6 +172,7 @@ static void _uart_platform_reset(int baud_base)
     g_test_serial_get_error = 0;
     g_test_serial_sets      = 0;
     g_test_write_step       = 0;
+    g_test_preserve_hw      = false;
 }
 
 /**
@@ -168,6 +184,7 @@ static void _uart_platform_standard(void)
     int           fd;
 
     _uart_platform_reset(1500000);
+    g_test_serial.type           = PORT_16550A;
     g_test_serial.flags          = ASYNC_SPD_CUST;
     g_test_serial.custom_divisor = 15;
     config.baudrate              = 115200;
@@ -188,7 +205,7 @@ static void _uart_platform_standard(void)
 }
 
 /**
- * @brief 验证USB串口把当前9600速率作为baud_base时仍可设置标准115200。
+ * @brief 验证USB WWAN保留硬件termios字段时仍可启用标准115200通道。
  */
 static void _uart_platform_standard_usb(void)
 {
@@ -196,6 +213,15 @@ static void _uart_platform_standard_usb(void)
     int           fd;
 
     _uart_platform_reset(9600);
+    g_test_serial.type     = PORT_UNKNOWN;
+    g_test_preserve_hw     = true;
+    g_test_termios.c_iflag = ICRNL | IXON;
+    g_test_termios.c_oflag = OPOST;
+    g_test_termios.c_lflag = ICANON | ECHO;
+    g_test_termios.c_cflag = B9600 | CS8 | CREAD | CLOCAL;
+    cfsetispeed(&g_test_termios, B9600);
+    cfsetospeed(&g_test_termios, B9600);
+
     config.baudrate        = 115200;
     config.data_bits       = 8;
     config.stop_bits       = 1;
@@ -206,8 +232,13 @@ static void _uart_platform_standard_usb(void)
     fd = linux_uart_open("/dev/test", &config);
     assert(fd == 42);
     assert(g_test_serial_sets == 0);
-    assert(cfgetispeed(&g_test_termios) == B115200);
-    assert(cfgetospeed(&g_test_termios) == B115200);
+    assert(cfgetispeed(&g_test_termios) == B9600);
+    assert(cfgetospeed(&g_test_termios) == B9600);
+    assert((g_test_termios.c_iflag & (ICRNL | IXON)) == 0);
+    assert((g_test_termios.c_oflag & OPOST) == 0);
+    assert((g_test_termios.c_lflag & (ICANON | ECHO)) == 0);
+    assert(g_test_termios.c_cc[VMIN] == 0);
+    assert(g_test_termios.c_cc[VTIME] == 0);
     assert(linux_uart_close(fd) == 0);
 }
 
@@ -221,6 +252,7 @@ static void _uart_platform_custom_sbus(void)
     int                    fd;
 
     _uart_platform_reset(1500000);
+    g_test_serial.type     = PORT_16550A;
     config.baudrate        = 100000;
     config.data_bits       = 8;
     config.stop_bits       = 2;

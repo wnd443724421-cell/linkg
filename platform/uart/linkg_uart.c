@@ -120,12 +120,19 @@ int linux_uart_baud_info(int fd, uint32_t baudrate, linux_uart_baud_info_t *out)
 /**
  * @brief 设置或清除自定义分频并回读确认，避免沿用上次非标准波特率。
  */
-static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom)
+static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom, bool *hardware_termios_configurable)
 {
     struct serial_struct   serial;
     struct serial_struct   verify;
     linux_uart_baud_info_t info;
     int                    ret;
+
+    if (hardware_termios_configurable == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *hardware_termios_configurable = true;
 
     memset(&serial, 0, sizeof(serial));
     if (ioctl(fd, TIOCGSERIAL, &serial) < 0)
@@ -135,6 +142,8 @@ static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom)
         // PTY和部分USB UART只支持标准termios，不提供serial_struct。
         return !custom && (ret == -ENOTTY || ret == -EINVAL) ? 0 : ret;
     }
+
+    *hardware_termios_configurable = serial.type != PORT_UNKNOWN;
 
     if (!custom)
     {
@@ -182,6 +191,7 @@ int linux_uart_open(const char *dev, const uart_config_t *config)
     struct termios tty;
     struct termios verify;
     speed_t        baud_flag;
+    bool           hardware_termios_configurable;
     int            fd;
     int            ret;
 
@@ -289,7 +299,7 @@ int linux_uart_open(const char *dev, const uart_config_t *config)
 
     baud_flag = _linux_uart_get_baud_flag(config->baudrate);
 
-    ret = _linux_uart_configure_divisor(fd, (uint32_t)config->baudrate, baud_flag == B0);
+    ret = _linux_uart_configure_divisor(fd, (uint32_t)config->baudrate, baud_flag == B0, &hardware_termios_configurable);
     if (ret != 0)
     {
         close(fd);
@@ -309,9 +319,10 @@ int linux_uart_open(const char *dev, const uart_config_t *config)
         return ret;
     }
 
-    if ((verify.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) !=
-        (tty.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) ||
-        cfgetospeed(&verify) != baud_flag || cfgetispeed(&verify) != baud_flag)
+    if (hardware_termios_configurable &&
+        ((verify.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) !=
+         (tty.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) ||
+         cfgetospeed(&verify) != baud_flag || cfgetispeed(&verify) != baud_flag))
     {
         close(fd);
         return -EIO;
