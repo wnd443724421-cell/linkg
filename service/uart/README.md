@@ -99,7 +99,7 @@ SBUS 串口重开时先在 I/O 锁内清空旧 FIFO，再发布新 fd 和新的�
 750000, 1500000
 ```
 
-标准 termios 值走标准速度标志，其他值使用 `TIOCGSERIAL`/`TIOCSSERIAL` 的 `ASYNC_SPD_CUST` 路径。打开设备时以驱动返回的 `baud_base` 计算整数分频，拒绝无效分频和绝对误差超过 2% 的配置，并回读串口参数。Web 状态中的 `actual` 和 `error_pct` 是驱动分频计算值，不包含晶振误差，也不是示波器实测值。
+标准 termios 值直接使用标准速度标志，并在需要时清除遗留的 `ASYNC_SPD_CUST`。其他值使用 `TIOCGSERIAL`/`TIOCSSERIAL` 的自定义分频路径，以驱动返回的 `baud_base` 计算整数分频，拒绝无效分频和绝对误差超过 2% 的配置，并回读串口参数。Web 状态中的 `actual` 和 `error_pct` 是驱动分频计算值，不包含晶振误差，也不是示波器实测值。
 
 T113 的 sunxi UART 驱动从实际 UART 时钟计算分频，板级设备树中的 UART3/4/5 时钟来自 APB1。不能把其他项目的固定 24 MHz 公式当成该板运行时证据。100000 baud 和全部白名单档位仍需在目标硬件运行后读取 `baud_base`，并用逻辑分析仪确认最终电气波形。
 

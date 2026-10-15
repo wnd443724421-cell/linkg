@@ -45,10 +45,10 @@ static linkg_network_manager_context_t g_network_manager;
 /****************************** 内部辅助 ******************************/
 
 /**
- * @brief 为指定Owner开始本地Maintenance。
+ * @brief 尝试为指定Owner开始本地Maintenance。
  *
- * 仅Network Manager线程调用。
- * BEGIN属于Best-effort操作，任何错误均不得阻止用户重启。
+ * BEGIN失败不得阻止用户请求的模块重启。
+ * 仅成功建立的事务由Manager负责结束。
  */
 static void _linkg_network_manager_maintenance_begin(linkg_network_worker_t *worker, linkg_link_access_t access)
 {
@@ -60,10 +60,8 @@ static void _linkg_network_manager_maintenance_begin(linkg_network_worker_t *wor
     }
 
     ret = linkg_switch_begin_maintenance(access);
-
-    if (ret == 0 || ret == -EALREADY)
+    if (ret == 0)
     {
-
         worker->maintenance_owned = true;
         return;
     }
@@ -489,18 +487,21 @@ static bool _linkg_network_manager_process_worker(linkg_network_worker_t *worker
             if (ret != 0)
             {
                 LINKG_LOG_WARN("network worker stop failed, thread=%s, error=%d", worker->thread.name, ret);
+            }
 
-                // 停止失败时结束本轮维护，保留模块状态供后续人工恢复。
+            // 旧Owner尚未完成join，保留重启请求，后续继续尝试回收。
+            if (linkg_thread_is_started(&worker->thread))
+            {
+                return false;
+            }
+
+            // 线程已回收但模块清理失败，本轮重启终止，不自动重复初始化。
+            if (ret != 0)
+            {
                 worker->start_attempted = true;
                 _linkg_network_manager_maintenance_end(worker, access, "stop_failed");
 
                 return true;
-            }
-
-            // 旧Owner尚未回收，不允许创建新Owner。
-            if (linkg_thread_is_started(&worker->thread))
-            {
-                return false;
             }
         }
     }
@@ -653,7 +654,7 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
         {
             _linkg_network_manager_maintenance_finish(&g_network.cellular_worker, LINKG_LINK_ACCESS_CELLULAR, cellular_enabled);
         }
-        /**
+        /**_linkg_network_worker_stop
          * 旧Owner尚未回收时，保留未完成的Cellular重启请求。
          */
         if (!processed && cellular_restart)

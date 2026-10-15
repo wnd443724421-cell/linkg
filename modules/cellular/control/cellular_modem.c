@@ -46,7 +46,7 @@ static void _cellular_modem_make_uart_config(uart_config_t *config)
     config->baudrate        = CELLULAR_MODEM_AT_BAUDRATE;
     config->data_bits       = 8;
     config->stop_bits       = 1;
-    config->parity          = 'N';
+    config->parity          = 'n';
     config->hw_flow_control = false;
     config->exclusive       = true;
 }

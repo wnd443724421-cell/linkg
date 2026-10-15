@@ -127,26 +127,33 @@ static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom)
     linux_uart_baud_info_t info;
     int                    ret;
 
-    ret = linux_uart_baud_info(fd, baudrate, &info);
-    if (ret != 0)
+    memset(&serial, 0, sizeof(serial));
+    if (ioctl(fd, TIOCGSERIAL, &serial) < 0)
     {
+        ret = -errno;
+
         // PTY和部分USB UART只支持标准termios，不提供serial_struct。
         return !custom && (ret == -ENOTTY || ret == -EINVAL) ? 0 : ret;
     }
 
-    if (ioctl(fd, TIOCGSERIAL, &serial) < 0)
+    if (!custom)
     {
-        return -errno;
-    }
+        if ((serial.flags & ASYNC_SPD_MASK) == 0)
+        {
+            return 0;
+        }
 
-    if (!custom && (serial.flags & ASYNC_SPD_MASK) == 0)
-    {
-        return 0;
+        serial.flags &= ~ASYNC_SPD_MASK;
     }
-
-    serial.flags &= ~ASYNC_SPD_MASK;
-    if (custom)
+    else
     {
+        ret = linux_uart_baud_info(fd, baudrate, &info);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        serial.flags &= ~ASYNC_SPD_MASK;
         serial.flags |= ASYNC_SPD_CUST;
         serial.custom_divisor = (int)info.divisor;
     }

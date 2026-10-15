@@ -188,6 +188,30 @@ static void _uart_platform_standard(void)
 }
 
 /**
+ * @brief 验证USB串口把当前9600速率作为baud_base时仍可设置标准115200。
+ */
+static void _uart_platform_standard_usb(void)
+{
+    uart_config_t config;
+    int           fd;
+
+    _uart_platform_reset(9600);
+    config.baudrate        = 115200;
+    config.data_bits       = 8;
+    config.stop_bits       = 1;
+    config.parity          = 'n';
+    config.hw_flow_control = false;
+    config.exclusive       = true;
+
+    fd = linux_uart_open("/dev/test", &config);
+    assert(fd == 42);
+    assert(g_test_serial_sets == 0);
+    assert(cfgetispeed(&g_test_termios) == B115200);
+    assert(cfgetospeed(&g_test_termios) == B115200);
+    assert(linux_uart_close(fd) == 0);
+}
+
+/**
  * @brief 验证100000 baud自定义分频及8E2设置。
  */
 static void _uart_platform_custom_sbus(void)
@@ -248,6 +272,7 @@ static void _uart_platform_edges(void)
 int main(void)
 {
     _uart_platform_standard();
+    _uart_platform_standard_usb();
     _uart_platform_custom_sbus();
     _uart_platform_edges();
     puts("PASS UART platform termios, divisor readback, 8E2 and partial-write tests");
