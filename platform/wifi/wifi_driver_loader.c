@@ -29,7 +29,8 @@
 #define WIFI_DRIVER_SYMLINK_RETRY_COUNT          16U                // 临时软链接名称冲突重试次数
 #define WIFI_DRIVER_AX_INI_KEY                   "11ax_switch_mask" // AX配置键
 #define WIFI_DRIVER_AX_MASK_AP_ENABLED           "0x2B"             // AP开启AX
-#define WIFI_DRIVER_AX_MASK_STA_ONLY             "0x23"             // AP关闭AX，STA保留AX能力
+#define WIFI_DRIVER_AX_MASK_AP_DISABLED          "0x00"             // AP关闭AX
+#define WIFI_DRIVER_AX_MASK_STA_ONLY             "0x23"             // STA固定AX掩码
 
 
 /****************************** 内部辅助 ******************************/
@@ -666,7 +667,7 @@ static int _wifi_driver_ax_mask_value(linkg_device_role_t role, linkg_wifi_proto
     {
         case LINKG_WIFI_PROTOCOL_N:
         case LINKG_WIFI_PROTOCOL_AC:
-            *value = WIFI_DRIVER_AX_MASK_STA_ONLY;
+            *value = WIFI_DRIVER_AX_MASK_AP_DISABLED;
             return 0;
 
         case LINKG_WIFI_PROTOCOL_AX:

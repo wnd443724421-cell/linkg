@@ -38,6 +38,7 @@ typedef struct
 {
     uint8_t           peer_node_id;    // 当前直接Peer节点编号
     uint32_t          peer_generation; // 当前Peer运行代际
+    bool              notify_peer;     // 是否有可用备份Path、需要通知远端
     bool              apply_plan;      // 当前是否需要修改本地发送计划
     linkg_send_plan_t plan;            // Maintenance迁移后的本地发送计划
 } linkg_switch_maintenance_peer_action_t;
@@ -411,6 +412,7 @@ static int _linkg_switch_maintenance_process_begin(const linkg_switch_event_t *e
     linkg_link_access_t                        alternate_access;
     uint32_t                                   blocked_link_id;
     uint32_t                                   alternate_link_id;
+    bool                                       backup_available;
     bool                                       apply_plan;
     int                                        ret;
 
@@ -469,18 +471,41 @@ static int _linkg_switch_maintenance_process_begin(const linkg_switch_event_t *e
         return 0;
     }
 
-    remote->active          = true;
-    remote->access          = access;
-    remote->last_message_id = event->message_id;
-    remote->started_us      = now_us;
-    remote->expires_us      = _linkg_switch_maintenance_add_us(now_us, LINKG_SWITCH_MAINTENANCE_REMOTE_TIMEOUT_US);
+    // 备份Path有效性与是否需要本机Plan迁移是两个独立判断。
+    backup_available = alternate_link_id != LINKG_LINK_ID_INVALID &&
+                       _linkg_switch_maintenance_peer_access_available_locked(peer, alternate_access) &&
+                       !linkg_switch_maintenance_access_blocked_locked(&peer->maintenance, alternate_access);
 
-    apply_plan = _linkg_switch_maintenance_build_escape_plan_locked(peer,
-                                                                    access,
-                                                                    blocked_link_id,
-                                                                    alternate_access,
-                                                                    alternate_link_id,
-                                                                    &plan);
+    apply_plan = backup_available &&
+                 _linkg_switch_maintenance_build_escape_plan_locked(peer,
+                                                                     access,
+                                                                     blocked_link_id,
+                                                                     alternate_access,
+                                                                     alternate_link_id,
+                                                                     &plan);
+
+    remote->last_message_id = event->message_id;
+
+    if (!backup_available)
+    {
+        remote->active     = false;
+        remote->access     = LINKG_LINK_ACCESS_NONE;
+        remote->started_us = 0U;
+        remote->expires_us = 0U;
+
+        pthread_mutex_unlock(&g_switch.lock);
+
+        LINKG_LOG_DEBUG("SWITCH-MAINT: BEGIN ignored, peer=%u id=%u access=%d reason=no-backup",
+                        (unsigned int)event->peer_node_id,
+                        (unsigned int)event->message_id,
+                        (int)access);
+        return 0;
+    }
+
+    remote->active     = true;
+    remote->access     = access;
+    remote->started_us = now_us;
+    remote->expires_us = _linkg_switch_maintenance_add_us(now_us, LINKG_SWITCH_MAINTENANCE_REMOTE_TIMEOUT_US);
 
     pthread_mutex_unlock(&g_switch.lock);
 
@@ -726,7 +751,7 @@ bool linkg_switch_maintenance_access_blocked_locked(const linkg_switch_maintenan
 /****************************** 本机维护控制 ******************************/
 
 /**
- * @brief 开始本机指定Access维护并通知全部当前直接Peer。
+ * @brief 开始本机指定Access维护，仅通知具有可用备用Path的直接Peer。
  */
 int linkg_switch_maintenance_begin(linkg_link_access_t access)
 {
@@ -828,6 +853,16 @@ int linkg_switch_maintenance_begin(linkg_link_access_t access)
                                                                alternate_link_id,
                                                                &actions[action_count].plan);
 
+        // 备份Path可用性与是否需要迁移Plan分开判定。
+        actions[action_count].notify_peer =
+            alternate_link_id != LINKG_LINK_ID_INVALID &&
+            _linkg_switch_maintenance_peer_access_available_locked(peer, alternate_access) &&
+            !linkg_switch_maintenance_access_blocked_locked(&peer->maintenance, alternate_access);
+
+        // 只有选中远端通知的Peer，才需要后续发送END和等待ACK。
+        peer->maintenance.local_begin_message_id =
+            actions[action_count].notify_peer ? message_id : LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID;
+
         action_count++;
     }
 
@@ -839,22 +874,36 @@ int linkg_switch_maintenance_begin(linkg_link_access_t access)
                     (unsigned int)action_count);
 
     /**
-     * Maintenance是强制配置流程。
-     * 单个Peer计划迁移或BEGIN发送失败不回滚本机Maintenance状态，
-     * 对端后续仍可依赖链路失效和Policy完成保底迁移。
+     * 本机维护始终执行；无可用备用Path的Peer不发送BEGIN，
+     * 避免单链路Wi-Fi恢复后被远端30秒Maintenance Block阻塞。
+     * 单Peer迁移或发送失败不回滚本机Maintenance状态。
      */
     for (index = 0U; index < action_count; index++)
     {
+        if (!actions[index].notify_peer)
+        {
+            LINKG_LOG_DEBUG("SWITCH-MAINT: BEGIN skipped, peer=%u access=%d reason=no-backup",
+                            (unsigned int)actions[index].peer_node_id,
+                            (int)access);
+            continue;
+        }
+
         if (actions[index].apply_plan)
         {
             ret = linkg_switch_plan_apply_local(actions[index].peer_node_id,
                                                  actions[index].peer_generation,
                                                  &actions[index].plan);
-            if (ret != 0 && !_linkg_switch_maintenance_expected_state_error(ret))
+            if (ret != 0)
             {
-                LINKG_LOG_WARN("SWITCH-MAINT: apply local escape plan failed, peer=%u, error=%d",
-                               (unsigned int)actions[index].peer_node_id,
-                               ret);
+                if (!_linkg_switch_maintenance_expected_state_error(ret))
+                {
+                    LINKG_LOG_WARN("SWITCH-MAINT: apply local escape plan failed, peer=%u, error=%d",
+                                   (unsigned int)actions[index].peer_node_id,
+                                   ret);
+                }
+
+                // 迁移失败时不得让对端单方面进入远端Maintenance Block。
+                continue;
             }
         }
 
@@ -958,11 +1007,12 @@ int linkg_switch_maintenance_end(linkg_link_access_t access)
     {
         peer = &g_switch.peers[index];
 
-        if (!peer->used)
+        if (!peer->used || peer->maintenance.local_begin_message_id != message_id)
         {
             continue;
         }
 
+        peer->maintenance.local_begin_message_id = LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID;
         memset(&peer->maintenance.end_tx, 0, sizeof(peer->maintenance.end_tx));
 
         peer->maintenance.end_tx.active        = true;

@@ -49,6 +49,11 @@ int linkg_config_get_uart(linkg_uart_config_t *out);
 int linkg_config_get_wifi(linkg_wifi_config_t *out);
 int linkg_config_get_cellular(linkg_cellular_config_t *out);
 
+/****************************** 配置事务 ******************************/
+
+int  linkg_config_transaction_begin(void);
+void linkg_config_transaction_end(void);
+
 /****************************** 配置更新 ******************************/
 
 int linkg_config_replace(const linkg_config_t *config);

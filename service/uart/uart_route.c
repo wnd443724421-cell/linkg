@@ -415,7 +415,9 @@ short uart_route_poll_events(const linkg_uart_route_t *route, bool client)
         return POLLIN; // TCP监听套接字始终处理新的连接
     }
 
-    events = route->config->dir == LINKG_UART_ROUTE_DIR_TX ? 0 : POLLIN;
+    events = route->config->dir != LINKG_UART_ROUTE_DIR_TX ||
+             (route->config->proto == LINKG_UART_ROUTE_PROTO_UDP &&
+              route->config->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL) ? POLLIN : 0;
     if (route->config->proto == LINKG_UART_ROUTE_PROTO_TCP && route->tcp_tx_count > 0U)
     {
         events |= POLLOUT;
@@ -601,6 +603,18 @@ void uart_route_event(linkg_uart_route_t *route, bool client, short revents)
         else if ((revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
         {
             _uart_route_schedule_retry(route, -EIO);
+        }
+        return;
+    }
+
+    // TCP关闭事件可能携带最后一批可读字节；逐轮读到EOF后再断开。
+    if (route->config->proto == LINKG_UART_ROUTE_PROTO_TCP &&
+        (revents & POLLIN) != 0 && (revents & POLLNVAL) == 0)
+    {
+        _uart_route_receive(route, fd);
+        if ((revents & POLLOUT) != 0)
+        {
+            _uart_route_tcp_flush(route);
         }
         return;
     }

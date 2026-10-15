@@ -58,8 +58,9 @@ typedef struct
 
 typedef struct
 {
-    linkg_switch_maintenance_remote_runtime_t remote; // 当前对端Maintenance状态
-    linkg_switch_maintenance_end_tx_runtime_t end_tx; // 当前本机END等待确认状态
+    linkg_switch_maintenance_remote_runtime_t remote;                 // 当前对端Maintenance状态
+    linkg_switch_maintenance_end_tx_runtime_t end_tx;                 // 当前本机END等待确认状态
+    uint32_t                                  local_begin_message_id; // 本机当前事务已选中通知该Peer的BEGIN编号，0表示无需END
 } linkg_switch_maintenance_peer_runtime_t;
 
 /****************************** 本机维护控制 ******************************/

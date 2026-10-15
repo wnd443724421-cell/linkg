@@ -7,6 +7,7 @@
 #define LINKG_UART_CONFIG_H
 
 #include <netinet/in.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -79,6 +80,16 @@ typedef struct
     uint32_t                 count;                                          // 有效串口数量
     linkg_uart_item_config_t items[LINKG_UART_CONFIG_PORT_COUNT_MAX];        // 串口配置列表
 } linkg_uart_config_t;
+
+#define LINKG_UART_CONFIG_SBUS_BAUDRATE  100000U // SBUS固定波特率
+#define LINKG_UART_CONFIG_SBUS_DATA_BITS 8U      // SBUS固定数据位
+#define LINKG_UART_CONFIG_SBUS_STOP_BITS 2U      // SBUS固定停止位
+
+/****************************** 配置能力 ******************************/
+
+const uint32_t *linkg_uart_config_baudrates(size_t *count);
+bool            linkg_uart_config_equal(const linkg_uart_config_t *left, const linkg_uart_config_t *right);
+bool            linkg_uart_config_reserved_port(linkg_uart_route_proto_t proto, uint16_t port);
 
 /****************************** 配置处理 ******************************/
 

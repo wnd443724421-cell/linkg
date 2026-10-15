@@ -46,6 +46,26 @@ static linkg_config_context_t g_config =
     .file_lock = PTHREAD_MUTEX_INITIALIZER   // 配置文件写入锁
 };
 
+static pthread_mutex_t g_config_transaction_lock = PTHREAD_MUTEX_INITIALIZER; // 配置写事务锁，不阻塞配置读取
+
+/**
+ * @brief 尝试独占一次跨保存和运行态切换的事务，必须由同一线程结束。
+ */
+int linkg_config_transaction_begin(void)
+{
+    int ret = pthread_mutex_trylock(&g_config_transaction_lock);
+
+    return ret == 0 ? 0 : -ret;
+}
+
+/**
+ * @brief 结束当前线程持有的配置写事务。
+ */
+void linkg_config_transaction_end(void)
+{
+    pthread_mutex_unlock(&g_config_transaction_lock);
+}
+
 /****************************** 错误处理 ******************************/
 
 /**

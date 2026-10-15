@@ -97,12 +97,12 @@ typedef struct
 {
     struct linkg_uart_port          *parent;         						 // 归属串口
     const linkg_uart_route_config_t *config;         						 // 指向Manager私有配置
-    linkg_uart_route_state_t     	 state;          						 // 网络路由状态
+    atomic_int     	 state;          						 // 网络路由状态
     int                          	 fd;             						 // UDP/连接TCP/监听TCP
     int                          	 client_fd;      						 // TCP服务端唯一客户端
     struct sockaddr_in           	 remote;         						 // 远端地址
     struct sockaddr_in           	 peer;           						 // UDP本地路由最近对端
-    bool                         	 peer_valid;     						 // UDP已学习对端
+    atomic_bool                    peer_valid;     						 // UDP已学习对端
     uint64_t                     	 retry_at_ms;    						 // 下次重建期限
     uint32_t                     	 retry_delay_ms; 						 // 退避间隔
     uint8_t                      	 tcp_tx[LINKG_UART_TCP_TX_CAPACITY]; 	 // TCP待发字节
@@ -124,7 +124,6 @@ typedef struct linkg_uart_port
     pthread_mutex_t                  io_lock;                                   // Worker与SBUS线程共享串口锁
     pthread_mutex_t                  sbus_lock;                                 // SBUS FIFO锁
     linkg_thread_t                   sbus_thread;                               // 定时输出线程对象
-    atomic_uint                      sbus_target_level;                         // 当前模式目标FIFO水位
     atomic_uint                      sbus_interval_us;                          // SBUS运行输出周期
     linkg_uart_sbus_fifo_t           sbus_fifo;                                 // 网络入站真实帧FIFO
     uint8_t                          sbus_rx[LINKG_UART_SBUS_FRAME_SIZE];       // 串口SBUS帧解析缓存
@@ -176,6 +175,13 @@ typedef struct
 
 extern linkg_uart_manager_context_t g_uart_manager;
 
+/****************************** 生命周期内部接口 ******************************/
+
+int uart_manager_init(void);
+int uart_manager_start(bool strict);
+int uart_manager_stop(void);
+int uart_manager_deinit(void);
+
 /****************************** 内部工具 ******************************/
 
 uint64_t uart_now_ms(void);
@@ -192,6 +198,7 @@ void        uart_port_close(linkg_uart_port_t *port);
 void        uart_port_maintenance(linkg_uart_port_t *port, uint64_t now_ms);
 int         uart_port_read(linkg_uart_port_t *port, uint8_t *buffer, uint32_t capacity);
 int         uart_port_write(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t length);
+int         uart_port_write_generation(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t length, uint32_t generation);
 void        uart_port_fault(linkg_uart_port_t *port, int error);
 int         uart_port_raw_enqueue(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t length);
 void        uart_port_raw_flush(linkg_uart_port_t *port);

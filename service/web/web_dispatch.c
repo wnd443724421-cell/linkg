@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "linkg_json.h"
+#include "linkg_config.h"
 
 /****************************** 内部类型 ******************************/
 
@@ -38,6 +39,9 @@ static const linkg_web_command_entry_t g_web_commands[] =
     {LINKG_WEB_CMD_CELLULAR_STATUS_GET, _linkg_web_handler_cellular_status_get},
     {LINKG_WEB_CMD_TRAFFIC_CONFIG_GET,  _linkg_web_handler_traffic_config_get},
     {LINKG_WEB_CMD_TRAFFIC_CONFIG_SET,  _linkg_web_handler_traffic_config_set},
+    {LINKG_WEB_CMD_UART_CONFIG_GET,     _linkg_web_handler_uart_config_get},
+    {LINKG_WEB_CMD_UART_CONFIG_SET,     _linkg_web_handler_uart_config_set},
+    {LINKG_WEB_CMD_UART_STATUS_GET,     _linkg_web_handler_uart_status_get},
     {LINKG_WEB_CMD_INVALID,             NULL}
 };
 
@@ -161,7 +165,25 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
         return 0;
     }
 
-    ret = handler(param, response);
+    // UART后台事务与其他Web写请求互斥；状态读取无需等待重载完成。
+    if (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
+        cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET)
+    {
+        ret = linkg_config_transaction_begin();
+        if (ret == 0)
+        {
+            ret = handler(param, response);
+            linkg_config_transaction_end();
+        }
+        else
+        {
+            ret = _linkg_web_response_error(cmd, "配置正在应用，请稍后再保存", response);
+        }
+    }
+    else
+    {
+        ret = handler(param, response);
+    }
 
     cJSON_Delete(root);
 

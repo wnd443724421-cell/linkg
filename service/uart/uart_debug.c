@@ -210,7 +210,7 @@ void uart_stats_report(linkg_uart_manager_context_t *manager)
                        drop - port->last_drops, errors - port->last_errors,
                        frames_rx - port->last_sbus_rx_frames, frames_tx - port->last_sbus_tx_frames,
                        depth, low, high, (sum * 100U) / samples,
-                       atomic_load(&port->sbus_target_level), atomic_load(&port->sbus_interval_us),
+                       atomic_load(&manager->sbus_target_level), atomic_load(&port->sbus_interval_us),
                        empty - port->last_fifo_empty);
 
         port->last_uart_rx_bytes  = urx;

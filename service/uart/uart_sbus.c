@@ -279,11 +279,11 @@ static uint32_t _uart_sbus_adjust(uint32_t interval, uint32_t depth, uint32_t ta
 /**
  * @brief 只向物理UART写真实帧，部分提交时先补足本帧，绝不交织另一帧。
  */
-static void _uart_sbus_write_pending(linkg_uart_port_t *port, uint8_t *frame, uint32_t *offset, bool *pending)
+static void _uart_sbus_write_pending(linkg_uart_port_t *port, uint8_t *frame, uint32_t *offset, bool *pending, uint32_t generation)
 {
     int ret;
 
-    ret = uart_port_write(port, frame + *offset, LINKG_UART_SBUS_FRAME_SIZE - *offset);
+    ret = uart_port_write_generation(port, frame + *offset, LINKG_UART_SBUS_FRAME_SIZE - *offset, generation);
     if (ret > 0)
     {
         *offset += (uint32_t)ret;
@@ -373,13 +373,13 @@ void uart_sbus_thread(linkg_thread_t *thread, void *user_data)
 
         if (pending)
         {
-            _uart_sbus_write_pending(port, pending_frame, &pending_offset, &pending);
+            _uart_sbus_write_pending(port, pending_frame, &pending_offset, &pending, pending_generation);
             continue;
         }
 
         pthread_mutex_lock(&port->sbus_lock);
         depth  = port->sbus_fifo.count;
-        target = atomic_load(&port->sbus_target_level);
+        target = atomic_load(&g_uart_manager.sbus_target_level);
 
         if (!primed && depth > 0U)
         {
@@ -395,6 +395,7 @@ void uart_sbus_thread(linkg_thread_t *thread, void *user_data)
 
         if (primed && depth > 0U)
         {
+            pending_generation = atomic_load(&port->generation);
             pending = _uart_sbus_pop_locked(port, pending_frame);
         }
         pthread_mutex_unlock(&port->sbus_lock);
@@ -412,7 +413,6 @@ void uart_sbus_thread(linkg_thread_t *thread, void *user_data)
         }
 
         pending_offset = 0U;
-        pending_generation = atomic_load(&port->generation);
-        _uart_sbus_write_pending(port, pending_frame, &pending_offset, &pending);
+        _uart_sbus_write_pending(port, pending_frame, &pending_offset, &pending, pending_generation);
     }
 }

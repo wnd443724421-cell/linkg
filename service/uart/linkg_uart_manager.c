@@ -18,6 +18,7 @@
 #include "linkg_gpio_manager.h"
 #include "linkg_log.h"
 #include "linkg_thread.h"
+#include "linkg_time.h"
 
 #include "uart_internal.h"
 
@@ -26,7 +27,8 @@
 linkg_uart_manager_context_t g_uart_manager =
 {
     .life_lock = PTHREAD_MUTEX_INITIALIZER,
-    .state     = LINKG_UART_LIFE_UNINITIALIZED
+    .state     = LINKG_UART_LIFE_UNINITIALIZED,
+    .sbus_target_level = LINKG_UART_SBUS_WIFI_LEVEL
 };
 
 /****************************** 内部清理 ******************************/
@@ -78,7 +80,7 @@ static void _uart_manager_close_routes(void)
 /**
  * @brief 初始化串口服务快照、端口上下文和线程对象，不打开设备。
  */
-int linkg_uart_manager_init(void)
+int uart_manager_init(void)
 {
     const linkg_uart_item_config_t *item;
     linkg_uart_port_t              *port;
@@ -96,8 +98,6 @@ int linkg_uart_manager_init(void)
     memset(&g_uart_manager.config, 0, sizeof(g_uart_manager.config));
     memset(g_uart_manager.ports, 0, sizeof(g_uart_manager.ports));
     g_uart_manager.port_count = 0U;
-    atomic_store(&g_uart_manager.debug_enabled, LINKG_UART_DEBUG_DEFAULT != 0);
-    atomic_store(&g_uart_manager.sbus_target_level, LINKG_UART_SBUS_WIFI_LEVEL);
 
     ret = linkg_config_get_uart(&g_uart_manager.config);
     if (ret != 0 || linkg_uart_config_validate(&g_uart_manager.config) != 0)
@@ -141,7 +141,6 @@ int linkg_uart_manager_init(void)
             goto fail;
         }
 
-        atomic_store(&port->sbus_target_level, LINKG_UART_SBUS_WIFI_LEVEL);
         atomic_store(&port->sbus_interval_us, LINKG_UART_SBUS_INTERVAL_US);
         uart_stats_reset(port);
 
@@ -183,7 +182,7 @@ fail:
 /**
  * @brief 打开配置的串口和路由并启动统一Worker与SBUS定时线程。
  */
-int linkg_uart_manager_start(void)
+int uart_manager_start(bool strict)
 {
     linkg_uart_port_t *port;
     bool              has_sbus;
@@ -208,7 +207,7 @@ int linkg_uart_manager_start(void)
     }
 
     // UART RX使能是板级统一GPIO，只有实际启动串口服务时才开启。
-    ret = linkg_gpio_manager_set_uart_rx_enabled(true);
+    ret = linkg_gpio_manager_set_uart_rx_enabled(false);
     if (ret != 0)
     {
         pthread_mutex_unlock(&g_uart_manager.life_lock);
@@ -232,14 +231,40 @@ int linkg_uart_manager_start(void)
         return ret;
     }
 
+    // MCU按1ms主循环采样模式；留出切换时间后才允许业务线程发送。
+    (void)linkg_time_sleep_ms(5U);
+
     for (i = 0U; i < g_uart_manager.port_count; i++)
     {
         port = &g_uart_manager.ports[i];
-        uart_port_maintenance(port, uart_now_ms());
+        if (strict)
+        {
+            ret = uart_port_open(port);
+            if (ret != 0)
+            {
+                goto fail;
+            }
+        }
+        else
+        {
+            uart_port_maintenance(port, uart_now_ms());
+        }
         for (j = 0U; j < port->route_count; j++)
         {
             uart_route_maintenance(&port->routes[j], uart_now_ms());
+            if (strict && port->routes[j].config->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL &&
+                atomic_load(&port->routes[j].state) == LINKG_UART_ROUTE_IDLE)
+            {
+                ret = -EADDRINUSE;
+                goto fail;
+            }
         }
+    }
+
+    ret = linkg_gpio_manager_set_uart_rx_enabled(true);
+    if (ret != 0)
+    {
+        goto fail;
     }
 
     g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
@@ -273,7 +298,7 @@ fail:
     cleanup_ret = linkg_thread_stop(&g_uart_manager.worker);
     if (cleanup_ret != 0)
     {
-        g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
+        g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
         pthread_mutex_unlock(&g_uart_manager.life_lock);
         return cleanup_ret;
     }
@@ -289,14 +314,14 @@ fail:
         cleanup_ret = linkg_thread_stop(&port->sbus_thread);
         if (cleanup_ret != 0)
         {
-            g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
+            g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
             pthread_mutex_unlock(&g_uart_manager.life_lock);
             return cleanup_ret;
         }
     }
     _uart_manager_close_routes();
-    (void)linkg_gpio_manager_set_sbus_enabled(false);
     (void)linkg_gpio_manager_set_uart_rx_enabled(false);
+    (void)linkg_gpio_manager_set_sbus_enabled(false);
     g_uart_manager.state = LINKG_UART_LIFE_STOPPED;
     pthread_mutex_unlock(&g_uart_manager.life_lock);
     return ret;
@@ -305,7 +330,7 @@ fail:
 /**
  * @brief 停止Worker和SBUS线程，关闭Socket与物理串口。
  */
-int linkg_uart_manager_stop(void)
+int uart_manager_stop(void)
 {
     linkg_uart_port_t *port;
     uint32_t           i;
@@ -318,7 +343,7 @@ int linkg_uart_manager_stop(void)
         pthread_mutex_unlock(&g_uart_manager.life_lock);
         return 0;
     }
-    if (g_uart_manager.state != LINKG_UART_LIFE_RUNNING)
+    if (g_uart_manager.state != LINKG_UART_LIFE_RUNNING && g_uart_manager.state != LINKG_UART_LIFE_STOPPING)
     {
         pthread_mutex_unlock(&g_uart_manager.life_lock);
         return -EBUSY;
@@ -332,7 +357,7 @@ int linkg_uart_manager_stop(void)
         ret = linkg_thread_stop(&g_uart_manager.worker);
         if (ret != 0)
         {
-            g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
+            g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
             pthread_mutex_unlock(&g_uart_manager.life_lock);
             return ret;
         }
@@ -347,19 +372,19 @@ int linkg_uart_manager_stop(void)
             ret = linkg_thread_stop(&port->sbus_thread);
             if (ret != 0)
             {
-                g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
+                g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
                 pthread_mutex_unlock(&g_uart_manager.life_lock);
                 return ret;
             }
         }
 
         _uart_manager_close_routes();
-        ret = linkg_gpio_manager_set_sbus_enabled(false);
+        ret = linkg_gpio_manager_set_uart_rx_enabled(false);
         if (ret != 0)
         {
             first_error = ret;
         }
-        ret = linkg_gpio_manager_set_uart_rx_enabled(false);
+        ret = linkg_gpio_manager_set_sbus_enabled(false);
         if (ret != 0 && first_error == 0)
         {
             first_error = ret;
@@ -374,7 +399,7 @@ int linkg_uart_manager_stop(void)
 /**
  * @brief 释放全部对象，要求业务线程已经停止。
  */
-int linkg_uart_manager_deinit(void)
+int uart_manager_deinit(void)
 {
     pthread_mutex_lock(&g_uart_manager.life_lock);
     if (g_uart_manager.state == LINKG_UART_LIFE_UNINITIALIZED)
@@ -404,46 +429,24 @@ int linkg_uart_manager_deinit(void)
 int linkg_uart_manager_set_sbus_profile(linkg_uart_sbus_profile_t profile)
 {
     uint32_t target;
-    uint32_t i;
 
     if (profile != LINKG_UART_SBUS_PROFILE_WIFI && profile != LINKG_UART_SBUS_PROFILE_BACKUP)
     {
         return -EINVAL;
     }
 
-    pthread_mutex_lock(&g_uart_manager.life_lock);
-    if (g_uart_manager.state == LINKG_UART_LIFE_UNINITIALIZED)
-    {
-        pthread_mutex_unlock(&g_uart_manager.life_lock);
-        return -ENODEV;
-    }
-
     target = profile == LINKG_UART_SBUS_PROFILE_WIFI ? LINKG_UART_SBUS_WIFI_LEVEL : LINKG_UART_SBUS_BACKUP_LEVEL;
     atomic_store(&g_uart_manager.sbus_target_level, target);
-    for (i = 0U; i < g_uart_manager.port_count; i++)
-    {
-        atomic_store(&g_uart_manager.ports[i].sbus_target_level, target);
-    }
-    pthread_mutex_unlock(&g_uart_manager.life_lock);
 
-    LINKG_LOG_INFO("UART: SBUS target FIFO level=%u", target);
     return 0;
 }
 
 /**
- * @brief 动态开关串口收发数据预览及五秒汇总统计。
+ * @brief 动态开关调试，避免等待重载线程退出。
  */
 int linkg_uart_manager_set_debug(bool enabled)
 {
-    pthread_mutex_lock(&g_uart_manager.life_lock);
-    if (g_uart_manager.state == LINKG_UART_LIFE_UNINITIALIZED)
-    {
-        pthread_mutex_unlock(&g_uart_manager.life_lock);
-        return -ENODEV;
-    }
-
     atomic_store(&g_uart_manager.debug_enabled, enabled);
-    pthread_mutex_unlock(&g_uart_manager.life_lock);
-    LINKG_LOG_INFO("UART: debug %s", enabled ? "enabled" : "disabled");
+
     return 0;
 }

@@ -42,20 +42,13 @@ const char *uart_port_device_path(uint8_t uart_num)
 /****************************** 错误恢复 ******************************/
 
 /**
- * @brief 标记串口故障并安排异步重开，不在调用线程立即关闭fd。
+ * @brief 持有io_lock时关闭故障设备并安排Worker稍后重开。
  */
-void uart_port_fault(linkg_uart_port_t *port, int error)
+static void _uart_port_fault_locked(linkg_uart_port_t *port, int error)
 {
     uint64_t now_ms;
 
-    if (port == NULL)
-    {
-        return;
-    }
-
     now_ms = uart_now_ms();
-
-    pthread_mutex_lock(&port->io_lock);
 
     if (port->fd >= 0)
     {
@@ -81,6 +74,20 @@ void uart_port_fault(linkg_uart_port_t *port, int error)
         }
     }
 
+}
+
+/**
+ * @brief 在共享IO锁内处理Worker检测到的设备故障。
+ */
+void uart_port_fault(linkg_uart_port_t *port, int error)
+{
+    if (port == NULL)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&port->io_lock);
+    _uart_port_fault_locked(port, error);
     pthread_mutex_unlock(&port->io_lock);
 }
 
@@ -121,6 +128,11 @@ int uart_port_open(linkg_uart_port_t *port)
     fd = linux_uart_open(port->device_path, &physical);
     if (fd >= 0)
     {
+        // 清空旧设备FIFO后再发布新fd；SBUS待发帧使用generation拒绝跨设备续写。
+        if (config->type == LINKG_UART_PORT_TYPE_SBUS)
+        {
+            uart_sbus_reset(port);
+        }
         port->fd = fd;
         atomic_fetch_add(&port->generation, 1U);
         port->retry_delay_ms = LINKG_UART_RETRY_INITIAL_MS;
@@ -134,11 +146,6 @@ int uart_port_open(linkg_uart_port_t *port)
     if (fd < 0)
     {
         return fd;
-    }
-
-    if (config->type == LINKG_UART_PORT_TYPE_SBUS)
-    {
-        uart_sbus_reset(port);
     }
 
     LINKG_LOG_INFO("UART: opened logical=%u path=%s baud=%u", port->config->uart_num, port->device_path, config->baudrate);
@@ -214,21 +221,19 @@ int uart_port_read(linkg_uart_port_t *port, uint8_t *buffer, uint32_t capacity)
 
     pthread_mutex_lock(&port->io_lock);
     ret = port->fd >= 0 ? linux_uart_read(port->fd, buffer, (int)capacity) : -ENODEV;
-    pthread_mutex_unlock(&port->io_lock);
-
     if (ret < 0 && ret != -ENODEV)
     {
-        uart_port_fault(port, ret);
+        _uart_port_fault_locked(port, ret);
     }
+    pthread_mutex_unlock(&port->io_lock);
 
     return ret;
 }
 
 /**
- * @brief 单次非阻塞写入并返回真实提交字节数。
- * @note 这里直接使用write，绕过当前linux_uart_write在部分写入后遇EAGAIN会丢失进度的问题。
+ * @brief 在IO锁内校验设备代次、执行一次非阻塞写入并保留真实进度。
  */
-int uart_port_write(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t length)
+static int _uart_port_write(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t length, bool check_generation, uint32_t generation)
 {
     ssize_t written;
     int     error;
@@ -239,6 +244,11 @@ int uart_port_write(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t len
     }
 
     pthread_mutex_lock(&port->io_lock);
+    if (check_generation && atomic_load(&port->generation) != generation)
+    {
+        pthread_mutex_unlock(&port->io_lock);
+        return -ESTALE;
+    }
     if (port->fd < 0)
     {
         pthread_mutex_unlock(&port->io_lock);
@@ -252,6 +262,10 @@ int uart_port_write(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t len
     while (written < 0 && errno == EINTR);
 
     error = written < 0 ? errno : 0;
+    if (written < 0 && error != EAGAIN && error != EWOULDBLOCK)
+    {
+        _uart_port_fault_locked(port, -error);
+    }
     pthread_mutex_unlock(&port->io_lock);
 
     if (written > 0)
@@ -266,8 +280,23 @@ int uart_port_write(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t len
         return -EAGAIN;
     }
 
-    uart_port_fault(port, -error);
     return -error;
+}
+
+/**
+ * @brief 普通串口按当前设备发送，不等待整个缓冲区完成。
+ */
+int uart_port_write(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t length)
+{
+    return _uart_port_write(port, buffer, length, false, 0U);
+}
+
+/**
+ * @brief SBUS只向取帧时的设备发送，重开后拒绝续写旧帧。
+ */
+int uart_port_write_generation(linkg_uart_port_t *port, const uint8_t *buffer, uint32_t length, uint32_t generation)
+{
+    return _uart_port_write(port, buffer, length, true, generation);
 }
 
 /****************************** 普通串口发送缓存 ******************************/

@@ -1,7 +1,9 @@
+
 {
   "env": {
     "KERNEL_SOURCE": "/home/dawn/t113_tina5.0_v1.2/kernel/linux-5.4",
-    "KERNEL_BUILD": "/home/dawn/t113_tina5.0_v1.2/out/t113_i/kernel/build"
+    "KERNEL_BUILD": "/home/dawn/t113_tina5.0_v1.2/out/t113_i/kernel/build",
+    "MCU_GCC": "/home/dawn/project/.codex-mcu-backups/20261014-v2/toolchain/gcc-arm-none-eabi-8-2019-q3-update/bin/arm-none-eabi-gcc"
   },
   "configurations": [
     {
@@ -89,6 +91,45 @@
         ],
         "limitSymbolsToIncludedHeaders": true,
         "databaseFilename": "${workspaceFolder}/build/.vscode-cache/linkg-kernel.vc.db"
+      }
+    },
+    {
+      "name": "LinkG STM32 MCU",
+      "includePath": [
+        "${workspaceFolder}/linkg-mcu/Core/Inc",
+        "${workspaceFolder}/linkg-mcu/Core/Src",
+        "${workspaceFolder}/linkg-mcu/bsp",
+        "${workspaceFolder}/linkg-mcu/service",
+        "${workspaceFolder}/linkg-mcu/Drivers/STM32L0xx_HAL_Driver/Inc",
+        "${workspaceFolder}/linkg-mcu/Drivers/STM32L0xx_HAL_Driver/Inc/Legacy",
+        "${workspaceFolder}/linkg-mcu/Drivers/CMSIS/Device/ST/STM32L0xx/Include",
+        "${workspaceFolder}/linkg-mcu/Drivers/CMSIS/Include"
+      ],
+      "defines": [
+        "USE_HAL_DRIVER",
+        "STM32L031xx"
+      ],
+      "compilerPath": "${MCU_GCC}",
+      "compilerArgs": [
+        "-mcpu=cortex-m0plus",
+        "-mthumb",
+        "-mfloat-abi=soft"
+      ],
+      "cStandard": "c99",
+      "cppStandard": "gnu++17",
+      "intelliSenseMode": "linux-gcc-arm",
+      "browse": {
+        "path": [
+          "${workspaceFolder}/linkg-mcu/Core/Inc",
+          "${workspaceFolder}/linkg-mcu/Core/Src",
+          "${workspaceFolder}/linkg-mcu/bsp",
+          "${workspaceFolder}/linkg-mcu/service",
+          "${workspaceFolder}/linkg-mcu/Drivers/STM32L0xx_HAL_Driver/Inc",
+          "${workspaceFolder}/linkg-mcu/Drivers/CMSIS/Device/ST/STM32L0xx/Include",
+          "${workspaceFolder}/linkg-mcu/Drivers/CMSIS/Include"
+        ],
+        "limitSymbolsToIncludedHeaders": false,
+        "databaseFilename": "${workspaceFolder}/build/.vscode-cache/linkg-mcu.vc.db"
       }
     }
   ],

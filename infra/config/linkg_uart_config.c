@@ -13,15 +13,13 @@
 #include <string.h>
 
 #include "linkg_json.h"
+#include "linkg_system_resources.h"
 
 #include "config_internal.h"
 
 /****************************** 配置常量 ******************************/
 
 #define LINKG_UART_CONFIG_ENUM_STRING_MAX  16U     // 枚举字符串缓冲区长度
-#define LINKG_UART_CONFIG_SBUS_BAUDRATE    100000U // SBUS对外逻辑波特率
-#define LINKG_UART_CONFIG_SBUS_DATA_BITS   8U      // SBUS逻辑数据位
-#define LINKG_UART_CONFIG_SBUS_STOP_BITS   2U      // SBUS逻辑停止位
 
 /****************************** 枚举转换 ******************************/
 
@@ -209,27 +207,98 @@ static const char *_uart_dir_to_string(linkg_uart_route_dir_t dir)
 /****************************** 配置校验 ******************************/
 
 /**
- * @brief 检查普通串口波特率是否属于LQ10已支持的配置集合。
+ * @brief 返回配置校验和Web能力列表共用的波特率集合。
  */
-static bool _uart_baudrate_supported(uint32_t baudrate)
+const uint32_t *linkg_uart_config_baudrates(size_t *count)
 {
-    static const uint32_t supported[] =
+    static const uint32_t baudrates[] =
     {
         1200U, 2400U, 4800U, 9600U, 19200U, 38400U, 57600U,
         100000U, 115200U, 150000U, 187500U, 250000U, 300000U,
         375000U, 500000U, 750000U, 1500000U
     };
-    size_t index;
 
-    for (index = 0U; index < sizeof(supported) / sizeof(supported[0]); index++)
+    if (count != NULL)
     {
-        if (baudrate == supported[index])
+        *count = sizeof(baudrates) / sizeof(baudrates[0]);
+    }
+
+    return baudrates;
+}
+
+/**
+ * @brief 检查配置波特率是否属于软件支持集合，硬件分频在打开设备时校验。
+ */
+static bool _uart_baudrate_supported(uint32_t baudrate)
+{
+    const uint32_t *baudrates;
+    size_t          count;
+    size_t          index;
+
+    baudrates = linkg_uart_config_baudrates(&count);
+    for (index = 0U; index < count; index++)
+    {
+        if (baudrates[index] == baudrate)
         {
             return true;
         }
     }
 
     return false;
+}
+
+/**
+ * @brief 按协议检查LinkG固定监听和预留端口，不禁止TCP与UDP合法共用端口。
+ */
+bool linkg_uart_config_reserved_port(linkg_uart_route_proto_t proto, uint16_t port)
+{
+    if (proto == LINKG_UART_ROUTE_PROTO_UDP)
+    {
+        return port >= LINKG_RESOURCE_UDP_PORT_WIFI_DATA && port <= LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY;
+    }
+
+    return port == LINKG_RESOURCE_TCP_PORT_WEB_CONTROL || port == LINKG_RESOURCE_TCP_PORT_WEBSOCKET;
+}
+
+/**
+ * @brief 拒绝未知或重复JSON字段，避免旧协议字段被静默忽略。
+ */
+static bool _uart_fields_valid(const cJSON *node, const char *const *names, size_t count)
+{
+    const cJSON *field;
+    const cJSON *other;
+    size_t       index;
+
+    cJSON_ArrayForEach(field, node)
+    {
+        if (field->string == NULL)
+        {
+            return false;
+        }
+
+        for (index = 0U; index < count; index++)
+        {
+            if (strcmp(field->string, names[index]) == 0)
+            {
+                break;
+            }
+        }
+
+        if (index == count)
+        {
+            return false;
+        }
+
+        for (other = field->next; other != NULL; other = other->next)
+        {
+            if (other->string != NULL && strcmp(field->string, other->string) == 0)
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -308,7 +377,8 @@ static int _uart_route_address_validate(const linkg_uart_route_config_t *config)
         return CONFIG_ERR_VALIDATE;
     }
 
-    if (config->endpoint == LINKG_UART_ROUTE_ENDPOINT_REMOTE && address == INADDR_ANY)
+    if ((address >> 24) == 0U &&
+        (address != INADDR_ANY || config->endpoint == LINKG_UART_ROUTE_ENDPOINT_REMOTE))
     {
         return CONFIG_ERR_VALIDATE;
     }
@@ -347,6 +417,12 @@ static int _uart_route_config_validate(const linkg_uart_route_config_t *config)
         return CONFIG_ERR_VALIDATE;
     }
 
+    if (config->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL &&
+        linkg_uart_config_reserved_port(config->proto, config->port))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
     return _uart_route_address_validate(config);
 }
 
@@ -367,7 +443,9 @@ static int _uart_port_config_parse(const cJSON *node, linkg_uart_port_config_t *
         return CONFIG_ERR_PARAM;
     }
 
-    if (!cJSON_IsObject(node))
+    const char *const fields[] = {"type", "baudrate", "data_bits", "stop_bits", "parity"};
+
+    if (!cJSON_IsObject(node) || !_uart_fields_valid(node, fields, sizeof(fields) / sizeof(fields[0])))
     {
         return CONFIG_ERR_PARSE;
     }
@@ -450,7 +528,9 @@ static int _uart_route_config_parse(const cJSON *node, linkg_uart_route_config_t
         return CONFIG_ERR_PARAM;
     }
 
-    if (!cJSON_IsObject(node))
+    const char *const fields[] = {"proto", "endpoint", "dir", "ip", "port"};
+
+    if (!cJSON_IsObject(node) || !_uart_fields_valid(node, fields, sizeof(fields) / sizeof(fields[0])))
     {
         return CONFIG_ERR_PARSE;
     }
@@ -511,7 +591,7 @@ static int _uart_route_config_parse(const cJSON *node, linkg_uart_route_config_t
             return CONFIG_ERR_VALIDATE;
         }
     }
-    else if (temp.endpoint == LINKG_UART_ROUTE_ENDPOINT_REMOTE)
+    else
     {
         return CONFIG_ERR_PARSE;
     }
@@ -547,7 +627,9 @@ static int _uart_item_config_parse(const cJSON *node, linkg_uart_item_config_t *
         return CONFIG_ERR_PARAM;
     }
 
-    if (!cJSON_IsObject(node))
+    const char *const fields[] = {"uart_num", "port_config", "routes"};
+
+    if (!cJSON_IsObject(node) || !_uart_fields_valid(node, fields, sizeof(fields) / sizeof(fields[0])))
     {
         return CONFIG_ERR_PARSE;
     }
@@ -594,8 +676,7 @@ static int _uart_item_config_parse(const cJSON *node, linkg_uart_item_config_t *
 
     if (!found)
     {
-        *out = temp;
-        return CONFIG_OK;
+        return CONFIG_ERR_PARSE;
     }
 
     count = cJSON_GetArraySize(routes);
@@ -955,6 +1036,35 @@ int linkg_uart_config_validate(const linkg_uart_config_t *config)
         }
     }
 
+    for (index = 0U; index < config->count; index++)
+    {
+        for (route = 0U; route < config->items[index].route_count; route++)
+        {
+            const linkg_uart_route_config_t *left = &config->items[index].routes[route];
+            uint32_t                        next;
+
+            if (left->endpoint != LINKG_UART_ROUTE_ENDPOINT_LOCAL)
+            {
+                continue;
+            }
+
+            for (other = index; other < config->count; other++)
+            {
+                for (next = other == index ? route + 1U : 0U; next < config->items[other].route_count; next++)
+                {
+                    const linkg_uart_route_config_t *right = &config->items[other].routes[next];
+
+                    if (right->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL &&
+                        left->proto == right->proto && left->port == right->port &&
+                        (left->ip.s_addr == INADDR_ANY || right->ip.s_addr == INADDR_ANY || left->ip.s_addr == right->ip.s_addr))
+                    {
+                        return CONFIG_ERR_VALIDATE;
+                    }
+                }
+            }
+        }
+    }
+
     return CONFIG_OK;
 }
 
@@ -1002,4 +1112,56 @@ int linkg_uart_config_to_json(cJSON *parent, const char *key, const linkg_uart_c
     }
 
     return CONFIG_OK;
+}
+
+/**
+ * @brief 按字段比较配置，忽略结构体填充和UART数组顺序，保留规则顺序语义。
+ */
+bool linkg_uart_config_equal(const linkg_uart_config_t *left, const linkg_uart_config_t *right)
+{
+    uint32_t i;
+    uint32_t j;
+    uint32_t route;
+
+    if (left == NULL || right == NULL || left->count != right->count)
+    {
+        return false;
+    }
+
+    for (i = 0U; i < left->count; i++)
+    {
+        const linkg_uart_item_config_t *a = &left->items[i];
+        const linkg_uart_item_config_t *b = NULL;
+
+        for (j = 0U; j < right->count; j++)
+        {
+            if (right->items[j].uart_num == a->uart_num)
+            {
+                b = &right->items[j];
+                break;
+            }
+        }
+
+        if (b == NULL || a->route_count != b->route_count ||
+            a->port_config.type != b->port_config.type || a->port_config.baudrate != b->port_config.baudrate ||
+            a->port_config.data_bits != b->port_config.data_bits || a->port_config.stop_bits != b->port_config.stop_bits ||
+            a->port_config.parity != b->port_config.parity)
+        {
+            return false;
+        }
+
+        for (route = 0U; route < a->route_count; route++)
+        {
+            const linkg_uart_route_config_t *x = &a->routes[route];
+            const linkg_uart_route_config_t *y = &b->routes[route];
+
+            if (x->proto != y->proto || x->endpoint != y->endpoint || x->dir != y->dir ||
+                x->ip.s_addr != y->ip.s_addr || x->port != y->port)
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
