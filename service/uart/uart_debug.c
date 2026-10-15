@@ -46,16 +46,16 @@ void uart_stats_reset(linkg_uart_port_t *port)
 
     memset(&port->stats, 0, sizeof(port->stats));
     atomic_store(&port->stats.fifo_min, UINT32_MAX);
-    port->last_debug_ms      = uart_now_ms();
+    port->last_debug_ms       = uart_now_ms();
     port->last_sbus_rx_frames = 0U;
     port->last_sbus_tx_frames = 0U;
-    port->last_uart_rx_bytes = 0U;
-    port->last_uart_tx_bytes = 0U;
-    port->last_net_rx_bytes  = 0U;
-    port->last_net_tx_bytes  = 0U;
-    port->last_drops         = 0U;
-    port->last_errors        = 0U;
-    port->last_fifo_empty    = 0U;
+    port->last_uart_rx_bytes  = 0U;
+    port->last_uart_tx_bytes  = 0U;
+    port->last_net_rx_bytes   = 0U;
+    port->last_net_tx_bytes   = 0U;
+    port->last_drops          = 0U;
+    port->last_errors         = 0U;
+    port->last_fifo_empty     = 0U;
     atomic_store(&port->debug_preview_budget, 3U);
 }
 

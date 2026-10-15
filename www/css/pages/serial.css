@@ -7,6 +7,8 @@
     gap: 16px;
 }
 .serial-header { align-items: flex-start; }
+.serial-header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.serial-mobile-menu, .serial-menu-backdrop { display: none; }
 .serial-summary {
     display: flex;
     flex-wrap: wrap;
@@ -40,8 +42,8 @@
 .serial-field select:disabled, .serial-field input:disabled {
     opacity: 1;
     background: var(--linkg-color-background);
-    color: var(--linkg-color-text-muted);
-    -webkit-text-fill-color: var(--linkg-color-text-muted);
+    color: var(--linkg-color-text-secondary);
+    -webkit-text-fill-color: var(--linkg-color-text-secondary);
     cursor: not-allowed;
 }
 .serial-field select:focus, .serial-field input:focus {
@@ -95,6 +97,35 @@
     .serial-route-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .serial-remove { justify-self: start; }
 }
+@media (max-width: 959px) {
+    body.serial-active { min-width: 0; }
+    body.serial-active .app-main { margin-left: 0; }
+    body.serial-active .app-sidebar {
+        z-index: 120;
+        visibility: hidden;
+        transform: translateX(-100%);
+        transition: transform 0.18s ease, visibility 0s linear 0.18s;
+    }
+    body.serial-active.serial-menu-open .app-sidebar {
+        visibility: visible;
+        transform: translateX(0);
+        box-shadow: 8px 0 24px rgba(31, 41, 55, 0.16);
+        transition-delay: 0s;
+    }
+    .serial-mobile-menu { display: inline-flex; align-items: center; }
+    .serial-menu-backdrop:not([hidden]) {
+        position: fixed;
+        z-index: 110;
+        top: var(--linkg-header-height);
+        right: 0;
+        bottom: 0;
+        left: 0;
+        display: block;
+        width: 100%;
+        height: auto;
+        background: rgba(31, 41, 55, 0.28);
+    }
+}
 @media (max-width: 700px) {
     .serial-header, .serial-card-header, .serial-footer { align-items: flex-start; flex-direction: column; }
     .serial-physical, .serial-route-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -103,4 +134,7 @@
 }
 @media (max-width: 380px) {
     .serial-physical, .serial-route-fields { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+    body.serial-active .app-sidebar { transition: none; }
 }

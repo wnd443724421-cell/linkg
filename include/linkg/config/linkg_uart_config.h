@@ -19,8 +19,11 @@ extern "C" {
 
 /****************************** 配置常量 ******************************/
 
-#define LINKG_UART_CONFIG_PORT_COUNT_MAX  3U  // 最大串口配置数量
-#define LINKG_UART_CONFIG_ROUTE_COUNT_MAX 16U // 每个串口的最大路由数量
+#define LINKG_UART_CONFIG_PORT_COUNT_MAX  3U      // 最大串口配置数量
+#define LINKG_UART_CONFIG_ROUTE_COUNT_MAX 16U     // 每个串口的最大路由数量
+#define LINKG_UART_CONFIG_SBUS_BAUDRATE   100000U // SBUS固定波特率
+#define LINKG_UART_CONFIG_SBUS_DATA_BITS  8U      // SBUS固定数据位
+#define LINKG_UART_CONFIG_SBUS_STOP_BITS  2U      // SBUS固定停止位
 
 /****************************** 类型定义 ******************************/
 
@@ -80,10 +83,6 @@ typedef struct
     uint32_t                 count;                                          // 有效串口数量
     linkg_uart_item_config_t items[LINKG_UART_CONFIG_PORT_COUNT_MAX];        // 串口配置列表
 } linkg_uart_config_t;
-
-#define LINKG_UART_CONFIG_SBUS_BAUDRATE  100000U // SBUS固定波特率
-#define LINKG_UART_CONFIG_SBUS_DATA_BITS 8U      // SBUS固定数据位
-#define LINKG_UART_CONFIG_SBUS_STOP_BITS 2U      // SBUS固定停止位
 
 /****************************** 配置能力 ******************************/
 

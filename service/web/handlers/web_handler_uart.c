@@ -10,7 +10,9 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <ifaddrs.h>
 #include <inttypes.h>
+#include <net/if.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -20,6 +22,69 @@
 #include "linkg_json.h"
 
 /****************************** JSON辅助 ******************************/
+
+/**
+ * @brief 判断JSON字符串数组是否已经包含指定地址。
+ */
+static bool _uart_web_string_exists(const cJSON *array, const char *text)
+{
+    const cJSON *item;
+
+    cJSON_ArrayForEach(item, array)
+    {
+        if (cJSON_IsString(item) && strcmp(item->valuestring, text) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @brief 返回当前接口的定向广播地址，供页面即时校验。
+ */
+static int _uart_web_broadcast_addresses(cJSON *data)
+{
+    struct ifaddrs *interfaces;
+    struct ifaddrs *item;
+    cJSON          *array;
+    cJSON          *address_item;
+    char            address[INET_ADDRSTRLEN];
+    int             ret;
+
+    array = cJSON_AddArrayToObject(data, "broadcast_addresses");
+    if (array == NULL)
+    {
+        return -ENOMEM;
+    }
+    if (getifaddrs(&interfaces) != 0)
+    {
+        return -errno;
+    }
+
+    ret = 0;
+    for (item = interfaces; item != NULL; item = item->ifa_next)
+    {
+        if ((item->ifa_flags & IFF_BROADCAST) == 0 || item->ifa_broadaddr == NULL ||
+            item->ifa_broadaddr->sa_family != AF_INET ||
+            inet_ntop(AF_INET, &((struct sockaddr_in *)item->ifa_broadaddr)->sin_addr, address, sizeof(address)) == NULL ||
+            _uart_web_string_exists(array, address))
+        {
+            continue;
+        }
+        address_item = cJSON_CreateString(address);
+        if (address_item == NULL || !cJSON_AddItemToArray(array, address_item))
+        {
+            cJSON_Delete(address_item);
+            ret = -ENOMEM;
+            break;
+        }
+    }
+    freeifaddrs(interfaces);
+
+    return ret;
+}
 
 /**
  * @brief 输出应用状态名称，接受请求和提交成功具有不同语义。
@@ -134,7 +199,7 @@ static int _uart_web_capabilities(cJSON *data)
         }
     }
 
-    return 0;
+    return _uart_web_broadcast_addresses(data);
 }
 
 /**
@@ -374,10 +439,10 @@ int _linkg_web_handler_uart_status_get(const cJSON *param, char **response)
 {
     linkg_uart_status_t       status;
     linkg_uart_apply_status_t apply;
-    cJSON                   *data;
-    cJSON                   *ports;
-    cJSON                   *job;
-    uint32_t                 i;
+    cJSON                    *data;
+    cJSON                    *ports;
+    cJSON                    *job;
+    uint32_t                  i;
 
     (void)param;
     linkg_uart_manager_get_status(&status);

@@ -87,13 +87,13 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
         return -EINVAL;
     }
 
-    *response = NULL;
+    *response        = NULL;
     *response_length = 0U;
 
-    root = NULL;
-    param = NULL;
+    root        = NULL;
+    param       = NULL;
     param_found = false;
-    cmd = LINKG_WEB_CMD_INVALID;
+    cmd         = LINKG_WEB_CMD_INVALID;
 
     ret = linkg_json_parse_buffer(request, request_length, &root);
     if (ret != LINKG_JSON_OK)

@@ -258,6 +258,10 @@ static void *_uart_apply_thread(void *argument)
     {
         ret = uart_manager_start(true);
     }
+    if (ret == 0 && !was_running)
+    {
+        ret = uart_manager_stop();
+    }
     if (ret != 0)
     {
         goto rollback;

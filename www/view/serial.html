@@ -4,8 +4,13 @@
             <h1 class="page-title">串口与网络路由</h1>
             <p class="page-description">管理物理串口及 TCP / UDP 组网转发；保存仅重新加载 UART 服务</p>
         </div>
-        <button id="serialReload" class="serial-button" type="button">重新读取</button>
+        <div class="serial-header-actions">
+            <button id="serialMenu" class="serial-button serial-mobile-menu" type="button" aria-controls="appSidebar" aria-expanded="false">导航菜单</button>
+            <button id="serialReload" class="serial-button" type="button">重新读取</button>
+        </div>
     </div>
+
+    <button id="serialMenuBackdrop" class="serial-menu-backdrop" type="button" aria-label="关闭导航菜单" hidden></button>
 
     <div class="serial-summary" role="status" aria-live="polite">
         <span>UART 服务：<strong id="serialState">正在查询…</strong></span>
@@ -43,7 +48,7 @@
                 </div>
                 <p class="serial-note" data-role="modeHint"></p>
                 <p class="serial-note" data-role="baudHint">设备打开后显示驱动分频结果；软件支持不代表零误差。</p>
-                <p class="serial-error" data-role="portError" hidden></p>
+                <p class="serial-error" data-role="portError" role="alert" hidden></p>
                 <div class="serial-route-header">
                     <h3>网络路由 <span data-role="count"></span></h3>
                     <div class="serial-actions">
@@ -71,7 +76,7 @@
                 <button class="serial-button serial-remove" data-action="remove" type="button">删除</button>
             </div>
             <p class="serial-note" data-role="routeHint"></p>
-            <p class="serial-error" data-role="error" hidden></p>
+            <p class="serial-error" data-role="error" role="alert" hidden></p>
         </fieldset>
     </template>
 </div>

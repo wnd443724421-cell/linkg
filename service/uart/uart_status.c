@@ -61,8 +61,8 @@ int linkg_uart_manager_get_status(linkg_uart_status_t *out)
     linkg_uart_apply_status_t apply;
     linkg_uart_port_t        *port;
     linkg_uart_port_status_t *status;
-    uint32_t                 i;
-    uint32_t                 j;
+    uint32_t                  i;
+    uint32_t                  j;
 
     if (out == NULL)
     {
@@ -132,6 +132,7 @@ int linkg_uart_manager_get_status(linkg_uart_status_t *out)
         }
 
         if (g_uart_manager.state == LINKG_UART_LIFE_RUNNING &&
+            strcmp(out->state, "failed") != 0 &&
             (!status->device_open || (port->config->port_config.type == LINKG_UART_PORT_TYPE_SBUS && !status->sbus_running)))
         {
             out->state = "not_ready";

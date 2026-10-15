@@ -26,9 +26,9 @@
 
 linkg_uart_manager_context_t g_uart_manager =
 {
-    .life_lock = PTHREAD_MUTEX_INITIALIZER,
-    .state     = LINKG_UART_LIFE_UNINITIALIZED,
-    .sbus_target_level = LINKG_UART_SBUS_WIFI_LEVEL
+    .life_lock         = PTHREAD_MUTEX_INITIALIZER,      // 生命周期锁
+    .state             = LINKG_UART_LIFE_UNINITIALIZED, // 尚未初始化
+    .sbus_target_level = LINKG_UART_SBUS_WIFI_LEVEL     // Wi-Fi模式默认目标水位
 };
 
 /****************************** 内部清理 ******************************/
@@ -75,6 +75,22 @@ static void _uart_manager_close_routes(void)
     }
 }
 
+/**
+ * @brief 依次关闭UART接收门控和SBUS模式，任一步失败都保留错误供调用方重试。
+ */
+static int _uart_manager_disable_hardware(void)
+{
+    int ret;
+
+    ret = linkg_gpio_manager_set_uart_rx_enabled(false);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return linkg_gpio_manager_set_sbus_enabled(false);
+}
+
 /****************************** 生命周期 ******************************/
 
 /**
@@ -115,6 +131,7 @@ int uart_manager_init(void)
         }
 
         port = &g_uart_manager.ports[g_uart_manager.port_count];
+
         port->config       = item;
         port->device_path  = uart_port_device_path(item->uart_num);
         port->fd           = -1;
@@ -185,11 +202,11 @@ fail:
 int uart_manager_start(bool strict)
 {
     linkg_uart_port_t *port;
-    bool              has_sbus;
-    uint32_t          i;
-    uint32_t          j;
-    int               ret;
-    int               cleanup_ret;
+    bool               has_sbus;
+    uint32_t           i;
+    uint32_t           j;
+    int                ret;
+    int                cleanup_ret;
 
     pthread_mutex_lock(&g_uart_manager.life_lock);
     if (g_uart_manager.state != LINKG_UART_LIFE_STOPPED)
@@ -210,6 +227,7 @@ int uart_manager_start(bool strict)
     ret = linkg_gpio_manager_set_uart_rx_enabled(false);
     if (ret != 0)
     {
+        g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
         pthread_mutex_unlock(&g_uart_manager.life_lock);
         return ret;
     }
@@ -226,7 +244,7 @@ int uart_manager_start(bool strict)
     ret = linkg_gpio_manager_set_sbus_enabled(has_sbus);
     if (ret != 0)
     {
-        (void)linkg_gpio_manager_set_uart_rx_enabled(false);
+        g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
         pthread_mutex_unlock(&g_uart_manager.life_lock);
         return ret;
     }
@@ -268,6 +286,7 @@ int uart_manager_start(bool strict)
     }
 
     g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
+
     ret = linkg_thread_start(&g_uart_manager.worker);
     if (ret != 0)
     {
@@ -320,8 +339,13 @@ fail:
         }
     }
     _uart_manager_close_routes();
-    (void)linkg_gpio_manager_set_uart_rx_enabled(false);
-    (void)linkg_gpio_manager_set_sbus_enabled(false);
+    cleanup_ret = _uart_manager_disable_hardware();
+    if (cleanup_ret != 0)
+    {
+        g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
+        pthread_mutex_unlock(&g_uart_manager.life_lock);
+        return cleanup_ret;
+    }
     g_uart_manager.state = LINKG_UART_LIFE_STOPPED;
     pthread_mutex_unlock(&g_uart_manager.life_lock);
     return ret;
@@ -335,7 +359,6 @@ int uart_manager_stop(void)
     linkg_uart_port_t *port;
     uint32_t           i;
     int                ret;
-    int                first_error;
 
     pthread_mutex_lock(&g_uart_manager.life_lock);
     if (g_uart_manager.state == LINKG_UART_LIFE_STOPPED || g_uart_manager.state == LINKG_UART_LIFE_UNINITIALIZED)
@@ -350,8 +373,6 @@ int uart_manager_stop(void)
     }
 
     g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
-    first_error = 0;
-
     if (g_uart_manager.port_count > 0U)
     {
         ret = linkg_thread_stop(&g_uart_manager.worker);
@@ -379,21 +400,18 @@ int uart_manager_stop(void)
         }
 
         _uart_manager_close_routes();
-        ret = linkg_gpio_manager_set_uart_rx_enabled(false);
+        ret = _uart_manager_disable_hardware();
         if (ret != 0)
         {
-            first_error = ret;
-        }
-        ret = linkg_gpio_manager_set_sbus_enabled(false);
-        if (ret != 0 && first_error == 0)
-        {
-            first_error = ret;
+            g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
+            pthread_mutex_unlock(&g_uart_manager.life_lock);
+            return ret;
         }
     }
 
     g_uart_manager.state = LINKG_UART_LIFE_STOPPED;
     pthread_mutex_unlock(&g_uart_manager.life_lock);
-    return first_error;
+    return 0;
 }
 
 /**

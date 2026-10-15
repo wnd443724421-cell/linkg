@@ -81,6 +81,7 @@ with tempfile.TemporaryDirectory(prefix='linkg-uart-test-') as temporary:
         assert capabilities['max_ports'] == 3 and capabilities['max_routes_per_port'] == 16
         assert [x['device_path'] for x in capabilities['ports']] == ['/dev/ttyS4', '/dev/ttyS3', '/dev/ttyS5']
         assert capabilities['sbus']['baudrate'] == 100000
+        assert isinstance(capabilities['broadcast_addresses'], list)
         for baud in capabilities['baudrates']:
             candidate = port()
             candidate['port_config']['baudrate'] = baud
@@ -99,6 +100,8 @@ with tempfile.TemporaryDirectory(prefix='linkg-uart-test-') as temporary:
         candidate['port_config']['baudrate'] = 115200
         rejects([candidate])
         for address in ('256.1.2.3', '1.2.3', '01.2.3.4', '255.255.255.255', '224.1.1.1', '240.0.0.1', '0.1.2.3', '0.0.0.0'):
+            rejects([port(routes=[route(endpoint='remote', address=address)])])
+        for address in capabilities['broadcast_addresses']:
             rejects([port(routes=[route(endpoint='remote', address=address)])])
         for key, value in [('port', 0), ('port', 65536), ('port', 3.5), ('dir', 'bad'), ('proto', 'bad'), ('endpoint', 'multicast')]:
             candidate = route()
@@ -157,6 +160,25 @@ with tempfile.TemporaryDirectory(prefix='linkg-uart-test-') as temporary:
             assert udp.recv(128) == b'linkg-test'
         print('PASS real UDP/PTY bidirectional bytes and Local TX peer discovery without RX forwarding', flush=True)
 
+        local_tcp = route(proto='tcp')
+        apply([port(routes=[local_tcp])])
+        with socket.create_connection(('127.0.0.1', local_tcp['port']), timeout=2) as tcp:
+            tcp.sendall(b'tcp-tail')
+        deadline = time.monotonic() + 2
+        value = ''
+        while time.monotonic() < deadline:
+            value = control('read')
+            if value == 'tcp-tail':
+                break
+            time.sleep(.01)
+        assert value == 'tcp-tail', value
+        with socket.create_connection(('127.0.0.1', local_tcp['port']), timeout=2) as tcp:
+            tcp.settimeout(2)
+            time.sleep(.05)
+            assert control('write') == '10'
+            assert tcp.recv(128) == b'linkg-test'
+        print('PASS real TCP/PTY bytes including final readable data delivered with peer close', flush=True)
+
         for fault in ('init', 'start', 'open', 'before', 'after'):
             saved = json.loads(disk.read_text())
             old = request(1012)['data']['uart']
@@ -167,6 +189,16 @@ with tempfile.TemporaryDirectory(prefix='linkg-uart-test-') as temporary:
             assert request(1012)['data']['uart'] == old
             assert json.loads(disk.read_text()) == saved
         print('PASS init/start/open failure and pre/post-rename persistence rollback', flush=True)
+
+        for fault in ('gpio-rx', 'gpio-sbus'):
+            old = request(1012)['data']['uart']
+            new = copy.deepcopy(old)
+            new[0]['port_config']['baudrate'] = 57600 if old[0]['port_config']['baudrate'] != 57600 else 115200
+            control(fault, 1)
+            apply(new, 'rolled_back')
+            assert request(1012)['data']['uart'] == old
+            assert request(1014)['data']['state'] in ('running', 'not_ready')
+        print('PASS GPIO shutdown failures stay retryable and rollback restores the running service', flush=True)
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
             occupied.bind(('127.0.0.1', 0))
@@ -202,6 +234,24 @@ with tempfile.TemporaryDirectory(prefix='linkg-uart-test-') as temporary:
         current = json.loads(disk.read_text())
         assert {k: v for k, v in current.items() if k != 'uart'} == {k: v for k, v in initial.items() if k != 'uart'}
         print('PASS 24 normal/SBUS reloads, no descriptor/Worker leak, all unrelated config preserved', flush=True)
+
+        control('service-stop')
+        stopped_old = request(1012)['data']['uart']
+        stopped_failed = copy.deepcopy(stopped_old)
+        stopped_failed[0]['port_config']['baudrate'] = 57600 if stopped_old[0]['port_config']['baudrate'] != 57600 else 115200
+        control('gpio-sbus', 1)
+        apply(stopped_failed, 'rolled_back')
+        assert request(1012)['data']['uart'] == stopped_old
+        stopped_status = request(1014)['data']
+        assert stopped_status['state'] == 'stopped' and not stopped_status['worker_running'], stopped_status
+
+        stopped_config = [port(routes=[route()])]
+        apply(stopped_config)
+        stopped_status = request(1014)['data']
+        assert stopped_status['state'] == 'stopped' and not stopped_status['worker_running'], stopped_status
+        control('service-start')
+        assert request(1014)['data']['state'] in ('running', 'not_ready')
+        print('PASS stopped-service GPIO cleanup rollback and successful Apply both preserve stopped state', flush=True)
 
         control('stop', 2)
         result = apply([port(routes=[route()])], 'failed')

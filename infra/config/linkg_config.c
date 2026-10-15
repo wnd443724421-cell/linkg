@@ -6,7 +6,7 @@
  * @date 2026-08-28
  */
 
-#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE        200809L         // 请求POSIX.1-2008接口
 
 #include "linkg_config.h"
 
@@ -24,8 +24,8 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CONFIG_FILE_MAX  (64U * 1024U) // 配置文件最大长度
-#define LINKG_CONFIG_FILE_MODE 0600           // 配置文件默认权限，包含Wi-Fi密码和SIM PIN
+#define LINKG_CONFIG_FILE_MAX  (64U * 1024U)   // 配置文件最大长度
+#define LINKG_CONFIG_FILE_MODE 0600            // 配置文件默认权限，包含Wi-Fi密码和SIM PIN
 
 /****************************** 内部类型 ******************************/
 
@@ -47,6 +47,8 @@ static linkg_config_context_t g_config =
 };
 
 static pthread_mutex_t g_config_transaction_lock = PTHREAD_MUTEX_INITIALIZER; // 配置写事务锁，不阻塞配置读取
+
+/****************************** 配置事务 ******************************/
 
 /**
  * @brief 尝试独占一次跨保存和运行态切换的事务，必须由同一线程结束。

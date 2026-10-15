@@ -24,6 +24,8 @@
     let uncertain = false;
     let pendingJob = null;
     let submitted = null;
+    let observedJob = null;
+    let externalJob = null;
 
     /****************************** 页面辅助 ******************************/
 
@@ -88,6 +90,32 @@
         return config != null && !reading && !saving && !remoteApplying && !uncertain;
     }
 
+    function setMenuOpen(open)
+    {
+        document.body.classList.toggle("serial-menu-open", open);
+        field("serialMenu").setAttribute("aria-expanded", open ? "true" : "false");
+        field("serialMenuBackdrop").hidden = !open;
+    }
+
+    function toggleMenu()
+    {
+        setMenuOpen(!document.body.classList.contains("serial-menu-open"));
+    }
+
+    function closeMenu()
+    {
+        setMenuOpen(false);
+    }
+
+    function handleKeydown(event)
+    {
+        if (event.key === "Escape" && document.body.classList.contains("serial-menu-open"))
+        {
+            closeMenu();
+            field("serialMenu").focus();
+        }
+    }
+
     /****************************** 配置渲染 ******************************/
 
     function routeHint(row)
@@ -144,6 +172,14 @@
         field("serialSave").disabled = !enabled;
         field("serialReset").disabled = config == null || reading || saving || remoteApplying;
         cards().forEach(function (card) {
+            if (config == null)
+            {
+                card.querySelectorAll("input, select, button").forEach(function (element) {
+                    element.disabled = true;
+                });
+                return;
+            }
+
             const present = control(card, "present").checked;
             const sbus = control(card, "type").value === "sbus";
             const count = rows(card).length;
@@ -163,8 +199,14 @@
                 "SBUS 固定为 " + config.sbus.baudrate + " baud / 8E2；电气反相由 MCU 完成。" :
                 "参数已保存且至少有一条路由时，UART 服务才会打开设备。";
             rows(card).forEach(function (row, index) {
+                const errorId = "serialRouteError" + card.dataset.uart + "-" + index;
+
                 role(row, "index").textContent = index + 1;
                 routeHint(row);
+                role(row, "error").id = errorId;
+                row.querySelectorAll("[data-route-field]").forEach(function (element) {
+                    element.setAttribute("aria-describedby", errorId);
+                });
                 row.querySelector('[data-action="remove"]').setAttribute("aria-label", "删除 UART " + card.dataset.uart + " 规则 " + (index + 1));
             });
         });
@@ -174,6 +216,7 @@
     {
         if (data == null || !Array.isArray(data.uart) || !Array.isArray(data.ports) ||
             !Array.isArray(data.baudrates) || data.baudrates.length === 0 || data.sbus == null ||
+            !Array.isArray(data.reserved_local_ports) || !Array.isArray(data.broadcast_addresses) ||
             !Number.isInteger(data.max_routes_per_port) || data.max_ports !== data.ports.length ||
             !ipv4Valid(data.local_virtual_ip, "remote") || !ipv4Valid(data.remote_virtual_ip_example, "remote"))
         {
@@ -190,6 +233,10 @@
             card.dataset.uart = capability.uart_num;
             role(card, "title").textContent = "UART " + capability.uart_num;
             role(card, "device").textContent = capability.device_path;
+            role(card, "portError").id = "serialPortError" + capability.uart_num;
+            control(card, "type").setAttribute("aria-describedby", "serialPortError" + capability.uart_num);
+            card.querySelector('[data-action="add"]').setAttribute("aria-label", "新增 UART " + capability.uart_num + " 路由规则");
+            card.querySelector('[data-action="clear"]').setAttribute("aria-label", "清空 UART " + capability.uart_num + " 路由规则");
             control(card, "present").checked = stored != null;
             if (capability.sbus_supported)
             {
@@ -253,6 +300,7 @@
             let error = "";
 
             showError(card, "portError", "");
+            card.querySelectorAll("[aria-invalid]").forEach(function (element) { element.removeAttribute("aria-invalid"); });
             rows(card).forEach(function (row) { showError(row, "error", ""); });
             if (!control(card, "present").checked)
             {
@@ -278,11 +326,14 @@
             if (error)
             {
                 showError(card, "portError", error);
+                control(card, "type").setAttribute("aria-invalid", "true");
                 invalid = invalid || control(card, "type");
             }
             rows(card).forEach(function (row) {
                 const rule = {};
                 const portControl = row.querySelector('[data-route-field="port"]');
+                const ipControl = row.querySelector('[data-route-field="ip"]');
+                let routeControl = portControl;
                 let routeError = "";
 
                 row.querySelectorAll("[data-route-field]").forEach(function (element) {
@@ -296,10 +347,17 @@
                 if (!["tcp", "udp"].includes(rule.proto) || !["local", "remote"].includes(rule.endpoint) || !["tx", "rx", "rxtx"].includes(rule.dir))
                 {
                     routeError = "请选择有效的协议、端点和转发方向。";
+                    routeControl = row.querySelector('[data-route-field="proto"]');
                 }
                 if (!ipv4Valid(rule.ip, rule.endpoint))
                 {
                     routeError = "请输入有效 IPv4 单播地址；仅 Local 允许 0.0.0.0。";
+                    routeControl = ipControl;
+                }
+                else if (config.broadcast_addresses.includes(rule.ip))
+                {
+                    routeError = "不能使用当前网络接口的广播地址。";
+                    routeControl = ipControl;
                 }
                 if (rule.endpoint === "local")
                 {
@@ -313,6 +371,7 @@
                         {
                             routeError = "本地监听与另一条规则冲突（含 0.0.0.0 全地址绑定）。";
                             showError(other.row, "error", routeError);
+                            other.row.querySelector('[data-route-field="port"]').setAttribute("aria-invalid", "true");
                         }
                     });
                     listeners.push({rule: rule, row: row});
@@ -320,7 +379,8 @@
                 if (routeError)
                 {
                     showError(row, "error", routeError);
-                    invalid = invalid || portControl;
+                    routeControl.setAttribute("aria-invalid", "true");
+                    invalid = invalid || routeControl;
                 }
                 routes.push(rule);
             });
@@ -448,6 +508,7 @@
     async function readConfig(token, expected)
     {
         reading = true;
+        field("serialPorts").setAttribute("aria-busy", "true");
         updateControls();
         try
         {
@@ -484,6 +545,7 @@
             if (alive(token))
             {
                 reading = false;
+                field("serialPorts").setAttribute("aria-busy", "false");
                 updateControls();
             }
         }
@@ -557,8 +619,10 @@
             if (alive(token))
             {
                 saving = false;
-                uncertain = true;
-                message("提交结果未确认：" + error.message + "。草稿已保留，请等待状态更新后重新读取。", "is-error");
+                uncertain = error.confirmed !== true;
+                message(error.confirmed === true ?
+                    "配置被后端拒绝：" + error.message + "。草稿已保留，请修正后重试。" :
+                    "提交结果未确认：" + error.message + "。草稿已保留，请等待状态更新后重新读取。", "is-error");
             }
         }
         if (alive(token))
@@ -614,6 +678,8 @@
             {
                 const job = pendingJob;
                 pendingJob = null;
+                observedJob = data.apply.job_id;
+                externalJob = null;
                 if (data.apply.job_id !== job)
                 {
                     uncertain = true;
@@ -642,7 +708,47 @@
                 saving = false;
                 updateControls();
             }
-            else if (config == null && !reading && !remoteApplying)
+            else if (pendingJob == null)
+            {
+                if (observedJob == null)
+                {
+                    observedJob = data.apply.job_id;
+                    externalJob = data.apply.state === "applying" ? data.apply.job_id : null;
+                }
+                else if (data.apply.state === "applying" && data.apply.job_id !== observedJob)
+                {
+                    externalJob = data.apply.job_id;
+                }
+                else if (data.apply.state !== "applying" &&
+                         (data.apply.job_id !== observedJob || data.apply.job_id === externalJob))
+                {
+                    if (dirty)
+                    {
+                        observedJob = data.apply.job_id;
+                        externalJob = null;
+                        uncertain = true;
+                        message("另一管理页面已修改 UART 配置；当前草稿已保留，请重新读取后再编辑。", "is-error");
+                        updateControls();
+                    }
+                    else if (!reading)
+                    {
+                        if (await readConfig(token))
+                        {
+                            observedJob = data.apply.job_id;
+                            externalJob = null;
+                            message("已读取另一管理页面刚提交的 UART 配置。", "");
+                        }
+                        else
+                        {
+                            observedJob = data.apply.job_id;
+                            externalJob = null;
+                            uncertain = true;
+                            updateControls();
+                        }
+                    }
+                }
+            }
+            if (config == null && !reading && !remoteApplying)
             {
                 await readConfig(token);
             }
@@ -678,15 +784,21 @@
         }
         root = document.getElementById("serialPage");
         session++;
+        document.body.classList.add("serial-active");
+        setMenuOpen(false);
         config = null;
         reading = saving = statusBusy = remoteApplying = dirty = uncertain = false;
         pendingJob = submitted = null;
+        observedJob = externalJob = null;
+        field("serialMenu").addEventListener("click", toggleMenu);
+        field("serialMenuBackdrop").addEventListener("click", closeMenu);
         field("serialReload").addEventListener("click", reload);
         field("serialReset").addEventListener("click", resetDraft);
         field("serialForm").addEventListener("submit", save);
         field("serialPorts").addEventListener("click", handleClick);
         field("serialPorts").addEventListener("input", draftChanged);
         field("serialPorts").addEventListener("change", draftChanged);
+        document.addEventListener("keydown", handleKeydown);
         readConfig(session);
         refresh(session);
     }
@@ -697,12 +809,17 @@
         {
             return;
         }
+        field("serialMenu").removeEventListener("click", toggleMenu);
+        field("serialMenuBackdrop").removeEventListener("click", closeMenu);
         field("serialReload").removeEventListener("click", reload);
         field("serialReset").removeEventListener("click", resetDraft);
         field("serialForm").removeEventListener("submit", save);
         field("serialPorts").removeEventListener("click", handleClick);
         field("serialPorts").removeEventListener("input", draftChanged);
         field("serialPorts").removeEventListener("change", draftChanged);
+        document.removeEventListener("keydown", handleKeydown);
+        setMenuOpen(false);
+        document.body.classList.remove("serial-active");
         clearTimeout(timer);
         session++;
         root = null;

@@ -6,7 +6,7 @@
  * @date 2026-10-14
  */
 
-#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE             200809L // 请求POSIX.1-2008接口
 
 #include "uart_internal.h"
 
@@ -18,7 +18,9 @@
 
 #include "linkg_log.h"
 
-#define LINKG_UART_SBUS_RT_PRIORITY 75 // SBUS定时线程尽力使用FIFO调度
+/****************************** 模块常量 ******************************/
+
+#define LINKG_UART_SBUS_RT_PRIORITY 75      // SBUS定时线程尽力使用FIFO调度
 
 /****************************** SBUS帧识别 ******************************/
 
@@ -37,7 +39,8 @@ static bool _uart_sbus_valid(const uint8_t *frame)
 
 /**
  * @brief 入队真实SBUS帧，满时删除最旧的未发送帧。
- * @note 调用方必须持有sbus_lock。
+ *
+ * 调用方必须持有sbus_lock。
  */
 static void _uart_sbus_push_locked(linkg_uart_port_t *port, const uint8_t *frame)
 {
@@ -230,6 +233,7 @@ static void _uart_sbus_try_realtime(void)
 
     memset(&param, 0, sizeof(param));
     param.sched_priority = LINKG_UART_SBUS_RT_PRIORITY;
+
     ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
     if (ret != 0)
     {
@@ -318,6 +322,8 @@ void uart_sbus_thread(linkg_thread_t *thread, void *user_data)
     uint32_t           target;
     uint32_t           depth;
     uint32_t           pending_generation;
+    uint32_t           observed_generation;
+    uint32_t           generation;
     uint64_t           warmup_started_ms;
     bool               primed;
     bool               pending;
@@ -331,11 +337,12 @@ void uart_sbus_thread(linkg_thread_t *thread, void *user_data)
 
     _uart_sbus_try_realtime();
 
-    pending        = false;
-    pending_offset = 0U;
-    pending_generation = atomic_load(&port->generation);
-    warmup_started_ms = 0U;
-    primed = false;
+    pending             = false;
+    pending_offset      = 0U;
+    pending_generation  = atomic_load(&port->generation);
+    observed_generation = pending_generation;
+    warmup_started_ms   = 0U;
+    primed              = false;
 
     while (linkg_thread_is_running(thread))
     {
@@ -364,11 +371,19 @@ void uart_sbus_thread(linkg_thread_t *thread, void *user_data)
             }
         }
 
-        if (pending && pending_generation != atomic_load(&port->generation))
+        generation = atomic_load(&port->generation);
+        if (observed_generation != generation)
         {
-            pending = false;
-            pending_offset = 0U;
-            atomic_fetch_add(&port->stats.drops, 1U);
+            observed_generation = generation;
+            if (pending)
+            {
+                atomic_fetch_add(&port->stats.drops, 1U);
+            }
+            pending           = false;
+            pending_offset    = 0U;
+            primed            = false;
+            warmup_started_ms = 0U;
+            atomic_store(&port->sbus_interval_us, LINKG_UART_SBUS_INTERVAL_US);
         }
 
         if (pending)
@@ -396,7 +411,7 @@ void uart_sbus_thread(linkg_thread_t *thread, void *user_data)
         if (primed && depth > 0U)
         {
             pending_generation = atomic_load(&port->generation);
-            pending = _uart_sbus_pop_locked(port, pending_frame);
+            pending            = _uart_sbus_pop_locked(port, pending_frame);
         }
         pthread_mutex_unlock(&port->sbus_lock);
 

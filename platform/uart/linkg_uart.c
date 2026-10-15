@@ -124,7 +124,7 @@ static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom)
 {
     struct serial_struct   serial;
     struct serial_struct   verify;
-    linux_uart_baud_info_t  info;
+    linux_uart_baud_info_t info;
     int                    ret;
 
     ret = linux_uart_baud_info(fd, baudrate, &info);

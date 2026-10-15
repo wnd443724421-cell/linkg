@@ -1,4 +1,3 @@
-
 /**
  * @file linkg_config.h
  * @brief LinkG全局配置管理接口

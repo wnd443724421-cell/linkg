@@ -578,6 +578,7 @@ static int _uart_route_config_parse(const cJSON *node, linkg_uart_route_config_t
     }
 
     found = false;
+
     ret = linkg_json_try_get_string(node, "ip", ip, sizeof(ip), &found);
     if (ret != LINKG_JSON_OK)
     {
@@ -648,6 +649,7 @@ static int _uart_item_config_parse(const cJSON *node, linkg_uart_item_config_t *
     temp.uart_num = (uint8_t)uart_num;
 
     port = NULL;
+
     ret = linkg_json_get_object(node, "port_config", &port);
     if (ret != LINKG_JSON_OK)
     {
@@ -668,6 +670,7 @@ static int _uart_item_config_parse(const cJSON *node, linkg_uart_item_config_t *
 
     routes = NULL;
     found  = false;
+
     ret = linkg_json_try_get_array(node, "routes", &routes, &found);
     if (ret != LINKG_JSON_OK)
     {
@@ -688,7 +691,7 @@ static int _uart_item_config_parse(const cJSON *node, linkg_uart_item_config_t *
     for (index = 0U; index < (uint32_t)count; index++)
     {
         route = cJSON_GetArrayItem(routes, (int)index);
-        ret = _uart_route_config_parse(route, &temp.routes[index]);
+        ret   = _uart_route_config_parse(route, &temp.routes[index]);
         if (ret != CONFIG_OK)
         {
             return ret;
@@ -710,9 +713,9 @@ static int _uart_item_config_parse(const cJSON *node, linkg_uart_item_config_t *
 static int _uart_port_config_to_json(cJSON *parent, const linkg_uart_port_config_t *config)
 {
     const char *type;
-    cJSON     *object;
-    char       parity[2];
-    int        ret;
+    cJSON      *object;
+    char        parity[2];
+    int         ret;
 
     if (parent == NULL || config == NULL)
     {
@@ -934,11 +937,11 @@ void linkg_uart_config_set_default(linkg_uart_config_t *out)
  */
 int linkg_uart_config_parse(const cJSON *node, linkg_uart_config_t *out)
 {
-    linkg_uart_config_t temp;
+    linkg_uart_config_t  temp;
     const cJSON         *item;
-    uint32_t            index;
-    int                 count;
-    int                 ret;
+    uint32_t             index;
+    int                  count;
+    int                  ret;
 
     if (node == NULL || out == NULL)
     {
@@ -1041,7 +1044,7 @@ int linkg_uart_config_validate(const linkg_uart_config_t *config)
         for (route = 0U; route < config->items[index].route_count; route++)
         {
             const linkg_uart_route_config_t *left = &config->items[index].routes[route];
-            uint32_t                        next;
+            uint32_t                         next;
 
             if (left->endpoint != LINKG_UART_ROUTE_ENDPOINT_LOCAL)
             {

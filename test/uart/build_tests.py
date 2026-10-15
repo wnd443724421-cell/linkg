@@ -24,3 +24,14 @@ command += sources + ['-Wl,--wrap=' + name for name in wraps] + ['-lm', '-lutil'
 print(' '.join(command), flush=True)
 subprocess.run(command, check=True)
 
+platform_command = [
+    'gcc', '-std=gnu17', '-O1', '-g', '-Wall', '-Wextra', '-Werror',
+    '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
+    '-Iinclude/linkg/platform/uart', 'platform/uart/linkg_uart.c', 'test/uart/uart_platform_test.c',
+]
+platform_command += ['-Wl,--wrap=' + name for name in ('open', 'close', 'ioctl', 'tcgetattr', 'tcsetattr', 'tcflush', 'write')]
+platform_command += ['-o', str(output / 'uart_platform_test')]
+print(' '.join(platform_command), flush=True)
+subprocess.run(platform_command, check=True)
+subprocess.run([str(output / 'uart_platform_test')], check=True)
+

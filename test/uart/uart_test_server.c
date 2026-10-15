@@ -31,21 +31,23 @@
 
 /****************************** 测试上下文 ******************************/
 
-static char        g_test_slave[3][128]; // 三个PTY从设备节点
-static int         g_test_master[3];     // 测试端持有的PTY主设备
-static const char *g_test_storage;       // 临时配置文件路径
-static atomic_int  g_test_fail_init;     // 线程初始化失败注入次数
-static atomic_int  g_test_fail_start;    // 线程启动失败注入次数
-static atomic_int  g_test_fail_stop;     // 线程停止失败注入次数
-static atomic_int  g_test_fail_open;     // UART打开失败注入次数
-static atomic_int  g_test_fail_before;   // 原子保存写入前失败次数
-static atomic_int  g_test_fail_after;    // 原子保存完成后失败次数
-static atomic_int  g_test_delay_ms;      // 一次持久化延时
-static atomic_int  g_test_worker_starts;// Worker累计启动次数
-static atomic_int  g_test_workers;      // 尚未join的Worker数量
-static atomic_int  g_test_peak_workers; // 同时存在的Worker峰值
-static atomic_bool g_test_rx_enabled;   // 模拟PD21接收门控
-static atomic_bool g_test_sbus_enabled; // 模拟PD16模式选择
+static char        g_test_slave[3][128];  // 三个PTY从设备节点
+static int         g_test_master[3];      // 测试端持有的PTY主设备
+static const char *g_test_storage;        // 临时配置文件路径
+static atomic_int  g_test_fail_init;      // 线程初始化失败注入次数
+static atomic_int  g_test_fail_start;     // 线程启动失败注入次数
+static atomic_int  g_test_fail_stop;      // 线程停止失败注入次数
+static atomic_int  g_test_fail_open;      // UART打开失败注入次数
+static atomic_int  g_test_fail_before;    // 原子保存写入前失败次数
+static atomic_int  g_test_fail_after;     // 原子保存完成后失败次数
+static atomic_int  g_test_fail_gpio_rx;   // UART接收门控失败注入次数
+static atomic_int  g_test_fail_gpio_sbus; // SBUS模式控制失败注入次数
+static atomic_int  g_test_delay_ms;       // 一次持久化延时
+static atomic_int  g_test_worker_starts;  // Worker累计启动次数
+static atomic_int  g_test_workers;        // 尚未join的Worker数量
+static atomic_int  g_test_peak_workers;   // 同时存在的Worker峰值
+static atomic_bool g_test_rx_enabled;     // 模拟PD21接收门控
+static atomic_bool g_test_sbus_enabled;   // 模拟PD16模式选择
 
 int __real_linux_uart_open(const char *dev, const uart_config_t *config);
 int __real_linkg_thread_init(linkg_thread_t *thread, const char *name, linkg_thread_func_t function, void *data);
@@ -215,6 +217,11 @@ int __wrap_linkg_file_write_all_atomic(const char *path, const void *data, size_
  */
 int linkg_gpio_manager_set_uart_rx_enabled(bool enabled)
 {
+    if (_uart_test_fail(&g_test_fail_gpio_rx))
+    {
+        return -EIO;
+    }
+
     atomic_store(&g_test_rx_enabled, enabled);
     return 0;
 }
@@ -225,6 +232,11 @@ int linkg_gpio_manager_set_uart_rx_enabled(bool enabled)
 int linkg_gpio_manager_set_sbus_enabled(bool enabled)
 {
     assert(!atomic_load(&g_test_rx_enabled));
+    if (_uart_test_fail(&g_test_fail_gpio_sbus))
+    {
+        return -EIO;
+    }
+
     atomic_store(&g_test_sbus_enabled, enabled);
     return 0;
 }
@@ -252,19 +264,94 @@ static int _uart_test_other(int cmd, const cJSON *param, char **response)
 }
 
 // 这些替身不表示真实Wi-Fi、5G、Switch已在VM运行。
-#define UART_TEST_HANDLER(name, cmd) int name(const cJSON *param, char **response) { return _uart_test_other(cmd, param, response); } // 既有Web命令隔离
 
-UART_TEST_HANDLER(_linkg_web_handler_header_get, 1001)
-UART_TEST_HANDLER(_linkg_web_handler_overview_get, 1002)
-UART_TEST_HANDLER(_linkg_web_handler_switch_status_get, 1003)
-UART_TEST_HANDLER(_linkg_web_handler_wifi_config_get, 1004)
-UART_TEST_HANDLER(_linkg_web_handler_wifi_config_set, 1005)
-UART_TEST_HANDLER(_linkg_web_handler_wifi_status_get, 1006)
-UART_TEST_HANDLER(_linkg_web_handler_cellular_config_get, 1007)
-UART_TEST_HANDLER(_linkg_web_handler_cellular_config_set, 1008)
-UART_TEST_HANDLER(_linkg_web_handler_cellular_status_get, 1009)
-UART_TEST_HANDLER(_linkg_web_handler_traffic_config_get, 1010)
-UART_TEST_HANDLER(_linkg_web_handler_traffic_config_set, 1011)
+/**
+ * @brief 返回固定头部测试替身响应。
+ */
+int _linkg_web_handler_header_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1001, param, response);
+}
+
+/**
+ * @brief 返回概览页面测试替身响应。
+ */
+int _linkg_web_handler_overview_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1002, param, response);
+}
+
+/**
+ * @brief 返回Switch状态测试替身响应。
+ */
+int _linkg_web_handler_switch_status_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1003, param, response);
+}
+
+/**
+ * @brief 返回Wi-Fi配置读取测试替身响应。
+ */
+int _linkg_web_handler_wifi_config_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1004, param, response);
+}
+
+/**
+ * @brief 返回Wi-Fi配置写入测试替身响应。
+ */
+int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
+{
+    return _uart_test_other(1005, param, response);
+}
+
+/**
+ * @brief 返回Wi-Fi状态测试替身响应。
+ */
+int _linkg_web_handler_wifi_status_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1006, param, response);
+}
+
+/**
+ * @brief 返回蜂窝网络配置读取测试替身响应。
+ */
+int _linkg_web_handler_cellular_config_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1007, param, response);
+}
+
+/**
+ * @brief 返回蜂窝网络配置写入测试替身响应。
+ */
+int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response)
+{
+    return _uart_test_other(1008, param, response);
+}
+
+/**
+ * @brief 返回蜂窝网络状态测试替身响应。
+ */
+int _linkg_web_handler_cellular_status_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1009, param, response);
+}
+
+/**
+ * @brief 返回流量配置读取测试替身响应。
+ */
+int _linkg_web_handler_traffic_config_get(const cJSON *param, char **response)
+{
+    return _uart_test_other(1010, param, response);
+}
+
+/**
+ * @brief 返回流量配置写入测试替身响应。
+ */
+int _linkg_web_handler_traffic_config_set(const cJSON *param, char **response)
+{
+    return _uart_test_other(1011, param, response);
+}
 
 /****************************** 测试控制 ******************************/
 
@@ -331,14 +418,53 @@ int main(int argc, char **argv)
         {
             break;
         }
-        if (strcmp(command, "init") == 0) atomic_store(&g_test_fail_init, value);
-        if (strcmp(command, "start") == 0) atomic_store(&g_test_fail_start, value);
-        if (strcmp(command, "stop") == 0) atomic_store(&g_test_fail_stop, value);
-        if (strcmp(command, "open") == 0) atomic_store(&g_test_fail_open, value);
-        if (strcmp(command, "before") == 0) atomic_store(&g_test_fail_before, value);
-        if (strcmp(command, "after") == 0) atomic_store(&g_test_fail_after, value);
-        if (strcmp(command, "delay") == 0) atomic_store(&g_test_delay_ms, value);
-        if (strcmp(command, "counts") == 0)
+        if (strcmp(command, "init") == 0)
+        {
+            atomic_store(&g_test_fail_init, value);
+        }
+        if (strcmp(command, "start") == 0)
+        {
+            atomic_store(&g_test_fail_start, value);
+        }
+        if (strcmp(command, "stop") == 0)
+        {
+            atomic_store(&g_test_fail_stop, value);
+        }
+        if (strcmp(command, "open") == 0)
+        {
+            atomic_store(&g_test_fail_open, value);
+        }
+        if (strcmp(command, "before") == 0)
+        {
+            atomic_store(&g_test_fail_before, value);
+        }
+        if (strcmp(command, "after") == 0)
+        {
+            atomic_store(&g_test_fail_after, value);
+        }
+        if (strcmp(command, "gpio-rx") == 0)
+        {
+            atomic_store(&g_test_fail_gpio_rx, value);
+        }
+        if (strcmp(command, "gpio-sbus") == 0)
+        {
+            atomic_store(&g_test_fail_gpio_sbus, value);
+        }
+        if (strcmp(command, "delay") == 0)
+        {
+            atomic_store(&g_test_delay_ms, value);
+        }
+        if (strcmp(command, "service-stop") == 0)
+        {
+            assert(linkg_uart_manager_stop() == 0);
+            puts("OK");
+        }
+        else if (strcmp(command, "service-start") == 0)
+        {
+            assert(linkg_uart_manager_start() == 0);
+            puts("OK");
+        }
+        else if (strcmp(command, "counts") == 0)
         {
             printf("%d %d %d %d\n", _uart_test_fd_count(), atomic_load(&g_test_worker_starts),
                    atomic_load(&g_test_workers), atomic_load(&g_test_peak_workers));

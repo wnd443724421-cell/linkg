@@ -137,6 +137,10 @@ int uart_port_open(linkg_uart_port_t *port)
         atomic_fetch_add(&port->generation, 1U);
         port->retry_delay_ms = LINKG_UART_RETRY_INITIAL_MS;
         port->retry_at_ms    = 0U;
+        if (port->raw_tx.count > 0U)
+        {
+            atomic_fetch_add(&port->stats.drops, 1U);
+        }
         port->raw_tx.head    = 0U;
         port->raw_tx.count   = 0U;
     }

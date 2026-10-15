@@ -103,7 +103,10 @@
 
         if (responseJson.code === "error")
         {
-            throw new Error(responseJson.msg || "设备处理请求失败");
+            const error = new Error(responseJson.msg || "设备处理请求失败");
+
+            error.confirmed = true;
+            throw error;
         }
 
         return responseJson;

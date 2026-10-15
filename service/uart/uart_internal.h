@@ -36,7 +36,7 @@
 #define LINKG_UART_DEBUG_PERIOD_MS       5000U // 调试统计周期
 #define LINKG_UART_DEBUG_PREVIEW_BYTES   16U   // 每次调试输出的字节数
 #define LINKG_UART_DEBUG_DEFAULT         0     // 出厂关闭调试
-#define LINKG_UART_MAX_FDS (1U + LINKG_UART_CONFIG_PORT_COUNT_MAX + 2U * LINKG_UART_CONFIG_PORT_COUNT_MAX * LINKG_UART_CONFIG_ROUTE_COUNT_MAX)
+#define LINKG_UART_MAX_FDS               (1U + LINKG_UART_CONFIG_PORT_COUNT_MAX + 2U * LINKG_UART_CONFIG_PORT_COUNT_MAX * LINKG_UART_CONFIG_ROUTE_COUNT_MAX) // poll描述符最大数量
 
 /****************************** 运行状态 ******************************/
 
@@ -68,8 +68,8 @@ typedef struct
 typedef struct
 {
     uint8_t frames[LINKG_UART_SBUS_FIFO_CAPACITY][LINKG_UART_SBUS_FRAME_SIZE]; // 真实SBUS帧FIFO
-    uint8_t head;                                                         	   // 读取位置
-    uint8_t count;                                                       	   // 当前帧数
+    uint8_t head;                                                              // 读取位置
+    uint8_t count;                                                             // 当前帧数
 } linkg_uart_sbus_fifo_t;
 
 typedef struct
@@ -95,54 +95,54 @@ struct linkg_uart_port;
 
 typedef struct
 {
-    struct linkg_uart_port          *parent;         						 // 归属串口
-    const linkg_uart_route_config_t *config;         						 // 指向Manager私有配置
-    atomic_int     	 state;          						 // 网络路由状态
-    int                          	 fd;             						 // UDP/连接TCP/监听TCP
-    int                          	 client_fd;      						 // TCP服务端唯一客户端
-    struct sockaddr_in           	 remote;         						 // 远端地址
-    struct sockaddr_in           	 peer;           						 // UDP本地路由最近对端
-    atomic_bool                    peer_valid;     						 // UDP已学习对端
-    uint64_t                     	 retry_at_ms;    						 // 下次重建期限
-    uint32_t                     	 retry_delay_ms; 						 // 退避间隔
-    uint8_t                      	 tcp_tx[LINKG_UART_TCP_TX_CAPACITY]; 	 // TCP待发字节
-    uint16_t                     	 tcp_tx_count;     						 // TCP待发长度
-    uint8_t                      	 sbus_stream[LINKG_UART_SBUS_FRAME_SIZE];// TCP入站SBUS组帧缓存
-    uint8_t                      	 sbus_stream_count;						 // TCP组帧缓存字节数
+    struct linkg_uart_port          *parent;                                     // 归属串口
+    const linkg_uart_route_config_t *config;                                     // 指向Manager私有配置
+    atomic_int                       state;                                      // 网络路由状态
+    int                              fd;                                         // UDP/连接TCP/监听TCP
+    int                              client_fd;                                  // TCP服务端唯一客户端
+    struct sockaddr_in               remote;                                     // 远端地址
+    struct sockaddr_in               peer;                                       // UDP本地路由最近对端
+    atomic_bool                      peer_valid;                                 // UDP已学习对端
+    uint64_t                         retry_at_ms;                                // 下次重建期限
+    uint32_t                         retry_delay_ms;                             // 退避间隔
+    uint8_t                          tcp_tx[LINKG_UART_TCP_TX_CAPACITY];         // TCP待发字节
+    uint16_t                         tcp_tx_count;                               // TCP待发长度
+    uint8_t                          sbus_stream[LINKG_UART_SBUS_FRAME_SIZE];    // TCP入站SBUS组帧缓存
+    uint8_t                          sbus_stream_count;                          // TCP组帧缓存字节数
 } linkg_uart_route_t;
 
 /****************************** 物理串口 ******************************/
 
 typedef struct linkg_uart_port
 {
-    const linkg_uart_item_config_t  *config;                                    // Manager私有配置引用
-    const char                      *device_path;                               // 固定设备节点
-    atomic_int                       fd;                                        // 物理UART描述符
-    atomic_uint_fast64_t             retry_at_ms;                               // 物理串口重开期限
-    atomic_uint                      retry_delay_ms;                            // 物理串口重开退避
-    atomic_uint                      generation;                                // 设备重开版本号
-    pthread_mutex_t                  io_lock;                                   // Worker与SBUS线程共享串口锁
-    pthread_mutex_t                  sbus_lock;                                 // SBUS FIFO锁
-    linkg_thread_t                   sbus_thread;                               // 定时输出线程对象
-    atomic_uint                      sbus_interval_us;                          // SBUS运行输出周期
-    linkg_uart_sbus_fifo_t           sbus_fifo;                                 // 网络入站真实帧FIFO
-    uint8_t                          sbus_rx[LINKG_UART_SBUS_FRAME_SIZE];       // 串口SBUS帧解析缓存
-    uint8_t                          sbus_rx_count;                       		// 已积累字节
-    linkg_uart_raw_queue_t           raw_tx;                              		// 普通串口待发字节
-    linkg_uart_route_t               routes[LINKG_UART_CONFIG_ROUTE_COUNT_MAX]; // 路由运行态
-    uint32_t                         route_count;                     		    // 路由数量
-    linkg_uart_stats_t               stats;                           		    // 运行计数器
-    uint64_t                         last_debug_ms;                   		    // 最近一次调试统计时间
-    uint64_t                         last_uart_rx_bytes;              		    // 最近一次串口输入快照
-    uint64_t                         last_uart_tx_bytes;              		    // 最近一次串口输出快照
-    uint64_t                         last_net_rx_bytes;               		    // 最近一次网络输入快照
-    uint64_t                         last_net_tx_bytes;               		    // 最近一次网络输出快照
-    uint64_t                         last_drops;                      		    // 最近一次丢弃快照
-    uint64_t                         last_errors;                     		    // 最近一次错误快照
-    uint64_t                         last_fifo_empty;                 		    // 最近一次欠载快照
-    uint64_t                         last_sbus_rx_frames;             		    // 最近一次串口SBUS组帧数
-    uint64_t                         last_sbus_tx_frames;             		    // 最近一次串口SBUS输出数
-    atomic_uint                      debug_preview_budget;            		    // 本统计周期最大数据预览数
+    const linkg_uart_item_config_t  *config;                                     // Manager私有配置引用
+    const char                      *device_path;                                // 固定设备节点
+    atomic_int                       fd;                                         // 物理UART描述符
+    atomic_uint_fast64_t             retry_at_ms;                                // 物理串口重开期限
+    atomic_uint                      retry_delay_ms;                             // 物理串口重开退避
+    atomic_uint                      generation;                                 // 设备重开版本号
+    pthread_mutex_t                  io_lock;                                    // Worker与SBUS线程共享串口锁
+    pthread_mutex_t                  sbus_lock;                                  // SBUS FIFO锁
+    linkg_thread_t                   sbus_thread;                                // 定时输出线程对象
+    atomic_uint                      sbus_interval_us;                           // SBUS运行输出周期
+    linkg_uart_sbus_fifo_t           sbus_fifo;                                  // 网络入站真实帧FIFO
+    uint8_t                          sbus_rx[LINKG_UART_SBUS_FRAME_SIZE];        // 串口SBUS帧解析缓存
+    uint8_t                          sbus_rx_count;                              // 已积累字节
+    linkg_uart_raw_queue_t           raw_tx;                                     // 普通串口待发字节
+    linkg_uart_route_t               routes[LINKG_UART_CONFIG_ROUTE_COUNT_MAX];  // 路由运行态
+    uint32_t                         route_count;                                // 路由数量
+    linkg_uart_stats_t               stats;                                      // 运行计数器
+    uint64_t                         last_debug_ms;                              // 最近一次调试统计时间
+    uint64_t                         last_uart_rx_bytes;                         // 最近一次串口输入快照
+    uint64_t                         last_uart_tx_bytes;                         // 最近一次串口输出快照
+    uint64_t                         last_net_rx_bytes;                          // 最近一次网络输入快照
+    uint64_t                         last_net_tx_bytes;                          // 最近一次网络输出快照
+    uint64_t                         last_drops;                                 // 最近一次丢弃快照
+    uint64_t                         last_errors;                                // 最近一次错误快照
+    uint64_t                         last_fifo_empty;                            // 最近一次欠载快照
+    uint64_t                         last_sbus_rx_frames;                        // 最近一次串口SBUS组帧数
+    uint64_t                         last_sbus_tx_frames;                        // 最近一次串口SBUS输出数
+    atomic_uint                      debug_preview_budget;                       // 本统计周期最大数据预览数
 } linkg_uart_port_t;
 
 /****************************** poll调度 ******************************/
@@ -163,14 +163,14 @@ typedef struct
 
 typedef struct
 {
-    linkg_uart_config_t config;                         // 独立配置副本
+    linkg_uart_config_t config;                                  // 独立配置副本
     linkg_uart_port_t   ports[LINKG_UART_CONFIG_PORT_COUNT_MAX]; // 有效串口上下文
-    uint32_t            port_count;                     // 当前有效串口数
-    linkg_thread_t      worker;                         // 单Worker
-    pthread_mutex_t     life_lock;                      // 生命周期锁
-    linkg_uart_life_t   state;                          // 生命周期状态
-    atomic_bool         debug_enabled;                  // 运行Debug开关
-    atomic_uint         sbus_target_level;              // 所有SBUS端口目标水位
+    uint32_t            port_count;                              // 当前有效串口数
+    linkg_thread_t      worker;                                  // 单Worker
+    pthread_mutex_t     life_lock;                               // 生命周期锁
+    linkg_uart_life_t   state;                                   // 生命周期状态
+    atomic_bool         debug_enabled;                           // 运行Debug开关
+    atomic_uint         sbus_target_level;                       // 所有SBUS端口目标水位
 } linkg_uart_manager_context_t;
 
 extern linkg_uart_manager_context_t g_uart_manager;
@@ -205,12 +205,12 @@ void        uart_port_raw_flush(linkg_uart_port_t *port);
 
 /****************************** Route操作 ******************************/
 
-void uart_route_init(linkg_uart_route_t *route, linkg_uart_port_t *port, const linkg_uart_route_config_t *config);
-void uart_route_close(linkg_uart_route_t *route);
-void uart_route_maintenance(linkg_uart_route_t *route, uint64_t now_ms);
-void uart_route_event(linkg_uart_route_t *route, bool client, short revents);
-void uart_route_send(linkg_uart_route_t *route, const uint8_t *data, uint32_t length);
-void uart_route_forward_serial(linkg_uart_port_t *port, const uint8_t *data, uint32_t length);
+void  uart_route_init(linkg_uart_route_t *route, linkg_uart_port_t *port, const linkg_uart_route_config_t *config);
+void  uart_route_close(linkg_uart_route_t *route);
+void  uart_route_maintenance(linkg_uart_route_t *route, uint64_t now_ms);
+void  uart_route_event(linkg_uart_route_t *route, bool client, short revents);
+void  uart_route_send(linkg_uart_route_t *route, const uint8_t *data, uint32_t length);
+void  uart_route_forward_serial(linkg_uart_port_t *port, const uint8_t *data, uint32_t length);
 short uart_route_poll_events(const linkg_uart_route_t *route, bool client);
 
 /****************************** SBUS操作 ******************************/

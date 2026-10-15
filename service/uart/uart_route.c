@@ -58,6 +58,18 @@ static struct sockaddr_in _uart_route_sockaddr(const linkg_uart_route_config_t *
     return address;
 }
 
+/**
+ * @brief 丢弃无法继续发送的TCP缓存并记录一次数据丢弃事件。
+ */
+static void _uart_route_discard_tcp(linkg_uart_route_t *route)
+{
+    if (route->tcp_tx_count > 0U)
+    {
+        atomic_fetch_add(&route->parent->stats.drops, 1U);
+        route->tcp_tx_count = 0U;
+    }
+}
+
 /****************************** 状态维护 ******************************/
 
 /**
@@ -68,8 +80,8 @@ static void _uart_route_schedule_retry(linkg_uart_route_t *route, int error)
     _uart_route_close_fd(&route->client_fd);
     _uart_route_close_fd(&route->fd);
 
+    _uart_route_discard_tcp(route);
     route->state             = LINKG_UART_ROUTE_IDLE;
-    route->tcp_tx_count      = 0U;
     route->sbus_stream_count = 0U;
     route->peer_valid        = false;
 
@@ -99,7 +111,7 @@ static void _uart_route_schedule_retry(linkg_uart_route_t *route, int error)
 static void _uart_route_disconnect_client(linkg_uart_route_t *route)
 {
     _uart_route_close_fd(&route->client_fd);
-    route->tcp_tx_count      = 0U;
+    _uart_route_discard_tcp(route);
     route->sbus_stream_count = 0U;
     route->state             = LINKG_UART_ROUTE_LISTENING;
     LINKG_LOG_INFO("UART: TCP client disconnected uart=%u port=%u", route->parent->config->uart_num, route->config->port);
@@ -132,7 +144,7 @@ void uart_route_close(linkg_uart_route_t *route)
 
     _uart_route_close_fd(&route->client_fd);
     _uart_route_close_fd(&route->fd);
-    route->tcp_tx_count      = 0U;
+    _uart_route_discard_tcp(route);
     route->sbus_stream_count = 0U;
     route->peer_valid        = false;
     route->state             = LINKG_UART_ROUTE_IDLE;
@@ -144,11 +156,11 @@ void uart_route_close(linkg_uart_route_t *route)
 static int _uart_route_open(linkg_uart_route_t *route)
 {
     const linkg_uart_route_config_t *config;
-    struct sockaddr_in              address;
-    int                             type;
-    int                             reuse;
-    int                             ret;
-    int                             fd;
+    struct sockaddr_in               address;
+    int                              type;
+    int                              reuse;
+    int                              ret;
+    int                              fd;
 
     config  = route->config;
     type    = config->proto == LINKG_UART_ROUTE_PROTO_TCP ? SOCK_STREAM : SOCK_DGRAM;
@@ -308,13 +320,18 @@ void uart_route_send(linkg_uart_route_t *route, const uint8_t *data, uint32_t le
     int                       fd;
     const struct sockaddr_in *destination;
 
-    if (route == NULL || data == NULL || length == 0U || route->state != LINKG_UART_ROUTE_READY)
+    if (route == NULL || data == NULL || length == 0U)
     {
         return;
     }
 
     if (route->config->dir == LINKG_UART_ROUTE_DIR_RX)
     {
+        return;
+    }
+    if (route->state != LINKG_UART_ROUTE_READY)
+    {
+        atomic_fetch_add(&route->parent->stats.drops, 1U);
         return;
     }
 
@@ -333,6 +350,7 @@ void uart_route_send(linkg_uart_route_t *route, const uint8_t *data, uint32_t le
     }
 
     fd = route->fd;
+
     destination = route->config->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL && route->peer_valid ? &route->peer : NULL;
     if (fd < 0 || (route->config->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL && destination == NULL))
     {
@@ -437,7 +455,7 @@ static void _uart_route_accept(linkg_uart_route_t *route)
     {
         if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
         {
-            LINKG_LOG_WARN("UART: accept uart=%u failed errno=%d", route->parent->config->uart_num, errno);
+            _uart_route_schedule_retry(route, -errno);
         }
         return;
     }
@@ -445,7 +463,7 @@ static void _uart_route_accept(linkg_uart_route_t *route)
     if (route->client_fd >= 0)
     {
         _uart_route_close_fd(&route->client_fd);
-        route->tcp_tx_count      = 0U;
+        _uart_route_discard_tcp(route);
         route->sbus_stream_count = 0U;
     }
 
@@ -513,6 +531,7 @@ static void _uart_route_receive(linkg_uart_route_t *route, int fd)
     int                 n;
 
     udp = route->config->proto == LINKG_UART_ROUTE_PROTO_UDP;
+
     peer_length = sizeof(peer);
 
     if (udp)
