@@ -9,10 +9,10 @@ SBUS 帧格式、通道解码、校验、补帧、重同步和发送周期全部
 2026-10-14 在 `/home/dawn/project/linkg_v3/linkg-mcu` 完成 ARM GCC 8.3.1 编译、链接及镜像生成。
 GNU 启动文件、链接脚本、48 项向量表、数据段初始化、BSS 清零、栈边界和目标架构均做了检查。
 Keil 工程通过 XML、源文件和头文件路径检查，但未执行 Keil 编译，当前机器没有可调用的 Keil/ARMCC。
-未烧录设备，UART 电气行为、真实延迟、误码恢复和看门狗复位仍须实板验证。
+2026-10-15 用户确认完成烧录，随后在 `192.168.3.1` 外部 UART0 短接上完成 Normal 5,060 字节、SBUS 2,087 帧/52,175 字节和 8 次模式类型切换的端到端测试；有效数据阶段均逐字节一致，错误和丢弃为 0。没有 SWD Flash 回读，因此须以用户实际烧录的是交付 BIN 为前提。CTL/U16 隔离、真实反相波形、误码恢复和看门狗复位仍须专项实板验证。
 
 运行结果见 `validation/gcc-build.log`、`validation/checks.log`、`validation/firmware.log`。
-`validation/REPORT.md` 记录完整命令、验证边界与文件变更清单。
+`validation/REPORT.md` 记录完整命令、验证边界与文件变更清单；`validation/BOARD_TEST_2026-10-15.md` 记录实板数据和仍需验证的电气项目。
 
 ## 模块和目录
 
@@ -156,4 +156,4 @@ Keil：打开 `MDK-ARM/soft.uvprojx`，目标 `soft`，芯片 `STM32L031G6Ux`（
 5. 注入 PE/FE/NE/ORE、长 BREAK 和 FIFO 压力，确认错误计数增加、后续字节恢复、Linux 能重新同步；测试在途模式切换的已记录丢失。
 6. 阻塞主循环和制造中断负载，确认 IWDG 真实复位时限；检查电压/温度下 HSI 和 LSI 偏差；用栈水位验证 1 KiB 栈余量。
 
-以上实板项目尚未执行，不因编译和主机测试通过而标记为成功。
+其中 Normal/SBUS 端到端回环、全字节值、短突发、持续 2,004 帧和 8 次模式切换已于 2026-10-15 实际通过。外部短接不能单独排除 U16 异常直通形成的替代路径，因此第 1～3 项中的 CTL、反相、实际位宽和上电窗口仍未标记成功；错误注入、MCU 内部 FIFO/SWD 统计及 IWDG 也尚未验证。具体数据见 `validation/BOARD_TEST_2026-10-15.md`。

@@ -1,0 +1,161 @@
+{
+  "completed_at": "2026-10-15T15:04:27+0800",
+  "duration_seconds": 16.42208709999977,
+  "result": {
+    "label": "MCU SBUS 2000-frame soak",
+    "bytes": 50100,
+    "frames": 2004,
+    "payload_octets_covered": 256,
+    "latency_ms": {
+      "minimum": 5.438099993625656,
+      "median": 8.161650002875831,
+      "maximum": 24.248800000350457
+    },
+    "baud": {
+      "verified": true,
+      "baud_base": 1500000,
+      "divisor": 15,
+      "actual": 100000,
+      "error_pct": 0
+    },
+    "status": {
+      "routes": [
+        "udp_ready"
+      ],
+      "uart_num": 0,
+      "device_path": "/dev/ttyS4",
+      "device_open": true,
+      "sbus_running": true,
+      "route_count": 1,
+      "uart_rx_bytes": "50100",
+      "uart_tx_bytes": "50100",
+      "net_rx_bytes": "50100",
+      "net_tx_bytes": "50100",
+      "errors": "0",
+      "drops": "0",
+      "baud": {
+        "verified": true,
+        "baud_base": 1500000,
+        "divisor": 15,
+        "actual": 100000,
+        "error_pct": 0
+      }
+    }
+  },
+  "restored_config": [
+    {
+      "uart_num": 0,
+      "port_config": {
+        "type": "normal",
+        "baudrate": 115200,
+        "data_bits": 8,
+        "stop_bits": 1,
+        "parity": "n"
+      },
+      "routes": [
+        {
+          "proto": "udp",
+          "endpoint": "local",
+          "dir": "rxtx",
+          "ip": "172.28.2.1",
+          "port": 7000
+        }
+      ]
+    }
+  ],
+  "final_status_a": {
+    "ports": [
+      {
+        "routes": [
+          "udp_ready"
+        ],
+        "uart_num": 0,
+        "device_path": "/dev/ttyS4",
+        "device_open": true,
+        "sbus_running": false,
+        "route_count": 1,
+        "uart_rx_bytes": "0",
+        "uart_tx_bytes": "0",
+        "net_rx_bytes": "0",
+        "net_tx_bytes": "0",
+        "errors": "5",
+        "drops": "0",
+        "baud": {
+          "verified": true,
+          "baud_base": 1500000,
+          "divisor": 13,
+          "actual": 115384.61538461539,
+          "error_pct": 0.1602564102564097
+        }
+      },
+      {
+        "routes": [
+          "waiting_peer"
+        ],
+        "uart_num": 1,
+        "device_path": "/dev/ttyS3",
+        "device_open": true,
+        "sbus_running": false,
+        "route_count": 1,
+        "uart_rx_bytes": "0",
+        "uart_tx_bytes": "0",
+        "net_rx_bytes": "0",
+        "net_tx_bytes": "0",
+        "errors": "0",
+        "drops": "0",
+        "baud": {
+          "verified": true,
+          "baud_base": 1500000,
+          "divisor": 13,
+          "actual": 115384.61538461539,
+          "error_pct": 0.1602564102564097
+        }
+      }
+    ],
+    "apply": {
+      "job_id": 0,
+      "state": "none",
+      "error": 0,
+      "rollback_error": 0,
+      "elapsed_ms": 0
+    },
+    "state": "running",
+    "worker_running": true
+  },
+  "final_status_b": {
+    "ports": [
+      {
+        "routes": [
+          "waiting_peer"
+        ],
+        "uart_num": 0,
+        "device_path": "/dev/ttyS4",
+        "device_open": true,
+        "sbus_running": false,
+        "route_count": 1,
+        "uart_rx_bytes": "0",
+        "uart_tx_bytes": "0",
+        "net_rx_bytes": "0",
+        "net_tx_bytes": "0",
+        "errors": "0",
+        "drops": "0",
+        "baud": {
+          "verified": true,
+          "baud_base": 1500000,
+          "divisor": 13,
+          "actual": 115384.61538461539,
+          "error_pct": 0.1602564102564097
+        }
+      }
+    ],
+    "apply": {
+      "job_id": 12,
+      "state": "applied",
+      "error": 0,
+      "rollback_error": 0,
+      "elapsed_ms": 28
+    },
+    "state": "running",
+    "worker_running": true
+  }
+}

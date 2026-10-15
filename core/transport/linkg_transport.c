@@ -19,7 +19,21 @@
 
 /****************************** 模块状态 ******************************/
 
+/**
+ * @brief 本进程内指定Node/Class的发送序列连续性状态。
+ *
+ * @note Transport Peer会随瞬态Access下线而注销，但对端可能仍保留接收窗口。
+ *       因此发送序列必须绑定Node而不是可复用Peer槽位，并持续到进程退出。
+ */
+typedef struct
+{
+    uint32_t tx_user_sequence;    // 最近已经分配的用户业务序列号
+    uint32_t tx_control_sequence; // 最近已经分配的内部控制序列号
+} linkg_transport_tx_sequence_state_t;
+
 linkg_transport_context_t g_transport;
+
+static linkg_transport_tx_sequence_state_t g_transport_tx_sequences[LINKG_RESOURCE_NODE_ID_MAX + 1U][LINKG_TRANSPORT_CLASS_COUNT];
 
 /****************************** 内部辅助 ******************************/
 
@@ -162,6 +176,54 @@ static void _linkg_transport_peer_tx_order_unlock_all(linkg_transport_peer_t *pe
 }
 
 /**
+ * @brief 保存指定Peer当前发送序列号。
+ *
+ * @note 调用方必须持有g_transport.lock和当前Peer全部tx_order_lock。
+ */
+static void _linkg_transport_save_peer_tx_sequences(const linkg_transport_peer_t *peer)
+{
+    linkg_transport_tx_sequence_state_t *state;
+    uint32_t                             class_index;
+
+    if (peer == NULL || !_linkg_transport_node_id_valid(peer->peer_node_id))
+    {
+        return;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        state = &g_transport_tx_sequences[peer->peer_node_id][class_index];
+
+        state->tx_user_sequence    = peer->classes[class_index].tx_user_sequence;
+        state->tx_control_sequence = peer->classes[class_index].tx_control_sequence;
+    }
+}
+
+/**
+ * @brief 恢复指定Node在本进程内连续的发送序列号。
+ *
+ * @note 调用方必须持有g_transport.lock，并确保当前Peer不存在并发TX。
+ */
+static void _linkg_transport_restore_peer_tx_sequences(linkg_transport_peer_t *peer, uint8_t peer_node_id)
+{
+    const linkg_transport_tx_sequence_state_t *state;
+    uint32_t                                   class_index;
+
+    if (peer == NULL || !_linkg_transport_node_id_valid(peer_node_id))
+    {
+        return;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        state = &g_transport_tx_sequences[peer_node_id][class_index];
+
+        peer->classes[class_index].tx_user_sequence    = state->tx_user_sequence;
+        peer->classes[class_index].tx_control_sequence = state->tx_control_sequence;
+    }
+}
+
+/**
  * @brief 重置指定Peer的三业务类别协议状态。
  *
  * @note 调用方必须持有g_transport.lock，并确保当前Peer不存在并发TX。
@@ -242,6 +304,7 @@ static int _linkg_transport_peer_quiesce_locked(linkg_transport_peer_t *peer, bo
         return ret;
     }
 
+    _linkg_transport_save_peer_tx_sequences(peer);
     _linkg_transport_reset_peer_classes(peer, clear_stats);
 
     _linkg_transport_peer_tx_order_unlock_all(peer);
@@ -636,6 +699,7 @@ int linkg_transport_register_peer(uint8_t peer_node_id)
      * tx_order_lock已经在Transport初始化阶段完成初始化。
      */
     _linkg_transport_reset_peer_classes(peer, true);
+    _linkg_transport_restore_peer_tx_sequences(peer, peer_node_id);
 
     current_epoch      = atomic_load_explicit(&peer->lifecycle_epoch, memory_order_relaxed);
     peer->peer_node_id = peer_node_id;
@@ -722,6 +786,7 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
         return -ESTALE;
     }
 
+    _linkg_transport_restore_peer_tx_sequences(peer, peer_node_id);
     atomic_store_explicit(&peer->lifecycle_epoch, quiescing_epoch + 1U, memory_order_release);
 
     ret = pthread_mutex_unlock(&g_transport.lock);
