@@ -32,6 +32,7 @@
 #define LINKG_UART_SBUS_BACKUP_LEVEL     5U    // 冗余/5G目标水位
 #define LINKG_UART_RETRY_INITIAL_MS      500U  // 故障首次恢复间隔
 #define LINKG_UART_RETRY_MAX_MS          8000U // 最大恢复间隔
+#define LINKG_UART_PEER_CHECK_MS         1000U // 离线节点状态检查间隔
 #define LINKG_UART_POLL_TIMEOUT_MS       100U  // Worker最大poll周期
 #define LINKG_UART_DEBUG_PERIOD_MS       5000U // 调试统计周期
 #define LINKG_UART_DEBUG_PREVIEW_BYTES   16U   // 每次调试输出的字节数
@@ -105,6 +106,7 @@ typedef struct
     atomic_bool                      peer_valid;                                 // UDP已学习对端
     uint64_t                         retry_at_ms;                                // 下次重建期限
     uint32_t                         retry_delay_ms;                             // 退避间隔
+    bool                             waiting_for_peer;                           // 等待Discovery确认远端节点在线
     uint8_t                          tcp_tx[LINKG_UART_TCP_TX_CAPACITY];         // TCP待发字节
     uint16_t                         tcp_tx_count;                               // TCP待发长度
     uint8_t                          sbus_stream[LINKG_UART_SBUS_FRAME_SIZE];    // TCP入站SBUS组帧缓存

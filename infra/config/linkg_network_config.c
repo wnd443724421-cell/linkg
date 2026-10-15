@@ -19,12 +19,13 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_NETWORK_VIRTUAL_IPV4_PREFIX        16U // LinkG虚拟聚合网络固定前缀
-#define LINKG_NETWORK_VIRTUAL_SUBNET_IPV4_PREFIX 24U // 单节点虚拟Endpoint子网固定前缀
-#define LINKG_NETWORK_ETHERNET_IPV4_PREFIX       24U // Ethernet网络固定前缀
-#define LINKG_NETWORK_VIRTUAL_NODE_SHIFT         8U  // 虚拟地址中Node ID位移
-#define LINKG_NETWORK_ETHERNET_GATEWAY_HOST_ID   1U  // LinkG Ethernet固定主机编号
-#define LINKG_NETWORK_VIRTUAL_NODE_HOST_ID       1U  // LinkG Ethernet固定主机编号
+#define LINKG_NETWORK_VIRTUAL_IPV4_PREFIX        16U   // LinkG虚拟聚合网络固定前缀
+#define LINKG_NETWORK_VIRTUAL_SUBNET_IPV4_PREFIX 24U   // 单节点虚拟Endpoint子网固定前缀
+#define LINKG_NETWORK_ETHERNET_IPV4_PREFIX       24U   // Ethernet网络固定前缀
+#define LINKG_NETWORK_VIRTUAL_NODE_SHIFT         8U    // 虚拟地址中Node ID位移
+#define LINKG_NETWORK_VIRTUAL_HOST_MASK          0xFFU // 虚拟地址主机编号掩码
+#define LINKG_NETWORK_ETHERNET_GATEWAY_HOST_ID   1U    // LinkG Ethernet固定主机编号
+#define LINKG_NETWORK_VIRTUAL_NODE_HOST_ID       1U    // LinkG Ethernet固定主机编号
 
 /****************************** 枚举转换 ******************************/
 
@@ -1048,6 +1049,54 @@ int linkg_network_config_get_virtual_network(const linkg_network_config_t *confi
     }
 
     return _network_ipv4_config_from_network(&config->virtual_network, LINKG_NETWORK_VIRTUAL_IPV4_PREFIX, network);
+}
+
+/**
+ * @brief 从有效LinkG虚拟Endpoint地址提取节点编号。
+ */
+int linkg_network_config_get_virtual_node_id(const linkg_network_config_t *config, const struct in_addr *address, uint8_t *node_id)
+{
+    linkg_network_ipv4_config_t virtual_network;
+    uint32_t                    address_value;
+    uint32_t                    host_id;
+    uint32_t                    network_value;
+    uint32_t                    node_value;
+    uint32_t                    netmask;
+    int                         ret;
+
+    if (config == NULL || address == NULL || node_id == NULL)
+    {
+        return CONFIG_ERR_PARAM;
+    }
+
+    *node_id = 0U;
+
+    ret = linkg_network_config_get_virtual_network(config, &virtual_network);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    address_value = ntohl(address->s_addr);
+    network_value = ntohl(virtual_network.ip.s_addr);
+    netmask       = ntohl(virtual_network.netmask.s_addr);
+
+    if ((address_value & netmask) != network_value)
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    node_value = (address_value >> LINKG_NETWORK_VIRTUAL_NODE_SHIFT) & LINKG_NETWORK_VIRTUAL_HOST_MASK;
+    host_id    = address_value & LINKG_NETWORK_VIRTUAL_HOST_MASK;
+
+    ret = _network_node_id_validate((uint8_t)node_value);
+    if (ret != CONFIG_OK || host_id == 0U || host_id == LINKG_NETWORK_VIRTUAL_HOST_MASK)
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    *node_id = (uint8_t)node_value;
+    return CONFIG_OK;
 }
 
 /**

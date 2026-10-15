@@ -35,3 +35,34 @@ print(' '.join(platform_command), flush=True)
 subprocess.run(platform_command, check=True)
 subprocess.run([str(output / 'uart_platform_test')], check=True)
 
+route_command = [
+    'gcc', '-std=gnu17', '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-pthread',
+    '-ffunction-sections', '-Wl,--gc-sections', '-fsanitize=address,undefined',
+    '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
+]
+route_command += ['-I' + directory for directory in includes]
+route_command += [
+    'service/uart/uart_route.c', 'infra/config/linkg_network_config.c',
+    'infra/base/linkg_network_ops.c', 'test/uart/uart_route_peer_test.c',
+]
+route_command += ['-Wl,--wrap=' + name for name in ('socket', 'connect', 'close')]
+route_command += ['-lm', '-o', str(output / 'uart_route_peer_test')]
+print(' '.join(route_command), flush=True)
+subprocess.run(route_command, check=True)
+subprocess.run([str(output / 'uart_route_peer_test')], check=True)
+
+discovery_command = [
+    'gcc', '-std=gnu17', '-O1', '-g', '-Wall', '-Wextra', '-Werror', '-pthread',
+    '-ffunction-sections', '-Wl,--gc-sections', '-fsanitize=address,undefined',
+    '-fno-omit-frame-pointer', '-fno-pie', '-no-pie',
+]
+discovery_command += ['-I' + directory for directory in includes]
+discovery_command += ['-Icore/discovery']
+discovery_command += [
+    'core/discovery/linkg_discovery.c', 'test/uart/discovery_node_online_test.c',
+    '-o', str(output / 'discovery_node_online_test'),
+]
+print(' '.join(discovery_command), flush=True)
+subprocess.run(discovery_command, check=True)
+subprocess.run([str(output / 'discovery_node_online_test')], check=True)
+

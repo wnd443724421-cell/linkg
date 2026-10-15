@@ -6,6 +6,7 @@
 #ifndef LINKG_DISCOVERY_H
 #define LINKG_DISCOVERY_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "linkg_system_resources.h"
@@ -34,6 +35,7 @@ int linkg_discovery_deinit(void);
 
 int linkg_discovery_get_network_node_count(uint32_t *count);
 int linkg_discovery_get_topology_snapshot(linkg_discovery_topology_snapshot_t *snapshot);
+int linkg_discovery_node_online(uint8_t node_id, bool *online);
 
 /****************************** 网络状态通知 ******************************/
 

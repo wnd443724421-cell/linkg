@@ -556,78 +556,36 @@ int linkg_network_deinit(void)
 /****************************** 独立重启 ******************************/
 
 /**
- * @brief 请求WiFi完整重启。
+ * @brief 请求Wi-Fi完整重启。
+ *
+ * 仅提交异步重启请求。
+ * Maintenance由Network Manager在实际停止旧Owner前执行。
  */
 int linkg_network_restart_wifi(void)
 {
-    bool maintenance_started;
-    int  ret;
-
     if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
     {
         return -ENODEV;
     }
 
-    maintenance_started = false;
-
-    ret = linkg_switch_begin_maintenance(LINKG_LINK_ACCESS_WIFI);
-    if (ret == 0)
-    {
-        maintenance_started = true;
-    }
-    else if (ret != -EALREADY)
-    {
-        return ret;
-    }
-
-    ret = _linkg_network_wifi_restart();
-    if (ret != 0)
-    {
-        if (maintenance_started)
-        {
-            (void)linkg_switch_end_maintenance(LINKG_LINK_ACCESS_WIFI);
-        }
-
-        return ret;
-    }
-
-    return 0;
+    return _linkg_network_wifi_restart();
 }
 
+
+/**
+ * @brief 请求Cellular完整重启。
+ *
+ * 仅提交异步重启请求。
+ * Maintenance由Network Manager在实际停止旧Owner前执行。
+ */
 int linkg_network_restart_cellular(void)
 {
-    bool maintenance_started;
-    int  ret;
-
     if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
     {
         return -ENODEV;
     }
 
-    maintenance_started = false;
-
-    ret = linkg_switch_begin_maintenance(LINKG_LINK_ACCESS_CELLULAR);
-    if (ret == 0)
-    {
-        maintenance_started = true;
-    }
-    else if (ret != -EALREADY)
-    {
-        return ret;
-    }
-
-    ret = _linkg_network_cellular_restart();
-    if (ret != 0)
-    {
-        if (maintenance_started)
-        {
-            (void)linkg_switch_end_maintenance(LINKG_LINK_ACCESS_CELLULAR);
-        }
-
-        return ret;
-    }
-
-    return 0;
+    return _linkg_network_cellular_restart();
 }
 
 /****************************** 状态查询 ******************************/

@@ -17,6 +17,7 @@
 #include "network_cellular.h"
 #include "network_internal.h"
 #include "network_wifi.h"
+#include "linkg_switch.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -42,6 +43,118 @@ typedef struct
 static linkg_network_manager_context_t g_network_manager;
 
 /****************************** 内部辅助 ******************************/
+
+/**
+ * @brief 为指定Owner开始本地Maintenance。
+ *
+ * 仅Network Manager线程调用。
+ * BEGIN属于Best-effort操作，任何错误均不得阻止用户重启。
+ */
+static void _linkg_network_manager_maintenance_begin(linkg_network_worker_t *worker, linkg_link_access_t access)
+{
+    int ret;
+
+    if (worker == NULL || worker->maintenance_owned)
+    {
+        return;
+    }
+
+    ret = linkg_switch_begin_maintenance(access);
+
+    if (ret == 0 || ret == -EALREADY)
+    {
+
+        worker->maintenance_owned = true;
+        return;
+    }
+
+    LINKG_LOG_WARN("NETWORK-MAINT: BEGIN skipped, access=%d error=%d", (int)access, ret);
+}
+
+/**
+ * @brief 结束Manager持有的本地Maintenance。
+ *
+ * 仅Network Manager线程调用。
+ * END失败时保留ownership，允许后续管理周期重试。
+ */
+static void _linkg_network_manager_maintenance_end(linkg_network_worker_t *worker, linkg_link_access_t access, const char *reason)
+{
+    int ret;
+
+    if (worker == NULL || !worker->maintenance_owned)
+    {
+        return;
+    }
+
+    ret = linkg_switch_end_maintenance(access);
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("NETWORK-MAINT: END failed, access=%d reason=%s error=%d", (int)access, reason, ret);
+        return;
+    }
+
+    worker->maintenance_owned = false;
+
+    LINKG_LOG_INFO("NETWORK-MAINT: END complete, access=%d reason=%s", (int)access, reason);
+}
+
+/**
+ * @brief 检查指定Owner是否已经达到Maintenance结束条件。
+ *
+ * 仅Network Manager线程调用。
+ * 不持有g_network.lock调用Switch接口。
+ */
+static void _linkg_network_manager_maintenance_finish(linkg_network_worker_t *worker, linkg_link_access_t access, bool enabled)
+{
+    bool restart_queued;
+    bool start_succeeded;
+
+    if (worker == NULL || !worker->maintenance_owned)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&g_network.lock);
+
+    start_succeeded = worker->start_succeeded;
+
+    if (access == LINKG_LINK_ACCESS_WIFI)
+    {
+        restart_queued = g_network_manager.wifi_restart_requested;
+    }
+    else
+    {
+        restart_queued = g_network_manager.cellular_restart_requested;
+    }
+
+    pthread_mutex_unlock(&g_network.lock);
+
+    /**
+     * 有新的重启请求等待处理时，保留当前Maintenance，
+     * 避免上一次Owner启动成功后过早解除约束。
+     */
+    if (restart_queued)
+    {
+        return;
+    }
+
+    if (!enabled)
+    {
+        _linkg_network_manager_maintenance_end(worker, access, "disabled");
+        return;
+    }
+
+    if (start_succeeded)
+    {
+        _linkg_network_manager_maintenance_end(worker, access, "started");
+        return;
+    }
+
+    if (!linkg_thread_is_started(&worker->thread) && worker->start_attempted)
+    {
+        _linkg_network_manager_maintenance_end(worker, access, "start_failed");
+    }
+}
 
 /**
  * @brief 记录首个错误。
@@ -137,6 +250,26 @@ static void _linkg_network_worker_thread(linkg_thread_t *thread, void *user_data
     if (start_error != 0)
     {
         goto cleanup;
+    }
+
+   /**
+    * Owner已完成Init和Start。
+    * 仅报告事实，由Network Manager统一结束Maintenance。
+    */
+    pthread_mutex_lock(&g_network.lock);
+
+    worker->start_succeeded = true;
+
+    pthread_mutex_unlock(&g_network.lock);
+
+    /* 唤醒Manager，避免等待下一次周期轮询。 */
+    if (linkg_thread_is_started(&g_network.manager_thread))
+    {
+        ret = linkg_thread_wakeup(&g_network.manager_thread);
+        if (ret != 0)
+        {
+            LINKG_LOG_WARN("network manager wakeup after Owner Start failed, error=%d", ret);
+        }
     }
 
     /**
@@ -326,14 +459,12 @@ static int _linkg_network_worker_deinit(linkg_network_worker_t *worker)
 /****************************** Worker调度 ******************************/
 
 /**
- * @brief 处理单个Worker的首次启动、退出回收及主动重启。
+ * @brief 处理单个Owner的启动、停止及主动重启。
  *
- * 返回true表示本轮重启请求已经处理；
- * 返回false表示旧Owner尚未回收，需要保留重启请求。
- *
- * 首次启动只尝试一次，失败退出后不自动重新创建Owner。
+ * Maintenance由Network Manager统一发起和结束，BEGIN失败不阻止重启。
+ * 返回false表示旧Owner尚未回收，需要保留当前重启请求。
  */
-static bool _linkg_network_manager_process_worker(linkg_network_worker_t *worker, bool enabled, bool restart)
+static bool _linkg_network_manager_process_worker(linkg_network_worker_t *worker, bool enabled, bool restart, linkg_link_access_t access)
 {
     int ret;
 
@@ -342,18 +473,14 @@ static bool _linkg_network_manager_process_worker(linkg_network_worker_t *worker
         return true;
     }
 
-    /**
-     * 主动重启重新给予本轮一次启动机会。
-     */
+    // 主动重启前尽力协调备用Path，并重新给予Owner一次启动机会。
     if (restart)
     {
+        _linkg_network_manager_maintenance_begin(worker, access);
         worker->start_attempted = false;
     }
 
-    /**
-     * 正常运行中的Owner不处理。
-     * 禁用、主动重启或Owner退出时才停止并回收。
-     */
+    // 禁用、主动重启或Owner退出时，停止并回收旧线程。
     if (linkg_thread_is_started(&worker->thread))
     {
         if (!enabled || restart || !linkg_thread_is_running(&worker->thread))
@@ -362,47 +489,41 @@ static bool _linkg_network_manager_process_worker(linkg_network_worker_t *worker
             if (ret != 0)
             {
                 LINKG_LOG_WARN("network worker stop failed, thread=%s, error=%d", worker->thread.name, ret);
+
+                // 停止失败时结束本轮维护，保留模块状态供后续人工恢复。
+                worker->start_attempted = true;
+                _linkg_network_manager_maintenance_end(worker, access, "stop_failed");
+
+                return true;
             }
 
-            /**
-             * 旧Owner尚未join，不允许创建新Owner。
-             * 主动重启请求保留至后续管理周期。
-             */
+            // 旧Owner尚未回收，不允许创建新Owner。
             if (linkg_thread_is_started(&worker->thread))
             {
                 return false;
             }
-
-            /**
-             * 线程已回收但模块清理失败，不自动重试。
-             * 后续人工重启时再尝试清理残留资源。
-             */
-            if (ret != 0)
-            {
-                worker->start_attempted = true;
-                return true;
-            }
         }
     }
 
-    /**
-     * 禁用、已经尝试启动或仍存在Owner时，不创建线程。
-     */
+    // 禁用、已经尝试启动或仍存在Owner时，不创建新线程。
     if (!enabled || worker->start_attempted || linkg_thread_is_started(&worker->thread))
     {
         return true;
     }
 
-    /**
-     * 先记录尝试，再创建Owner。
-     * 无论线程创建、模块Init或Start是否失败，均不自动重试。
-     */
+    // 记录本轮启动尝试，并清除上一轮Owner的启动成功状态。
     worker->start_attempted = true;
+
+    pthread_mutex_lock(&g_network.lock);
+    worker->start_succeeded = false;
+    pthread_mutex_unlock(&g_network.lock);
 
     ret = _linkg_network_worker_start(worker);
     if (ret != 0)
     {
         LINKG_LOG_WARN("network worker start failed, thread=%s, error=%d", worker->thread.name, ret);
+
+        _linkg_network_manager_maintenance_end(worker, access, "thread_start_failed");
     }
 
     return true;
@@ -504,8 +625,11 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
 
         pthread_mutex_unlock(&g_network.lock);
 
-        processed = _linkg_network_manager_process_worker(&g_network.wifi_worker, wifi_enabled, wifi_restart);
-
+        processed = _linkg_network_manager_process_worker(&g_network.wifi_worker, wifi_enabled, wifi_restart, LINKG_LINK_ACCESS_WIFI);
+        if (processed)
+        {
+            _linkg_network_manager_maintenance_finish(&g_network.wifi_worker, LINKG_LINK_ACCESS_WIFI, wifi_enabled);
+        }
         /**
          * 旧Owner尚未回收时，保留未完成的Wi-Fi重启请求。
          * 不覆盖处理期间新到达的请求。
@@ -524,8 +648,11 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
             break;
         }
 
-        processed = _linkg_network_manager_process_worker(&g_network.cellular_worker, cellular_enabled, cellular_restart);
-
+        processed = _linkg_network_manager_process_worker(&g_network.cellular_worker, cellular_enabled, cellular_restart, LINKG_LINK_ACCESS_CELLULAR);
+        if (processed)
+        {
+            _linkg_network_manager_maintenance_finish(&g_network.cellular_worker, LINKG_LINK_ACCESS_CELLULAR, cellular_enabled);
+        }
         /**
          * 旧Owner尚未回收时，保留未完成的Cellular重启请求。
          */
@@ -563,6 +690,10 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
 
     ret = _linkg_network_worker_stop(&g_network.wifi_worker);
     _linkg_network_manager_record_error(&first_error, ret);
+
+    _linkg_network_manager_maintenance_end(&g_network.cellular_worker, LINKG_LINK_ACCESS_CELLULAR, "manager_shutdown");
+
+    _linkg_network_manager_maintenance_end(&g_network.wifi_worker, LINKG_LINK_ACCESS_WIFI, "manager_shutdown");
 
     pthread_mutex_lock(&g_network.lock);
 

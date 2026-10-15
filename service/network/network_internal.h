@@ -39,8 +39,10 @@ typedef struct
     bool                               initialized;        // Owner线程对象是否初始化
     bool                               module_initialized; // 模块是否初始化
     bool                               start_attempted;    // 本轮是否已尝试启动Owner
-
+    bool                               start_succeeded;    // 本轮Owner是否成功执行Start
+    bool                               maintenance_owned;  // Manager是否持有本Access的Maintenance
 } linkg_network_worker_t;
+
 /****************************** 模块上下文 ******************************/
 
 typedef struct

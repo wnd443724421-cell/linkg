@@ -126,12 +126,6 @@ int _linkg_network_cellular_start(void)
         LINKG_LOG_WARN("notify Cellular Discovery failed, error=%d", ret);
     }
 
-    ret = linkg_switch_end_maintenance(LINKG_LINK_ACCESS_CELLULAR);
-    if (ret != 0)
-    {
-        LINKG_LOG_WARN("end Cellular maintenance failed, error=%d", ret);
-    }
-
     return 0;
 }
 

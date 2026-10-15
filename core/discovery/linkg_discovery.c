@@ -775,6 +775,99 @@ int linkg_discovery_deinit(void)
 /****************************** 状态查询 ******************************/
 
 /**
+ * @brief 查询指定组网节点当前是否在线。
+ */
+int linkg_discovery_node_online(uint8_t node_id, bool *online)
+{
+    const linkg_discovery_peer_t *peer;
+    bool                          topology_ap_online;
+    uint32_t                      index;
+    int                           unlock_ret;
+    int                           ret;
+
+    if (online == NULL || node_id < LINKG_RESOURCE_NODE_ID_MIN || node_id > LINKG_RESOURCE_NODE_ID_MAX)
+    {
+        return -EINVAL;
+    }
+
+    *online = false;
+
+    if (!g_discovery.initialized)
+    {
+        return -ENODEV;
+    }
+
+    ret = pthread_mutex_lock(&g_discovery.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    ret = 0;
+
+    if (!g_discovery.running)
+    {
+        goto out;
+    }
+
+    if (g_discovery.local_report.node.node_id == node_id)
+    {
+        *online = true;
+        goto out;
+    }
+
+    topology_ap_online = false;
+
+    for (index = 0U; index < LINKG_NODE_PEER_MAX; index++)
+    {
+        peer = &g_discovery.peers[index];
+
+        if (!peer->used || !peer->online)
+        {
+            continue;
+        }
+
+        if (peer->report.node.node_id == node_id)
+        {
+            *online = true;
+            goto out;
+        }
+
+        if (peer->report.node.role == LINKG_DEVICE_ROLE_AP &&
+            peer->report.session_id == g_discovery.topology.ap_session_id)
+        {
+            topology_ap_online = true;
+        }
+    }
+
+    if (g_discovery.local_report.node.role != LINKG_DEVICE_ROLE_STA ||
+        g_discovery.topology.ap_session_id == 0U ||
+        g_discovery.topology.revision == 0U ||
+        !topology_ap_online)
+    {
+        goto out;
+    }
+
+    for (index = 0U; index < g_discovery.topology.node_count; index++)
+    {
+        if (g_discovery.topology.node_ids[index] == node_id)
+        {
+            *online = true;
+            break;
+        }
+    }
+
+out:
+    unlock_ret = pthread_mutex_unlock(&g_discovery.lock);
+    if (ret == 0 && unlock_ret != 0)
+    {
+        ret = -unlock_ret;
+    }
+
+    return ret;
+}
+
+/**
  * @brief 获取STA当前已知在线组网节点总数。
  *
  * 数量包含本机、当前在线AP以及AP同步的其他在线STA。

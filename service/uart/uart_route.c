@@ -17,6 +17,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "linkg_config.h"
+#include "linkg_discovery.h"
 #include "linkg_log.h"
 
 /****************************** Socket辅助 ******************************/
@@ -70,6 +72,46 @@ static void _uart_route_discard_tcp(linkg_uart_route_t *route)
     }
 }
 
+/**
+ * @brief 等待LinkG虚拟地址对应的远端节点上线。
+ */
+static bool _uart_route_wait_for_peer(linkg_uart_route_t *route, uint64_t now_ms)
+{
+    linkg_network_config_t network;
+    bool                   online;
+    uint8_t                node_id;
+    int                    ret;
+
+    if (route->config->endpoint != LINKG_UART_ROUTE_ENDPOINT_REMOTE)
+    {
+        route->waiting_for_peer = false;
+        return false;
+    }
+
+    ret = linkg_config_get_network(&network);
+    if (ret == 0 && linkg_network_config_get_virtual_node_id(&network, &route->config->ip, &node_id) != 0)
+    {
+        route->waiting_for_peer = false;
+        return false;
+    }
+
+    if (ret == 0)
+    {
+        online = false;
+        ret = linkg_discovery_node_online(node_id, &online);
+        if (ret == 0 && online)
+        {
+            route->waiting_for_peer = false;
+            return false;
+        }
+    }
+
+    route->waiting_for_peer = true;
+    route->retry_at_ms      = now_ms + LINKG_UART_PEER_CHECK_MS;
+    route->retry_delay_ms   = LINKG_UART_RETRY_INITIAL_MS;
+    return true;
+}
+
 /****************************** 状态维护 ******************************/
 
 /**
@@ -77,6 +119,8 @@ static void _uart_route_discard_tcp(linkg_uart_route_t *route)
  */
 static void _uart_route_schedule_retry(linkg_uart_route_t *route, int error)
 {
+    uint32_t retry_delay_ms;
+
     _uart_route_close_fd(&route->client_fd);
     _uart_route_close_fd(&route->fd);
 
@@ -90,7 +134,8 @@ static void _uart_route_schedule_retry(linkg_uart_route_t *route, int error)
         route->retry_delay_ms = LINKG_UART_RETRY_INITIAL_MS;
     }
 
-    route->retry_at_ms = uart_now_ms() + route->retry_delay_ms;
+    retry_delay_ms     = route->retry_delay_ms;
+    route->retry_at_ms = uart_now_ms() + retry_delay_ms;
     if (route->retry_delay_ms < LINKG_UART_RETRY_MAX_MS)
     {
         route->retry_delay_ms *= 2U;
@@ -102,7 +147,7 @@ static void _uart_route_schedule_retry(linkg_uart_route_t *route, int error)
 
     atomic_fetch_add(&route->parent->stats.errors, 1U);
     LINKG_LOG_WARN("UART: route uart=%u proto=%u port=%u error=%d retry_ms=%u", route->parent->config->uart_num,
-                   (unsigned)route->config->proto, route->config->port, error, route->retry_delay_ms);
+                   (unsigned)route->config->proto, route->config->port, error, retry_delay_ms);
 }
 
 /**
@@ -147,6 +192,7 @@ void uart_route_close(linkg_uart_route_t *route)
     _uart_route_discard_tcp(route);
     route->sbus_stream_count = 0U;
     route->peer_valid        = false;
+    route->waiting_for_peer  = false;
     route->state             = LINKG_UART_ROUTE_IDLE;
 }
 
@@ -240,6 +286,11 @@ void uart_route_maintenance(linkg_uart_route_t *route, uint64_t now_ms)
     int ret;
 
     if (route == NULL || route->state != LINKG_UART_ROUTE_IDLE || now_ms < route->retry_at_ms)
+    {
+        return;
+    }
+
+    if (_uart_route_wait_for_peer(route, now_ms))
     {
         return;
     }

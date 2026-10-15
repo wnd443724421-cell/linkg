@@ -1,4 +1,3 @@
-
 /**
  * @file sbus_bridge.c
  * @brief 双向UART透明转发、FIFO管理、模式切换及错误统计
@@ -21,7 +20,7 @@
 #define SBUS_BRIDGE_RETRY_MS       100U                                                                  // UART初始化失败后的重试间隔
 #define SBUS_BRIDGE_IWDG_RELOAD    249U                                                                  // 37kHz、256分频下约1.73秒
 #define SBUS_BRIDGE_IWDG_FEED_MS   100U                                                                  // 主循环看门狗刷新间隔
-#define SBUS_BRIDGE_BAD_RX_ERRORS (BSP_UART_ERROR_PARITY | BSP_UART_ERROR_FRAME | BSP_UART_ERROR_NOISE) // 不可信接收字节的错误标记
+#define SBUS_BRIDGE_BAD_RX_ERRORS  (BSP_UART_ERROR_PARITY | BSP_UART_ERROR_FRAME | BSP_UART_ERROR_NOISE) // 不可信接收字节的错误标记
 
 /****************************** 内部类型 ******************************/
 

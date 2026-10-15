@@ -85,6 +85,7 @@ int linkg_network_config_get_ethernet(const linkg_network_config_t *config, link
 int linkg_network_config_get_ethernet_network(const linkg_network_config_t *config, linkg_network_ipv4_config_t *network);
 int linkg_network_config_get_tun(const linkg_network_config_t *config, linkg_network_ipv4_config_t *tun);
 int linkg_network_config_get_virtual_network(const linkg_network_config_t *config, linkg_network_ipv4_config_t *network);
+int linkg_network_config_get_virtual_node_id(const linkg_network_config_t *config, const struct in_addr *address, uint8_t *node_id);
 int linkg_network_config_get_node_virtual_subnet(const linkg_network_config_t *config, uint8_t node_id, linkg_network_ipv4_config_t *subnet);
 int linkg_network_config_get_node_address(const linkg_network_config_t *config, uint8_t node_id, struct in_addr *address);
 

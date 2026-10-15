@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #include "linkg_config.h"
+#include "linkg_discovery.h"
 #include "linkg_file.h"
 #include "linkg_log.h"
 #include "linkg_thread.h"
@@ -211,6 +212,22 @@ int __wrap_linkg_file_write_all_atomic(const char *path, const void *data, size_
 }
 
 /****************************** 硬件隔离 ******************************/
+
+/**
+ * @brief 测试宿主不运行Discovery，组网节点按在线处理。
+ */
+int linkg_discovery_node_online(uint8_t node_id, bool *online)
+{
+    (void)node_id;
+
+    if (online == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *online = true;
+    return 0;
+}
 
 /**
  * @brief 模拟串口接收门控，测试不操作VM或板卡GPIO。
