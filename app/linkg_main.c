@@ -1029,6 +1029,19 @@ int main(void)
     }
 
 
+    // 在启动LinkG网络和业务Socket之前，阻止内核随机占用固定系统端口和NAT端口池。
+    ret = linkg_os_reserve_local_ports();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("reserve Linux local ports failed, error=%d", ret);
+        linkg_log_deinit();
+        return EXIT_FAILURE;
+    }
+
+    LINKG_LOG_INFO("OS: Linux local ports reserved, system=%u-%u, nat=%u-%u",
+                   LINKG_RESOURCE_PORT_RESERVED_START, LINKG_RESOURCE_PORT_RESERVED_END,
+                   LINKG_RESOURCE_NAT_SNAT_PORT_START, LINKG_RESOURCE_NAT_SNAT_PORT_END);
+
     ret = linkg_lifecycle_init();
     if (ret != 0)
     {
