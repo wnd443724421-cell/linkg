@@ -85,12 +85,6 @@
                                 基础网络
                             </a>
 
-                            <a href="#/network/dhcp"
-                                data-route="network/dhcp"
-                                data-page="/view/network_dhcp.html">
-                                DHCP服务
-                            </a>
-
                             <a href="#/network/traffic"
                                 data-route="network/traffic"
                                 data-page="/view/network_traffic.html">
@@ -342,12 +336,14 @@
                     await loadScript("/js/api/overview.js", latestVersion);
                     await loadScript("/js/api/switch_status.js", latestVersion);
                     await loadScript("/js/api/network_traffic.js", latestVersion);
+                    await loadScript("/js/api/network_basic.js", latestVersion);
                     await loadScript("/js/api/serial.js", latestVersion);
                     await loadScript("/js/api/wifi.js", latestVersion);
                     await loadScript("/js/api/cellular.js", latestVersion);
                     await loadScript("/js/pages/overview.js", latestVersion);
                     await loadScript("/js/pages/switch_status.js", latestVersion);
                     await loadScript("/js/pages/network_traffic.js", latestVersion);
+                    await loadScript("/js/pages/network_basic.js", latestVersion);
                     await loadScript("/js/pages/serial.js", latestVersion);
                     await loadScript("/js/pages/link_wifi.js", latestVersion);
                     await loadScript("/js/pages/link_cellular.js", latestVersion);

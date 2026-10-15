@@ -284,6 +284,11 @@
     {
         const hash = window.location.hash;
 
+        if (hash === "#/network/dhcp")
+        {
+            return "network/basic";
+        }
+
         if (!hash || hash.indexOf("#/") !== 0)
         {
             return LINKG_DEFAULT_ROUTE;

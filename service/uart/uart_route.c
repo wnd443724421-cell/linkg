@@ -20,6 +20,7 @@
 #include "linkg_config.h"
 #include "linkg_discovery.h"
 #include "linkg_log.h"
+#include "linkg_network.h"
 
 /****************************** Socket辅助 ******************************/
 
@@ -88,7 +89,7 @@ static bool _uart_route_wait_for_peer(linkg_uart_route_t *route, uint64_t now_ms
         return false;
     }
 
-    ret = linkg_config_get_network(&network);
+    ret = linkg_network_get_running_config(&network);
     if (ret == 0 && linkg_network_config_get_virtual_node_id(&network, &route->config->ip, &node_id) != 0)
     {
         route->waiting_for_peer = false;

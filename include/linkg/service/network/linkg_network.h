@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "linkg_cellular_config.h"
+#include "linkg_network_config.h"
 #include "linkg_packet_pool.h"
 #include "linkg_wifi_config.h"
 
@@ -55,6 +56,7 @@ int linkg_network_restart_cellular(void);
 /****************************** 状态查询 ******************************/
 
 linkg_network_state_t linkg_network_get_state(void);
+int                   linkg_network_get_running_config(linkg_network_config_t *out);
 
 #ifdef __cplusplus
 }

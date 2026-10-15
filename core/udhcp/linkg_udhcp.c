@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/prctl.h>
@@ -25,32 +26,36 @@
 #include <unistd.h>
 
 #include "linkg_log.h"
+#include "linkg_file.h"
 #include "linkg_system_resources.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_UDHCP_RUNTIME_ROOT                      "/var/run/linkg"                    // LinkG运行目录
-#define LINKG_UDHCP_RUNTIME_DIRECTORY                 LINKG_UDHCP_RUNTIME_ROOT "/udhcp"    // DHCP运行目录
-#define LINKG_UDHCP_CONFIG_FILE                       LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.conf" // udhcpd正式配置文件
-#define LINKG_UDHCP_CONFIG_TEMP_FILE                  LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.conf.tmp" // udhcpd临时配置文件
-#define LINKG_UDHCP_LEASE_FILE                        LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.leases" // DHCP租约文件
-#define LINKG_UDHCP_PID_FILE                          LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.pid" // udhcpd PID文件
-#define LINKG_UDHCP_EXECUTABLE_USR_SBIN               "/usr/sbin/udhcpd"                  // 独立udhcpd常用路径
-#define LINKG_UDHCP_EXECUTABLE_SBIN                   "/sbin/udhcpd"                      // 独立udhcpd备用路径
-#define LINKG_UDHCP_EXECUTABLE_USR_BIN                "/usr/bin/udhcpd"                   // udhcpd备用路径
-#define LINKG_UDHCP_EXECUTABLE_BIN                    "/bin/udhcpd"                       // udhcpd备用路径
-#define LINKG_UDHCP_BUSYBOX_USR_BIN                   "/usr/bin/busybox"                  // BusyBox常用路径
-#define LINKG_UDHCP_BUSYBOX_BIN                       "/bin/busybox"                      // BusyBox备用路径
-#define LINKG_UDHCP_POOL_FIRST_HOST_ID                2U                                  // DHCP地址池首个主机编号
-#define LINKG_UDHCP_DNS_PRIMARY                       "223.5.5.5"                         // 默认主DNS服务器
-#define LINKG_UDHCP_DNS_SECONDARY                     "223.6.6.6"                         // 默认备用DNS服务器
-#define LINKG_UDHCP_LEASE_TIME_SEC                    600U                                // DHCP默认租约时长，单位秒
-#define LINKG_UDHCP_LEASE_WRITE_INTERVAL_SEC          60U                                 // 租约文件自动写回周期，单位秒
-#define LINKG_UDHCP_PROCESS_START_PROBE_COUNT         20U                                 // udhcpd启动存活探测次数
-#define LINKG_UDHCP_PROCESS_START_PROBE_INTERVAL_US   10000U                              // udhcpd启动存活探测间隔
-#define LINKG_UDHCP_PROCESS_STOP_WAIT_COUNT           50U                                 // udhcpd正常停止等待次数
-#define LINKG_UDHCP_PROCESS_STOP_WAIT_INTERVAL_US     20000U                              // udhcpd正常停止等待间隔
-#define LINKG_UDHCP_PROCESS_LEASE_FLUSH_WAIT_US       20000U                              // SIGUSR1租约写回等待时间
+#ifndef LINKG_UDHCP_RUNTIME_ROOT
+#define LINKG_UDHCP_RUNTIME_ROOT                    "/var/run/linkg"                                 // LinkG运行目录
+#endif
+#define LINKG_UDHCP_RUNTIME_DIRECTORY               LINKG_UDHCP_RUNTIME_ROOT "/udhcp"                // DHCP运行目录
+#define LINKG_UDHCP_CONFIG_FILE                     LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.conf"     // udhcpd正式配置文件
+#define LINKG_UDHCP_CONFIG_TEMP_FILE                LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.conf.tmp" // udhcpd临时配置文件
+#define LINKG_UDHCP_LEASE_FILE                      LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.leases"   // DHCP租约文件
+#define LINKG_UDHCP_POOL_STATE_FILE                 LINKG_UDHCP_RUNTIME_DIRECTORY "/lease-pool-v1"   // 持久地址池标识
+#define LINKG_UDHCP_PID_FILE                        LINKG_UDHCP_RUNTIME_DIRECTORY "/udhcpd.pid"      // udhcpd PID文件
+#define LINKG_UDHCP_EXECUTABLE_USR_SBIN             "/usr/sbin/udhcpd"                               // 独立udhcpd常用路径
+#define LINKG_UDHCP_EXECUTABLE_SBIN                 "/sbin/udhcpd"                                   // 独立udhcpd备用路径
+#define LINKG_UDHCP_EXECUTABLE_USR_BIN              "/usr/bin/udhcpd"                                // udhcpd备用路径
+#define LINKG_UDHCP_EXECUTABLE_BIN                  "/bin/udhcpd"                                    // udhcpd备用路径
+#define LINKG_UDHCP_BUSYBOX_USR_BIN                 "/usr/bin/busybox"                               // BusyBox常用路径
+#define LINKG_UDHCP_BUSYBOX_BIN                     "/bin/busybox"                                   // BusyBox备用路径
+#define LINKG_UDHCP_POOL_FIRST_HOST_ID              2U                                               // DHCP地址池首个主机编号
+#define LINKG_UDHCP_DNS_PRIMARY                     "223.5.5.5"                                      // 默认主DNS服务器
+#define LINKG_UDHCP_DNS_SECONDARY                   "223.6.6.6"                                      // 默认备用DNS服务器
+#define LINKG_UDHCP_LEASE_TIME_SEC                  600U                                             // DHCP默认租约时长，单位秒
+#define LINKG_UDHCP_LEASE_WRITE_INTERVAL_SEC        60U                                              // 租约文件自动写回周期，单位秒
+#define LINKG_UDHCP_PROCESS_START_PROBE_COUNT       20U                                              // udhcpd启动存活探测次数
+#define LINKG_UDHCP_PROCESS_START_PROBE_INTERVAL_US 10000U                                           // udhcpd启动存活探测间隔
+#define LINKG_UDHCP_PROCESS_STOP_WAIT_COUNT         50U                                              // udhcpd正常停止等待次数
+#define LINKG_UDHCP_PROCESS_STOP_WAIT_INTERVAL_US   20000U                                           // udhcpd正常停止等待间隔
+#define LINKG_UDHCP_PROCESS_LEASE_FLUSH_WAIT_US     20000U                                           // SIGUSR1租约写回等待时间
 
 /****************************** 内部类型 ******************************/
 
@@ -360,6 +365,55 @@ static int _linkg_udhcp_lease_file_reset(void)
     }
 
     return _linkg_udhcp_lease_file_prepare();
+}
+
+/**
+ * @brief 在每次启动前核对租约所属地址池，跨deinit和设备上电安全复用。
+ *
+ * control_lock已持有且旧udhcpd已停止。状态缺失、损坏或不匹配时先清空租约，
+ * 再原子提交新标识；任何一步失败均禁止启动，不能让旧地址池继续分配。
+ */
+static int _linkg_udhcp_lease_pool_prepare(const linkg_udhcp_runtime_config_t *config)
+{
+    struct in_addr start;
+    struct in_addr end;
+    uint32_t       max_leases;
+    char           expected[160];
+    char          *previous = NULL;
+    size_t         previous_length = 0U;
+    int            length;
+    int            ret;
+
+    ret = _linkg_udhcp_build_pool(config, &start, &end, &max_leases);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    length = snprintf(expected, sizeof(expected), "linkg-lease-pool-v1 %08x %08x %08x %08x %08x\n",
+                      ntohl(config->ethernet_network.ip.s_addr), ntohl(config->ethernet_network.netmask.s_addr),
+                      ntohl(config->ethernet.ip.s_addr), ntohl(start.s_addr), ntohl(end.s_addr));
+    if (length < 0 || (size_t)length >= sizeof(expected))
+    {
+        return -EOVERFLOW;
+    }
+
+    ret = linkg_file_read_all(LINKG_UDHCP_POOL_STATE_FILE, sizeof(expected), &previous, &previous_length);
+    if (ret == 0 && previous_length == (size_t)length && memcmp(previous, expected, previous_length) == 0)
+    {
+        free(previous);
+        return _linkg_udhcp_lease_file_prepare();
+    }
+
+    free(previous);
+    LINKG_LOG_INFO("DHCP lease pool changed or untrusted; invalidating old leases");
+    ret = _linkg_udhcp_lease_file_reset();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return linkg_file_write_all_atomic(LINKG_UDHCP_POOL_STATE_FILE, expected, (size_t)length, 0600);
 }
 
 /**
@@ -883,7 +937,7 @@ static int _linkg_udhcp_service_start_locked(void)
         return ret;
     }
 
-    ret = _linkg_udhcp_lease_file_prepare();
+    ret = _linkg_udhcp_lease_pool_prepare(&g_udhcp.config);
     if (ret != 0)
     {
         LINKG_LOG_ERROR("prepare DHCP lease file failed, path=%s, error=%d",
@@ -1167,7 +1221,8 @@ int linkg_udhcp_reload(const linkg_network_config_t *network_config)
         return -ENODEV;
     }
 
-    if (_linkg_udhcp_runtime_config_equal(&g_udhcp.config, &new_config))
+    if (_linkg_udhcp_runtime_config_equal(&g_udhcp.config, &new_config) &&
+        (!g_udhcp.started || !new_config.enabled || _linkg_udhcp_process_alive_locked()))
     {
         (void)pthread_mutex_unlock(&g_udhcp.control_lock);
         return 0;

@@ -18,6 +18,7 @@
 
 #include "linkg_config.h"
 #include "linkg_network_config.h"
+#include "linkg_network.h"
 #include "linkg_uart_manager.h"
 #include "linkg_json.h"
 
@@ -218,7 +219,7 @@ static int _uart_web_network_addresses(cJSON *data)
     uint8_t                example_node_id;
     int                    ret;
 
-    ret = linkg_config_get_network(&network);
+    ret = linkg_network_get_running_config(&network);
     if (ret != 0)
     {
         return ret;

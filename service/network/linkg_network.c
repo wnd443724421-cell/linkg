@@ -80,6 +80,26 @@ static void _linkg_network_set_state(linkg_network_state_t state)
 /****************************** 本机节点地址 ******************************/
 
 /**
+ * @brief 获取已初始化网络服务的地址快照，避免使用保存后尚未生效的地址。
+ */
+int linkg_network_get_running_config(linkg_network_config_t *out)
+{
+    if (out == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
+    {
+        return -ENODEV;
+    }
+
+    // 地址快照只在init中赋值，所有使用者停止后才由deinit释放。
+    *out = g_network.network_config;
+    return 0;
+}
+
+/**
  * @brief 配置本机节点IPv4地址。
  */
 static int _linkg_network_node_address_start(void)

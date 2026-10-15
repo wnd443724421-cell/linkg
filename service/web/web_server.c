@@ -543,6 +543,9 @@ static void _linkg_web_server_thread(linkg_thread_t *thread, void *user_data)
 
         close(client_fd);
 
+        // 先完成应答并关闭TCP连接，再让主线程进入会停止Web自身的清理阶段。
+        _linkg_web_network_response_complete(ret == 0);
+
         if (ret != 0)
         {
             LINKG_WEB_WARN("client request failed, error=%d", ret);

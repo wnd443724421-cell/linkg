@@ -296,6 +296,75 @@
     opacity: 0.52;
 }
 
+/****************************** DHCP与接入帮助 ******************************/
+.network-basic-status {
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: var(--linkg-color-primary-soft);
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+.network-basic-status.is-error { background: #fff3ed; color: #a63e21; }
+.network-basic-status a { color: var(--linkg-color-primary); }
+.network-basic-dhcp {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+    padding: 15px 22px;
+    border-top: 1px solid var(--linkg-color-border-light);
+}
+.network-basic-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.network-basic-toggle-row .network-basic-field-subtitle { margin-top: 4px; }
+.network-basic-toggle-row input {
+    appearance: none;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 21px;
+    border-radius: 12px;
+    background: #cbd2dc;
+    position: relative;
+    cursor: pointer;
+}
+.network-basic-toggle-row input::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+}
+.network-basic-toggle-row input:checked { background: var(--linkg-color-primary); }
+.network-basic-toggle-row input:checked::after { transform: translateX(15px); }
+.network-basic-toggle-row input:disabled { opacity: 0.45; cursor: not-allowed; }
+.network-basic-toggle-row input:focus-visible { outline: 2px solid var(--linkg-color-primary); outline-offset: 3px; }
+.network-basic-help summary { padding: 15px 22px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.network-basic-help-content { padding: 0 22px 18px; color: var(--linkg-color-text-secondary); font-size: 12px; line-height: 1.8; }
+.network-basic-help-content p { margin: 0 0 12px; }
+.network-basic-warning { color: #a45d16; }
+.network-basic-help-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-bottom: 12px; }
+.network-basic-help-fields label { display: flex; flex-direction: column; gap: 4px; }
+.network-basic-help-fields input {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 9px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: 5px;
+    color: var(--linkg-color-text);
+    background: var(--linkg-color-surface);
+}
+#networkBasicCommands details { border-top: 1px solid var(--linkg-color-border-light); padding-bottom: 10px; }
+#networkBasicCommands summary { padding: 10px 0; font-size: 13px; }
+#networkBasicCommands pre { overflow-x: auto; padding: 12px; border-radius: 5px; background: #f4f6fa; line-height: 1.8; margin: 0 0 8px; }
+.network-basic-copy-buffer { position: fixed; top: -10000px; left: -10000px; }
+.network-basic-page input:disabled { cursor: not-allowed; }
+.network-basic-page [hidden] { display: none; }
+
 @media (max-width: 1000px) {
     .network-basic-summary-item { padding: 17px 16px; }
     .network-basic-node-row { padding: 17px 16px; }
@@ -304,6 +373,7 @@
     .network-basic-form-footer { padding: 14px 16px; }
 }
 @media (max-width: 770px) {
+    .network-basic-dhcp, .network-basic-help-fields { grid-template-columns: 1fr; }
     .network-basic-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .network-basic-summary-value { font-size: 18px; }
     .network-basic-node-description { flex-basis: 175px; }

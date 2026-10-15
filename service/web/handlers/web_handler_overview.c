@@ -20,6 +20,7 @@
 #include "linkg_json.h"
 #include "linkg_link_manager.h"
 #include "linkg_node.h"
+#include "linkg_network.h"
 #include "linkg_path.h"
 #include "linkg_switch.h"
 #include "linkg_time.h"
@@ -720,7 +721,7 @@ static int _linkg_web_overview_get_nodes_info(linkg_web_overview_nodes_info_t *i
         return -ENODEV;
     }
 
-    ret = linkg_config_get_network(&network_config);
+    ret = linkg_network_get_running_config(&network_config);
     if (ret != 0)
     {
         return ret;

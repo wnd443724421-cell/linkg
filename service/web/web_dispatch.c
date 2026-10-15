@@ -15,6 +15,7 @@
 
 #include "linkg_json.h"
 #include "linkg_config.h"
+#include "linkg_lifecycle.h"
 
 /****************************** 内部类型 ******************************/
 
@@ -42,6 +43,9 @@ static const linkg_web_command_entry_t g_web_commands[] =
     {LINKG_WEB_CMD_UART_CONFIG_GET,     _linkg_web_handler_uart_config_get},
     {LINKG_WEB_CMD_UART_CONFIG_SET,     _linkg_web_handler_uart_config_set},
     {LINKG_WEB_CMD_UART_STATUS_GET,     _linkg_web_handler_uart_status_get},
+    {LINKG_WEB_CMD_NETWORK_BASIC_GET,   _linkg_web_handler_network_basic_get},
+    {LINKG_WEB_CMD_NETWORK_BASIC_SET,   _linkg_web_handler_network_basic_set},
+    {LINKG_WEB_CMD_NETWORK_BASIC_RESTART, _linkg_web_handler_network_basic_restart},
     {LINKG_WEB_CMD_INVALID,             NULL}
 };
 
@@ -165,9 +169,25 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
         return 0;
     }
 
+    // 退出已经开始时拒绝所有写入，包括由UART模块自行持有事务的异步写请求。
+    if (linkg_lifecycle_is_exit_requested() &&
+        (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
+         cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET || cmd == LINKG_WEB_CMD_UART_CONFIG_SET ||
+         cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART))
+    {
+        cJSON_Delete(root);
+        ret = _linkg_web_response_error(cmd, "服务正在停止或重启，请稍后重新连接", response);
+        if (ret == 0)
+        {
+            *response_length = strlen(*response);
+        }
+        return ret;
+    }
+
     // UART后台事务与其他Web写请求互斥；状态读取无需等待重载完成。
     if (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
-        cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET)
+        cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET ||
+        cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART)
     {
         ret = linkg_config_transaction_begin();
         if (ret == 0)
