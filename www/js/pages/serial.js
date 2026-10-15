@@ -12,7 +12,7 @@
     };
     const SERIAL_ROUTE_TEXT = {
         retrying: "等待重试", connecting: "正在连接", listening: "正在监听",
-        connected: "已连接", waiting_peer: "UDP 等待对端", udp_ready: "UDP 已就绪（未确认远端可达）"
+        connected: "已连接", waiting_peer: "UDP 等待对端", udp_ready: "UDP 已就绪"
     };
 
     let root = null;
