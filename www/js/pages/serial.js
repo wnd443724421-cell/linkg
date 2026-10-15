@@ -2,6 +2,7 @@
     "use strict";
 
     const SERIAL_REFRESH_MS = 1000;
+    const SERIAL_NORMAL_DEFAULT = Object.freeze({baudrate: 115200, data_bits: 8, stop_bits: 1, parity: "n"});
     const SERIAL_STATE_TEXT = {
         uninitialized: "未初始化", stopped: "已停止", running: "运行中",
         reloading: "正在重载", failed: "服务故障", not_ready: "设备未就绪"
@@ -93,13 +94,17 @@
     {
         const endpoint = row.querySelector('[data-route-field="endpoint"]').value;
         const proto = row.querySelector('[data-route-field="proto"]').value;
+        const address = row.querySelector('[data-route-field="ip"]');
+        const localIp = config == null ? "" : config.local_virtual_ip;
+        const remoteExample = config == null ? "172.28.1.1" : config.remote_virtual_ip_example;
 
-        role(row, "ipLabel").textContent = endpoint === "local" ? "本地绑定 IPv4" : "远端 IPv4";
+        address.placeholder = endpoint === "local" ? (localIp || "本机组网 IPv4") : remoteExample;
+        role(row, "ipLabel").textContent = endpoint === "local" ? "本机组网 IPv4（绑定）" : "远端组网 IPv4";
         role(row, "routeHint").textContent = endpoint === "local" ?
-            (proto === "tcp" ? "监听本机；0.0.0.0 表示全部本机地址。" :
-             "绑定本机；0.0.0.0 表示全部地址。回传目标由最近收到的数据报确定。") :
-            (proto === "tcp" ? "主动连接远端 TCP 服务，不支持广播或组播。" :
-             "发送到指定 UDP 对端，不支持广播或组播。UDP 就绪不代表远端在线。");
+            ("默认使用本机 LinkG 组网地址 " + localIp + "；0.0.0.0 表示监听全部本机 IPv4 地址。" +
+             (proto === "udp" ? " UDP 回传目标由最近收到的数据报确定。" : "")) :
+            ("请填写目标节点的 LinkG 虚拟组网 IPv4（如 " + remoteExample + "，仅为示例），" +
+             (proto === "tcp" ? "主动连接 TCP 服务。" : "发送到 UDP 对端；就绪不代表对端在线。"));
     }
 
     function createRoute(rule)
@@ -120,6 +125,12 @@
                 }
             }
         });
+        const endpoint = row.querySelector('[data-route-field="endpoint"]').value;
+        const address = row.querySelector('[data-route-field="ip"]').value;
+
+        row.dataset.activeEndpoint = endpoint;
+        row.dataset.localIp = endpoint === "local" ? address : "";
+        row.dataset.remoteIp = endpoint === "remote" ? address : "";
         routeHint(row);
 
         return row;
@@ -153,6 +164,7 @@
                 "参数已保存且至少有一条路由时，UART 服务才会打开设备。";
             rows(card).forEach(function (row, index) {
                 role(row, "index").textContent = index + 1;
+                routeHint(row);
                 row.querySelector('[data-action="remove"]').setAttribute("aria-label", "删除 UART " + card.dataset.uart + " 规则 " + (index + 1));
             });
         });
@@ -162,7 +174,8 @@
     {
         if (data == null || !Array.isArray(data.uart) || !Array.isArray(data.ports) ||
             !Array.isArray(data.baudrates) || data.baudrates.length === 0 || data.sbus == null ||
-            !Number.isInteger(data.max_routes_per_port) || data.max_ports !== data.ports.length)
+            !Number.isInteger(data.max_routes_per_port) || data.max_ports !== data.ports.length ||
+            !ipv4Valid(data.local_virtual_ip, "remote") || !ipv4Valid(data.remote_virtual_ip_example, "remote"))
         {
             throw new Error("串口配置响应格式无效");
         }
@@ -172,7 +185,7 @@
         data.ports.forEach(function (capability) {
             const card = field("serialPortTemplate").content.firstElementChild.cloneNode(true);
             const stored = data.uart.find(function (item) { return item.uart_num === capability.uart_num; });
-            const physical = stored == null ? {type: "normal", baudrate: 115200, data_bits: 8, stop_bits: 1, parity: "n"} : stored.port_config;
+            const physical = stored == null ? {type: "normal", ...SERIAL_NORMAL_DEFAULT} : stored.port_config;
 
             card.dataset.uart = capability.uart_num;
             role(card, "title").textContent = "UART " + capability.uart_num;
@@ -332,14 +345,48 @@
         const card = event.target.closest(".serial-port");
         const row = event.target.closest(".serial-route");
 
-        if (event.target.dataset.field === "type" && event.target.value === "sbus")
+        if (event.target.dataset.field === "type")
         {
+            const physical = event.target.value === "sbus" ? config.sbus : SERIAL_NORMAL_DEFAULT;
+
             ["baudrate", "data_bits", "stop_bits", "parity"].forEach(function (key) {
-                control(card, key).value = String(config.sbus[key]);
+                control(card, key).value = String(physical[key]);
             });
         }
         if (row != null)
         {
+            const changed = event.target.dataset.routeField;
+            const address = row.querySelector('[data-route-field="ip"]');
+
+            if (changed === "endpoint" && event.type === "change")
+            {
+                const previous = row.dataset.activeEndpoint;
+                const endpoint = event.target.value;
+
+                if (previous === "local")
+                {
+                    row.dataset.localIp = address.value.trim();
+                }
+                else if (previous === "remote")
+                {
+                    row.dataset.remoteIp = address.value.trim();
+                }
+
+                address.value = endpoint === "local" ?
+                    (row.dataset.localIp || config.local_virtual_ip) : row.dataset.remoteIp;
+                row.dataset.activeEndpoint = endpoint;
+            }
+            else if (changed === "ip")
+            {
+                if (row.dataset.activeEndpoint === "local")
+                {
+                    row.dataset.localIp = address.value;
+                }
+                else
+                {
+                    row.dataset.remoteIp = address.value;
+                }
+            }
             routeHint(row);
         }
         dirty = true;
