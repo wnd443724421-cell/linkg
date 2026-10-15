@@ -23,6 +23,7 @@
 #include "linkg_nat.h"
 #include "linkg_network.h"
 #include "linkg_node.h"
+#include "linkg_os.h"
 #include "linkg_packet_pool.h"
 #include "linkg_path_probe.h"
 #include "linkg_route.h"
@@ -32,9 +33,9 @@
 #include "linkg_time.h"
 #include "linkg_transport.h"
 #include "linkg_tun.h"
+#include "linkg_uart_manager.h"
 #include "linkg_udhcp.h"
 #include "linkg_web.h"
-#include "linkg_os.h"
 
 /****************************** 应用资源 ******************************/
 
@@ -66,6 +67,7 @@ typedef struct
     bool                discovery_initialized;       // Discovery模块是否已经初始化
     bool                probe_initialized;           // Path Probe模块是否已经初始化
     bool                udhcp_initialized;           // UDHCP模块是否已经初始化
+    bool                uart_initialized;            // UART Manager是否已经初始化
     bool                web_initialized;             // Web模块是否已经初始化
     bool                gpio_started;                // GPIO Manager是否进入过start生命周期
     bool                network_started;             // Network Service是否进入过start生命周期
@@ -76,6 +78,7 @@ typedef struct
     bool                discovery_started;           // Discovery模块是否进入过start生命周期
     bool                probe_started;               // Path Probe模块是否进入过start生命周期
     bool                udhcp_started;               // UDHCP模块是否进入过start生命周期
+    bool                uart_started;                // UART Manager是否进入过start生命周期
     bool                web_started;                 // Web模块是否进入过start生命周期
 } linkg_app_context_t;
 
@@ -105,6 +108,7 @@ static bool _linkg_app_has_initialized_modules(void)
            g_app.discovery_initialized ||
            g_app.probe_initialized ||
            g_app.udhcp_initialized ||
+           g_app.uart_initialized ||
            g_app.web_initialized;
 }
 
@@ -122,6 +126,7 @@ static bool _linkg_app_has_started_modules(void)
            g_app.discovery_started ||
            g_app.probe_started ||
            g_app.udhcp_started ||
+           g_app.uart_started ||
            g_app.web_started;
 }
 
@@ -338,6 +343,16 @@ static int _linkg_app_init(void)
 
     g_app.udhcp_initialized = true;
 
+    // UART依赖已经初始化的GPIO Manager，在Web服务启动前建立运行资源。
+    ret = linkg_uart_manager_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize UART Manager failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.uart_initialized = true;
+
     ret = linkg_web_init();
     if (ret != 0)
     {
@@ -358,7 +373,7 @@ static int _linkg_app_init(void)
  * @brief 启动全部具有运行态的应用模块。
  *
  * 启动顺序严格按照运行依赖建立：
- * Network -> TUN -> Route -> NAT -> Switch -> Discovery -> Probe -> UDHCP -> GPIO -> Web。
+ * Network -> TUN -> Route -> NAT -> Switch -> Discovery -> Probe -> UDHCP -> GPIO -> UART -> Web。
  */
 static int _linkg_app_start(void)
 {
@@ -379,6 +394,7 @@ static int _linkg_app_start(void)
         !g_app.discovery_initialized ||
         !g_app.probe_initialized ||
         !g_app.udhcp_initialized ||
+        !g_app.uart_initialized ||
         !g_app.web_initialized)
     {
         return -ENODEV;
@@ -438,7 +454,7 @@ static int _linkg_app_start(void)
         return ret;
     }
 
-        /**
+    /**
      * Switch在Discovery之前启动。
      *
      * 此时Transport、Scheduler和业务Link均已经完成初始化，
@@ -507,6 +523,16 @@ static int _linkg_app_start(void)
         return ret;
     }
 
+    // UART依赖GPIO控制SBUS通路和接收门控，必须在GPIO进入运行态后启动。
+    g_app.uart_started = true;
+
+    ret = linkg_uart_manager_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start UART Manager failed, error=%d", ret);
+        return ret;
+    }
+
     /**
      * Web最后启动。
      * 此时所有业务模块已经进入运行态，Web请求可以安全查询和修改运行状态。
@@ -550,6 +576,19 @@ static int _linkg_app_stop(void)
         }
 
         g_app.web_started = false;
+    }
+
+    // UART必须在GPIO之前停止，保证串口线程退出时仍能安全控制SBUS和接收门控。
+    if (g_app.uart_started)
+    {
+        ret = linkg_uart_manager_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop UART Manager failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.uart_started = false;
     }
 
     // GPIO Worker先于Network和Discovery停止，防止继续读取其状态。
@@ -721,6 +760,18 @@ static int _linkg_app_deinit(void)
         }
 
         g_app.web_initialized = false;
+    }
+
+    if (g_app.uart_initialized)
+    {
+        ret = linkg_uart_manager_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize UART Manager failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.uart_initialized = false;
     }
 
     if (g_app.udhcp_initialized)
@@ -1027,7 +1078,6 @@ int main(void)
         linkg_log_deinit();
         return EXIT_FAILURE;
     }
-
 
     ret = linkg_lifecycle_init();
     if (ret != 0)
