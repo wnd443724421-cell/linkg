@@ -1159,8 +1159,8 @@ OAL_STATIC void wal_radio_status_fill_peer(wal_radio_peer_status_stru *peer, con
 
     peer->rssi_dbm           = sta_info->signal;
     peer->inactive_ms        = sta_info->inactive_time;
-    peer->tx_rate_kbps       = (uint32_t)sta_info->txrate.legacy * 100U;
-    peer->rx_rate_kbps       = (uint32_t)sta_info->rxrate.legacy * 100U;
+    peer->tx_rate_kbps       = cfg80211_calculate_bitrate(&sta_info->txrate) * 100U;
+    peer->rx_rate_kbps       = cfg80211_calculate_bitrate(&sta_info->rxrate) * 100U;
     peer->driver_tx_bytes    = sta_info->tx_bytes;
     peer->driver_rx_bytes    = sta_info->rx_bytes;
     peer->driver_tx_packets  = sta_info->tx_packets;

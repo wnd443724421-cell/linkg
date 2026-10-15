@@ -10,6 +10,7 @@
 
 #include "linkg_uart.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -74,7 +75,10 @@ static speed_t _linux_uart_get_baud_flag(int baudrate)
 }
 
 /**
- * @brief 根据驱动真实baud_base计算整数分频和误差，不猜测T113时钟频率。
+ * @brief 根据驱动上报的baud_base计算整数分频和误差。
+ *
+ * @note 只用于支持传统serial_struct自定义分频的物理串口，
+ *       不用于判定USB WWAN标准波特率是否生效。
  */
 int linux_uart_baud_info(int fd, uint32_t baudrate, linux_uart_baud_info_t *out)
 {
@@ -118,36 +122,30 @@ int linux_uart_baud_info(int fd, uint32_t baudrate, linux_uart_baud_info_t *out)
 }
 
 /**
- * @brief 设置或清除自定义分频并回读确认，避免沿用上次非标准波特率。
+ * @brief 标准波特率清理历史自定义分频，非标准波特率设置并回读分频。
+ *
+ * @note USB WWAN等非物理UART使用termios，不应因不支持传统分频ioctl而失败。
  */
-static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom, bool *hardware_termios_configurable)
+static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom)
 {
     struct serial_struct   serial;
     struct serial_struct   verify;
     linux_uart_baud_info_t info;
     int                    ret;
 
-    if (hardware_termios_configurable == NULL)
-    {
-        return -EINVAL;
-    }
-
-    *hardware_termios_configurable = true;
-
     memset(&serial, 0, sizeof(serial));
     if (ioctl(fd, TIOCGSERIAL, &serial) < 0)
     {
         ret = -errno;
 
-        // PTY和部分USB UART只支持标准termios，不提供serial_struct。
-        return !custom && (ret == -ENOTTY || ret == -EINVAL) ? 0 : ret;
+        // 标准波特率由termios负责，读取传统serial_struct失败不应阻止打开。
+        return custom ? ret : 0;
     }
-
-    *hardware_termios_configurable = serial.type != PORT_UNKNOWN;
 
     if (!custom)
     {
-        if ((serial.flags & ASYNC_SPD_MASK) == 0)
+        // USB WWAN等虚拟串口没有需要清除的物理分频配置。
+        if (serial.type == PORT_UNKNOWN || (serial.flags & ASYNC_SPD_MASK) == 0)
         {
             return 0;
         }
@@ -167,7 +165,12 @@ static int _linux_uart_configure_divisor(int fd, uint32_t baudrate, bool custom,
         serial.custom_divisor = (int)info.divisor;
     }
 
-    if (ioctl(fd, TIOCSSERIAL, &serial) < 0 || ioctl(fd, TIOCGSERIAL, &verify) < 0)
+    if (ioctl(fd, TIOCSSERIAL, &serial) < 0)
+    {
+        return -errno;
+    }
+
+    if (ioctl(fd, TIOCGSERIAL, &verify) < 0)
     {
         return -errno;
     }
@@ -191,23 +194,21 @@ int linux_uart_open(const char *dev, const uart_config_t *config)
     struct termios tty;
     struct termios verify;
     speed_t        baud_flag;
-    bool           hardware_termios_configurable;
+    char           parity;
+    bool           custom_baud;
     int            fd;
     int            ret;
 
-    if (dev == NULL)
+    if (dev == NULL || config == NULL)
     {
         return -EINVAL;
     }
 
-    if (config == NULL)
-    {
-        return -EINVAL;
-    }
+    parity = (char)tolower((unsigned char)config->parity);
 
     if (config->baudrate <= 0 || config->data_bits < 5 || config->data_bits > 8 ||
         (config->stop_bits != 1 && config->stop_bits != 2) ||
-        (config->parity != 'n' && config->parity != 'e' && config->parity != 'o'))
+        (parity != 'n' && parity != 'e' && parity != 'o'))
     {
         return -EINVAL;
     }
@@ -259,12 +260,12 @@ int linux_uart_open(const char *dev, const uart_config_t *config)
             break;
     }
 
-    if (config->parity == 'e')
+    if (parity == 'e')
     {
         tty.c_cflag |= PARENB;
         tty.c_cflag &= ~PARODD;
     }
-    else if (config->parity == 'o')
+    else if (parity == 'o')
     {
         tty.c_cflag |= PARENB;
         tty.c_cflag |= PARODD;
@@ -297,35 +298,46 @@ int linux_uart_open(const char *dev, const uart_config_t *config)
     tty.c_cc[VMIN]  = 0;
     tty.c_cc[VTIME] = 0;
 
-    baud_flag = _linux_uart_get_baud_flag(config->baudrate);
+    baud_flag   = _linux_uart_get_baud_flag(config->baudrate);
+    custom_baud = baud_flag == B0;
 
-    ret = _linux_uart_configure_divisor(fd, (uint32_t)config->baudrate, baud_flag == B0, &hardware_termios_configurable);
+    ret = _linux_uart_configure_divisor(fd, (uint32_t)config->baudrate, custom_baud);
     if (ret != 0)
     {
         close(fd);
         return ret;
     }
 
-    if (baud_flag == B0)
+    if (custom_baud)
     {
         baud_flag = B38400;
     }
 
     if (cfsetispeed(&tty, baud_flag) < 0 || cfsetospeed(&tty, baud_flag) < 0 ||
-        tcsetattr(fd, TCSANOW, &tty) < 0 || tcgetattr(fd, &verify) < 0)
+        tcsetattr(fd, TCSANOW, &tty) < 0)
     {
         ret = -errno;
         close(fd);
         return ret;
     }
 
-    if (hardware_termios_configurable &&
-        ((verify.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) !=
-         (tty.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) ||
-         cfgetospeed(&verify) != baud_flag || cfgetispeed(&verify) != baud_flag))
+    // 只有自定义分频模式需要严格验证termios回读结果。
+    if (custom_baud)
     {
-        close(fd);
-        return -EIO;
+        if (tcgetattr(fd, &verify) < 0)
+        {
+            ret = -errno;
+            close(fd);
+            return ret;
+        }
+
+        if ((verify.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) !=
+            (tty.c_cflag & (CSIZE | PARENB | PARODD | CSTOPB | CRTSCTS)) ||
+            cfgetospeed(&verify) != baud_flag || cfgetispeed(&verify) != baud_flag)
+        {
+            close(fd);
+            return -EIO;
+        }
     }
 
     tcflush(fd, TCIOFLUSH);
