@@ -8,11 +8,14 @@
 
 #include "web_internal.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "linkg_config.h"
+#include "linkg_network_config.h"
 #include "linkg_uart_manager.h"
 #include "linkg_json.h"
 
@@ -134,6 +137,58 @@ static int _uart_web_capabilities(cJSON *data)
     return 0;
 }
 
+/**
+ * @brief 返回本机实际组网IPv4与其他节点的示例地址。
+ *
+ * 本机组网地址按照当前虚拟网络基址与Node ID生成，不使用固定IP。
+ * 示例对端只用于输入框占位提示，不代表该节点在线。
+ */
+static int _uart_web_network_addresses(cJSON *data)
+{
+    linkg_network_config_t network;
+    struct in_addr         local_address;
+    struct in_addr         example_address;
+    char                   local_ip[INET_ADDRSTRLEN];
+    char                   example_ip[INET_ADDRSTRLEN];
+    uint8_t                example_node_id;
+    int                    ret;
+
+    ret = linkg_config_get_network(&network);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_network_config_get_node_address(&network, network.node_id, &local_address);
+    if (ret != 0)
+    {
+        return -EINVAL;
+    }
+
+    example_node_id = network.node_id == LINKG_RESOURCE_NODE_ID_MIN ?
+                      LINKG_RESOURCE_NODE_ID_MIN + 1U : LINKG_RESOURCE_NODE_ID_MIN;
+
+    ret = linkg_network_config_get_node_address(&network, example_node_id, &example_address);
+    if (ret != 0)
+    {
+        return -EINVAL;
+    }
+
+    if (inet_ntop(AF_INET, &local_address, local_ip, sizeof(local_ip)) == NULL ||
+        inet_ntop(AF_INET, &example_address, example_ip, sizeof(example_ip)) == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (cJSON_AddStringToObject(data, "local_virtual_ip", local_ip) == NULL ||
+        cJSON_AddStringToObject(data, "remote_virtual_ip_example", example_ip) == NULL)
+    {
+        return -ENOMEM;
+    }
+
+    return 0;
+}
+
 /****************************** 配置请求 ******************************/
 
 /**
@@ -162,6 +217,10 @@ int _linkg_web_handler_uart_config_get(const cJSON *param, char **response)
     if (ret == 0)
     {
         ret = _uart_web_capabilities(data);
+    }
+    if (ret == 0)
+    {
+        ret = _uart_web_network_addresses(data);
     }
     if (ret != 0)
     {
