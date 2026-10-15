@@ -1028,7 +1028,6 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-
     // 在启动LinkG网络和业务Socket之前，阻止内核随机占用固定系统端口和NAT端口池。
     ret = linkg_os_reserve_local_ports();
     if (ret != 0)
