@@ -52,6 +52,7 @@
     box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
 }
 .serial-note { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--linkg-color-text-secondary); overflow-wrap: anywhere; }
+.serial-rate { color: var(--linkg-color-text); font-weight: 500; font-variant-numeric: tabular-nums; }
 .serial-route-header { margin-top: 20px; }
 .serial-route-header h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .serial-route-header h3 span { margin-left: 6px; font-weight: 400; color: var(--linkg-color-text-muted); }
