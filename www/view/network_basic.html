@@ -2,23 +2,22 @@
     <div class="page-header network-basic-page-header">
         <div>
             <h1 class="page-title">基础网络</h1>
-            <p class="page-description">查看当前设备网络地址，配置组网节点与本地网络</p>
+            <p class="page-description">查看设备网络地址，管理节点编号与网络配置</p>
         </div>
-        <span class="network-basic-preview-tag">页面样式预览</span>
+        <span class="network-basic-preview-tag">静态预览</span>
     </div>
 
-    <!-- 当前地址摘要：静态示例数据，后续通过Web状态接口填充。 -->
+    <!-- 当前运行信息：示例地址，后续由Web运行状态接口填充。 -->
     <section class="page-card network-basic-section" aria-labelledby="networkBasicOverviewTitle">
         <div class="page-card-header">
             <h2 id="networkBasicOverviewTitle" class="page-card-title">当前网络信息</h2>
-            <span class="network-basic-card-note">运行地址 · 示例数据</span>
+            <span class="network-basic-card-note">示例数据</span>
         </div>
-
         <div class="network-basic-summary">
             <div class="network-basic-summary-item">
                 <span class="network-basic-summary-label">本机节点 ID</span>
                 <strong id="networkBasicCurrentNode" class="network-basic-summary-value is-node">1</strong>
-                <span class="network-basic-summary-hint">组网节点标识</span>
+                <span class="network-basic-summary-hint">组网节点编号</span>
             </div>
             <div class="network-basic-summary-item">
                 <span class="network-basic-summary-label">本机虚拟 IP</span>
@@ -33,32 +32,35 @@
         </div>
     </section>
 
-    <!-- 仅实现页面结构和样式，不提交配置或调用后端接口。 -->
+    <!-- 仅实现静态HTML/CSS，不调用后端或提交配置。 -->
     <section class="page-card network-basic-section" aria-labelledby="networkBasicConfigTitle">
         <div class="page-card-header">
-            <h2 id="networkBasicConfigTitle" class="page-card-title">修改网络配置</h2>
-            <span class="network-basic-card-note">修改后需重启 LinkG 服务生效</span>
+            <h2 id="networkBasicConfigTitle" class="page-card-title">网络配置</h2>
+            <span class="network-basic-card-note">配置修改后需重启服务</span>
         </div>
 
         <div id="networkBasicConfig" class="network-basic-config">
-            <div class="network-basic-config-row">
-                <div class="network-basic-config-description">
-                    <label for="networkBasicNodeId" class="network-basic-config-label">本机节点 ID</label>
-                    <p>范围 1–254，同一组网内不可重复</p>
+            <div class="network-basic-node-row">
+                <div class="network-basic-node-description">
+                    <label for="networkBasicNodeId" class="network-basic-field-title">本机节点 ID</label>
+                    <span class="network-basic-field-subtitle">设备在 LinkG 组网中的唯一编号</span>
                 </div>
-                <div class="network-basic-config-control">
-                    <input id="networkBasicNodeId" class="network-basic-node-input"
-                        type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                        autocomplete="off" spellcheck="false" value="1">
-                </div>
+                <input id="networkBasicNodeId" class="network-basic-node-input"
+                    type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
+                    autocomplete="off" spellcheck="false" value="1">
+                <span class="network-basic-node-range">范围 1–254，组网内不可重复</span>
             </div>
 
-            <div class="network-basic-config-row">
-                <div class="network-basic-config-description">
-                    <div id="networkBasicVirtualLabel" class="network-basic-config-label">虚拟网络</div>
-                    <p>所有 LinkG 组网节点必须使用相同网段</p>
-                </div>
-                <div class="network-basic-config-control">
+            <div class="network-basic-networks">
+                <div class="network-basic-network-card">
+                    <div class="network-basic-network-heading">
+                        <div>
+                            <h3 id="networkBasicVirtualLabel" class="network-basic-field-title">虚拟网络</h3>
+                            <p class="network-basic-field-subtitle">所有组网节点必须保持一致</p>
+                        </div>
+                        <span class="network-basic-network-tag">组网共用</span>
+                    </div>
+
                     <div class="network-basic-address" role="group" aria-labelledby="networkBasicVirtualLabel">
                         <input id="networkBasicVirtualOctet1" class="network-basic-octet"
                             type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
@@ -73,16 +75,18 @@
                         <span class="network-basic-octet is-fixed" aria-label="固定第四段 0">0</span>
                         <span class="network-basic-prefix">/16</span>
                     </div>
-                    <span class="network-basic-input-note">前两段可修改，后两段固定为 0</span>
+                    <p class="network-basic-input-note">前两段可修改，后两段固定为 0</p>
                 </div>
-            </div>
 
-            <div class="network-basic-config-row">
-                <div class="network-basic-config-description">
-                    <div id="networkBasicEthernetLabel" class="network-basic-config-label">以太网网段</div>
-                    <p>设备 IP 固定使用当前网段的 .1 地址</p>
-                </div>
-                <div class="network-basic-config-control">
+                <div class="network-basic-network-card">
+                    <div class="network-basic-network-heading">
+                        <div>
+                            <h3 id="networkBasicEthernetLabel" class="network-basic-field-title">以太网网段</h3>
+                            <p class="network-basic-field-subtitle">连接本机以太网口的本地网络</p>
+                        </div>
+                        <span class="network-basic-network-tag">本机独立</span>
+                    </div>
+
                     <div class="network-basic-address" role="group" aria-labelledby="networkBasicEthernetLabel">
                         <input id="networkBasicEthernetOctet1" class="network-basic-octet"
                             type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
@@ -99,24 +103,22 @@
                         <span class="network-basic-octet is-fixed" aria-label="固定第四段 0">0</span>
                         <span class="network-basic-prefix">/24</span>
                     </div>
-                    <span class="network-basic-input-note">最后一段固定为 0，本机以太网 IP 自动使用 .1</span>
+                    <p class="network-basic-input-note">最后一段固定为 0，本机 IP 使用 .1</p>
                 </div>
             </div>
 
             <div class="network-basic-form-footer">
                 <div class="network-basic-footer-message">
                     <span class="network-basic-notice-mark" aria-hidden="true">i</span>
-                    <span>修改节点或网段会暂时中断网络连接，保存后需重启服务生效。</span>
+                    <span>网络配置更改后，重新启动 LinkG 服务才能生效，当前连接可能中断。</span>
                 </div>
                 <div class="network-basic-form-actions">
                     <button id="networkBasicResetButton" class="network-basic-button network-basic-button-secondary"
-                        type="button" disabled title="静态页面预览，尚未接入配置接口">还原修改</button>
+                        type="button" disabled title="静态预览，暂未接入后端">还原修改</button>
                     <button id="networkBasicSaveButton" class="network-basic-button network-basic-button-primary"
-                        type="button" disabled title="静态页面预览，尚未接入配置接口">保存配置</button>
+                        type="button" disabled title="静态预览，暂未接入后端">保存配置</button>
                 </div>
             </div>
         </div>
     </section>
-
-    <p class="network-basic-preview-note">当前为静态界面预览，显示示例地址；后端配置读取、校验、保存和生效操作将在下一阶段接入。</p>
 </div>

@@ -1,4 +1,4 @@
-/* 基础网络：运行地址摘要和紧凑的网段配置，继承LinkG全局设计变量。 */
+/* 基础网络：紧凑的信息摘要、并排网段卡片和一体化IPv4输入。 */
 .network-basic-page {
     max-width: 960px;
     padding-bottom: 8px;
@@ -7,18 +7,17 @@
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 16px;
+    gap: 18px;
 }
 .network-basic-preview-tag {
     flex: none;
-    margin-top: 4px;
+    margin-top: 3px;
     padding: 5px 10px;
     border: 1px solid var(--linkg-color-border);
     border-radius: 999px;
-    color: var(--linkg-color-text-secondary);
     background: var(--linkg-color-surface);
+    color: var(--linkg-color-text-secondary);
     font-size: 12px;
-    line-height: 1.4;
     white-space: nowrap;
 }
 .network-basic-section + .network-basic-section { margin-top: var(--page-space); }
@@ -28,21 +27,21 @@
     white-space: nowrap;
 }
 
-/****************************** 当前网络摘要 ******************************/
+/****************************** 当前网络信息 ******************************/
 .network-basic-summary {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 180px repeat(2, minmax(0, 1fr));
 }
 .network-basic-summary-item {
     min-width: 0;
-    padding: 19px 22px 20px;
+    padding: 18px 22px 19px;
 }
 .network-basic-summary-item + .network-basic-summary-item {
     border-left: 1px solid var(--linkg-color-border-light);
 }
 .network-basic-summary-label {
     display: block;
-    margin-bottom: 7px;
+    margin-bottom: 6px;
     color: var(--linkg-color-text-secondary);
     font-size: 12px;
 }
@@ -61,136 +60,188 @@
 .network-basic-summary-value.is-node { color: var(--linkg-color-primary); }
 .network-basic-summary-hint {
     display: block;
-    margin-top: 6px;
+    margin-top: 5px;
     color: var(--linkg-color-text-muted);
     font-size: 12px;
 }
 
-/****************************** 网络配置 ******************************/
-.network-basic-config { width: 100%; }
-.network-basic-config-row {
-    display: grid;
-    grid-template-columns: minmax(205px, 0.9fr) minmax(0, 1.45fr);
+/****************************** 节点配置 ******************************/
+.network-basic-node-row {
+    display: flex;
     align-items: center;
-    gap: 20px;
-    min-height: 94px;
-    padding: 17px 22px;
+    flex-wrap: wrap;
+    gap: 12px 22px;
+    padding: 19px 22px;
+    border-bottom: 1px solid var(--linkg-color-border-light);
 }
-.network-basic-config-row + .network-basic-config-row {
-    border-top: 1px solid var(--linkg-color-border-light);
+.network-basic-node-description {
+    display: flex;
+    flex: 0 0 220px;
+    flex-direction: column;
+    gap: 4px;
 }
-.network-basic-config-description { min-width: 0; }
-.network-basic-config-label {
+.network-basic-field-title {
     display: block;
-    margin-bottom: 5px;
     color: var(--linkg-color-text);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
-    line-height: 1.5;
+    line-height: 1.45;
 }
-.network-basic-config-description p {
-    max-width: 310px;
+.network-basic-field-subtitle {
+    display: block;
     color: var(--linkg-color-text-secondary);
     font-size: 12px;
-    line-height: 1.6;
+    font-weight: 400;
+    line-height: 1.5;
 }
-.network-basic-config-control {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 7px;
-}
-.network-basic-node-input,
-.network-basic-octet {
-    height: 38px;
-    padding: 0 7px;
+.network-basic-node-input {
+    width: 78px;
+    height: 40px;
+    padding: 0 10px;
     border: 1px solid var(--linkg-color-border);
     border-radius: var(--linkg-radius-medium);
     outline: none;
-    color: var(--linkg-color-text);
     background: var(--linkg-color-surface);
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 36px;
+    color: var(--linkg-color-text);
+    font-size: 15px;
+    font-weight: 600;
     text-align: center;
     font-variant-numeric: tabular-nums;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.network-basic-node-input { width: 86px; }
-.network-basic-node-input:hover,
-.network-basic-octet:hover { border-color: #c6d1e2; }
-.network-basic-node-input:focus,
-.network-basic-octet:focus {
+.network-basic-node-input:focus {
     border-color: var(--linkg-color-primary);
     box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
 }
-.network-basic-address {
+.network-basic-node-range {
+    color: var(--linkg-color-text-muted);
+    font-size: 12px;
+}
+
+/****************************** 网段卡片 ******************************/
+.network-basic-networks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    padding: 18px 22px 22px;
+}
+.network-basic-network-card {
+    min-width: 0;
+    padding: 17px 17px 15px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: 8px;
+    background: #fcfdff;
+}
+.network-basic-network-heading {
     display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 54px;
+}
+.network-basic-network-heading > div { min-width: 0; }
+.network-basic-network-heading .network-basic-field-title {
+    margin: 0 0 4px;
+}
+.network-basic-network-tag {
+    flex: none;
+    padding: 3px 7px;
+    border-radius: 4px;
+    background: var(--linkg-color-primary-soft);
+    color: var(--linkg-color-primary);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+.network-basic-address {
+    display: inline-flex;
     align-items: center;
-    flex-wrap: nowrap;
-    gap: 6px;
+    gap: 3px;
     max-width: 100%;
+    margin-top: 12px;
+    padding: 4px 7px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: 7px;
+    background: var(--linkg-color-surface);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.network-basic-address:focus-within {
+    border-color: var(--linkg-color-primary);
+    box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
 }
 .network-basic-octet {
-    flex: 0 0 52px;
-    width: 52px;
+    flex: 0 0 40px;
+    width: 40px;
     min-width: 0;
+    height: 32px;
+    padding: 0 2px;
+    border: 0;
+    border-radius: 4px;
+    outline: none;
+    background: transparent;
+    color: var(--linkg-color-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 32px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
 }
+.network-basic-octet:focus { background: var(--linkg-color-primary-soft); }
 .network-basic-octet.is-fixed {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-color: var(--linkg-color-border-light);
+    background: #f1f3f7;
     color: var(--linkg-color-text-muted);
-    background: var(--linkg-color-background);
-    cursor: not-allowed;
+    cursor: default;
     user-select: none;
 }
 .network-basic-dot {
     flex: none;
+    width: 5px;
     color: var(--linkg-color-text-secondary);
-    font-size: 16px;
-    line-height: 1;
+    font-size: 15px;
     font-weight: 600;
+    line-height: 1;
+    text-align: center;
 }
 .network-basic-prefix {
+    display: flex;
     flex: none;
-    margin-left: 5px;
-    padding: 5px 7px;
-    border: 1px solid var(--linkg-color-border-light);
-    border-radius: var(--linkg-radius-medium);
+    align-items: center;
+    height: 24px;
+    margin-left: 6px;
+    padding-left: 10px;
+    border-left: 1px solid var(--linkg-color-border);
     color: var(--linkg-color-text-secondary);
-    background: var(--linkg-color-background);
     font-size: 12px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
 .network-basic-input-note {
+    margin-top: 10px;
     color: var(--linkg-color-text-muted);
     font-size: 12px;
-    line-height: 1.5;
+    line-height: 1.6;
 }
 
-/****************************** 底部操作 ******************************/
+/****************************** 操作区域 ******************************/
 .network-basic-form-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    min-height: 76px;
+    gap: 14px;
+    min-height: 69px;
     padding: 14px 22px;
     border-top: 1px solid var(--linkg-color-border-light);
-    background: #fbfcfe;
 }
 .network-basic-footer-message {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    max-width: 500px;
+    max-width: 520px;
     color: var(--linkg-color-text-secondary);
     font-size: 12px;
-    line-height: 1.65;
+    line-height: 1.6;
 }
 .network-basic-notice-mark {
     display: flex;
@@ -199,7 +250,7 @@
     justify-content: center;
     width: 16px;
     height: 16px;
-    margin-top: 2px;
+    margin-top: 1px;
     border-radius: 50%;
     background: var(--linkg-color-primary-soft);
     color: var(--linkg-color-primary);
@@ -244,24 +295,19 @@
     cursor: not-allowed;
     opacity: 0.52;
 }
-.network-basic-preview-note {
-    margin: 11px 2px 0;
-    color: var(--linkg-color-text-muted);
-    font-size: 12px;
-    line-height: 1.6;
-}
 
-@media (max-width: 1050px) {
+@media (max-width: 1000px) {
     .network-basic-summary-item { padding: 17px 16px; }
-    .network-basic-config-row { padding: 16px; gap: 16px; }
+    .network-basic-node-row { padding: 17px 16px; }
+    .network-basic-networks { padding: 16px; gap: 12px; }
+    .network-basic-network-card { padding: 14px 12px; }
     .network-basic-form-footer { padding: 14px 16px; }
 }
-@media (max-width: 760px) {
-    .network-basic-summary-value { font-size: 19px; }
-    .network-basic-config-row {
-        grid-template-columns: 1fr;
-        gap: 10px;
-    }
-    .network-basic-form-footer { align-items: flex-start; flex-direction: column; }
+@media (max-width: 770px) {
+    .network-basic-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .network-basic-summary-value { font-size: 18px; }
+    .network-basic-node-description { flex-basis: 175px; }
+    .network-basic-networks { grid-template-columns: 1fr; }
+    .network-basic-form-footer { flex-direction: column; align-items: flex-start; }
     .network-basic-form-actions { align-self: flex-end; }
 }
