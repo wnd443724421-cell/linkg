@@ -2,6 +2,9 @@
     "use strict";
 
     const SERIAL_REFRESH_MS = 1000;
+    const SERIAL_RATE_MIN_INTERVAL_MS = 200;
+    const SERIAL_RATE_MAX_INTERVAL_MS = 5000;
+    const SERIAL_RATE_FIELDS = ["uart_rx_bytes", "uart_tx_bytes", "net_rx_bytes", "net_tx_bytes"];
     const SERIAL_NORMAL_DEFAULT = Object.freeze({baudrate: 115200, data_bits: 8, stop_bits: 1, parity: "n"});
     const SERIAL_STATE_TEXT = {
         uninitialized: "未初始化", stopped: "已停止", running: "运行中",
@@ -26,6 +29,8 @@
     let submitted = null;
     let observedJob = null;
     let externalJob = null;
+    let rateSamples = new Map();
+    let rateJob = null;
 
     /****************************** 页面辅助 ******************************/
 
@@ -631,21 +636,116 @@
         }
     }
 
+    /****************************** 实时速率 ******************************/
+
+    /**
+     * @brief 按实际采样间隔计算每秒字节数，保留后端64位计数器精度。
+     *
+     * 后端以十进制字符串返回累计计数；只有做完BigInt差分后才转为Number。
+     */
+    function sampleRates(data)
+    {
+        const sampledAt = performance.now();
+        const rates = new Map();
+        const active = new Set();
+        const reloading = data.state === "reloading" || data.apply.state === "applying";
+
+        if (reloading || (rateJob != null && rateJob !== data.apply.job_id))
+        {
+            rateSamples.clear();
+        }
+        rateJob = data.apply.job_id;
+
+        if (reloading)
+        {
+            return rates;
+        }
+
+        data.ports.forEach(function (port) {
+            const number = Number(port.uart_num);
+            const counters = {};
+            const previous = rateSamples.get(number);
+            const valuesValid = SERIAL_RATE_FIELDS.every(function (name) {
+                const value = port[name];
+
+                if (typeof value !== "string" || !/^[0-9]+$/.test(value))
+                {
+                    return false;
+                }
+                counters[name] = BigInt(value);
+                return true;
+            });
+
+            if (!valuesValid)
+            {
+                rateSamples.delete(number);
+                return;
+            }
+
+            active.add(number);
+            if (previous != null)
+            {
+                const elapsedMs = sampledAt - previous.time;
+                const deltas = SERIAL_RATE_FIELDS.map(function (name) {
+                    return counters[name] - previous.bytes[name];
+                });
+
+                if (elapsedMs >= SERIAL_RATE_MIN_INTERVAL_MS && elapsedMs <= SERIAL_RATE_MAX_INTERVAL_MS &&
+                    deltas.every(function (delta) { return delta >= 0n && delta <= BigInt(Number.MAX_SAFE_INTEGER); }))
+                {
+                    rates.set(number, deltas.map(function (delta) {
+                        return Number(delta) * 1000 / elapsedMs;
+                    }));
+                }
+            }
+
+            rateSamples.set(number, {time: sampledAt, bytes: counters});
+        });
+
+        Array.from(rateSamples.keys()).forEach(function (number) {
+            if (!active.has(number))
+            {
+                rateSamples.delete(number);
+            }
+        });
+        return rates;
+    }
+
+    /**
+     * @brief 以二进制容量单位显示实际字节速率。
+     */
+    function formatRate(bytesPerSecond)
+    {
+        if (bytesPerSecond < 1024)
+        {
+            return bytesPerSecond.toFixed(bytesPerSecond < 10 ? 1 : 0) + " B/s";
+        }
+        if (bytesPerSecond < 1024 * 1024)
+        {
+            return (bytesPerSecond / 1024).toFixed(2) + " KiB/s";
+        }
+        return (bytesPerSecond / (1024 * 1024)).toFixed(2) + " MiB/s";
+    }
+
     /****************************** 运行状态 ******************************/
 
-    function renderStatus(data)
+    function renderStatus(data, rates)
     {
         field("serialState").textContent = SERIAL_STATE_TEXT[data.state] || "未知状态";
         remoteApplying = data.apply.state === "applying";
         cards().forEach(function (card) {
             const number = Number(card.dataset.uart);
             const port = data.ports.find(function (item) { return item.uart_num === number; });
+            const speed = rates.get(number);
             const persisted = config == null ? null : config.uart.find(function (item) { return item.uart_num === number; });
 
             role(card, "status").textContent = remoteApplying ? "正在重载，设备状态待确认" :
                 (port == null ? (persisted == null ? "未配置" : (persisted.routes.length === 0 ? "仅保存参数 · 没有活动路由 · 设备未打开" : "未创建活动上下文")) :
                  (port.device_open ? "设备已打开" : "设备未就绪") + " · " +
                  port.routes.map(function (state, index) { return "规则 " + (index + 1) + "：" + (SERIAL_ROUTE_TEXT[state] || state); }).join("；"));
+            role(card, "rates").textContent = port == null ? "" : speed == null ? "实时速率：采样中…" :
+                "实时 UART RX / TX " + formatRate(speed[0]) + " / " + formatRate(speed[1]) +
+                " · 网络 RX / TX " + formatRate(speed[2]) + " / " + formatRate(speed[3]);
             role(card, "counters").textContent = port == null ? "" :
                 "UART RX / TX " + port.uart_rx_bytes + " / " + port.uart_tx_bytes + " B · 网络 RX / TX " +
                 port.net_rx_bytes + " / " + port.net_tx_bytes + " B · 错误 " + port.errors + " · 丢弃 " + port.drops;
@@ -673,7 +773,7 @@
                 return;
             }
             const data = response.data;
-            renderStatus(data);
+            renderStatus(data, sampleRates(data));
             if (pendingJob != null && pendingJob === requestedJob && data.apply.state !== "applying")
             {
                 const job = pendingJob;
@@ -790,6 +890,8 @@
         reading = saving = statusBusy = remoteApplying = dirty = uncertain = false;
         pendingJob = submitted = null;
         observedJob = externalJob = null;
+        rateSamples = new Map();
+        rateJob = null;
         field("serialMenu").addEventListener("click", toggleMenu);
         field("serialMenuBackdrop").addEventListener("click", closeMenu);
         field("serialReload").addEventListener("click", reload);
@@ -821,6 +923,8 @@
         setMenuOpen(false);
         document.body.classList.remove("serial-active");
         clearTimeout(timer);
+        rateSamples.clear();
+        rateJob = null;
         session++;
         root = null;
         timer = null;
