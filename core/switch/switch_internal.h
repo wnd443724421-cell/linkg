@@ -33,27 +33,53 @@
 
 /****************************** Peer运行状态 ******************************/
 
-typedef struct
-{
-    linkg_switch_observation_t         observation;                    // 最近一次完整切换观测快照
-    linkg_switch_traffic_sampler_t     wifi_traffic_sampler;           // Wi-Fi Path流量采样基线
-    linkg_switch_loss_sampler_t        wifi_downlink_loss_sampler;     // AP到STA下行丢包采样基线
-    linkg_switch_loss_observation_t    remote_wifi_uplink_loss;        // AP上报的STA到AP上行丢包
-    linkg_switch_plan_sync_runtime_t   plan_sync;                      // 当前STA到AP发送计划同步事务
-    uint32_t                           remote_wifi_uplink_report_id;   // 最近接收的Wi-Fi上行质量报告编号
-    uint32_t                           next_plan_message_id;           // 下一发送计划同步消息编号基线
-} linkg_switch_sta_peer_runtime_t;
 
 typedef struct
 {
-    linkg_switch_loss_sampler_t     wifi_uplink_loss_sampler; // STA到AP上行丢包采样基线
-    linkg_switch_loss_observation_t wifi_uplink_loss;         // 最近一次STA到AP上行丢包观测
-    bool                            wifi_path_available;      // 当前Wi-Fi Path是否存在且可用
-    bool                            cellular_path_available;  // 当前Cellular Path是否存在且可用
-    uint64_t                        path_updated_us;          // 最近一次Path状态刷新时间
-    uint32_t                        report_message_id;        // 最近分配的Wi-Fi质量报告编号
-    uint32_t                        remote_plan_message_id;   // 最近处理的STA发送计划同步编号
-    int32_t                         remote_plan_status;       // 最近一次发送计划同步处理结果
+    linkg_switch_observation_t        observation;                       // 最近一次完整切换观测快照
+
+    linkg_switch_traffic_sampler_t    wifi_traffic_sampler;              // Wi-Fi Path业务流量采样基线
+
+    linkg_switch_loss_sampler_t       wifi_downlink_loss_sampler;        // AP到STA Wi-Fi Wire丢包采样基线
+    linkg_switch_load_sampler_t       wifi_uplink_load_sampler;          // STA到AP Wi-Fi Load丢包采样基线
+
+    linkg_switch_loss_sampler_t       cellular_downlink_loss_sampler;    // AP到STA Cellular Wire丢包采样基线
+    linkg_switch_load_sampler_t       cellular_uplink_load_sampler;      // STA到AP Cellular Load丢包采样基线
+
+    linkg_switch_loss_observation_t   remote_wifi_uplink_loss;           // AP上报的STA到AP Wi-Fi Wire丢包
+    linkg_switch_loss_observation_t   remote_wifi_downlink_load;         // AP上报的AP到STA Wi-Fi Load丢包
+    linkg_switch_loss_observation_t   remote_cellular_uplink_loss;       // AP上报的STA到AP Cellular Wire丢包
+    linkg_switch_loss_observation_t   remote_cellular_downlink_load;     // AP上报的AP到STA Cellular Load丢包
+
+    linkg_switch_plan_sync_runtime_t  plan_sync;                         // 当前STA到AP发送计划同步事务
+
+    uint32_t                          remote_quality_report_id;          // 最近接收的AP质量报告编号
+    uint32_t                          next_plan_message_id;              // 下一发送计划同步消息编号基线
+} linkg_switch_sta_peer_runtime_t;
+
+
+
+typedef struct
+{
+    linkg_switch_loss_sampler_t      wifi_uplink_loss_sampler;          // STA到AP Wi-Fi Wire丢包采样基线
+    linkg_switch_load_sampler_t      wifi_downlink_load_sampler;        // AP到STA Wi-Fi Load丢包采样基线
+
+    linkg_switch_loss_sampler_t      cellular_uplink_loss_sampler;      // STA到AP Cellular Wire丢包采样基线
+    linkg_switch_load_sampler_t      cellular_downlink_load_sampler;    // AP到STA Cellular Load丢包采样基线
+
+    linkg_switch_loss_observation_t  wifi_uplink_loss;                  // 最近一次STA到AP Wi-Fi Wire丢包
+    linkg_switch_loss_observation_t  wifi_downlink_load;                // 最近一次AP到STA Wi-Fi Load丢包
+
+    linkg_switch_loss_observation_t  cellular_uplink_loss;              // 最近一次STA到AP Cellular Wire丢包
+    linkg_switch_loss_observation_t  cellular_downlink_load;            // 最近一次AP到STA Cellular Load丢包
+
+    bool                             wifi_path_available;               // 当前Wi-Fi Path是否存在且可用
+    bool                             cellular_path_available;           // 当前Cellular Path是否存在且可用
+    uint64_t                         path_updated_us;                   // 最近一次Path状态刷新时间
+
+    uint32_t                         report_message_id;                 // 最近分配的Quality Report消息编号
+    uint32_t                         remote_plan_message_id;            // 最近处理的STA发送计划同步编号
+    int32_t                          remote_plan_status;                // 最近一次发送计划同步处理结果
 } linkg_switch_ap_peer_runtime_t;
 
 typedef struct

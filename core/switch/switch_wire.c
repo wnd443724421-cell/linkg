@@ -2,8 +2,8 @@
  * @file switch_wire.c
  * @brief LinkG链路切换Wire协议编解码实现
  * @author Dawn
- * @version 1.1.0
- * @date 2026-09-19
+ * @version 2.0.0
+ * @date 2026-10-16
  */
 
 #include "switch_wire.h"
@@ -20,25 +20,27 @@
 #define LINKG_SWITCH_WIRE_HEADER_LENGTH_OFFSET                 2U
 #define LINKG_SWITCH_WIRE_HEADER_MESSAGE_ID_OFFSET             4U
 
-#define LINKG_SWITCH_WIRE_WIFI_QUALITY_LOSS_OFFSET             LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_WIFI_QUALITY_SAMPLE_OFFSET           (LINKG_SWITCH_WIRE_HEADER_SIZE + 4U)
+#define LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_OFFSET             LINKG_SWITCH_WIRE_HEADER_SIZE
+#define LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_LOAD_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 8U)
+#define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_OFFSET        (LINKG_SWITCH_WIRE_HEADER_SIZE + 16U)
+#define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET (LINKG_SWITCH_WIRE_HEADER_SIZE + 24U)
 
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET                LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET             (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET           (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET            (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET                  LINKG_SWITCH_WIRE_HEADER_SIZE
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET              (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET            (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET             (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
 
-#define LINKG_SWITCH_WIRE_PLAN_ACK_STATUS_OFFSET               LINKG_SWITCH_WIRE_HEADER_SIZE
+#define LINKG_SWITCH_WIRE_PLAN_ACK_STATUS_OFFSET                LINKG_SWITCH_WIRE_HEADER_SIZE
 
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACCESS_OFFSET           LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_MAINTENANCE_PHASE_OFFSET            (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED0_OFFSET        (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED1_OFFSET        (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACCESS_OFFSET             LINKG_SWITCH_WIRE_HEADER_SIZE
+#define LINKG_SWITCH_WIRE_MAINTENANCE_PHASE_OFFSET             (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED0_OFFSET         (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED1_OFFSET         (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
 
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_ACCESS_OFFSET       LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED0_OFFSET    (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED1_OFFSET    (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED2_OFFSET    (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_ACCESS_OFFSET         LINKG_SWITCH_WIRE_HEADER_SIZE
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED0_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED1_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED2_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
 
 /****************************** 基础编解码 ******************************/
 
@@ -293,12 +295,43 @@ static int _linkg_switch_wire_decode_header(const uint8_t *buffer, size_t length
     return 0;
 }
 
-/****************************** Wi-Fi质量上报 ******************************/
+/****************************** 质量上报 ******************************/
 
 /**
- * @brief 编码AP到STA的Wi-Fi上行质量上报消息。
+ * @brief 校验单项丢包质量指标。
  */
-int linkg_switch_wire_encode_wifi_quality_report(uint32_t message_id, const linkg_switch_wire_wifi_quality_report_t *report, uint8_t *buffer, size_t capacity, size_t *length)
+static bool _linkg_switch_wire_loss_valid(const linkg_switch_wire_loss_t *loss)
+{
+    if (loss == NULL || loss->loss_permille > 1000U)
+    {
+        return false;
+    }
+
+    return loss->sample_packets != 0U || loss->loss_permille == 0U;
+}
+
+/**
+ * @brief 按网络字节序编码一项丢包质量指标，占8字节。
+ */
+static void _linkg_switch_wire_encode_loss(uint8_t *buffer, const linkg_switch_wire_loss_t *loss)
+{
+    _linkg_switch_wire_write_u32(buffer, loss->loss_permille);
+    _linkg_switch_wire_write_u32(buffer + 4U, loss->sample_packets);
+}
+
+/**
+ * @brief 按网络字节序解码一项丢包质量指标，占8字节。
+ */
+static void _linkg_switch_wire_decode_loss(const uint8_t *buffer, linkg_switch_wire_loss_t *loss)
+{
+    loss->loss_permille  = _linkg_switch_wire_read_u32(buffer);
+    loss->sample_packets = _linkg_switch_wire_read_u32(buffer + 4U);
+}
+
+/**
+ * @brief 编码AP到STA的Wi-Fi与Cellular质量上报消息。
+ */
+int linkg_switch_wire_encode_quality_report(uint32_t message_id, const linkg_switch_wire_quality_report_t *report, uint8_t *buffer, size_t capacity, size_t *length)
 {
     int ret;
 
@@ -314,19 +347,16 @@ int linkg_switch_wire_encode_wifi_quality_report(uint32_t message_id, const link
         return -EINVAL;
     }
 
-    if (report->loss_permille > 1000U)
+    if (!_linkg_switch_wire_loss_valid(&report->wifi_uplink) ||
+        !_linkg_switch_wire_loss_valid(&report->wifi_downlink_load) ||
+        !_linkg_switch_wire_loss_valid(&report->cellular_uplink) ||
+        !_linkg_switch_wire_loss_valid(&report->cellular_downlink_load))
     {
         return -EINVAL;
     }
 
-    if (report->sample_packets == 0U &&
-        report->loss_permille != 0U)
-    {
-        return -EINVAL;
-    }
-
-    ret = _linkg_switch_wire_encode_header(LINKG_SWITCH_WIRE_TYPE_WIFI_QUALITY_REPORT,
-                                           LINKG_SWITCH_WIRE_WIFI_QUALITY_REPORT_SIZE,
+    ret = _linkg_switch_wire_encode_header(LINKG_SWITCH_WIRE_TYPE_QUALITY_REPORT,
+                                           LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE,
                                            message_id,
                                            buffer,
                                            capacity);
@@ -335,13 +365,16 @@ int linkg_switch_wire_encode_wifi_quality_report(uint32_t message_id, const link
         return ret;
     }
 
-    _linkg_switch_wire_write_u32(&buffer[LINKG_SWITCH_WIRE_WIFI_QUALITY_LOSS_OFFSET],
-                                 report->loss_permille);
+    _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_OFFSET],
+                                   &report->wifi_uplink);
+    _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_LOAD_OFFSET],
+                                   &report->wifi_downlink_load);
+    _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_OFFSET],
+                                   &report->cellular_uplink);
+    _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET],
+                                   &report->cellular_downlink_load);
 
-    _linkg_switch_wire_write_u32(&buffer[LINKG_SWITCH_WIRE_WIFI_QUALITY_SAMPLE_OFFSET],
-                                 report->sample_packets);
-
-    *length = LINKG_SWITCH_WIRE_WIFI_QUALITY_REPORT_SIZE;
+    *length = LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE;
 
     return 0;
 }
@@ -561,26 +594,30 @@ int linkg_switch_wire_decode(const uint8_t *buffer, size_t length, linkg_switch_
 
     switch (message->header.type)
     {
-        case LINKG_SWITCH_WIRE_TYPE_WIFI_QUALITY_REPORT:
+        case LINKG_SWITCH_WIRE_TYPE_QUALITY_REPORT:
         {
-            if (length != LINKG_SWITCH_WIRE_WIFI_QUALITY_REPORT_SIZE)
+            linkg_switch_wire_quality_report_t *report;
+
+            if (length != LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE)
             {
                 return -EMSGSIZE;
             }
 
-            message->payload.wifi_quality_report.loss_permille =
-                _linkg_switch_wire_read_u32(&buffer[LINKG_SWITCH_WIRE_WIFI_QUALITY_LOSS_OFFSET]);
+            report = &message->payload.quality_report;
 
-            message->payload.wifi_quality_report.sample_packets =
-                _linkg_switch_wire_read_u32(&buffer[LINKG_SWITCH_WIRE_WIFI_QUALITY_SAMPLE_OFFSET]);
+            _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_OFFSET],
+                                           &report->wifi_uplink);
+            _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_LOAD_OFFSET],
+                                           &report->wifi_downlink_load);
+            _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_OFFSET],
+                                           &report->cellular_uplink);
+            _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET],
+                                           &report->cellular_downlink_load);
 
-            if (message->payload.wifi_quality_report.loss_permille > 1000U)
-            {
-                return -EINVAL;
-            }
-
-            if (message->payload.wifi_quality_report.sample_packets == 0U &&
-                message->payload.wifi_quality_report.loss_permille != 0U)
+            if (!_linkg_switch_wire_loss_valid(&report->wifi_uplink) ||
+                !_linkg_switch_wire_loss_valid(&report->wifi_downlink_load) ||
+                !_linkg_switch_wire_loss_valid(&report->cellular_uplink) ||
+                !_linkg_switch_wire_loss_valid(&report->cellular_downlink_load))
             {
                 return -EINVAL;
             }

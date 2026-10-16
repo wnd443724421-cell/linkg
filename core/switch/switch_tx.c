@@ -106,9 +106,9 @@ static int _linkg_switch_tx_submit(uint8_t peer_node_id, linkg_packet_t *packet,
 /****************************** 数据发送 ******************************/
 
 /**
- * @brief 向指定STA发送Wi-Fi上行质量报告。
+ * @brief 向指定STA发送Wi-Fi和Cellular质量报告。
  */
-int linkg_switch_tx_send_wifi_quality_report(linkg_packet_pool_t *pool, uint8_t peer_node_id, uint32_t message_id, const linkg_switch_wire_wifi_quality_report_t *report)
+int linkg_switch_tx_send_quality_report(linkg_packet_pool_t *pool, uint8_t peer_node_id, uint32_t message_id, const linkg_switch_wire_quality_report_t *report)
 {
     linkg_packet_t *packet;
     size_t          wire_length;
@@ -128,11 +128,11 @@ int linkg_switch_tx_send_wifi_quality_report(linkg_packet_pool_t *pool, uint8_t 
         return ret;
     }
 
-    ret = linkg_switch_wire_encode_wifi_quality_report(message_id,
-                                                       report,
-                                                       linkg_packet_data(packet),
-                                                       linkg_packet_capacity(packet),
-                                                       &wire_length);
+    ret = linkg_switch_wire_encode_quality_report(message_id,
+                                                  report,
+                                                  linkg_packet_data(packet),
+                                                  linkg_packet_capacity(packet),
+                                                  &wire_length);
     if (ret == 0)
     {
         ret = _linkg_switch_tx_submit(peer_node_id, packet, wire_length);

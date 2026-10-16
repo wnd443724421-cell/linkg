@@ -80,7 +80,6 @@ static const uint16_t g_wifi_wide_80mhz_channels[] =
      52U,  56U,  60U,  64U,
     100U, 104U, 108U, 112U,
     116U, 120U, 124U, 128U,
-    132U, 136U, 140U, 144U,
 #endif
     149U, 153U, 157U, 161U
 };

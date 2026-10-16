@@ -92,16 +92,16 @@ static bool _linkg_switch_rx_delivery_valid(const linkg_transport_delivery_t *it
 /****************************** 消息分发 ******************************/
 
 /**
- * @brief 将AP Wi-Fi质量报告直接交给Report模块更新STA运行状态。
+ * @brief 将AP上报的Wi-Fi和Cellular质量报告交给Report模块更新STA运行状态。
  */
-static int _linkg_switch_rx_dispatch_wifi_quality(linkg_device_role_t role, uint8_t peer_node_id, const linkg_switch_wire_message_t *message)
+static int _linkg_switch_rx_dispatch_quality(linkg_device_role_t role, uint8_t peer_node_id, const linkg_switch_wire_message_t *message)
 {
     if (role != LINKG_DEVICE_ROLE_STA)
     {
         return 0;
     }
 
-    return linkg_switch_report_receive_wifi_quality(peer_node_id, message->header.message_id, &message->payload.wifi_quality_report);
+    return linkg_switch_report_receive_quality(peer_node_id, message->header.message_id, &message->payload.quality_report);
 }
 
 /**
@@ -194,9 +194,9 @@ static int _linkg_switch_rx_dispatch(linkg_device_role_t role, uint8_t peer_node
 
     switch (message->header.type)
     {
-        case LINKG_SWITCH_WIRE_TYPE_WIFI_QUALITY_REPORT:
+        case LINKG_SWITCH_WIRE_TYPE_QUALITY_REPORT:
         {
-            return _linkg_switch_rx_dispatch_wifi_quality(role, peer_node_id, message);
+            return _linkg_switch_rx_dispatch_quality(role, peer_node_id, message);
         }
 
         case LINKG_SWITCH_WIRE_TYPE_PLAN_SYNC:

@@ -117,11 +117,6 @@ static const char *_wifi_hostapd_get_80mhz_center_channel(uint16_t channel)
         return "122";
     }
 
-    if (channel >= 132U && channel <= 144U)
-    {
-        return "138";
-    }
-
     if (channel >= 149U && channel <= 161U)
     {
         return "155";

@@ -34,7 +34,7 @@
 
 #define LINKG_CELLULAR_TX_BATCH_SIZE_MAX     32U                                   // 单次发送调度最大Packet数量
 #define LINKG_CELLULAR_TX_QUEUE_BATCH_COUNT  5U                                    // 单业务等待队列最多缓存批次数
-#define LINKG_CELLULAR_TX_CONTROL_SIZE       CMSG_SPACE(sizeof(struct in6_pktinfo)) // 单个IPv6 PKTINFO控制区大小
+#define LINKG_CELLULAR_TX_CONTROL_SIZE       CMSG_SPACE(sizeof(struct in6_pktinfo))// 单个IPv6 PKTINFO控制区大小
 #define LINKG_CELLULAR_TX_PEER_SLOTS         256U                                  // 最多256个IPv6对端Sequence状态
 
 /****************************** 内部类型 ******************************/

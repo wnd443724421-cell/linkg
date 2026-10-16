@@ -15,6 +15,11 @@
         132, 136, 140, 144, 149, 153, 157, 161,
         165, 184, 188, 192, 196
     ];
+    const WIFI_80_MHZ_CHANNELS = [
+        36, 40, 44, 48, 52, 56, 60, 64,
+        100, 104, 108, 112, 116, 120, 124, 128,
+        149, 153, 157, 161
+    ];
     const WIFI_ALLOWED_TEXT = /^[A-Za-z0-9!@#$%^&*()_=+.,:;?-]+$/;
 
     let mounted = false;
@@ -514,7 +519,12 @@
             return channel !== 165;
         }
 
-        return channel !== 165 && channel < 184;
+        if (bandwidth === 80)
+        {
+            return WIFI_80_MHZ_CHANNELS.includes(channel);
+        }
+
+        return false;
     }
 
     function updateChannels()
