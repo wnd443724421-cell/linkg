@@ -347,6 +347,14 @@
 .network-basic-help-content { padding: 0 22px 18px; color: var(--linkg-color-text-secondary); font-size: 12px; line-height: 1.8; }
 .network-basic-help-content p { margin: 0 0 12px; }
 .network-basic-warning { color: #a45d16; }
+.network-basic-help-mode { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; padding: 0; border: 0; }
+.network-basic-help-mode legend { width: 100%; margin: 0 0 9px; color: var(--linkg-color-text); font-size: 13px; font-weight: 600; }
+.network-basic-help-mode label { display: flex; gap: 10px; align-items: center; padding: 11px 12px; border: 1px solid var(--linkg-color-border); border-radius: 6px; background: var(--linkg-color-surface); cursor: pointer; }
+.network-basic-help-mode label:has(input:checked) { border-color: var(--linkg-color-primary); background: var(--linkg-color-primary-soft); }
+.network-basic-help-mode input { flex: none; accent-color: var(--linkg-color-primary); }
+.network-basic-help-mode strong, .network-basic-help-mode small { display: block; line-height: 1.5; }
+.network-basic-help-mode strong { color: var(--linkg-color-text); font-size: 13px; }
+.network-basic-help-mode small { color: var(--linkg-color-text-secondary); font-size: 11px; font-weight: 400; }
 .network-basic-help-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-bottom: 12px; }
 .network-basic-help-fields label { display: flex; flex-direction: column; gap: 4px; }
 .network-basic-help-fields input {
@@ -373,7 +381,7 @@
     .network-basic-form-footer { padding: 14px 16px; }
 }
 @media (max-width: 770px) {
-    .network-basic-dhcp, .network-basic-help-fields { grid-template-columns: 1fr; }
+    .network-basic-dhcp, .network-basic-help-fields, .network-basic-help-mode { grid-template-columns: 1fr; }
     .network-basic-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .network-basic-summary-value { font-size: 18px; }
     .network-basic-node-description { flex-basis: 175px; }

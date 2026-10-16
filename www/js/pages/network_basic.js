@@ -347,47 +347,88 @@
         timer = setTimeout(poll, 1500);
     }
     function shellQuote(value) { return "'" + value.replace(/'/g, "'\\''") + "'"; }
-    function commandGroups(config, clientIp, windowsInterface, linuxInterface, connection)
+    /**
+     * @brief 使用Linux网卡名称识别当前活动NetworkManager连接。
+     */
+    function linuxManaged(iface, actions)
     {
+        return "IFACE=" + shellQuote(iface) +
+            "\nCONN=\"$(nmcli -g GENERAL.CONNECTION device show \"$IFACE\" 2>/dev/null)\"" +
+            "\nif [ -z \"$CONN\" ] || [ \"$CONN\" = \"--\" ]; then" +
+            "\n    echo '没有找到活动的 NetworkManager 连接；请先执行 nmcli connection show 并激活正确连接。' >&2" +
+            "\nelse\n    " + actions.join(" &&\n    ") + "\nfi";
+    }
+    /**
+     * @brief 根据客户端获取IP的模式生成四组命令。
+     */
+    function commandGroups(config, clientIp, windowsInterface, linuxInterface, mode)
+    {
+        if (mode !== "static" && mode !== "dhcp") { throw new Error("请选择静态 IP 或 DHCP"); }
+        if (!windowsInterface.trim() || /["%!&|<>^\x60\r\n\x00-\x1f]/.test(windowsInterface))
+        {
+            throw new Error("Windows 网卡名称不合法");
+        }
+        if (!/^[a-zA-Z0-9_.:-]{1,15}$/.test(linuxInterface))
+        {
+            throw new Error("Linux 网卡名称不合法，请使用 ip link 查看");
+        }
+        const win = '"' + windowsInterface + '"';
+        const dev = shellQuote(linuxInterface);
+        const network = config.virtual_network + "/16";
+        const gateway = config.ethernet_ip;
+        const winRoute = "prefix=" + network + " interface=" + win + " nexthop=" + gateway;
+        const winVerify = "ipconfig /all\nroute print -4\nping " + config.virtual_ip;
+        const linVerify = ["ip -4 addr show dev \"$IFACE\"", "ip -4 route show", "ping -c 4 " + config.virtual_ip];
+        if (mode === "dhcp")
+        {
+            return [
+                ["Windows · 启用 DHCP / 取消静态配置（管理员命令提示符）",
+                    "netsh interface ipv4 delete route " + winRoute + " store=persistent\n" +
+                    "netsh interface ipv4 set address name=" + win + " source=dhcp store=persistent\n" +
+                    "ipconfig /release " + win + "\nipconfig /renew " + win + "\n" + winVerify],
+                ["Windows · 重新获取 DHCP 租约（已经启用 DHCP）",
+                    "ipconfig /release " + win + "\nipconfig /renew " + win + "\n" + winVerify],
+                ["Linux · 启用 DHCP / 取消静态配置（NetworkManager）",
+                    linuxManaged(linuxInterface, [
+                        "sudo nmcli connection modify \"$CONN\" ipv4.method auto ipv4.addresses \"\" ipv4.gateway \"\" ipv4.routes \"\" ipv4.never-default no connection.autoconnect yes",
+                        "sudo nmcli connection down \"$CONN\"",
+                        "sudo nmcli connection up \"$CONN\" ifname \"$IFACE\""
+                    ].concat(linVerify))],
+                ["Linux · 重新获取 DHCP 租约（已经启用 DHCP）",
+                    linuxManaged(linuxInterface, [
+                        "sudo nmcli connection down \"$CONN\"",
+                        "sudo nmcli connection up \"$CONN\" ifname \"$IFACE\""
+                    ].concat(linVerify))]
+            ];
+        }
         const client = ipv4(clientIp);
         clientIp = client.join(".");
         const pool = ipv4(config.ethernet_network);
         if (client.slice(0, 3).join(".") !== pool.slice(0, 3).join(".") || client[3] < 2 || client[3] > 254)
         {
-            throw new Error("客户端 IP 必须位于当前 Ethernet 网段，末段为 2–254；请确认没有地址冲突");
+            throw new Error("客户端 IP 必须属于当前 Ethernet 网段，末段为 2–254；请排除地址冲突");
         }
-        if (!windowsInterface.trim() || /["%!&|<>^`\r\n\x00-\x1f]/.test(windowsInterface))
-        {
-            throw new Error("Windows 网卡名称不能为空，且不能包含命令特殊字符");
-        }
-        if (!/^[a-zA-Z0-9_.:-]{1,15}$/.test(linuxInterface) || !connection.trim() || /[\x00-\x1f]/.test(connection))
-        {
-            throw new Error("请填写实际 Linux 网卡名称（最多15字符）和 NetworkManager 连接名称");
-        }
-        const win = '"' + windowsInterface + '"';
-        const dev = shellQuote(linuxInterface);
-        const profile = shellQuote(connection);
-        const network = config.virtual_network + "/16";
-        const gateway = config.ethernet_ip;
-        const winVerify = "ipconfig /all\nroute print -4\nping " + config.virtual_ip;
-        const linuxVerify = "ip -4 addr show dev " + dev + "\nip -4 route show\nping -c 4 " + config.virtual_ip;
         function windows(store)
         {
-            return "netsh interface ipv4 add address name=" + win + " address=" + clientIp + " mask=255.255.255.0 store=" + store +
-                "\nnetsh interface ipv4 add route prefix=" + network + " interface=" + win + " nexthop=" + gateway + " store=" + store + "\n" + winVerify;
+            return "netsh interface ipv4 set address name=" + win + " source=static address=" + clientIp +
+                " mask=255.255.255.0 gateway=none store=" + store +
+                "\nnetsh interface ipv4 add route " + winRoute + " store=" + store + "\n" + winVerify;
         }
         return [
-            ["Windows · 临时静态 IP 与路由（管理员命令提示符）", windows("active")],
-            ["Windows · 永久静态 IP 与路由（管理员命令提示符）", windows("persistent")],
-            ["Linux · 临时静态 IP 与路由", "sudo ip addr add " + clientIp + "/24 dev " + dev + "\nsudo ip link set dev " + dev +
-                " up\nsudo ip route replace " + network + " via " + gateway + " dev " + dev + "\n" + linuxVerify],
-            ["Linux · 永久配置（NetworkManager 专用连接）", "nmcli connection show\nsudo nmcli connection modify " + profile +
-                " connection.interface-name " + dev + " ipv4.method manual ipv4.addresses " + clientIp + "/24 ipv4.never-default yes +ipv4.routes " +
-                shellQuote(network + " " + gateway) + "\nsudo nmcli connection up " + profile + " ifname " + dev + "\n" + linuxVerify],
-            ["Windows · DHCP 释放旧租约并重新获取配置（已启用自动获取时）", "ipconfig /release " + win +
-                "\nipconfig /renew " + win + "\n" + winVerify],
-            ["Linux · DHCP 重新获取配置（NetworkManager 自动连接）", "sudo nmcli connection down " + profile +
-                "\nsudo nmcli connection up " + profile + " ifname " + dev + "\n" + linuxVerify]
+            ["Windows · 临时静态配置（管理员命令提示符）", windows("active")],
+            ["Windows · 永久静态配置（管理员命令提示符）", windows("persistent")],
+            ["Linux · 临时静态配置",
+                "sudo ip addr add " + clientIp + "/24 dev " + dev +
+                "\nsudo ip link set dev " + dev + " up\nsudo ip route replace " + network + " via " + gateway +
+                " dev " + dev + "\nip -4 addr show dev " + dev + "\nip -4 route show\nping -c 4 " + config.virtual_ip],
+            ["Linux · 永久静态配置（NetworkManager）",
+                linuxManaged(linuxInterface, [
+                    "sudo nmcli connection modify \"$CONN\" connection.interface-name \"$IFACE\" ipv4.method manual ipv4.addresses " +
+                        clientIp + "/24 ipv4.gateway \"\" ipv4.never-default yes connection.autoconnect yes +ipv4.routes " +
+                        shellQuote(network + " " + gateway),
+                    "sudo nmcli connection down \"$CONN\"",
+                    "sudo nmcli connection up \"$CONN\" ifname \"$IFACE\""
+                ].concat(linVerify))]
         ];
     }
     function commands()
@@ -398,8 +439,12 @@
         if (!data) { return; }
         try
         {
+            const mode = root.querySelector('input[name="networkBasicHelpMode"]:checked').value;
+            field("ClientIpField").hidden = mode !== "static";
+            field("StaticNotice").hidden = mode !== "static";
+            field("DhcpNotice").hidden = mode !== "dhcp";
             const groups = commandGroups(data.running, field("ClientIp").value, field("WindowsInterface").value,
-                field("LinuxInterface").value, field("LinuxConnection").value);
+                field("LinuxInterface").value, mode);
             groups.forEach(function (group) {
                 const details = document.createElement("details");
                 const summary = document.createElement("summary");
@@ -456,6 +501,7 @@
                 catch (error) { status(error.message, true); }
             });
             root.querySelectorAll(".network-basic-help-fields input").forEach(function (input) { input.addEventListener("input", commands); });
+            root.querySelectorAll('input[name="networkBasicHelpMode"]').forEach(function (input) { input.addEventListener("change", commands); });
             load();
         },
         unmount: function () {
