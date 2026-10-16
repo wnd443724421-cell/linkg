@@ -424,9 +424,9 @@
         {
             return [
                 ["Windows · 启用 DHCP / 取消静态配置（管理员命令提示符）",
-                    "netsh interface ipv4 delete route " + winRoute + " store=persistent\n" +
                     "netsh interface ipv4 set address name=" + win + " source=dhcp store=persistent\n" +
-                    "ipconfig /release " + win + "\nipconfig /renew " + win + "\n" + winVerify],
+                    "ipconfig /release " + win + "\nipconfig /renew " + win +
+                    "\nipconfig /all\nroute print -4"],
                 ["Windows · 重新获取 DHCP 租约（已经启用 DHCP）",
                     "ipconfig /release " + win + "\nipconfig /renew " + win + "\n" + winVerify],
                 ["Linux · 启用 DHCP / 取消静态配置（NetworkManager）",
@@ -449,9 +449,14 @@
                 " mask=255.255.255.0 gateway=none store=" + store +
                 "\nnetsh interface ipv4 add route " + winRoute + " store=" + store + "\n" + winVerify;
         }
+        function windowsCleanup(store)
+        {
+            return "route print -4\nnetsh interface ipv4 delete route " + winRoute +
+                " store=" + store + "\nroute print -4";
+        }
         return [
-            ["Windows · 临时静态配置（管理员命令提示符）", windows("active")],
-            ["Windows · 永久静态配置（管理员命令提示符）", windows("persistent")],
+            ["Windows · 临时静态配置（管理员命令提示符）", windows("active"), windowsCleanup("active")],
+            ["Windows · 永久静态配置（管理员命令提示符）", windows("persistent"), windowsCleanup("persistent")],
             ["Linux · 临时静态配置（NetworkManager，不保存到磁盘）",
                 linuxTemporary(linuxInterface, connection, clientIp, network, gateway, linVerify)],
             ["Linux · 永久静态配置（NetworkManager）",
@@ -466,6 +471,33 @@
         container.replaceChildren();
         text("HelpError", "");
         if (!data) { return; }
+        function copyButton(command)
+        {
+            const copy = document.createElement("button");
+            copy.type = "button";
+            copy.className = "network-basic-button network-basic-button-secondary";
+            copy.textContent = "复制命令";
+            copy.addEventListener("click", async function () {
+                try
+                {
+                    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(command); }
+                    else
+                    {
+                        const area = document.createElement("textarea");
+                        area.value = command;
+                        area.className = "network-basic-copy-buffer";
+                        document.body.appendChild(area);
+                        area.select();
+                        const copied = document.execCommand("copy");
+                        area.remove();
+                        if (!copied) { throw new Error("复制不可用"); }
+                    }
+                    copy.textContent = "已复制";
+                }
+                catch (error) { copy.textContent = "请选中命令手动复制"; }
+            });
+            return copy;
+        }
         try
         {
             const mode = root.querySelector('input[name="networkBasicHelpMode"]:checked').value;
@@ -479,33 +511,25 @@
                 const summary = document.createElement("summary");
                 const pre = document.createElement("pre");
                 const code = document.createElement("code");
-                const copy = document.createElement("button");
                 summary.textContent = group[0];
                 code.textContent = group[1];
-                copy.type = "button";
-                copy.className = "network-basic-button network-basic-button-secondary";
-                copy.textContent = "复制命令";
-                copy.addEventListener("click", async function () {
-                    try
-                    {
-                        if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(group[1]); }
-                        else
-                        {
-                            const area = document.createElement("textarea");
-                            area.value = group[1];
-                            area.className = "network-basic-copy-buffer";
-                            document.body.appendChild(area);
-                            area.select();
-                            const copied = document.execCommand("copy");
-                            area.remove();
-                            if (!copied) { throw new Error("复制不可用"); }
-                        }
-                        copy.textContent = "已复制";
-                    }
-                    catch (error) { copy.textContent = "请选中命令手动复制"; }
-                });
                 pre.appendChild(code);
-                details.append(summary, pre, copy);
+                details.append(summary, pre, copyButton(group[1]));
+                if (group[2])
+                {
+                    const optional = document.createElement("details");
+                    const optionalTitle = document.createElement("summary");
+                    const notice = document.createElement("p");
+                    const optionalPre = document.createElement("pre");
+                    const optionalCode = document.createElement("code");
+                    optional.className = "network-basic-route-cleanup";
+                    optionalTitle.textContent = "可选：删除本组手动添加的静态路由";
+                    notice.textContent = "仅在需要清理时使用。删除前核对网段、下一跳和网卡；旧网段或网关变化时需按实际路由修改命令。路由不存在会提示找不到元素，不影响其他操作。";
+                    optionalCode.textContent = group[2];
+                    optionalPre.appendChild(optionalCode);
+                    optional.append(optionalTitle, notice, optionalPre, copyButton(group[2]));
+                    details.appendChild(optional);
+                }
                 container.appendChild(details);
             });
         }

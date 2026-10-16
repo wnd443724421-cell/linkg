@@ -370,6 +370,9 @@
 #networkBasicCommands details { border-top: 1px solid var(--linkg-color-border-light); padding-bottom: 10px; }
 #networkBasicCommands summary { padding: 10px 0; font-size: 13px; }
 #networkBasicCommands pre { overflow-x: auto; padding: 12px; border-radius: 5px; background: #f4f6fa; line-height: 1.8; margin: 0 0 8px; }
+.network-basic-route-cleanup { margin: 12px 0 0 0; padding: 0 12px 10px; border: 1px solid var(--linkg-color-border-light); border-radius: 6px; }
+#networkBasicCommands .network-basic-route-cleanup summary { font-size: 12px; color: var(--linkg-color-text-secondary); }
+.network-basic-route-cleanup p { margin: 0 0 9px; font-size: 12px; color: var(--linkg-color-text-muted); }
 .network-basic-copy-buffer { position: fixed; top: -10000px; left: -10000px; }
 .network-basic-page input:disabled { cursor: not-allowed; }
 .network-basic-page [hidden] { display: none; }
