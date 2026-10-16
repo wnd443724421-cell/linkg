@@ -348,20 +348,39 @@
     }
     function shellQuote(value) { return "'" + value.replace(/'/g, "'\\''") + "'"; }
     /**
-     * @brief 使用Linux网卡名称识别当前活动NetworkManager连接。
+     * @brief 按用户指定的连接名称创建或更新以太网配置，随后在指定网卡激活。
+     *
+     * @note 若目标NAME不存在则创建；若已存在但类型不是Ethernet则拒绝覆盖。
+     *       不删除网卡上的其他连接配置，也不自动接管unmanaged网卡。
      */
-    function linuxManaged(iface, actions)
+    function linuxProfile(iface, connection, settings, verify)
     {
         return "IFACE=" + shellQuote(iface) +
-            "\nCONN=\"$(nmcli -g GENERAL.CONNECTION device show \"$IFACE\" 2>/dev/null)\"" +
-            "\nif [ -z \"$CONN\" ] || [ \"$CONN\" = \"--\" ]; then" +
-            "\n    echo '没有找到活动的 NetworkManager 连接；请先执行 nmcli connection show 并激活正确连接。' >&2" +
-            "\nelse\n    " + actions.join(" &&\n    ") + "\nfi";
+            "\nCONN=" + shellQuote(connection) +
+            "\nTYPE=\"$(nmcli -g connection.type connection show \"$CONN\" 2>/dev/null)\"" +
+            "\nif [ -n \"$TYPE\" ] && [ \"$TYPE\" != \"802-3-ethernet\" ]; then" +
+            "\n    echo '同名连接不是以太网配置，请改用其他连接名称。' >&2" +
+            "\nelif [ -z \"$TYPE\" ] && ! sudo nmcli connection add type ethernet ifname \"$IFACE\" con-name \"$CONN\" connection.autoconnect no ipv4.method disabled; then" +
+            "\n    echo '无法创建 NetworkManager 以太网连接，请检查网卡是否受 NetworkManager 管理。' >&2" +
+            "\nelse\n    sudo nmcli connection modify \"$CONN\" connection.interface-name \"$IFACE\" " + settings +
+            " &&\n    sudo nmcli connection up \"$CONN\" ifname \"$IFACE\"" +
+            " &&\n    " + verify.join(" &&\n    ") + "\nfi";
     }
     /**
-     * @brief 根据客户端获取IP的模式生成四组命令。
+     * @brief 只刷新已有的NetworkManager连接，不创建或修改永久配置。
      */
-    function commandGroups(config, clientIp, windowsInterface, linuxInterface, mode)
+    function linuxRenew(iface, connection, verify)
+    {
+        return "IFACE=" + shellQuote(iface) +
+            "\nCONN=" + shellQuote(connection) +
+            "\nsudo nmcli connection down \"$CONN\" &&" +
+            "\nsudo nmcli connection up \"$CONN\" ifname \"$IFACE\" &&" +
+            "\n" + verify.join(" &&\n") ;
+    }
+    /**
+     * @brief 根据静态或DHCP模式生成相应的四组客户端命令。
+     */
+    function commandGroups(config, clientIp, windowsInterface, linuxInterface, connection, mode)
     {
         if (mode !== "static" && mode !== "dhcp") { throw new Error("请选择静态 IP 或 DHCP"); }
         if (!windowsInterface.trim() || /["%!&|<>^\x60\r\n\x00-\x1f]/.test(windowsInterface))
@@ -371,6 +390,10 @@
         if (!/^[a-zA-Z0-9_.:-]{1,15}$/.test(linuxInterface))
         {
             throw new Error("Linux 网卡名称不合法，请使用 ip link 查看");
+        }
+        if (!connection.trim() || /[\x00-\x1f]/.test(connection))
+        {
+            throw new Error("Linux 连接名称不能为空，且不能包含控制字符");
         }
         const win = '"' + windowsInterface + '"';
         const dev = shellQuote(linuxInterface);
@@ -389,16 +412,10 @@
                 ["Windows · 重新获取 DHCP 租约（已经启用 DHCP）",
                     "ipconfig /release " + win + "\nipconfig /renew " + win + "\n" + winVerify],
                 ["Linux · 启用 DHCP / 取消静态配置（NetworkManager）",
-                    linuxManaged(linuxInterface, [
-                        "sudo nmcli connection modify \"$CONN\" ipv4.method auto ipv4.addresses \"\" ipv4.gateway \"\" ipv4.routes \"\" ipv4.never-default no connection.autoconnect yes",
-                        "sudo nmcli connection down \"$CONN\"",
-                        "sudo nmcli connection up \"$CONN\" ifname \"$IFACE\""
-                    ].concat(linVerify))],
+                    linuxProfile(linuxInterface, connection,
+                        'ipv4.method auto ipv4.addresses "" ipv4.gateway "" ipv4.routes "" ipv4.never-default no connection.autoconnect yes connection.autoconnect-priority 100', linVerify)],
                 ["Linux · 重新获取 DHCP 租约（已经启用 DHCP）",
-                    linuxManaged(linuxInterface, [
-                        "sudo nmcli connection down \"$CONN\"",
-                        "sudo nmcli connection up \"$CONN\" ifname \"$IFACE\""
-                    ].concat(linVerify))]
+                    linuxRenew(linuxInterface, connection, linVerify)]
             ];
         }
         const client = ipv4(clientIp);
@@ -422,13 +439,9 @@
                 "\nsudo ip link set dev " + dev + " up\nsudo ip route replace " + network + " via " + gateway +
                 " dev " + dev + "\nip -4 addr show dev " + dev + "\nip -4 route show\nping -c 4 " + config.virtual_ip],
             ["Linux · 永久静态配置（NetworkManager）",
-                linuxManaged(linuxInterface, [
-                    "sudo nmcli connection modify \"$CONN\" connection.interface-name \"$IFACE\" ipv4.method manual ipv4.addresses " +
-                        clientIp + "/24 ipv4.gateway \"\" ipv4.never-default yes connection.autoconnect yes +ipv4.routes " +
-                        shellQuote(network + " " + gateway),
-                    "sudo nmcli connection down \"$CONN\"",
-                    "sudo nmcli connection up \"$CONN\" ifname \"$IFACE\""
-                ].concat(linVerify))]
+                linuxProfile(linuxInterface, connection, "ipv4.method manual ipv4.addresses " +
+                    clientIp + '/24 ipv4.gateway "" ipv4.never-default yes ipv4.routes ' +
+                    shellQuote(network + " " + gateway) + " connection.autoconnect yes connection.autoconnect-priority 100", linVerify)]
         ];
     }
     function commands()
@@ -444,7 +457,7 @@
             field("StaticNotice").hidden = mode !== "static";
             field("DhcpNotice").hidden = mode !== "dhcp";
             const groups = commandGroups(data.running, field("ClientIp").value, field("WindowsInterface").value,
-                field("LinuxInterface").value, mode);
+                field("LinuxInterface").value, field("LinuxConnection").value, mode);
             groups.forEach(function (group) {
                 const details = document.createElement("details");
                 const summary = document.createElement("summary");

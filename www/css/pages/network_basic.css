@@ -357,6 +357,7 @@
 .network-basic-help-mode small { color: var(--linkg-color-text-secondary); font-size: 11px; font-weight: 400; }
 .network-basic-help-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-bottom: 12px; }
 .network-basic-help-fields label { display: flex; flex-direction: column; gap: 4px; }
+.network-basic-help-fields small { display: block; font-size: 11px; line-height: 1.5; color: var(--linkg-color-text-muted); }
 .network-basic-help-fields input {
     width: 100%;
     min-width: 0;
