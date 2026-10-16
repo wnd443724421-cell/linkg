@@ -292,7 +292,14 @@ static void _linkg_wifi_tx_record_dropped(linkg_wifi_tx_t *tx, linkg_path_t *pat
         return;
     }
 
-    linkg_path_record_tx_dropped(path, packet->data_length, 1U);
+    if (reason == LINKG_WIFI_TX_DROP_QUEUE_FULL)
+    {
+        linkg_path_record_tx_queue_overflow(path, packet->data_length, 1U);
+    }
+    else
+    {
+        linkg_path_record_tx_dropped(path, packet->data_length, 1U);
+    }
 
     tx->dropped_total++;
     tx->dropped_by_reason[reason]++;

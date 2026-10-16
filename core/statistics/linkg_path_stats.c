@@ -82,6 +82,22 @@ void linkg_path_stats_record_tx_expired(linkg_path_stats_t *stats, uint64_t byte
 }
 
 /**
+ * @brief 精确记录队列容量不足导致的淘汰，同时归入主动丢弃总计。
+ */
+void linkg_path_stats_record_tx_queue_overflow(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets)
+{
+    if (stats == NULL)
+    {
+        return;
+    }
+
+    stats->tx_dropped_bytes          += bytes;
+    stats->tx_dropped_packets        += packets;
+    stats->tx_queue_overflow_bytes   += bytes;
+    stats->tx_queue_overflow_packets += packets;
+}
+
+/**
  * @brief 记录路径实际接收成功。
  */
 void linkg_path_stats_record_rx(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets)

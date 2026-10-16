@@ -86,8 +86,8 @@ typedef struct
 
 _Static_assert(sizeof(linkg_transport_header_t) == LINKG_TRANSPORT_WIRE_HEADER_SIZE, "invalid transport header size");
 _Static_assert(sizeof(linkg_transport_fragment_header_t) == LINKG_TRANSPORT_WIRE_FRAGMENT_HEADER_SIZE, "invalid transport fragment header size");
-_Static_assert(LINKG_TRANSPORT_PAYLOAD_MAX_SIZE == 1436U, "invalid transport payload size");
-_Static_assert(LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE == 1428U, "invalid transport fragment payload size");
+_Static_assert(LINKG_TRANSPORT_PAYLOAD_MAX_SIZE == 1428U, "invalid transport payload size");
+_Static_assert(LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE == 1420U, "invalid transport fragment payload size");
 
 #ifdef __cplusplus
 }

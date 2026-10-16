@@ -433,6 +433,21 @@ void linkg_path_record_tx_expired(linkg_path_t *path, uint64_t bytes, uint64_t p
 }
 
 /**
+ * @brief 记录本地TX队列溢出丢弃，队列溢出属于tx_dropped子集。
+ */
+void linkg_path_record_tx_queue_overflow(linkg_path_t *path, uint64_t bytes, uint64_t packets)
+{
+    if (path == NULL || !path->initialized)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&path->stats_lock);
+    linkg_path_stats_record_tx_queue_overflow(&path->stats, bytes, packets);
+    pthread_mutex_unlock(&path->stats_lock);
+}
+
+/**
  * @brief 记录从该路径实际接收成功的数据。
  *
  * @note rx是本机累计事实统计，不表示端到端丢包率。

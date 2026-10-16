@@ -10,6 +10,7 @@
 
 #include "cellular_tx.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -19,6 +20,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
 
@@ -26,14 +28,26 @@
 #include "linkg_packet_pool.h"
 #include "linkg_time.h"
 #include "cellular_tx_queue.h"
+#include "cellular_wire.h"
 
 /****************************** 模块常量 ******************************/
 
 #define LINKG_CELLULAR_TX_BATCH_SIZE_MAX     32U                                    // 单次发送调度最大Packet数量
 #define LINKG_CELLULAR_TX_QUEUE_BATCH_COUNT  5U                                     // 单业务等待队列最多缓存批次数
-#define LINKG_CELLULAR_TX_CONTROL_SIZE       CMSG_SPACE(sizeof(struct in6_pktinfo))  // 单个IPv6 PKTINFO控制区大小
+#define LINKG_CELLULAR_TX_CONTROL_SIZE       CMSG_SPACE(sizeof(struct in6_pktinfo))
+#define LINKG_CELLULAR_TX_PEER_SLOTS         256U // 最多256个IPv6对端Sequence状态  // 单个IPv6 PKTINFO控制区大小
 
 /****************************** 内部类型 ******************************/
+
+/**
+ * @brief 每个目标IPv6地址的三业务独立发送序号。
+ */
+typedef struct
+{
+    struct in6_addr address;                                        // 对端下一跳IPv6
+    uint32_t        sequence[LINKG_LINK_TX_CLASS_COUNT];            // 成功提交Socket的序号
+    bool            used;                                           // 状态槽是否已分配
+} linkg_cellular_tx_peer_sequence_t;
 
 /**
  * @brief 单个蜂窝业务类别的预分配发送Scratch。
@@ -42,7 +56,9 @@ typedef struct
 {
     linkg_cellular_tx_queue_item_t items[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                           // 当前发送Queue元素快照
     struct mmsghdr                 messages[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                        // sendmmsg消息数组
-    struct iovec                   iovecs[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                          // iovec数组
+    struct iovec                   iovecs[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][2];                       // Wire头和Transport帧
+    linkg_cellular_wire_header_t  headers[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                          // 当轮Wire头
+    uint32_t                      peer_indices[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                     // 当轮序号Peer槽索引
     struct sockaddr_in6            destinations[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                    // UDP目标IPv6地址数组
     unsigned char                  controls[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][LINKG_CELLULAR_TX_CONTROL_SIZE]; // IPv6 PKTINFO控制区
 } linkg_cellular_tx_scratch_t;
@@ -61,6 +77,8 @@ typedef struct
 struct linkg_cellular_tx
 {
     pthread_mutex_t             lock;                               // 三业务队列和发送调度串行锁
+    uint32_t                    session_id;                         // 当前TX对象随机Session ID
+    linkg_cellular_tx_peer_sequence_t peer_sequences[LINKG_CELLULAR_TX_PEER_SLOTS]; // Peer独立序号
     linkg_cellular_tx_scratch_t scratch[LINKG_LINK_TX_CLASS_COUNT]; // 三业务预分配Scratch
     linkg_cellular_tx_queue_t  *queues[LINKG_LINK_TX_CLASS_COUNT];  // 三业务等待FIFO
     int                        *socket_fds;                          // 借用Cellular Link业务Socket数组
@@ -72,6 +90,96 @@ struct linkg_cellular_tx
 };
 
 /****************************** 内部辅助 ******************************/
+
+/**
+ * @brief 生成当前TX对象非零随机Session ID。
+ */
+static int _linkg_cellular_tx_generate_session(uint32_t *session_id)
+{
+    uint8_t  *cursor;
+    size_t    remaining;
+    ssize_t   result;
+    uint32_t  value;
+
+    if (session_id == NULL)
+    {
+        return -EINVAL;
+    }
+
+    do
+    {
+        value     = 0U;
+        cursor    = (uint8_t *)&value;
+        remaining = sizeof(value);
+
+        while (remaining > 0U)
+        {
+            do
+            {
+                result = getrandom(cursor, remaining, 0U);
+            }
+            while (result < 0 && errno == EINTR);
+
+            if (result <= 0)
+            {
+                return result == 0 ? -EIO : -errno;
+            }
+
+            cursor    += (size_t)result;
+            remaining -= (size_t)result;
+        }
+    }
+    while (value == 0U);
+
+    *session_id = value;
+
+    return 0;
+}
+
+/**
+ * @brief 查找或分配指定目标IPv6的序号状态槽。
+ *
+ * @note 调用方持有tx->lock，不依赖Transport逻辑Node ID。
+ */
+static int _linkg_cellular_tx_peer_slot_locked(linkg_cellular_tx_t *tx, const struct in6_addr *address, uint32_t *slot)
+{
+    uint32_t free_index;
+    uint32_t index;
+
+    if (tx == NULL || address == NULL || slot == NULL)
+    {
+        return -EINVAL;
+    }
+
+    free_index = LINKG_CELLULAR_TX_PEER_SLOTS;
+
+    for (index = 0U; index < LINKG_CELLULAR_TX_PEER_SLOTS; index++)
+    {
+        if (tx->peer_sequences[index].used)
+        {
+            if (memcmp(&tx->peer_sequences[index].address, address, sizeof(*address)) == 0)
+            {
+                *slot = index;
+                return 0;
+            }
+        }
+        else if (free_index == LINKG_CELLULAR_TX_PEER_SLOTS)
+        {
+            free_index = index;
+        }
+    }
+
+    if (free_index == LINKG_CELLULAR_TX_PEER_SLOTS)
+    {
+        return -ENOSPC;
+    }
+
+    tx->peer_sequences[free_index].address = *address;
+    tx->peer_sequences[free_index].used    = true;
+    *slot                                  = free_index;
+
+    return 0;
+}
 
 /**
  * @brief 校验蜂窝发送业务类别。
@@ -154,6 +262,19 @@ static void _linkg_cellular_tx_record_dropped(linkg_path_t *path, const linkg_pa
 }
 
 /**
+ * @brief 仅队列容量溢出时更新专用计数，不与其它主动丢弃混淆。
+ */
+static void _linkg_cellular_tx_record_queue_overflow(linkg_path_t *path, const linkg_packet_t *packet)
+{
+    if (path == NULL || packet == NULL)
+    {
+        return;
+    }
+
+    linkg_path_record_tx_queue_overflow(path, packet->data_length, 1U);
+}
+
+/**
  * @brief 记录单个Packet发送失败。
  */
 static void _linkg_cellular_tx_record_failed(linkg_path_t *path, const linkg_packet_t *packet)
@@ -214,7 +335,7 @@ static uint32_t _linkg_cellular_tx_drop_oldest_locked(linkg_cellular_tx_t *tx, l
     // Queue丢弃会释放Packet和Path引用，因此必须提前记录丢包统计。
     for (index = 0U; index < drop_count; index++)
     {
-        _linkg_cellular_tx_record_dropped(items[index].path, items[index].packet);
+        _linkg_cellular_tx_record_queue_overflow(items[index].path, items[index].packet);
     }
 
     ret = linkg_cellular_tx_queue_discard_batch(queue, drop_count);
@@ -371,6 +492,9 @@ static int _linkg_cellular_tx_send_once_locked(linkg_cellular_tx_t *tx, linkg_li
     const struct sockaddr_in6   *target;
     unsigned int                 interface_index;
     uint32_t                     index;
+    uint32_t                     peer_slot;
+    uint32_t                     sequence;
+    uint8_t                      reserved_counts[LINKG_CELLULAR_TX_PEER_SLOTS] = {0};
     int                          socket_fd;
     int                          ret;
 
@@ -399,16 +523,31 @@ static int _linkg_cellular_tx_send_once_locked(linkg_cellular_tx_t *tx, linkg_li
     {
         target = (const struct sockaddr_in6 *)&items[index].destination.address;
 
+        ret = _linkg_cellular_tx_peer_slot_locked(tx, &target->sin6_addr, &peer_slot);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        sequence = tx->peer_sequences[peer_slot].sequence[tx_class] + reserved_counts[peer_slot];
+        reserved_counts[peer_slot]++;
+
+        scratch->peer_indices[index]       = peer_slot;
+        scratch->headers[index].session_id = htonl(tx->session_id);
+        scratch->headers[index].sequence   = htonl(sequence);
+
         scratch->destinations[index]           = *target;
         scratch->destinations[index].sin6_port = htons(tx->service_ports[tx_class]);
 
-        scratch->iovecs[index].iov_base = (void *)linkg_packet_const_data(items[index].packet);
-        scratch->iovecs[index].iov_len  = items[index].packet->data_length;
+        scratch->iovecs[index][0].iov_base = &scratch->headers[index];
+        scratch->iovecs[index][0].iov_len  = LINKG_CELLULAR_WIRE_HEADER_SIZE;
+        scratch->iovecs[index][1].iov_base = (void *)linkg_packet_const_data(items[index].packet);
+        scratch->iovecs[index][1].iov_len  = items[index].packet->data_length;
 
         scratch->messages[index].msg_hdr.msg_name    = &scratch->destinations[index];
         scratch->messages[index].msg_hdr.msg_namelen = sizeof(scratch->destinations[index]);
-        scratch->messages[index].msg_hdr.msg_iov     = &scratch->iovecs[index];
-        scratch->messages[index].msg_hdr.msg_iovlen  = 1U;
+        scratch->messages[index].msg_hdr.msg_iov     = scratch->iovecs[index];
+        scratch->messages[index].msg_hdr.msg_iovlen  = 2U;
 
         ret = _linkg_cellular_tx_prepare_pktinfo(&scratch->messages[index].msg_hdr, scratch->controls[index], sizeof(scratch->controls[index]), interface_index);
         if (ret != 0)
@@ -431,6 +570,12 @@ static int _linkg_cellular_tx_send_once_locked(linkg_cellular_tx_t *tx, linkg_li
     if ((uint32_t)ret > count)
     {
         return -EIO;
+    }
+
+    // 仅成功提交Socket的前缀消耗序号，未提交尾部下次重试重新编号。
+    for (index = 0U; index < (uint32_t)ret; index++)
+    {
+        tx->peer_sequences[scratch->peer_indices[index]].sequence[tx_class]++;
     }
 
     return ret;
@@ -677,6 +822,13 @@ linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds
     tx->interface_name = interface_name;
     tx->capacity       = capacity;
     tx->queue_capacity = capacity * LINKG_CELLULAR_TX_QUEUE_BATCH_COUNT;
+
+    ret = _linkg_cellular_tx_generate_session(&tx->session_id);
+    if (ret != 0)
+    {
+        free(tx);
+        return NULL;
+    }
 
     atomic_store(&tx->started, false);
 
