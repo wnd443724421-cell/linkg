@@ -8,7 +8,11 @@ const s=gen(c,"192.168.3.100","以太网 2","end0","LinkG","static"),d=gen(c,"",
 assert.equal(s.length,4);assert.equal(d.length,4);
 assert.match(s[0][1],/source=static.*store=active/);
 assert.match(s[1][1],/store=persistent/);
-assert.match(s[2][1],/ip addr add 192\.168\.3\.100\/24/);
+assert.ok(s[2][1].includes("nmcli connection add save no type ethernet"));
+assert.ok(s[2][1].includes("ipv4.method manual ipv4.addresses 192.168.3.100/24"));
+assert.ok(s[2][1].includes("ipv4.never-default yes"));
+assert.ok(s[2][1].includes('nmcli connection up "$TMP" ifname "$IFACE"'));
+assert.ok(!s[2][1].includes("ip addr add"));
 assert.ok(s[3][1].includes("CONN='LinkG'"));
 assert.ok(s[3][1].includes('nmcli connection add type ethernet ifname "$IFACE"'));
 assert.ok(s[3][1].includes('nmcli connection modify "$CONN"'));

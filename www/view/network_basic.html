@@ -143,7 +143,7 @@
                     <label><input type="radio" name="networkBasicHelpMode" value="static" checked><span><strong>手动静态 IP</strong><small>手动设置地址及虚拟组网路由</small></span></label>
                     <label><input type="radio" name="networkBasicHelpMode" value="dhcp"><span><strong>自动获取 IP（DHCP）</strong><small>启用 DHCP 或重新获取地址</small></span></label>
                 </fieldset>
-                <p id="networkBasicStaticNotice" class="network-basic-warning">静态配置不添加 Internet 默认路由。LinkG DHCP 地址池为 .2–.254，未预留静态地址，请先确认 IP 未被其他设备使用。Windows 路由若提示“对象已存在”，先通过 route print -4 检查已有路由。临时设置可能被系统网络管理服务重新配置。</p>
+                <p id="networkBasicStaticNotice" class="network-basic-warning">静态配置不添加 Internet 默认路由。LinkG DHCP 地址池为 .2–.254，未预留静态地址，请先确认 IP 未被其他设备使用。Windows 路由若提示“对象已存在”，先通过 route print -4 检查已有路由。Linux 的临时静态配置使用 NetworkManager 运行时连接来替换当前 DHCP 地址，非追加第二个地址；不会修改原连接档案，NetworkManager 重启后该临时连接消失。</p>
                 <p id="networkBasicDhcpNotice" hidden>“启用 DHCP”用于取消静态 IPv4 配置并恢复自动获取；“重新获取 DHCP 租约”用于已经是 DHCP 模式的设备。LinkG 通过 Option 121/249 下发虚拟路由，原有租约不会因服务端重载立刻更新，换网段后需要主动释放并重新获取租约。</p>
                 <div class="network-basic-help-fields">
                     <label id="networkBasicClientIpField">客户端静态 IP<input id="networkBasicClientIp" type="text" maxlength="15" autocomplete="off"></label>
@@ -154,8 +154,8 @@
                 <p id="networkBasicHelpError" class="network-basic-warning" role="status"></p>
                 <div id="networkBasicCommands"></div>
                 <p>Windows 在管理员命令提示符中执行。静态模式使用 set address 设置网卡 IPv4 模式；此前手工添加过同一路由时可能提示“对象已存在”。“启用 DHCP”仅尝试删除<strong>当前网段/网关匹配的永久手工路由</strong>，如不存在可忽略删除提示；历史网段的手工路由需先用 route print -4 核对后自行清理，切勿误删其他用途的路由。</p>
-                <p>Linux 永久配置和 DHCP 操作仅适用于 NetworkManager。<strong>网卡名称</strong>（如 <code>end0</code>）是物理接口；<strong>连接配置名称 NAME</strong>（如 <code>LinkG</code> 或 <code>end0-dhcp-linkg</code>）是保存的网络设置名称，可由用户自行命名，并不是 Wi-Fi 名称。执行永久静态或“启用 DHCP”命令时，指定 NAME 不存在就新建以太网配置，存在就更新该配置，并激活到指定网卡；不会重命名或删除原来使用的其他连接。只刷新 DHCP 租约则要求配置已存在且已激活。若网卡在 NetworkManager 中显示 <code>unmanaged</code>，不会强制接管，需先处理系统的网卡托管设置。其他 Linux（如 netplan、systemd-networkd、Tina UCI）需要使用对应方式。</p>
-                <p>Linux “启用 DHCP”会清空指定 NetworkManager 连接保存的<strong>全部</strong>静态 IPv4 地址、网关及手工路由，只适用于专门连接 LinkG 的配置。执行 connection up 会切换网卡当前活动的连接，而 DHCP 租约刷新采用 down/up，均可能暂时断网；经该网卡 SSH 管理的设备建议使用串口或本地终端。静态 IP 不会因拔插网线自动改变。</p>
+                <p>Linux 临时/永久静态配置与 DHCP 操作均适用于 NetworkManager。<strong>网卡名称</strong>（如 <code>end0</code>）是物理接口；<strong>连接配置名称 NAME</strong>（如 <code>LinkG</code> 或 <code>end0-dhcp-linkg</code>）是保存的网络设置名称，可由用户自行命名，并不是 Wi-Fi 名称。执行永久静态或“启用 DHCP”命令时，指定 NAME 不存在就新建以太网配置，存在就更新该配置，并激活到指定网卡；临时静态配置则以 NAME 派生一个不保存到磁盘的临时连接并切换该网卡；不会重命名或删除原来使用的其他连接。只刷新 DHCP 租约则要求配置已存在且已激活。若网卡在 NetworkManager 中显示 <code>unmanaged</code>，不会强制接管，需先处理系统的网卡托管设置。其他 Linux（如 netplan、systemd-networkd、Tina UCI）需要使用对应方式。</p>
+                <p>Linux “启用 DHCP”会清空指定 NetworkManager 连接保存的<strong>全部</strong>静态 IPv4 地址、网关及手工路由，只适用于专门连接 LinkG 的配置。激活临时或永久连接会切换网卡当前活动的连接，DHCP 租约刷新采用 down/up，均可能暂时断网；经该网卡 SSH 管理的设备建议使用串口或本地终端。静态 IP 不会因拔插网线自动改变。</p>
             </div>
         </details>
     </section>

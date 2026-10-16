@@ -378,6 +378,24 @@
             "\n" + verify.join(" &&\n") ;
     }
     /**
+     * @brief 创建不保存到磁盘的NetworkManager静态IPv4连接，切换掉活动DHCP配置。
+     *
+     * @note 不改动原连接档案。每次创建独立的运行时连接，NetworkManager重启后消失。
+     */
+    function linuxTemporary(iface, connection, address, network, gateway, verify)
+    {
+        return "IFACE=" + shellQuote(iface) +
+            "\nCONN=" + shellQuote(connection) +
+            '\nTMP="$CONN-temporary-$IFACE-$(date +%s)"' +
+            "\nif ! command -v nmcli >/dev/null 2>&1; then" +
+            "\n    echo '此临时静态配置命令需要 NetworkManager（nmcli）。' >&2" +
+            "\nelse\n    sudo nmcli connection add save no type ethernet ifname \"$IFACE\" con-name \"$TMP\"" +
+            " connection.autoconnect no ipv4.method manual ipv4.addresses " + address + "/24" +
+            " ipv4.gateway \"\" ipv4.never-default yes ipv4.routes " + shellQuote(network + " " + gateway) +
+            " &&\n    sudo nmcli connection up \"$TMP\" ifname \"$IFACE\"" +
+            " &&\n    " + verify.join(" &&\n    ") + "\nfi";
+    }
+    /**
      * @brief 根据静态或DHCP模式生成相应的四组客户端命令。
      */
     function commandGroups(config, clientIp, windowsInterface, linuxInterface, connection, mode)
@@ -434,10 +452,8 @@
         return [
             ["Windows · 临时静态配置（管理员命令提示符）", windows("active")],
             ["Windows · 永久静态配置（管理员命令提示符）", windows("persistent")],
-            ["Linux · 临时静态配置",
-                "sudo ip addr add " + clientIp + "/24 dev " + dev +
-                "\nsudo ip link set dev " + dev + " up\nsudo ip route replace " + network + " via " + gateway +
-                " dev " + dev + "\nip -4 addr show dev " + dev + "\nip -4 route show\nping -c 4 " + config.virtual_ip],
+            ["Linux · 临时静态配置（NetworkManager，不保存到磁盘）",
+                linuxTemporary(linuxInterface, connection, clientIp, network, gateway, linVerify)],
             ["Linux · 永久静态配置（NetworkManager）",
                 linuxProfile(linuxInterface, connection, "ipv4.method manual ipv4.addresses " +
                     clientIp + '/24 ipv4.gateway "" ipv4.never-default yes ipv4.routes ' +
