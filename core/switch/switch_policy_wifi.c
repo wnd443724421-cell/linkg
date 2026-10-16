@@ -136,7 +136,6 @@ static int _linkg_switch_policy_enter_dual_verify(const linkg_switch_policy_inpu
 static int _linkg_switch_policy_process_wifi_single(const linkg_switch_policy_input_t *input, uint64_t now_us)
 {
     linkg_switch_policy_loss_state_t loss_state;
-    linkg_switch_policy_rf_state_t   rf_state;
     int                              ret;
 
     ret = linkg_switch_policy_loss_process(input, now_us, &loss_state);
@@ -145,28 +144,7 @@ static int _linkg_switch_policy_process_wifi_single(const linkg_switch_policy_in
         return ret;
     }
 
-    if (loss_state == LINKG_SWITCH_POLICY_LOSS_NONE)
-    {
-        return _linkg_switch_policy_enter_dual_verify(input, now_us);
-    }
-
-    if (loss_state == LINKG_SWITCH_POLICY_LOSS_BAD)
-    {
-        return _linkg_switch_policy_enter_dual_verify(input, now_us);
-    }
-
-    if (loss_state != LINKG_SWITCH_POLICY_LOSS_SUSPECT)
-    {
-        return 0;
-    }
-
-    ret = linkg_switch_policy_rf_evaluate(&input->observation.wifi.radio, &rf_state);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (rf_state != LINKG_SWITCH_POLICY_RF_DEGRADED)
+    if (loss_state != LINKG_SWITCH_POLICY_LOSS_BAD)
     {
         return 0;
     }

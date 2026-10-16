@@ -71,7 +71,7 @@
 #define LINKG_FAST_NAT_PRIORITY_EARLY         (NF_IP_PRI_RAW + 50)                                        // conntrack之前执行
 #define LINKG_FAST_NAT_PRIORITY_POSTROUTING   (NF_IP_PRI_NAT_SRC - 10)                                    // 常规Source NAT之前执行
 
-#define LINKG_FAST_NAT_TCP_MSS_MAX            1396U                                                       // LinkG IPv6/UDP隧道下TCP MSS上限
+#define LINKG_FAST_NAT_TCP_MSS_MAX            1388U                                                       // LinkG IPv6/UDP隧道下TCP MSS上限
 
 /****************************** SNAT定义 ******************************/
 

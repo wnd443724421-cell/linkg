@@ -1136,6 +1136,8 @@ OAL_STATIC uint8_t wal_radio_status_state(const oal_net_device_stru *net_dev,
 OAL_STATIC void wal_radio_status_fill_peer(wal_radio_peer_status_stru *peer, const uint8_t *mac,
     const oal_station_info_stru *sta_info, const hmac_user_stru *hmac_user, int32_t query_ret)
 {
+    oal_rate_info_stru tx_rate;
+    oal_rate_info_stru rx_rate;
     uint32_t current_time = (uint32_t)oal_time_get_stamp_ms();
 
     peer->rssi_dbm = -127;
@@ -1157,10 +1159,13 @@ OAL_STATIC void wal_radio_status_fill_peer(wal_radio_peer_status_stru *peer, con
         return;
     }
 
+    tx_rate = sta_info->txrate;
+    rx_rate = sta_info->rxrate;
+
     peer->rssi_dbm           = sta_info->signal;
     peer->inactive_ms        = sta_info->inactive_time;
-    peer->tx_rate_kbps       = cfg80211_calculate_bitrate(&sta_info->txrate) * 100U;
-    peer->rx_rate_kbps       = cfg80211_calculate_bitrate(&sta_info->rxrate) * 100U;
+    peer->tx_rate_kbps       = cfg80211_calculate_bitrate(&tx_rate) * 100U;
+    peer->rx_rate_kbps       = cfg80211_calculate_bitrate(&rx_rate) * 100U;
     peer->driver_tx_bytes    = sta_info->tx_bytes;
     peer->driver_rx_bytes    = sta_info->rx_bytes;
     peer->driver_tx_packets  = sta_info->tx_packets;
