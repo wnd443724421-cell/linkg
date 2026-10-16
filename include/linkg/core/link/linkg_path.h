@@ -77,6 +77,7 @@ void linkg_path_record_tx_success(linkg_path_t *path, uint64_t bytes, uint64_t p
 void linkg_path_record_tx_failed(linkg_path_t *path, uint64_t bytes, uint64_t packets);
 void linkg_path_record_tx_dropped(linkg_path_t *path, uint64_t bytes, uint64_t packets);
 void linkg_path_record_tx_expired(linkg_path_t *path, uint64_t bytes, uint64_t packets);
+void linkg_path_record_tx_queue_overflow(linkg_path_t *path, uint64_t bytes, uint64_t packets);
 void linkg_path_record_rx(linkg_path_t *path, uint64_t bytes, uint64_t packets);
 int  linkg_path_get_stats(linkg_path_t *path, linkg_path_stats_t *stats);
 

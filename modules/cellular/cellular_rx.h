@@ -10,6 +10,9 @@
 
 #include "linkg_link.h"
 #include "linkg_packet_pool.h"
+#include "linkg_cellular_link.h"
+
+#include <netinet/in.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -31,6 +34,10 @@ int                  linkg_cellular_rx_stop(linkg_cellular_rx_t *rx);
 
 int linkg_cellular_rx_get_fd(linkg_cellular_rx_t *rx);
 int linkg_cellular_rx_receive_batch(linkg_cellular_rx_t *rx, linkg_link_rx_item_t *items, uint32_t capacity);
+
+/****************************** 链路统计 ******************************/
+
+int linkg_cellular_rx_get_source_stats(linkg_cellular_rx_t *rx, const struct in6_addr *address, linkg_cellular_rx_stats_t *stats);
 
 #ifdef __cplusplus
 }

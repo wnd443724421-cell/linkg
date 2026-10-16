@@ -10,9 +10,11 @@
 
 #include "cellular_rx.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -30,6 +32,7 @@
 #include "linkg_time.h"
 
 #include "cellular_rx_queue.h"
+#include "cellular_wire.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -44,20 +47,51 @@
 #define LINKG_CELLULAR_RX_WORKER_WAKEUP_EVENT   LINKG_LINK_TX_CLASS_COUNT                                                                 // Worker唤醒事件索引
 #define LINKG_CELLULAR_RX_WORKER_THREAD_NAME    "cell-rx"                                                                                 // RX生产线程名称
 #define LINKG_CELLULAR_RX_WORKER_CPU_CORE       0                                                                                         // RX生产线程绑定CPU0
+#define LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE 64U // 接收确认窗口，与Wi-Fi一致
+#define LINKG_CELLULAR_RX_SOURCE_SLOTS         256U // IPv6接收来源状态槽数量
 #define LINKG_CELLULAR_RX_RETRY_MS              1U                                                                                        // Queue或Packet Pool暂不可用时重试间隔
 
 /****************************** 内部类型 ******************************/
+
+/**
+ * @brief 单个Cellular Peer业务类别的64帧Sequence接收窗口。
+ *
+ * Session切换时只清空窗口，累计received/confirmed_lost保持单调。
+ */
+typedef struct
+{
+    uint32_t highest_sequence;        // 当前窗口最高Sequence
+    uint32_t window_span;             // 当前窗口有效跨度
+    uint64_t received_bitmap;         // 接收位图
+    uint64_t received_packets;        // 累计唯一接收帧
+    uint64_t confirmed_lost_packets;  // 累计确认丢失帧
+    bool     initialized;             // 本业务窗口已初始化
+} linkg_cellular_rx_class_stats_t;
+
+/**
+ * @brief IPv6来源识别的Cellular RX独立Session及三业务统计。
+ */
+typedef struct
+{
+    struct in6_addr                 address;                             // 当前Peer来源IPv6
+    uint32_t                        session_id;                          // 当前发送端会话
+    uint32_t                        previous_session_id;                 // 上一代已退役会话
+    linkg_cellular_rx_class_stats_t classes[LINKG_LINK_TX_CLASS_COUNT];  // 三业务独立Sequence窗口
+    bool                            used;                                // 当前IPv6来源槽已占用
+    bool                            initialized;                         // Peer接收会话已初始化
+} linkg_cellular_rx_source_stats_t;
 
 /**
  * @brief 蜂窝接收生产线程预分配Scratch。
  */
 typedef struct
 {
-    linkg_cellular_rx_queue_item_t items[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                               // 当前接收完成Queue元素
-    linkg_packet_t                *packets[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                             // 当前从Packet Pool申请的Packet
-    struct mmsghdr                 messages[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                            // recvmmsg消息数组
-    struct iovec                   iovecs[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                              // recvmmsg缓冲区数组
-    unsigned char                  controls[LINKG_CELLULAR_RX_BATCH_SIZE_MAX][LINKG_CELLULAR_RX_CONTROL_SIZE]; // IPv6辅助控制区
+    linkg_cellular_rx_queue_item_t items[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                                     // 当前接收完成Queue元素
+    linkg_packet_t                 *packets[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                                  // Packet Pool申请的Packet
+    struct mmsghdr                 messages[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                                  // recvmmsg消息数组
+    struct iovec                   iovecs[LINKG_CELLULAR_RX_BATCH_SIZE_MAX][2];                                 // Wire头和Transport数据
+    linkg_cellular_wire_header_t   headers[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];                                   // 本轮Wire头
+    unsigned char                  controls[LINKG_CELLULAR_RX_BATCH_SIZE_MAX][LINKG_CELLULAR_RX_CONTROL_SIZE];  // IPv6辅助控制区
 } linkg_cellular_rx_scratch_t;
 
 /**
@@ -69,6 +103,9 @@ struct linkg_cellular_rx
     linkg_cellular_rx_scratch_t    scratch;                                        // 生产线程预分配Scratch
     linkg_cellular_rx_queue_item_t consume_items[LINKG_CELLULAR_RX_BATCH_SIZE_MAX];// Link RX消费临时元素
     linkg_cellular_rx_queue_t     *queues[LINKG_LINK_TX_CLASS_COUNT];              // 三业务SPSC接收FIFO
+
+    pthread_mutex_t                  stats_lock;                                    // RX会话和累计统计锁
+    linkg_cellular_rx_source_stats_t source_stats[LINKG_CELLULAR_RX_SOURCE_SLOTS];  // IPv6来源状态
 
     linkg_packet_pool_t           *packet_pool;                                    // 借用Link Packet Pool
     int                           *socket_fds;                                     // 借用Cellular Link业务Socket数组
@@ -86,6 +123,198 @@ struct linkg_cellular_rx
 };
 
 /****************************** 内部辅助 ******************************/
+
+/**
+ * @brief 生成低bits位为1的64位掩码。
+ */
+static uint64_t _linkg_cellular_rx_low_mask(uint32_t bits)
+{
+    if (bits == 0U)
+    {
+        return 0U;
+    }
+
+    if (bits >= LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE)
+    {
+        return UINT64_MAX;
+    }
+
+    return (UINT64_C(1) << bits) - UINT64_C(1);
+}
+
+/**
+ * @brief 清空窗口位置，不清空累计计数。
+ */
+static void _linkg_cellular_rx_reset_peer_windows(linkg_cellular_rx_source_stats_t *peer)
+{
+    uint32_t index;
+
+    for (index = 0U; index < LINKG_LINK_TX_CLASS_COUNT; index++)
+    {
+        peer->classes[index].highest_sequence = 0U;
+        peer->classes[index].window_span      = 0U;
+        peer->classes[index].received_bitmap  = 0U;
+        peer->classes[index].initialized      = false;
+    }
+}
+
+/**
+ * @brief 记录已经从Cellular Socket收到的链路序号。
+ *
+ * 与Wi-Fi完全一致：只有缺口永久滑出64窗口后才确认丢失。
+ * 重复、乱序但仍在窗口内的报文不会被错误累计为重复成功接收。
+ */
+static void _linkg_cellular_rx_record_sequence(linkg_cellular_rx_class_stats_t *stats, uint32_t sequence)
+{
+    uint64_t valid_mask;
+    uint64_t shifted_mask;
+    uint64_t bit;
+    uint32_t shift;
+    uint32_t received_count;
+    uint32_t shifted_count;
+    uint32_t distance;
+    int32_t  delta;
+
+    if (!stats->initialized)
+    {
+        stats->highest_sequence = sequence;
+        stats->window_span      = 1U;
+        stats->received_bitmap  = UINT64_C(1);
+        stats->received_packets++;
+        stats->initialized = true;
+        return;
+    }
+
+    delta = (int32_t)(sequence - stats->highest_sequence);
+
+    if (delta > 0)
+    {
+        shift = (uint32_t)delta;
+        valid_mask = stats->received_bitmap & _linkg_cellular_rx_low_mask(stats->window_span);
+
+        if (shift >= LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE)
+        {
+            received_count = (uint32_t)__builtin_popcountll((unsigned long long)valid_mask);
+
+            stats->confirmed_lost_packets += (uint64_t)(stats->window_span - received_count);
+            stats->confirmed_lost_packets += (uint64_t)(shift - LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE);
+            stats->received_bitmap         = UINT64_C(1);
+            stats->window_span             = LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE;
+        }
+        else
+        {
+            if (stats->window_span <= LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE - shift)
+            {
+                shifted_count = 0U;
+            }
+            else
+            {
+                shifted_count = stats->window_span - (LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE - shift);
+            }
+
+            shifted_mask = valid_mask & ~_linkg_cellular_rx_low_mask(LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE - shift);
+            received_count = (uint32_t)__builtin_popcountll((unsigned long long)shifted_mask);
+
+            stats->confirmed_lost_packets += (uint64_t)(shifted_count - received_count);
+            stats->received_bitmap         = (stats->received_bitmap << shift) | UINT64_C(1);
+            stats->window_span            += shift;
+
+            if (stats->window_span > LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE)
+            {
+                stats->window_span = LINKG_CELLULAR_RX_SEQUENCE_WINDOW_SIZE;
+            }
+        }
+
+        stats->highest_sequence = sequence;
+        stats->received_packets++;
+        return;
+    }
+
+    if (delta == 0)
+    {
+        return;
+    }
+
+    distance = stats->highest_sequence - sequence;
+    if (distance >= stats->window_span)
+    {
+        return;
+    }
+
+    bit = UINT64_C(1) << distance;
+    if ((stats->received_bitmap & bit) != 0U)
+    {
+        return;
+    }
+
+    stats->received_bitmap |= bit;
+    stats->received_packets++;
+}
+
+/**
+ * @brief 按IPv6来源+业务类别记录Cellular独立链路丢包。
+ *
+ * @note 调用方持有rx->stats_lock；上一会话迟到报文被拒绝交付。
+ */
+static bool _linkg_cellular_rx_record_wire_locked(linkg_cellular_rx_t *rx, const struct in6_addr *address, linkg_link_tx_class_t tx_class, uint32_t session_id, uint32_t sequence)
+{
+    linkg_cellular_rx_source_stats_t *peer;
+    uint32_t                          free_slot;
+    uint32_t                          index;
+
+    peer      = NULL;
+    free_slot = LINKG_CELLULAR_RX_SOURCE_SLOTS;
+
+    for (index = 0U; index < LINKG_CELLULAR_RX_SOURCE_SLOTS; index++)
+    {
+        if (rx->source_stats[index].used)
+        {
+            if (memcmp(&rx->source_stats[index].address, address, sizeof(*address)) == 0)
+            {
+                peer = &rx->source_stats[index];
+                break;
+            }
+        }
+        else if (free_slot == LINKG_CELLULAR_RX_SOURCE_SLOTS)
+        {
+            free_slot = index;
+        }
+    }
+
+    if (peer == NULL)
+    {
+        // 统计槽满不应中断正常传输；当前最多一个AP对端，正常不会耗尽。
+        if (free_slot == LINKG_CELLULAR_RX_SOURCE_SLOTS)
+        {
+            return true;
+        }
+
+        peer          = &rx->source_stats[free_slot];
+        peer->address = *address;
+        peer->used    = true;
+    }
+
+    if (!peer->initialized)
+    {
+        peer->session_id  = session_id;
+        peer->initialized = true;
+    }
+    else if (peer->session_id != session_id)
+    {
+        if (peer->previous_session_id == session_id)
+        {
+            return false;
+        }
+
+        peer->previous_session_id = peer->session_id;
+        peer->session_id          = session_id;
+        _linkg_cellular_rx_reset_peer_windows(peer);
+    }
+
+    _linkg_cellular_rx_record_sequence(&peer->classes[tx_class], sequence);
+
+    return true;
+}
 
 /**
  * @brief 校验蜂窝业务类别。
@@ -430,18 +659,22 @@ static int _linkg_cellular_rx_receive_once(linkg_cellular_rx_t *rx, linkg_link_t
         scratch->items[index].packet = packet;
         memset(&scratch->items[index].source, 0, sizeof(scratch->items[index].source));
 
-        scratch->iovecs[index].iov_base = linkg_packet_data(packet);
-        scratch->iovecs[index].iov_len  = packet_capacity;
+        scratch->iovecs[index][0].iov_base = &scratch->headers[index];
+        scratch->iovecs[index][0].iov_len  = LINKG_CELLULAR_WIRE_HEADER_SIZE;
+        scratch->iovecs[index][1].iov_base = linkg_packet_data(packet);
+        scratch->iovecs[index][1].iov_len  = packet_capacity;
 
-        if (scratch->iovecs[index].iov_len > LINKG_CELLULAR_RX_UDP_PAYLOAD_MAX)
+        if (scratch->iovecs[index][1].iov_len >
+            LINKG_CELLULAR_RX_UDP_PAYLOAD_MAX - LINKG_CELLULAR_WIRE_HEADER_SIZE)
         {
-            scratch->iovecs[index].iov_len = LINKG_CELLULAR_RX_UDP_PAYLOAD_MAX;
+            scratch->iovecs[index][1].iov_len =
+                LINKG_CELLULAR_RX_UDP_PAYLOAD_MAX - LINKG_CELLULAR_WIRE_HEADER_SIZE;
         }
 
         scratch->messages[index].msg_hdr.msg_name       = &scratch->items[index].source.address;
         scratch->messages[index].msg_hdr.msg_namelen    = sizeof(scratch->items[index].source.address);
-        scratch->messages[index].msg_hdr.msg_iov        = &scratch->iovecs[index];
-        scratch->messages[index].msg_hdr.msg_iovlen     = 1U;
+        scratch->messages[index].msg_hdr.msg_iov        = scratch->iovecs[index];
+        scratch->messages[index].msg_hdr.msg_iovlen     = 2U;
         scratch->messages[index].msg_hdr.msg_control    = scratch->controls[index];
         scratch->messages[index].msg_hdr.msg_controllen = sizeof(scratch->controls[index]);
     }
@@ -468,6 +701,18 @@ static int _linkg_cellular_rx_receive_once(linkg_cellular_rx_t *rx, linkg_link_t
 
     valid_count = 0U;
 
+    // 按recvmmsg批次加一次锁，避免每个包加锁。
+    {
+        int lock_ret;
+
+        lock_ret = pthread_mutex_lock(&rx->stats_lock);
+        if (lock_ret != 0)
+        {
+            _linkg_cellular_rx_release_packets(scratch, allocated_count);
+            return -lock_ret;
+        }
+    }
+
     for (index = 0U; index < (uint32_t)ret; index++)
     {
         packet          = scratch->packets[index];
@@ -476,8 +721,8 @@ static int _linkg_cellular_rx_receive_once(linkg_cellular_rx_t *rx, linkg_link_t
         scratch->items[index].source.length = scratch->messages[index].msg_hdr.msg_namelen;
 
         if ((scratch->messages[index].msg_hdr.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0 ||
-            scratch->messages[index].msg_len == 0U ||
-            scratch->messages[index].msg_len > packet_capacity ||
+            scratch->messages[index].msg_len <= LINKG_CELLULAR_WIRE_HEADER_SIZE ||
+            scratch->messages[index].msg_len > packet_capacity + LINKG_CELLULAR_WIRE_HEADER_SIZE ||
             scratch->messages[index].msg_len > LINKG_CELLULAR_RX_UDP_PAYLOAD_MAX ||
             scratch->items[index].source.length != sizeof(struct sockaddr_in6) ||
             scratch->items[index].source.address.ss_family != AF_INET6)
@@ -508,7 +753,15 @@ static int _linkg_cellular_rx_receive_once(linkg_cellular_rx_t *rx, linkg_link_t
         // 统一使用DATA端口表示同一蜂窝Peer的规范化Endpoint。
         source->sin6_port = htons(rx->service_ports[LINKG_LINK_TX_CLASS_DATA]);
 
-        packet->data_length = scratch->messages[index].msg_len;
+        if (ntohl(scratch->headers[index].session_id) == 0U ||
+            !_linkg_cellular_rx_record_wire_locked(rx, &source->sin6_addr, tx_class, ntohl(scratch->headers[index].session_id), ntohl(scratch->headers[index].sequence)))
+        {
+            linkg_packet_release(packet);
+            scratch->packets[index] = NULL;
+            continue;
+        }
+
+        packet->data_length = scratch->messages[index].msg_len - LINKG_CELLULAR_WIRE_HEADER_SIZE;
         _linkg_cellular_rx_set_received_class(packet, tx_class);
 
         if (valid_count != index)
@@ -519,6 +772,8 @@ static int _linkg_cellular_rx_receive_once(linkg_cellular_rx_t *rx, linkg_link_t
         scratch->packets[index] = NULL;
         valid_count++;
     }
+
+    pthread_mutex_unlock(&rx->stats_lock);
 
     for (index = (uint32_t)ret; index < allocated_count; index++)
     {
@@ -718,6 +973,13 @@ linkg_cellular_rx_t *linkg_cellular_rx_create(uint32_t capacity, linkg_packet_po
     atomic_store(&rx->started, false);
     atomic_store(&rx->notify_pending, false);
 
+    ret = pthread_mutex_init(&rx->stats_lock, NULL);
+    if (ret != 0)
+    {
+        free(rx);
+        return NULL;
+    }
+
     for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
     {
         rx->queues[class_index] = linkg_cellular_rx_queue_create(rx->queue_capacity);
@@ -754,6 +1016,7 @@ fail_queues:
         rx->queues[class_index] = NULL;
     }
 
+    pthread_mutex_destroy(&rx->stats_lock);
     free(rx);
 
     return NULL;
@@ -782,6 +1045,7 @@ void linkg_cellular_rx_destroy(linkg_cellular_rx_t *rx)
         rx->queues[class_index] = NULL;
     }
 
+    pthread_mutex_destroy(&rx->stats_lock);
     free(rx);
 }
 
@@ -1039,4 +1303,53 @@ retry:
     }
 
     return 0;
+}
+
+/****************************** 链路统计 ******************************/
+
+/**
+ * @brief 获取指定IPv6发送源的三业务独立接收累计统计。
+ *
+ * @note 尚未收到该来源任何Cellular Wire报文时返回-ENOENT。
+ */
+int linkg_cellular_rx_get_source_stats(linkg_cellular_rx_t *rx, const struct in6_addr *address, linkg_cellular_rx_stats_t *stats)
+{
+    uint32_t index;
+    uint32_t class_index;
+    int      ret;
+
+    if (rx == NULL || address == NULL || stats == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+
+    ret = pthread_mutex_lock(&rx->stats_lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    for (index = 0U; index < LINKG_CELLULAR_RX_SOURCE_SLOTS; index++)
+    {
+        if (!rx->source_stats[index].used ||
+            memcmp(&rx->source_stats[index].address, address, sizeof(*address)) != 0)
+        {
+            continue;
+        }
+
+        for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
+        {
+            stats->received_packets += rx->source_stats[index].classes[class_index].received_packets;
+            stats->confirmed_lost_packets += rx->source_stats[index].classes[class_index].confirmed_lost_packets;
+        }
+
+        pthread_mutex_unlock(&rx->stats_lock);
+        return 0;
+    }
+
+    pthread_mutex_unlock(&rx->stats_lock);
+
+    return -ENOENT;
 }

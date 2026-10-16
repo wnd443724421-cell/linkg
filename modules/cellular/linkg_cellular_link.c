@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "linkg_network_ops.h"
+#include "linkg_node.h"
 #include "linkg_system_resources.h"
 
 #include "link_internal.h"
@@ -562,4 +563,59 @@ int linkg_cellular_link_create(const linkg_link_config_t *link_config, const lin
     }
 
     return linkg_link_create(link_config, &g_cellular_link_ops, cellular_config, out);
+}
+
+/****************************** 统计查询 ******************************/
+
+/**
+ * @brief 获取指定对端Cellular链路接收累计统计。
+ *
+ * Peer的Cellular Path已注册时，通过当前IPv6下一跳地址匹配RX的来源统计。
+ * 此接口不使用Transport去重后的结果，适用于AP上报STA的上行路径丢包。
+ */
+int linkg_cellular_link_get_rx_stats(linkg_link_t *link, uint8_t peer_node_id, linkg_cellular_rx_stats_t *stats)
+{
+    linkg_cellular_link_t      *cellular_link;
+    linkg_path_endpoint_t      endpoint;
+    linkg_path_t              *path;
+    const struct sockaddr_in6 *address;
+    int                        ret;
+
+    if (link == NULL || stats == NULL || peer_node_id == 0U || peer_node_id == UINT8_MAX)
+    {
+        return -EINVAL;
+    }
+
+    memset(stats, 0, sizeof(*stats));
+
+    if (linkg_link_get_access(link) != LINKG_LINK_ACCESS_CELLULAR)
+    {
+        return -EINVAL;
+    }
+
+    cellular_link = (linkg_cellular_link_t *)link;
+    if (cellular_link->rx == NULL)
+    {
+        return -ENODEV;
+    }
+
+    path = NULL;
+    memset(&endpoint, 0, sizeof(endpoint));
+
+    ret = linkg_node_acquire_path(peer_node_id, linkg_link_get_id(link), &path, &endpoint);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    linkg_path_release(path);
+
+    if (endpoint.length != sizeof(struct sockaddr_in6) || endpoint.address.ss_family != AF_INET6)
+    {
+        return -EPROTO;
+    }
+
+    address = (const struct sockaddr_in6 *)&endpoint.address;
+
+    return linkg_cellular_rx_get_source_stats(cellular_link->rx, &address->sin6_addr, stats);
 }
