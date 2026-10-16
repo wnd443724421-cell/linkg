@@ -1,6 +1,25 @@
 cmake_minimum_required(VERSION 3.12)
 
-project(linkg VERSION 1.0.0 LANGUAGES C)
+# /****************************** 版本信息 ******************************/
+
+file(STRINGS
+    "${CMAKE_SOURCE_DIR}/VERSION"
+    LINKG_SOFTWARE_VERSION
+    LIMIT_COUNT 1
+)
+
+string(STRIP "${LINKG_SOFTWARE_VERSION}" LINKG_SOFTWARE_VERSION)
+
+string(REGEX REPLACE "^V" "" LINKG_VERSION_NUMBER "${LINKG_SOFTWARE_VERSION}")
+
+project(linkg VERSION "${LINKG_VERSION_NUMBER}" LANGUAGES C)
+
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/VERSION"
+)
+
+# 获取本次构建日期，使用Ubuntu构建主机的本地时间
+string(TIMESTAMP LINKG_BUILD_DATE "%Y-%m-%d")
 
 set(ARCHITECTURE "x86" CACHE STRING "Target architecture")
 set_property(CACHE ARCHITECTURE PROPERTY STRINGS "x86" "arm")
@@ -80,6 +99,14 @@ set(LINKG_MAIN_SOURCE
     "${CMAKE_SOURCE_DIR}/app/linkg_main.c"
 )
 
+# /****************************** 生成编译信息 ******************************/
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/linkg_build_info.h.in"
+    "${CMAKE_BINARY_DIR}/generated/linkg_build_info.h"
+    @ONLY
+)
+
 if(NOT EXISTS "${LINKG_MAIN_SOURCE}")
     message(FATAL_ERROR "Main source not found: ${LINKG_MAIN_SOURCE}")
 endif()
@@ -98,6 +125,10 @@ set(LINKG_SOURCES
 
 add_executable(${PROJECT_NAME}
     ${LINKG_SOURCES}
+)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

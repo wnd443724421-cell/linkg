@@ -1,9 +1,13 @@
+
 {
     "C_Cpp.intelliSenseEngine": "default",
     "C_Cpp.workspaceParsingPriority": "highest",
     "C_Cpp.errorSquiggles": "enabled",
     "C_Cpp.autocomplete": "default",
     "C_Cpp.default.configurationProvider": "",
+    "C_Cpp.files.exclude": {
+        "**/test/**": true
+    },
     "cmake.configureOnOpen": false,
     "files.associations": {
         "*.h": "c"
@@ -18,6 +22,7 @@
         "**/tools/output": true
     },
     "search.exclude": {
+        "**/test/**": true,
         "**/build": true,
         "**/output": true,
         "**/out": true,

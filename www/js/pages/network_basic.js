@@ -384,9 +384,10 @@
             ["Linux · 永久配置（NetworkManager 专用连接）", "nmcli connection show\nsudo nmcli connection modify " + profile +
                 " connection.interface-name " + dev + " ipv4.method manual ipv4.addresses " + clientIp + "/24 ipv4.never-default yes +ipv4.routes " +
                 shellQuote(network + " " + gateway) + "\nsudo nmcli connection up " + profile + " ifname " + dev + "\n" + linuxVerify],
-            ["Windows · DHCP 重新获取配置（已启用自动获取时）", "ipconfig /renew " + win + "\n" + winVerify],
-            ["Linux · DHCP 重新获取配置（NetworkManager 自动连接）", "sudo nmcli device disconnect " + dev +
-                "\nsudo nmcli device connect " + dev + "\n" + linuxVerify]
+            ["Windows · DHCP 释放旧租约并重新获取配置（已启用自动获取时）", "ipconfig /release " + win +
+                "\nipconfig /renew " + win + "\n" + winVerify],
+            ["Linux · DHCP 重新获取配置（NetworkManager 自动连接）", "sudo nmcli connection down " + profile +
+                "\nsudo nmcli connection up " + profile + " ifname " + dev + "\n" + linuxVerify]
         ];
     }
     function commands()

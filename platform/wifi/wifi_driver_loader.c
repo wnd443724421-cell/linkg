@@ -20,7 +20,7 @@
 #include "linkg_file.h"
 #include "linkg_os.h"
 #include "linkg_text.h"
-
+#include "linkg_wifi_hardware.h"
 #include "wifi_platform_internal.h"
 
 /****************************** 模块常量 ******************************/
@@ -34,26 +34,6 @@
 
 
 /****************************** 内部辅助 ******************************/
-
-/**
- * @brief 判断是否使用进口PA硬件资源。
- */
-static bool _wifi_driver_is_imported_hardware(uint8_t hardware_id)
-{
-    if (hardware_id == WIFI_DRIVER_HARDWARE_ID_IMPORTED)
-    {
-        return true;
-    }
-
-#if WIFI_DRIVER_ENABLE_LQ10_COMPAT
-    if (hardware_id == WIFI_DRIVER_HARDWARE_ID_LQ10)
-    {
-        return true;
-    }
-#endif
-
-    return false;
-}
 
 /**
  * @brief 检查指定内核模块是否已经加载。
@@ -144,10 +124,12 @@ static int _wifi_driver_load_module(const char *module_path, const char *module_
 }
 
 /**
- * @brief 根据硬件版本选择固件目录名称。
+ * @brief 根据Wi-Fi硬件类型选择固件目录。
  */
 static int _wifi_driver_firmware_target(uint8_t hardware_id, const char **target)
 {
+    linkg_wifi_hardware_type_t type;
+
     if (target == NULL)
     {
         return -EINVAL;
@@ -155,16 +137,23 @@ static int _wifi_driver_firmware_target(uint8_t hardware_id, const char **target
 
     *target = NULL;
 
-    if (hardware_id == WIFI_DRIVER_HARDWARE_ID_DOMESTIC)
+    type = linkg_wifi_hardware_from_id(hardware_id);
+
+    switch (type)
     {
-        *target = WIFI_DRIVER_FIRMWARE_DOMESTIC_TARGET;
-    }
-    else if (_wifi_driver_is_imported_hardware(hardware_id))
-    {
-        *target = WIFI_DRIVER_FIRMWARE_IMPORTED_TARGET;
+        case LINKG_WIFI_HARDWARE_DOMESTIC:
+            *target = WIFI_DRIVER_FIRMWARE_DOMESTIC_TARGET;
+            break;
+
+        case LINKG_WIFI_HARDWARE_IMPORTED:
+            *target = WIFI_DRIVER_FIRMWARE_IMPORTED_TARGET;
+            break;
+
+        default:
+            return -EINVAL;
     }
 
-    return *target != NULL ? 0 : -EINVAL;
+    return 0;
 }
 
 /**
@@ -528,10 +517,12 @@ int wifi_driver_prepare_firmware(uint8_t hardware_id)
 /****************************** INI配置 ******************************/
 
 /**
- * @brief 根据硬件版本和工作模式选择INI文件。
+ * @brief 根据Wi-Fi硬件类型及工作模式选择INI文件。
  */
 static int _wifi_driver_ini_target(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode, const char **target)
 {
+    linkg_wifi_hardware_type_t type;
+
     if (target == NULL)
     {
         return -EINVAL;
@@ -539,27 +530,40 @@ static int _wifi_driver_ini_target(uint8_t hardware_id, linkg_wifi_work_mode_t w
 
     *target = NULL;
 
-    if (hardware_id == WIFI_DRIVER_HARDWARE_ID_DOMESTIC)
+    type = linkg_wifi_hardware_from_id(hardware_id);
+
+    switch (type)
     {
-        if (work_mode == LINKG_WIFI_WORK_MODE_NARROW)
+        case LINKG_WIFI_HARDWARE_DOMESTIC:
         {
-            *target = WIFI_DRIVER_DOMESTIC_NARROW_INI_TARGET;
+            if (work_mode == LINKG_WIFI_WORK_MODE_NARROW)
+            {
+                *target = WIFI_DRIVER_DOMESTIC_NARROW_INI_TARGET;
+            }
+            else if (work_mode == LINKG_WIFI_WORK_MODE_WIDE)
+            {
+                *target = WIFI_DRIVER_DOMESTIC_WIDE_INI_TARGET;
+            }
+
+            break;
         }
-        else if (work_mode == LINKG_WIFI_WORK_MODE_WIDE)
+
+        case LINKG_WIFI_HARDWARE_IMPORTED:
         {
-            *target = WIFI_DRIVER_DOMESTIC_WIDE_INI_TARGET;
+            if (work_mode == LINKG_WIFI_WORK_MODE_NARROW)
+            {
+                *target = WIFI_DRIVER_IMPORTED_NARROW_INI_TARGET;
+            }
+            else if (work_mode == LINKG_WIFI_WORK_MODE_WIDE)
+            {
+                *target = WIFI_DRIVER_IMPORTED_WIDE_INI_TARGET;
+            }
+
+            break;
         }
-    }
-    else if (_wifi_driver_is_imported_hardware(hardware_id))
-    {
-        if (work_mode == LINKG_WIFI_WORK_MODE_NARROW)
-        {
-            *target = WIFI_DRIVER_IMPORTED_NARROW_INI_TARGET;
-        }
-        else if (work_mode == LINKG_WIFI_WORK_MODE_WIDE)
-        {
-            *target = WIFI_DRIVER_IMPORTED_WIDE_INI_TARGET;
-        }
+
+        default:
+            return -EINVAL;
     }
 
     return *target != NULL ? 0 : -EINVAL;

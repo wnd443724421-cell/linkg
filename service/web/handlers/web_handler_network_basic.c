@@ -187,6 +187,14 @@ int _linkg_web_network_basic_init(void)
 }
 
 /**
+ * @brief 获取当前Web服务实例标识。
+ */
+const char *_linkg_web_network_basic_instance(void)
+{
+    return g_web_network_instance;
+}
+
+/**
  * @brief 只在确认响应已完整发送并关闭连接后通知主线程重启服务。
  *
  * 由Web服务线程调用；短暂宽限让独立CGI进程完成HTTP输出，无额外管理线程。

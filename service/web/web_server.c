@@ -6,6 +6,8 @@
  * @date 2026-09-13
  */
 
+#define _GNU_SOURCE
+
 #include "web_internal.h"
 
 #include <arpa/inet.h>
@@ -117,7 +119,7 @@ static int _linkg_web_server_open_listen_socket(void)
     int                 reuse;
     int                 fd;
 
-    fd = socket(AF_INET, SOCK_STREAM, 0);
+    fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0)
     {
         return -errno;
@@ -523,7 +525,7 @@ static void _linkg_web_server_thread(linkg_thread_t *thread, void *user_data)
             continue;
         }
 
-        client_fd = accept(g_web_server.listen_fd, NULL, NULL);
+        client_fd = accept4(g_web_server.listen_fd, NULL, NULL, SOCK_CLOEXEC);
         if (client_fd < 0)
         {
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)

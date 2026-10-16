@@ -33,7 +33,7 @@ DHCP 每次启动前检查 `/var/run/linkg/udhcp/lease-pool-v1`。记录包含�
 
 DHCP 关闭时禁用默认网关交互，但保留布尔值。保存、还原、刷新、前后端校验、修改检测、等待、确认重启及重连均已实现。帮助默认折叠，使用运行配置生成 Windows active/persistent、Linux ip 和 NetworkManager 永久命令，支持网卡/连接名称和客户端 IP 输入及复制。参数通过文本绑定展示，并校验或引用命令参数。
 
-按实际更改显示提示：开启 DHCP 提醒重新获取 IP；关闭时提示静态 IP；默认网关改变提示更新租约；Ethernet 改变提示更新 DHCP 或静态地址、新管理入口；节点 ID 改变提示客户端通常不必更新 IP。拔插网线只是更新 DHCP 的可选方法。提供 Windows `ipconfig /renew` 和 NetworkManager 断开/连接示例。
+按实际更改显示提示：开启 DHCP 提醒重新获取 IP；关闭时提示静态 IP；默认网关改变提示更新租约；Ethernet 改变提示更新 DHCP 或静态地址、新管理入口；节点 ID 改变提示客户端通常不必更新 IP。拔插网线只是更新 DHCP 的可选方法。跨网段变更时 Windows 先执行 `ipconfig /release` 再执行 `ipconfig /renew`，避免客户端继续向旧 DHCP Server 单播续租；Linux 使用指定 NetworkManager 连接的 down/up 命令重新获取地址。
 
 静态示例不添加 Internet 默认路由，提醒使用连接 LinkG 的专用网卡并记录原配置。NetworkManager 示例需要填写已有连接名称；非 NetworkManager 系统需用 netplan、systemd-networkd 等机制。提示 DHCP 路由一般无需重复手工添加、静态用户需手工路由，以及 DHCP/静态混用的地址冲突风险。
 

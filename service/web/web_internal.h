@@ -38,7 +38,10 @@ typedef enum
     LINKG_WEB_CMD_TRAFFIC_CONFIG_SET    = 1011, // 设置业务流量分类规则
     LINKG_WEB_CMD_NETWORK_BASIC_GET     = 1015, // 获取运行及已保存基础网络
     LINKG_WEB_CMD_NETWORK_BASIC_SET     = 1016, // 保存基础网络及DHCP配置
-    LINKG_WEB_CMD_NETWORK_BASIC_RESTART = 1017  // 确认后异步重启全部服务
+    LINKG_WEB_CMD_NETWORK_BASIC_RESTART = 1017, // 确认后异步重启全部服务
+    LINKG_WEB_CMD_DEVICE_INFO_GET       = 1018, // 设备信息及角色状态
+    LINKG_WEB_CMD_DEVICE_ROLE_SET       = 1019, // 保存AP/STA角色
+    LINKG_WEB_CMD_DEVICE_RESTART        = 1020  // 确认重启全部服务
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -52,6 +55,7 @@ int  _linkg_web_server_start(void);
 int  _linkg_web_server_stop(void);
 int  _linkg_web_server_deinit(void);
 int  _linkg_web_network_basic_init(void);
+const char *_linkg_web_network_basic_instance(void);
 void _linkg_web_network_response_complete(bool sent);
 
 /****************************** 请求分发 ******************************/
@@ -86,6 +90,10 @@ int  _linkg_web_handler_traffic_config_set(const cJSON *param, char **response);
 int  _linkg_web_handler_network_basic_get(const cJSON *param, char **response);
 int  _linkg_web_handler_network_basic_set(const cJSON *param, char **response);
 int  _linkg_web_handler_network_basic_restart(const cJSON *param, char **response);
+
+int _linkg_web_handler_device_info_get(const cJSON *param, char **response);
+int _linkg_web_handler_device_role_set(const cJSON *param, char **response);
+int _linkg_web_handler_device_restart(const cJSON *param, char **response);
 
 #ifdef __cplusplus
 }

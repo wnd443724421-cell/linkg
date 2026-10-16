@@ -17,8 +17,7 @@
         "${workspaceFolder}/platform/**",
         "${workspaceFolder}/service/**",
         "${workspaceFolder}/third_party/cjson/**",
-        "${workspaceFolder}/kernel/linkg_fast_nat/**",
-        "${workspaceFolder}/test/**"
+        "${workspaceFolder}/kernel/linkg_fast_nat/**"
       ],
       "defines": [
         "PRODUCT_RELEASE"
@@ -43,8 +42,7 @@
           "${workspaceFolder}/platform",
           "${workspaceFolder}/service",
           "${workspaceFolder}/third_party/cjson",
-          "${workspaceFolder}/kernel/linkg_fast_nat",
-          "${workspaceFolder}/test"
+          "${workspaceFolder}/kernel/linkg_fast_nat"
         ],
         "limitSymbolsToIncludedHeaders": false,
         "databaseFilename": "${workspaceFolder}/build/.vscode-cache/linkg-app.vc.db"

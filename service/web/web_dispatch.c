@@ -27,26 +27,31 @@ typedef struct
 
 /****************************** 命令映射 ******************************/
 
+/****************************** 命令映射 ******************************/
+
 static const linkg_web_command_entry_t g_web_commands[] =
 {
-    {LINKG_WEB_CMD_HEADER_GET,          _linkg_web_handler_header_get},
-    {LINKG_WEB_CMD_OVERVIEW_GET,        _linkg_web_handler_overview_get},
-    {LINKG_WEB_CMD_SWITCH_STATUS_GET,   _linkg_web_handler_switch_status_get},
-    {LINKG_WEB_CMD_WIFI_CONFIG_GET,     _linkg_web_handler_wifi_config_get},
-    {LINKG_WEB_CMD_WIFI_CONFIG_SET,     _linkg_web_handler_wifi_config_set},
-    {LINKG_WEB_CMD_WIFI_STATUS_GET,     _linkg_web_handler_wifi_status_get},
-    {LINKG_WEB_CMD_CELLULAR_CONFIG_GET, _linkg_web_handler_cellular_config_get},
-    {LINKG_WEB_CMD_CELLULAR_CONFIG_SET, _linkg_web_handler_cellular_config_set},
-    {LINKG_WEB_CMD_CELLULAR_STATUS_GET, _linkg_web_handler_cellular_status_get},
-    {LINKG_WEB_CMD_TRAFFIC_CONFIG_GET,  _linkg_web_handler_traffic_config_get},
-    {LINKG_WEB_CMD_TRAFFIC_CONFIG_SET,  _linkg_web_handler_traffic_config_set},
-    {LINKG_WEB_CMD_UART_CONFIG_GET,     _linkg_web_handler_uart_config_get},
-    {LINKG_WEB_CMD_UART_CONFIG_SET,     _linkg_web_handler_uart_config_set},
-    {LINKG_WEB_CMD_UART_STATUS_GET,     _linkg_web_handler_uart_status_get},
-    {LINKG_WEB_CMD_NETWORK_BASIC_GET,   _linkg_web_handler_network_basic_get},
-    {LINKG_WEB_CMD_NETWORK_BASIC_SET,   _linkg_web_handler_network_basic_set},
+    {LINKG_WEB_CMD_HEADER_GET,            _linkg_web_handler_header_get},
+    {LINKG_WEB_CMD_OVERVIEW_GET,          _linkg_web_handler_overview_get},
+    {LINKG_WEB_CMD_SWITCH_STATUS_GET,     _linkg_web_handler_switch_status_get},
+    {LINKG_WEB_CMD_WIFI_CONFIG_GET,       _linkg_web_handler_wifi_config_get},
+    {LINKG_WEB_CMD_WIFI_CONFIG_SET,       _linkg_web_handler_wifi_config_set},
+    {LINKG_WEB_CMD_WIFI_STATUS_GET,       _linkg_web_handler_wifi_status_get},
+    {LINKG_WEB_CMD_CELLULAR_CONFIG_GET,   _linkg_web_handler_cellular_config_get},
+    {LINKG_WEB_CMD_CELLULAR_CONFIG_SET,   _linkg_web_handler_cellular_config_set},
+    {LINKG_WEB_CMD_CELLULAR_STATUS_GET,   _linkg_web_handler_cellular_status_get},
+    {LINKG_WEB_CMD_TRAFFIC_CONFIG_GET,    _linkg_web_handler_traffic_config_get},
+    {LINKG_WEB_CMD_TRAFFIC_CONFIG_SET,    _linkg_web_handler_traffic_config_set},
+    {LINKG_WEB_CMD_UART_CONFIG_GET,       _linkg_web_handler_uart_config_get},
+    {LINKG_WEB_CMD_UART_CONFIG_SET,       _linkg_web_handler_uart_config_set},
+    {LINKG_WEB_CMD_UART_STATUS_GET,       _linkg_web_handler_uart_status_get},
+    {LINKG_WEB_CMD_NETWORK_BASIC_GET,     _linkg_web_handler_network_basic_get},
+    {LINKG_WEB_CMD_NETWORK_BASIC_SET,     _linkg_web_handler_network_basic_set},
     {LINKG_WEB_CMD_NETWORK_BASIC_RESTART, _linkg_web_handler_network_basic_restart},
-    {LINKG_WEB_CMD_INVALID,             NULL}
+    {LINKG_WEB_CMD_DEVICE_INFO_GET,       _linkg_web_handler_device_info_get},
+    {LINKG_WEB_CMD_DEVICE_ROLE_SET,       _linkg_web_handler_device_role_set},
+    {LINKG_WEB_CMD_DEVICE_RESTART,        _linkg_web_handler_device_restart},
+    {LINKG_WEB_CMD_INVALID,               NULL}
 };
 
 /****************************** 内部辅助 ******************************/
