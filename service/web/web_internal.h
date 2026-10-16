@@ -57,6 +57,8 @@ int  _linkg_web_server_deinit(void);
 int  _linkg_web_network_basic_init(void);
 const char *_linkg_web_network_basic_instance(void);
 void _linkg_web_network_response_complete(bool sent);
+int  _linkg_web_device_init(void);
+void _linkg_web_device_response_complete(bool sent);
 
 /****************************** 请求分发 ******************************/
 

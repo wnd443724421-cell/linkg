@@ -26,6 +26,12 @@ int linkg_web_init(void)
         return ret;
     }
 
+    ret = _linkg_web_device_init();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     ret = _linkg_web_server_init();
     if (ret != 0)
     {

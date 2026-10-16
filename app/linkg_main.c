@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "linkg_config.h"
+#include "linkg_device_info.h"
 #include "linkg_discovery.h"
 #include "linkg_gpio_manager.h"
 #include "linkg_lifecycle.h"
@@ -1089,6 +1090,15 @@ int main(void)
         return EXIT_FAILURE;
     }
 
+    ret = linkg_device_info_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("device information initialization failed, error=%d", ret);
+        linkg_lifecycle_deinit();
+        linkg_log_deinit();
+        return EXIT_FAILURE;
+    }
+
     LINKG_LOG_INFO("LinkG application starting");
 
     while (true)
@@ -1177,6 +1187,7 @@ int main(void)
         ret = EXIT_FAILURE;
     }
 
+    linkg_device_info_deinit();
     linkg_lifecycle_deinit();
 
     LINKG_LOG_INFO("LinkG application exited");

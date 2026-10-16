@@ -178,7 +178,8 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
     if (linkg_lifecycle_is_exit_requested() &&
         (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
          cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET || cmd == LINKG_WEB_CMD_UART_CONFIG_SET ||
-         cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART))
+         cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART ||
+         cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART))
     {
         cJSON_Delete(root);
         ret = _linkg_web_response_error(cmd, "服务正在停止或重启，请稍后重新连接", response);
@@ -192,7 +193,8 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
     // UART后台事务与其他Web写请求互斥；状态读取无需等待重载完成。
     if (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
         cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET ||
-        cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART)
+        cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART ||
+        cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART)
     {
         ret = linkg_config_transaction_begin();
         if (ret == 0)
