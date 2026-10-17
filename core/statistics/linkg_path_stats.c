@@ -97,19 +97,6 @@ void linkg_path_stats_record_tx_queue_overflow(linkg_path_stats_t *stats, uint64
     stats->tx_queue_overflow_packets += packets;
 }
 
-void linkg_path_stats_record_tx_shaped(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets)
-{
-    if (stats == NULL)
-    {
-        return;
-    }
-
-    stats->tx_dropped_bytes   += bytes;
-    stats->tx_dropped_packets += packets;
-    stats->tx_shaped_bytes    += bytes;
-    stats->tx_shaped_packets  += packets;
-}
-
 /**
  * @brief 记录路径实际接收成功。
  */

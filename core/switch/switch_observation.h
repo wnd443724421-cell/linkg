@@ -60,8 +60,7 @@ typedef struct
  * 之后到对端接收之间的报文损失，不等同于纯无线空口丢包。
  *
  * Load由发送端根据Path累计统计计算：
- * Wi-Fi：tx_queue_overflow_packets
- * Cellular：tx_queue_overflow_packets + tx_shaped_packets
+ * Wi-Fi和Cellular统一使用tx_queue_overflow_packets。
  *
  * 综合交付丢包率不在此处缓存，由Switch Policy根据Wire和
  * Load的有效样本计算。
@@ -79,24 +78,24 @@ typedef struct
 
 typedef struct
 {
-    bool                    valid;                  // 当前Wi-Fi基础状态是否有效
-    bool                    connected;              // 当前是否已经关联AP
-    bool                    statistics_valid;       // 当前Peer无线统计是否有效
-    int32_t                 rssi_dbm;               // 当前接收信号强度
-    uint32_t                tx_phy_kbps;            // 当前发送PHY速率
-    uint32_t                rx_phy_kbps;            // 当前接收PHY速率
-    uint32_t                inactive_ms;            // 当前对端最近无线活动间隔
-    bool                    noise_valid;            // 当前信道噪声是否有效
-    int32_t                 noise_dbm;              // 当前信道噪声
-    linkg_wifi_work_mode_t  work_mode;              // 当前宽带或窄带工作模式
-    uint16_t                bandwidth_mhz;          // 当前实际工作带宽
-    linkg_wifi_narrow_mode_t narrow_mode;           // 当前窄带速率控制模式
-    bool                    rate_level_valid;       // 当前实际窄带速率档位是否有效
-    uint16_t                rate_level;              // 当前窄带速率档位
-    bool                    temperature_valid;      // 当前Wi-Fi芯片温度是否有效
-    int32_t                 temperature_c;          // 当前Wi-Fi芯片温度
-    uint64_t                status_updated_us;      // Wi-Fi基础状态更新时间
-    uint64_t                statistics_updated_us;  // Peer无线统计更新时间
+    bool                     valid;                  // 当前Wi-Fi基础状态是否有效
+    bool                     connected;              // 当前是否已经关联AP
+    bool                     statistics_valid;       // 当前Peer无线统计是否有效
+    int32_t                  rssi_dbm;               // 当前接收信号强度
+    uint32_t                 tx_phy_kbps;            // 当前发送PHY速率
+    uint32_t                 rx_phy_kbps;            // 当前接收PHY速率
+    uint32_t                 inactive_ms;            // 当前对端最近无线活动间隔
+    bool                     noise_valid;            // 当前信道噪声是否有效
+    int32_t                  noise_dbm;              // 当前信道噪声
+    linkg_wifi_work_mode_t   work_mode;              // 当前宽带或窄带工作模式
+    uint16_t                 bandwidth_mhz;          // 当前实际工作带宽
+    linkg_wifi_narrow_mode_t narrow_mode;            // 当前窄带速率控制模式
+    bool                     rate_level_valid;       // 当前实际窄带速率档位是否有效
+    uint16_t                 rate_level;             // 当前窄带速率档位
+    bool                     temperature_valid;      // 当前Wi-Fi芯片温度是否有效
+    int32_t                  temperature_c;          // 当前Wi-Fi芯片温度
+    uint64_t                 status_updated_us;      // Wi-Fi基础状态更新时间
+    uint64_t                 statistics_updated_us;  // Peer无线统计更新时间
 } linkg_switch_wifi_radio_observation_t;
 
 /****************************** Wi-Fi路径观测 ******************************/
@@ -181,7 +180,6 @@ typedef struct
     uint32_t link_id;                // 当前采样对应的Link实例
     uint64_t sent_packets;           // 上一轮累计成功提交底层的帧数
     uint64_t queue_overflow_packets; // 上一轮累计TX队列溢出丢弃帧数
-    uint64_t shaped_packets;         // 上一轮累计TX限速主动丢弃帧数
 } linkg_switch_load_sampler_t;
 
 /****************************** 观测操作 ******************************/

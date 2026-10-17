@@ -31,9 +31,6 @@ typedef struct
     uint64_t tx_queue_overflow_bytes;   // TX等待队列溢出淘汰字节数，属于tx_dropped子集
     uint64_t tx_queue_overflow_packets; // TX等待队列溢出淘汰帧数，属于tx_dropped子集
 
-    uint64_t tx_shaped_bytes;           // TX带宽限速主动丢弃字节数，属于tx_dropped子集
-    uint64_t tx_shaped_packets;         // TX带宽限速主动丢弃帧数，属于tx_dropped子集
-
     uint64_t tx_expired_bytes;          // 本地等待超时失效字节数，独立于tx_dropped
     uint64_t tx_expired_packets;        // 本地等待超时失效帧数，独立于tx_dropped
 
@@ -49,7 +46,6 @@ void linkg_path_stats_record_tx_failed(linkg_path_stats_t *stats, uint64_t bytes
 void linkg_path_stats_record_tx_dropped(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
 void linkg_path_stats_record_tx_expired(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
 void linkg_path_stats_record_tx_queue_overflow(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
-void linkg_path_stats_record_tx_shaped(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
 void linkg_path_stats_record_rx(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
 
 #ifdef __cplusplus
