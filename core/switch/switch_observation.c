@@ -2,8 +2,8 @@
  * @file switch_observation.c
  * @brief LinkG链路切换观测快照实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-09-18
+ * @version 2.0.0
+ * @date 2026-10-17
  */
 
 #include "switch_observation.h"
@@ -14,10 +14,10 @@
 #include <string.h>
 
 #include "linkg_cellular.h"
+#include "linkg_cellular_link.h"
 #include "linkg_config.h"
 #include "linkg_link.h"
 #include "linkg_link_manager.h"
-#include "linkg_log.h"
 #include "linkg_node.h"
 #include "linkg_path.h"
 #include "linkg_path_probe.h"
@@ -28,33 +28,41 @@
 
 #include "switch_internal.h"
 
+/****************************** 模块常量 ******************************/
+
+#define LINKG_SWITCH_OBSERVATION_REMOTE_LOSS_MAX_AGE_US 1000000ULL // AP质量报告最长有效时间：1秒
+
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
-    linkg_wifi_status_snapshot_t     wifi_status;                 // Wi-Fi运行状态快照
-    linkg_wifi_config_t              wifi_config;                 // Wi-Fi当前配置
-    linkg_path_probe_peer_snapshot_t probe;                       // Peer周期Probe快照
-    linkg_path_stats_t               wifi_path_stats;             // Wi-Fi Path累计统计
-    linkg_wifi_rx_stats_t            wifi_rx_stats;               // Wi-Fi链路累计接收丢包统计
-    uint32_t                         wifi_link_id;                // 当前Wi-Fi Link实例
-    uint32_t                         cellular_link_id;            // 当前Cellular Link实例
-    uint64_t                         elapsed_ms;                  // 本轮程序运行时间
-    bool                             wifi_status_valid;           // Wi-Fi状态快照是否有效
-    bool                             wifi_config_valid;           // Wi-Fi配置是否有效
-    bool                             probe_valid;                 // Probe快照是否有效
-    bool                             wifi_path_available;         // 当前Peer Wi-Fi Path是否存在且Link运行
-    bool                             wifi_path_stats_valid;       // Wi-Fi Path累计统计是否有效
-    bool                             wifi_rx_stats_valid;         // Wi-Fi接收累计统计是否有效
-    bool                             cellular_data_ready;         // Cellular IPv6数据通道是否就绪
-    bool                             cellular_ipv6_reachable;     // Cellular IPv6公网是否可达
-    bool                             cellular_path_available;     // 当前Peer Cellular Path是否存在且Link运行
+    linkg_wifi_status_snapshot_t     wifi_status;              // Wi-Fi运行状态快照
+    linkg_wifi_config_t              wifi_config;              // Wi-Fi当前配置
+    linkg_path_probe_peer_snapshot_t probe;                    // Peer周期Probe快照
+    linkg_path_stats_t               wifi_path_stats;          // Wi-Fi Path发送及接收累计统计
+    linkg_path_stats_t               cellular_path_stats;      // Cellular Path发送及接收累计统计
+    linkg_wifi_rx_stats_t            wifi_rx_stats;            // Wi-Fi Wire累计接收统计
+    linkg_cellular_rx_stats_t        cellular_rx_stats;        // Cellular Wire累计接收统计
+    uint32_t                         wifi_link_id;             // 当前Wi-Fi Link实例
+    uint32_t                         cellular_link_id;         // 当前Cellular Link实例
+    uint64_t                         elapsed_ms;               // 当前程序运行时间
+    bool                             wifi_status_valid;        // Wi-Fi运行状态有效
+    bool                             wifi_config_valid;        // Wi-Fi配置有效
+    bool                             probe_valid;              // Probe快照有效
+    bool                             wifi_path_available;      // Wi-Fi Peer Path存在且Link运行
+    bool                             wifi_path_stats_valid;    // Wi-Fi Path统计有效
+    bool                             wifi_rx_stats_valid;      // Wi-Fi Wire累计统计有效
+    bool                             cellular_data_ready;      // Cellular IPv6数据通道就绪
+    bool                             cellular_ipv6_reachable;  // Cellular IPv6公网可达
+    bool                             cellular_path_available;  // Cellular Peer Path存在且Link运行
+    bool                             cellular_path_stats_valid;// Cellular Path统计有效
+    bool                             cellular_rx_stats_valid;  // Cellular Wire累计统计有效
 } linkg_switch_observation_raw_t;
 
 /****************************** 内部辅助 ******************************/
 
 /**
- * @brief 判断外部运行状态暂不可用是否属于正常状态变化。
+ * @brief 判断运行状态变化带来的预期采集错误。
  */
 static bool _linkg_switch_observation_expected_state_error(int error)
 {
@@ -62,7 +70,7 @@ static bool _linkg_switch_observation_expected_state_error(int error)
 }
 
 /**
- * @brief 记录本轮第一个非预期采集错误。
+ * @brief 保存本轮第一个非预期采集错误。
  */
 static void _linkg_switch_observation_record_error(int error, int *first_error)
 {
@@ -78,7 +86,7 @@ static void _linkg_switch_observation_record_error(int error, int *first_error)
 }
 
 /**
- * @brief 将64位数值饱和转换为32位无符号整数。
+ * @brief 64位累计计数饱和转换为32位样本数。
  */
 static uint32_t _linkg_switch_observation_u32_saturate(uint64_t value)
 {
@@ -86,7 +94,15 @@ static uint32_t _linkg_switch_observation_u32_saturate(uint64_t value)
 }
 
 /**
- * @brief 计算带比例系数的无符号整数比值，并避免中间乘法溢出。
+ * @brief 64位无符号饱和加法，避免统计窗口计数溢出。
+ */
+static uint64_t _linkg_switch_observation_u64_add(uint64_t a, uint64_t b)
+{
+    return UINT64_MAX - a < b ? UINT64_MAX : a + b;
+}
+
+/**
+ * @brief 计算放大scale倍的无符号比率，避免64位乘法溢出。
  */
 static uint64_t _linkg_switch_observation_scale_ratio(uint64_t numerator, uint64_t scale, uint64_t denominator)
 {
@@ -131,7 +147,29 @@ static uint64_t _linkg_switch_observation_scale_ratio(uint64_t numerator, uint64
 }
 
 /**
- * @brief 将linkg_time_elapsed_ms时间戳转换为本轮CLOCK_MONOTONIC微秒时间基准。
+ * @brief 根据丢失帧数与总样本数计算千分比，结果限定在0~1000。
+ */
+static uint32_t _linkg_switch_observation_loss_permille(uint64_t lost_packets, uint64_t sample_packets)
+{
+    uint64_t ratio;
+
+    if (sample_packets == 0U || lost_packets == 0U)
+    {
+        return 0U;
+    }
+
+    if (lost_packets >= sample_packets)
+    {
+        return 1000U;
+    }
+
+    ratio = _linkg_switch_observation_scale_ratio(lost_packets, 1000ULL, sample_packets);
+
+    return ratio > 1000U ? 1000U : (uint32_t)ratio;
+}
+
+/**
+ * @brief 将elapsed_ms时间转换为当前CLOCK_MONOTONIC微秒时间基准。
  */
 static uint64_t _linkg_switch_observation_elapsed_ms_to_monotonic_us(uint64_t updated_ms, uint64_t now_us, uint64_t elapsed_ms)
 {
@@ -155,7 +193,9 @@ static uint64_t _linkg_switch_observation_elapsed_ms_to_monotonic_us(uint64_t up
 }
 
 /**
- * @brief 获取指定Peer在指定Link上的活动Path并可选读取累计统计。
+ * @brief 获取指定Peer在指定Link上的活动Path，并读取可选的累计统计。
+ *
+ * 不持有Switch锁访问其他模块，Path引用由本函数释放。
  */
 static int _linkg_switch_observation_collect_path(uint8_t peer_node_id, uint32_t link_id, bool read_stats, bool *available, linkg_path_stats_t *stats)
 {
@@ -246,7 +286,7 @@ static void _linkg_switch_observation_collect_wifi_status(linkg_switch_observati
 }
 
 /**
- * @brief 读取当前Peer周期Probe快照。
+ * @brief 读取指定Peer的周期Probe快照。
  */
 static void _linkg_switch_observation_collect_probe(uint8_t peer_node_id, linkg_switch_observation_raw_t *raw, int *first_error)
 {
@@ -263,7 +303,7 @@ static void _linkg_switch_observation_collect_probe(uint8_t peer_node_id, linkg_
 }
 
 /**
- * @brief 读取当前Peer Wi-Fi Path、累计流量及本机接收丢包统计。
+ * @brief 读取STA Wi-Fi Path统计及本机Wi-Fi Wire接收统计。
  */
 static void _linkg_switch_observation_collect_wifi_path(uint8_t peer_node_id, linkg_switch_observation_raw_t *raw, int *first_error)
 {
@@ -301,20 +341,22 @@ static void _linkg_switch_observation_collect_wifi_path(uint8_t peer_node_id, li
     if (ret == 0)
     {
         raw->wifi_rx_stats_valid = true;
-        return;
     }
-
-    _linkg_switch_observation_record_error(ret, first_error);
+    else
+    {
+        _linkg_switch_observation_record_error(ret, first_error);
+    }
 }
 
 /**
- * @brief 读取Cellular数据通道、IPv6公网状态及当前Peer Cellular Path。
+ * @brief 读取Cellular数据状态、Peer Path TX统计及本机Wire RX统计。
  */
 static void _linkg_switch_observation_collect_cellular(uint8_t peer_node_id, linkg_switch_observation_raw_t *raw, int *first_error)
 {
-    bool data_ready;
-    bool ipv6_internet_available;
-    int  ret;
+    linkg_link_t *cellular_link;
+    bool          data_ready;
+    bool          ipv6_internet_available;
+    int           ret;
 
     data_ready              = false;
     ipv6_internet_available = false;
@@ -343,11 +385,42 @@ static void _linkg_switch_observation_collect_cellular(uint8_t peer_node_id, lin
 
     ret = _linkg_switch_observation_collect_path(peer_node_id,
                                                   raw->cellular_link_id,
-                                                  false,
+                                                  true,
                                                   &raw->cellular_path_available,
-                                                  NULL);
-    _linkg_switch_observation_record_error(ret, first_error);
+                                                  &raw->cellular_path_stats);
+    if (ret == 0 && raw->cellular_path_available)
+    {
+        raw->cellular_path_stats_valid = true;
+    }
+    else
+    {
+        _linkg_switch_observation_record_error(ret, first_error);
+    }
+
+    if (!raw->cellular_path_available || raw->cellular_link_id == LINKG_LINK_ID_INVALID)
+    {
+        return;
+    }
+
+    cellular_link = linkg_link_manager_get(raw->cellular_link_id);
+    if (cellular_link == NULL || !linkg_link_is_running(cellular_link))
+    {
+        return;
+    }
+
+    ret = linkg_cellular_link_get_rx_stats(cellular_link, peer_node_id, &raw->cellular_rx_stats);
+    if (ret == 0)
+    {
+        raw->cellular_rx_stats_valid = true;
+    }
+    else
+    {
+        // 来源尚未出现时通常为-ENOENT，本轮Wire样本必须保持无效。
+        _linkg_switch_observation_record_error(ret, first_error);
+    }
 }
+
+/****************************** 观测构造 ******************************/
 
 /**
  * @brief 从Wi-Fi状态快照构造STA无线观测。
@@ -419,33 +492,49 @@ static void _linkg_switch_observation_build_wifi_radio(const linkg_switch_observ
 }
 
 /**
- * @brief 从周期Probe快照构造Wi-Fi三业务类别观测。
+ * @brief 将单条Path的三个业务类别周期Probe复制到Switch观测。
  */
-static void _linkg_switch_observation_build_probe(const linkg_switch_observation_raw_t *raw, linkg_switch_wifi_observation_t *wifi)
+static void _linkg_switch_observation_build_probe_path(const linkg_path_probe_path_snapshot_t *source, uint32_t link_id, linkg_switch_probe_observation_t *destination)
 {
-    const linkg_path_probe_class_snapshot_t *source;
-    linkg_switch_probe_observation_t        *destination;
-    uint32_t                                 index;
+    uint32_t index;
 
-    if (!raw->probe_valid || !raw->probe.wifi.active || raw->probe.wifi.link_id != raw->wifi_link_id)
+    if (!source->active || source->link_id != link_id)
     {
         return;
     }
 
     for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
-        source      = &raw->probe.wifi.classes[index];
-        destination = &wifi->probe[index];
-
-        destination->valid      = source->valid;
-        destination->reachable  = source->reachable;
-        destination->rtt_us     = source->rtt_us;
-        destination->updated_us = source->updated_us;
+        destination[index].valid      = source->classes[index].valid;
+        destination[index].reachable  = source->classes[index].reachable;
+        destination[index].rtt_us     = source->classes[index].rtt_us;
+        destination[index].updated_us = source->classes[index].updated_us;
     }
 }
 
 /**
- * @brief 按本轮真实时间间隔更新Wi-Fi Path累计差分速率采样，调用方持有Switch锁。
+ * @brief 从周期Probe快照构造Wi-Fi和Cellular三业务类别观测。
+ */
+static void _linkg_switch_observation_build_probe(const linkg_switch_observation_raw_t *raw, linkg_switch_observation_t *observation)
+{
+    if (!raw->probe_valid)
+    {
+        return;
+    }
+
+    _linkg_switch_observation_build_probe_path(&raw->probe.wifi,
+                                                 raw->wifi_link_id,
+                                                 observation->wifi.probe);
+
+    _linkg_switch_observation_build_probe_path(&raw->probe.cellular,
+                                                 raw->cellular_link_id,
+                                                 observation->cellular.probe);
+}
+
+/****************************** 差分采样 ******************************/
+
+/**
+ * @brief 计算Wi-Fi Path双向实际发送/接收速率，调用方持有Switch锁。
  */
 static void _linkg_switch_observation_update_traffic_locked(linkg_switch_sta_peer_runtime_t *runtime, const linkg_switch_observation_raw_t *raw, uint64_t now_us, linkg_switch_traffic_observation_t *traffic)
 {
@@ -509,57 +598,124 @@ static void _linkg_switch_observation_update_traffic_locked(linkg_switch_sta_pee
 }
 
 /**
- * @brief 更新STA本机统计的AP到STA Wi-Fi下行丢包窗口，调用方持有Switch锁。
+ * @brief 将本机RX累计Wire统计转换为当前窗口丢包观测，调用方持有Switch锁。
+ *
+ * 第一次建立基线、Link切换、计数回退或无RX数据时输出valid=false。
  */
-static void _linkg_switch_observation_update_downlink_loss_locked(linkg_switch_sta_peer_runtime_t *runtime, const linkg_switch_observation_raw_t *raw, uint64_t now_us, linkg_switch_loss_observation_t *loss)
+static void _linkg_switch_observation_update_wire_locked(linkg_switch_loss_sampler_t *sampler, uint32_t link_id, bool stats_valid, uint64_t received, uint64_t lost, uint64_t now_us, linkg_switch_loss_observation_t *observation)
 {
-    linkg_switch_loss_sampler_t *sampler;
-    uint64_t                     received_delta;
-    uint64_t                     lost_delta;
-    uint64_t                     total_delta;
-    uint64_t                     loss_permille;
+    uint64_t received_delta;
+    uint64_t lost_delta;
+    uint64_t total_delta;
 
-    memset(loss, 0, sizeof(*loss));
-    sampler = &runtime->wifi_downlink_loss_sampler;
+    memset(observation, 0, sizeof(*observation));
 
-    if (!raw->wifi_rx_stats_valid)
+    if (!stats_valid)
     {
         memset(sampler, 0, sizeof(*sampler));
         return;
     }
 
     if (!sampler->initialized ||
-        sampler->link_id != raw->wifi_link_id ||
-        raw->wifi_rx_stats.received_packets < sampler->received_packets ||
-        raw->wifi_rx_stats.confirmed_lost_packets < sampler->lost_packets)
+        sampler->link_id != link_id ||
+        received < sampler->received_packets ||
+        lost < sampler->lost_packets)
     {
         sampler->initialized      = true;
-        sampler->link_id          = raw->wifi_link_id;
-        sampler->received_packets = raw->wifi_rx_stats.received_packets;
-        sampler->lost_packets     = raw->wifi_rx_stats.confirmed_lost_packets;
+        sampler->link_id          = link_id;
+        sampler->received_packets = received;
+        sampler->lost_packets     = lost;
         return;
     }
 
-    received_delta = raw->wifi_rx_stats.received_packets - sampler->received_packets;
-    lost_delta     = raw->wifi_rx_stats.confirmed_lost_packets - sampler->lost_packets;
-    total_delta    = received_delta + lost_delta;
+    received_delta = received - sampler->received_packets;
+    lost_delta     = lost - sampler->lost_packets;
+    total_delta    = _linkg_switch_observation_u64_add(received_delta, lost_delta);
 
     if (total_delta != 0U)
     {
-        loss_permille = _linkg_switch_observation_scale_ratio(lost_delta, 1000ULL, total_delta);
-
-        loss->valid          = true;
-        loss->loss_permille  = _linkg_switch_observation_u32_saturate(loss_permille);
-        loss->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
-        loss->updated_us     = now_us;
+        observation->valid          = true;
+        observation->loss_permille  = _linkg_switch_observation_loss_permille(lost_delta, total_delta);
+        observation->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
+        observation->updated_us     = now_us;
     }
 
-    sampler->received_packets = raw->wifi_rx_stats.received_packets;
-    sampler->lost_packets     = raw->wifi_rx_stats.confirmed_lost_packets;
+    sampler->received_packets = received;
+    sampler->lost_packets     = lost;
 }
 
 /**
- * @brief 发布本轮完整观测快照并更新STA本地差分采样状态。
+ * @brief 将本机TX累计Queue Overflow转换为当前窗口负载丢包，调用方持有Switch锁。
+ *
+ * Wi-Fi和Cellular统一采用success/(success+overflow)的分母口径。
+ */
+static void _linkg_switch_observation_update_load_locked(linkg_switch_load_sampler_t *sampler, uint32_t link_id, bool stats_valid, const linkg_path_stats_t *stats, uint64_t now_us, linkg_switch_loss_observation_t *observation)
+{
+    uint64_t sent_delta;
+    uint64_t overflow_delta;
+    uint64_t total_delta;
+
+    memset(observation, 0, sizeof(*observation));
+
+    if (!stats_valid)
+    {
+        memset(sampler, 0, sizeof(*sampler));
+        return;
+    }
+
+    if (!sampler->initialized ||
+        sampler->link_id != link_id ||
+        stats->tx_packets < sampler->sent_packets ||
+        stats->tx_queue_overflow_packets < sampler->queue_overflow_packets)
+    {
+        sampler->initialized            = true;
+        sampler->link_id                = link_id;
+        sampler->sent_packets           = stats->tx_packets;
+        sampler->queue_overflow_packets = stats->tx_queue_overflow_packets;
+        return;
+    }
+
+    sent_delta     = stats->tx_packets - sampler->sent_packets;
+    overflow_delta = stats->tx_queue_overflow_packets - sampler->queue_overflow_packets;
+    total_delta    = _linkg_switch_observation_u64_add(sent_delta, overflow_delta);
+
+    if (total_delta != 0U)
+    {
+        observation->valid          = true;
+        observation->loss_permille  = _linkg_switch_observation_loss_permille(overflow_delta, total_delta);
+        observation->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
+        observation->updated_us     = now_us;
+    }
+
+    sampler->sent_packets           = stats->tx_packets;
+    sampler->queue_overflow_packets = stats->tx_queue_overflow_packets;
+}
+
+/**
+ * @brief 将AP远端观测合并到本轮快照；过期值标记无效。
+ *
+ * updated_us由STA收到Quality Report时生成，不能与AP本机时钟直接比较。
+ */
+static void _linkg_switch_observation_copy_remote_locked(const linkg_switch_loss_observation_t *source, uint64_t now_us, linkg_switch_loss_observation_t *destination)
+{
+    memset(destination, 0, sizeof(*destination));
+
+    if (source->updated_us == 0U ||
+        now_us < source->updated_us ||
+        now_us - source->updated_us > LINKG_SWITCH_OBSERVATION_REMOTE_LOSS_MAX_AGE_US)
+    {
+        return;
+    }
+
+    *destination = *source;
+}
+
+/****************************** 快照发布 ******************************/
+
+/**
+ * @brief 更新STA本地四项窗口统计并合并AP远端四项报告。
+ *
+ * 外部采集已完成；持有Switch锁期间只处理预先取得的快照与差分基线。
  */
 static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer_generation, const linkg_switch_observation_raw_t *raw, uint64_t now_us)
 {
@@ -577,7 +733,7 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
     observation.cellular.updated_us = now_us;
 
     _linkg_switch_observation_build_wifi_radio(raw, now_us, &observation.wifi.radio);
-    _linkg_switch_observation_build_probe(raw, &observation.wifi);
+    _linkg_switch_observation_build_probe(raw, &observation);
 
     observation.wifi.available     = raw->wifi_path_available;
     observation.cellular.available = raw->cellular_data_ready && raw->cellular_ipv6_reachable && raw->cellular_path_available;
@@ -611,18 +767,60 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
 
     runtime = &peer->role.sta;
 
-    _linkg_switch_observation_update_traffic_locked(runtime,
-                                                     raw,
-                                                     now_us,
-                                                     &observation.wifi.traffic);
+    // Wi-Fi实际收发速率，保留原有Path统计差分语义。
+    _linkg_switch_observation_update_traffic_locked(runtime, raw, now_us, &observation.wifi.traffic);
 
-    _linkg_switch_observation_update_downlink_loss_locked(runtime,
-                                                           raw,
-                                                           now_us,
-                                                           &observation.wifi.loss.downlink);
+    // STA本机接收端：AP -> STA，两条链路各自独立Wire窗口。
+    _linkg_switch_observation_update_wire_locked(&runtime->wifi_downlink_loss_sampler,
+                                                   raw->wifi_link_id,
+                                                   raw->wifi_path_available && raw->wifi_rx_stats_valid,
+                                                   raw->wifi_rx_stats.received_packets,
+                                                   raw->wifi_rx_stats.confirmed_lost_packets,
+                                                   now_us,
+                                                   &observation.wifi.loss.downlink);
 
-    observation.wifi.loss.uplink = runtime->remote_wifi_uplink_loss;
-    runtime->observation         = observation;
+    _linkg_switch_observation_update_wire_locked(&runtime->cellular_downlink_loss_sampler,
+                                                   raw->cellular_link_id,
+                                                   raw->cellular_path_available && raw->cellular_rx_stats_valid,
+                                                   raw->cellular_rx_stats.received_packets,
+                                                   raw->cellular_rx_stats.confirmed_lost_packets,
+                                                   now_us,
+                                                   &observation.cellular.loss.downlink);
+
+    // STA本机发送端：STA -> AP，两条链路各自独立Queue Overflow窗口。
+    _linkg_switch_observation_update_load_locked(&runtime->wifi_uplink_load_sampler,
+                                                   raw->wifi_link_id,
+                                                   raw->wifi_path_available && raw->wifi_path_stats_valid,
+                                                   &raw->wifi_path_stats,
+                                                   now_us,
+                                                   &observation.wifi.loss.uplink_load);
+
+    _linkg_switch_observation_update_load_locked(&runtime->cellular_uplink_load_sampler,
+                                                   raw->cellular_link_id,
+                                                   raw->cellular_path_available && raw->cellular_path_stats_valid,
+                                                   &raw->cellular_path_stats,
+                                                   now_us,
+                                                   &observation.cellular.loss.uplink_load);
+
+    // AP远端接收端：STA -> AP，两条链路各自Wire质量。
+    _linkg_switch_observation_copy_remote_locked(&runtime->remote_wifi_uplink_loss,
+                                                   now_us,
+                                                   &observation.wifi.loss.uplink);
+
+    _linkg_switch_observation_copy_remote_locked(&runtime->remote_cellular_uplink_loss,
+                                                   now_us,
+                                                   &observation.cellular.loss.uplink);
+
+    // AP远端发送端：AP -> STA，两条链路各自Queue Overflow质量。
+    _linkg_switch_observation_copy_remote_locked(&runtime->remote_wifi_downlink_load,
+                                                   now_us,
+                                                   &observation.wifi.loss.downlink_load);
+
+    _linkg_switch_observation_copy_remote_locked(&runtime->remote_cellular_downlink_load,
+                                                   now_us,
+                                                   &observation.cellular.loss.downlink_load);
+
+    runtime->observation = observation;
 
     pthread_mutex_unlock(&g_switch.lock);
 
@@ -632,7 +830,7 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
 /****************************** Observation ******************************/
 
 /**
- * @brief 刷新指定STA直接AP的一轮Switch观测快照。
+ * @brief 刷新指定STA直接AP的一轮完整Switch观测快照。
  */
 int linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generation, uint64_t now_us)
 {
@@ -695,17 +893,20 @@ int linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generat
 }
 
 /**
- * @brief 更新AP上报的STA到AP Wi-Fi上行丢包观测。
+ * @brief 兼容旧接口：单独更新AP上报的Wi-Fi上行Wire丢包观测。
+ *
+ * V2正常接收路径应使用linkg_switch_report_receive_quality()更新整份四项报告。
  */
 int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t loss_permille, uint32_t sample_packets)
 {
     linkg_switch_sta_peer_runtime_t *runtime;
     linkg_switch_peer_runtime_t     *peer;
-    uint64_t now_us;
+    uint64_t                         now_us;
 
     if (peer_node_id < LINKG_RESOURCE_NODE_ID_MIN ||
         peer_node_id > LINKG_RESOURCE_NODE_ID_MAX ||
-        loss_permille > 1000U)
+        loss_permille > 1000U ||
+        (sample_packets == 0U && loss_permille != 0U))
     {
         return -EINVAL;
     }
@@ -758,7 +959,9 @@ int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uin
 }
 
 /**
- * @brief 清空指定STA Peer的观测快照和本地差分采样状态，调用方持有Switch锁。
+ * @brief 清空指定STA Peer观测及采样基线，调用方已经持有Switch锁。
+ *
+ * 不清除Plan Sync及消息编号；Peer生命周期变更由上层统一管理。
  */
 void linkg_switch_observation_reset_locked(uint8_t peer_node_id)
 {
@@ -780,6 +983,14 @@ void linkg_switch_observation_reset_locked(uint8_t peer_node_id)
 
     memset(&runtime->observation, 0, sizeof(runtime->observation));
     memset(&runtime->wifi_traffic_sampler, 0, sizeof(runtime->wifi_traffic_sampler));
+
     memset(&runtime->wifi_downlink_loss_sampler, 0, sizeof(runtime->wifi_downlink_loss_sampler));
+    memset(&runtime->wifi_uplink_load_sampler, 0, sizeof(runtime->wifi_uplink_load_sampler));
+    memset(&runtime->cellular_downlink_loss_sampler, 0, sizeof(runtime->cellular_downlink_loss_sampler));
+    memset(&runtime->cellular_uplink_load_sampler, 0, sizeof(runtime->cellular_uplink_load_sampler));
+
     memset(&runtime->remote_wifi_uplink_loss, 0, sizeof(runtime->remote_wifi_uplink_loss));
+    memset(&runtime->remote_wifi_downlink_load, 0, sizeof(runtime->remote_wifi_downlink_load));
+    memset(&runtime->remote_cellular_uplink_loss, 0, sizeof(runtime->remote_cellular_uplink_loss));
+    memset(&runtime->remote_cellular_downlink_load, 0, sizeof(runtime->remote_cellular_downlink_load));
 }
