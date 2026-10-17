@@ -1,9 +1,8 @@
-
 /**
  * @file switch_wire.h
  * @brief LinkG链路切换Wire协议定义
  * @author Dawn
- * @version 2.0.0
+ * @version 3.0.0
  * @date 2026-10-16
  */
 
@@ -13,36 +12,47 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "linkg_transport_types.h"
+
 /****************************** 协议常量 ******************************/
 
-#define LINKG_SWITCH_WIRE_VERSION                          2U  // 当前Switch Wire协议版本
-#define LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID               0U  // 无效消息编号
+#define LINKG_SWITCH_WIRE_VERSION                      1U                                                                               // 当前Switch Wire协议版本
+#define LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID           0U                                                                               // 无效消息编号
 
-#define LINKG_SWITCH_WIRE_HEADER_SIZE                      8U  // Switch公共头Wire长度
-#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE     32U  // Wi-Fi与Cellular质量上报Payload长度
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_PAYLOAD_SIZE           4U  // 发送计划同步Payload长度
-#define LINKG_SWITCH_WIRE_PLAN_ACK_PAYLOAD_SIZE            4U  // 发送计划确认Payload长度
-#define LINKG_SWITCH_WIRE_MAINTENANCE_PAYLOAD_SIZE         4U  // Maintenance控制Payload长度
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_PAYLOAD_SIZE     4U  // Maintenance结束确认Payload长度
+#define LINKG_SWITCH_WIRE_HEADER_SIZE                  8U                                                                               // Switch公共头Wire长度
+#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE  32U                                                                              // Wi-Fi与Cellular质量上报Payload长度
+#define LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE              4U                                                                               // 单业务发送计划Wire长度
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_PAYLOAD_SIZE       (LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE * LINKG_TRANSPORT_CLASS_COUNT)                // 完整Peer发送计划同步Payload长度
+#define LINKG_SWITCH_WIRE_PLAN_ACK_PAYLOAD_SIZE        4U                                                                               // 发送计划确认Payload长度
+#define LINKG_SWITCH_WIRE_MAINTENANCE_PAYLOAD_SIZE     4U                                                                               // Maintenance控制Payload长度
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_PAYLOAD_SIZE 4U                                                                               // Maintenance结束确认Payload长度
 
-#define LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE             (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE)
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_SIZE                  (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_PLAN_SYNC_PAYLOAD_SIZE)
-#define LINKG_SWITCH_WIRE_PLAN_ACK_SIZE                   (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_PLAN_ACK_PAYLOAD_SIZE)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_SIZE                (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_MAINTENANCE_PAYLOAD_SIZE)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_SIZE            (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_MAINTENANCE_ACK_PAYLOAD_SIZE)
-#define LINKG_SWITCH_WIRE_MAX_SIZE                         LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE
+#define LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE          (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE)  // 质量报告长度
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_SIZE               (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_PLAN_SYNC_PAYLOAD_SIZE)       // 计划同步长度
+#define LINKG_SWITCH_WIRE_PLAN_ACK_SIZE                (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_PLAN_ACK_PAYLOAD_SIZE)        // 计划确认长度
+#define LINKG_SWITCH_WIRE_MAINTENANCE_SIZE             (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_MAINTENANCE_PAYLOAD_SIZE)     // 维护长度
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_SIZE         (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_MAINTENANCE_ACK_PAYLOAD_SIZE) // 维护确认长度
+#define LINKG_SWITCH_WIRE_MAX_SIZE                     LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE                                            // 最大长度
+
+/****************************** 协议约束 ******************************/
+
+_Static_assert(LINKG_TRANSPORT_CLASS_REALTIME == 0, "invalid realtime class index");
+_Static_assert(LINKG_TRANSPORT_CLASS_VIDEO == 1, "invalid video class index");
+_Static_assert(LINKG_TRANSPORT_CLASS_DATA == 2, "invalid data class index");
+_Static_assert(LINKG_TRANSPORT_CLASS_COUNT == 3, "invalid transport class count");
+_Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_PLAN_SYNC_SIZE, "invalid switch wire max size");
 
 /****************************** 消息类型 ******************************/
 
 typedef enum
 {
-    LINKG_SWITCH_WIRE_TYPE_NONE = 0,       // 无效消息
-    LINKG_SWITCH_WIRE_TYPE_QUALITY_REPORT, // AP向STA上报Wi-Fi和Cellular质量
-    LINKG_SWITCH_WIRE_TYPE_PLAN_SYNC,      // STA发送计划同步
-    LINKG_SWITCH_WIRE_TYPE_PLAN_ACK,       // AP发送计划同步确认
-    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE,    // 接入维护开始或结束通知
-    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE_ACK,// 接入维护结束确认
-    LINKG_SWITCH_WIRE_TYPE_COUNT           // 消息类型数量
+    LINKG_SWITCH_WIRE_TYPE_NONE = 0,        // 无效消息
+    LINKG_SWITCH_WIRE_TYPE_QUALITY_REPORT,  // AP向STA上报Wi-Fi和Cellular质量
+    LINKG_SWITCH_WIRE_TYPE_PLAN_SYNC,       // STA发送计划同步
+    LINKG_SWITCH_WIRE_TYPE_PLAN_ACK,        // AP发送计划同步确认
+    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE,     // 接入维护开始或结束通知
+    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE_ACK, // 接入维护结束确认
+    LINKG_SWITCH_WIRE_TYPE_COUNT            // 消息类型数量
 } linkg_switch_wire_type_t;
 
 /****************************** 接入类型 ******************************/
@@ -59,7 +69,7 @@ typedef enum
 
 typedef enum
 {
-    LINKG_SWITCH_WIRE_MODE_NONE = 0,  // 无效发送模式
+    LINKG_SWITCH_WIRE_MODE_NONE = 0,  // 当前业务无可用链路
     LINKG_SWITCH_WIRE_MODE_SINGLE,    // 单链路发送
     LINKG_SWITCH_WIRE_MODE_REDUNDANT, // 双链路冗余发送
     LINKG_SWITCH_WIRE_MODE_COUNT      // 发送模式数量
@@ -112,8 +122,8 @@ typedef struct
  */
 typedef struct
 {
-    linkg_switch_wire_loss_t wifi_uplink;            // STA到AP Wi-Fi Wire丢包
-    linkg_switch_wire_loss_t wifi_downlink_load;     // AP到STA Wi-Fi Load丢包
+    linkg_switch_wire_loss_t wifi_uplink;        // STA到AP Wi-Fi Wire丢包
+    linkg_switch_wire_loss_t wifi_downlink_load; // AP到STA Wi-Fi Load丢包
 
     linkg_switch_wire_loss_t cellular_uplink;        // STA到AP Cellular Wire丢包
     linkg_switch_wire_loss_t cellular_downlink_load; // AP到STA Cellular Load丢包
@@ -123,9 +133,14 @@ typedef struct
 
 typedef struct
 {
-    linkg_switch_wire_mode_t   mode;             // STA当前生效发送模式
-    linkg_switch_wire_access_t primary_access;   // STA当前主发送接入
-    linkg_switch_wire_access_t secondary_access; // STA当前备用发送接入
+    linkg_switch_wire_mode_t   mode;             // 当前业务生效发送模式
+    linkg_switch_wire_access_t primary_access;   // 当前业务主发送接入
+    linkg_switch_wire_access_t secondary_access; // 当前业务备用发送接入
+} linkg_switch_wire_class_send_plan_t;
+
+typedef struct
+{
+    linkg_switch_wire_class_send_plan_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 一次同步全部业务计划
 } linkg_switch_wire_plan_sync_t;
 
 /****************************** 发送计划确认 ******************************/
@@ -158,11 +173,11 @@ typedef struct
 
     union
     {
-        linkg_switch_wire_quality_report_t  quality_report;   // Wi-Fi和Cellular质量上报
-        linkg_switch_wire_plan_sync_t       plan_sync;        // 发送计划同步
-        linkg_switch_wire_plan_ack_t        plan_ack;         // 发送计划确认
-        linkg_switch_wire_maintenance_t     maintenance;      // Maintenance开始或结束通知
-        linkg_switch_wire_maintenance_ack_t maintenance_ack;  // Maintenance结束确认
+        linkg_switch_wire_quality_report_t  quality_report;  // Wi-Fi和Cellular质量上报
+        linkg_switch_wire_plan_sync_t       plan_sync;       // 发送计划同步
+        linkg_switch_wire_plan_ack_t        plan_ack;        // 发送计划确认
+        linkg_switch_wire_maintenance_t     maintenance;     // Maintenance开始或结束通知
+        linkg_switch_wire_maintenance_ack_t maintenance_ack; // Maintenance结束确认
     } payload;
 } linkg_switch_wire_message_t;
 

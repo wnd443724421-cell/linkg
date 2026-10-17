@@ -2,7 +2,7 @@
  * @file switch_wire.c
  * @brief LinkG链路切换Wire协议编解码实现
  * @author Dawn
- * @version 2.0.0
+ * @version 3.0.0
  * @date 2026-10-16
  */
 
@@ -15,32 +15,32 @@
 
 /****************************** Wire偏移 ******************************/
 
-#define LINKG_SWITCH_WIRE_HEADER_VERSION_OFFSET                0U
-#define LINKG_SWITCH_WIRE_HEADER_TYPE_OFFSET                   1U
-#define LINKG_SWITCH_WIRE_HEADER_LENGTH_OFFSET                 2U
-#define LINKG_SWITCH_WIRE_HEADER_MESSAGE_ID_OFFSET             4U
+#define LINKG_SWITCH_WIRE_HEADER_VERSION_OFFSET                 0U                                    // 公共头版本偏移
+#define LINKG_SWITCH_WIRE_HEADER_TYPE_OFFSET                    1U                                    // 公共头类型偏移
+#define LINKG_SWITCH_WIRE_HEADER_LENGTH_OFFSET                  2U                                    // 公共头长度偏移
+#define LINKG_SWITCH_WIRE_HEADER_MESSAGE_ID_OFFSET              4U                                    // 公共头消息编号偏移
 
-#define LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_OFFSET             LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_LOAD_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 8U)
-#define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_OFFSET        (LINKG_SWITCH_WIRE_HEADER_SIZE + 16U)
-#define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET (LINKG_SWITCH_WIRE_HEADER_SIZE + 24U)
+#define LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_OFFSET            LINKG_SWITCH_WIRE_HEADER_SIZE         // 质量Wi-Fi上行偏移
+#define LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_LOAD_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 8U)  // 质量Wi-Fi下行负载偏移
+#define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_OFFSET        (LINKG_SWITCH_WIRE_HEADER_SIZE + 16U) // 质量Cellular上行偏移
+#define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET (LINKG_SWITCH_WIRE_HEADER_SIZE + 24U) // 质量Cellular下行负载偏移
 
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET                  LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET              (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET            (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
-#define LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET             (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET                 LINKG_SWITCH_WIRE_HEADER_SIZE         // 计划同步模式偏移
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET              (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)  // 计划同步主用接入偏移
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET            (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)  // 计划同步备用接入偏移
+#define LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET             (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)  // 计划同步保留字段偏移
 
-#define LINKG_SWITCH_WIRE_PLAN_ACK_STATUS_OFFSET                LINKG_SWITCH_WIRE_HEADER_SIZE
+#define LINKG_SWITCH_WIRE_PLAN_ACK_STATUS_OFFSET                LINKG_SWITCH_WIRE_HEADER_SIZE         // 计划确认状态偏移
 
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACCESS_OFFSET             LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_MAINTENANCE_PHASE_OFFSET             (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED0_OFFSET         (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED1_OFFSET         (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACCESS_OFFSET             LINKG_SWITCH_WIRE_HEADER_SIZE         // 维护接入类型偏移
+#define LINKG_SWITCH_WIRE_MAINTENANCE_PHASE_OFFSET              (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)  // 维护阶段偏移
+#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED0_OFFSET          (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)  // 维护保留字段0偏移
+#define LINKG_SWITCH_WIRE_MAINTENANCE_RESERVED1_OFFSET          (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)  // 维护保留字段1偏移
 
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_ACCESS_OFFSET         LINKG_SWITCH_WIRE_HEADER_SIZE
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED0_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED1_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)
-#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED2_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_ACCESS_OFFSET         LINKG_SWITCH_WIRE_HEADER_SIZE         // 维护确认接入类型偏移
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED0_OFFSET      (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)  // 维护确认保留字段0偏移
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED1_OFFSET      (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)  // 维护确认保留字段1偏移
+#define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED2_OFFSET      (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)  // 维护确认保留字段2偏移
 
 /****************************** 基础编解码 ******************************/
 
@@ -138,11 +138,16 @@ static bool _linkg_switch_wire_maintenance_phase_valid(linkg_switch_wire_mainten
 /**
  * @brief 校验发送计划Wire字段组合。
  */
-static int _linkg_switch_wire_validate_plan(const linkg_switch_wire_plan_sync_t *plan)
+static int _linkg_switch_wire_validate_class_plan(const linkg_switch_wire_class_send_plan_t *plan)
 {
     if (plan == NULL)
     {
         return -EINVAL;
+    }
+
+    if (plan->mode == LINKG_SWITCH_WIRE_MODE_NONE)
+    {
+        return plan->primary_access == LINKG_SWITCH_WIRE_ACCESS_NONE && plan->secondary_access == LINKG_SWITCH_WIRE_ACCESS_NONE ? 0 : -EINVAL;
     }
 
     if (!_linkg_switch_wire_mode_valid(plan->mode) ||
@@ -166,6 +171,31 @@ static int _linkg_switch_wire_validate_plan(const linkg_switch_wire_plan_sync_t 
         plan->secondary_access == LINKG_SWITCH_WIRE_ACCESS_NONE)
     {
         return -EINVAL;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 校验完整Peer发送计划，拒绝任一非法业务字段。
+ */
+static int _linkg_switch_wire_validate_plan(const linkg_switch_wire_plan_sync_t *plan)
+{
+    uint32_t class_index;
+    int      ret;
+
+    if (plan == NULL)
+    {
+        return -EINVAL;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        ret = _linkg_switch_wire_validate_class_plan(&plan->classes[class_index]);
+        if (ret != 0)
+        {
+            return ret;
+        }
     }
 
     return 0;
@@ -386,7 +416,9 @@ int linkg_switch_wire_encode_quality_report(uint32_t message_id, const linkg_swi
  */
 int linkg_switch_wire_encode_plan_sync(uint32_t message_id, const linkg_switch_wire_plan_sync_t *plan, uint8_t *buffer, size_t capacity, size_t *length)
 {
-    int ret;
+    uint32_t class_index;
+    uint32_t offset;
+    int      ret;
 
     if (length == NULL)
     {
@@ -416,10 +448,14 @@ int linkg_switch_wire_encode_plan_sync(uint32_t message_id, const linkg_switch_w
         return ret;
     }
 
-    buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET]      = (uint8_t)plan->mode;
-    buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET]   = (uint8_t)plan->primary_access;
-    buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET] = (uint8_t)plan->secondary_access;
-    buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET]  = 0U;
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        offset = class_index * LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE;
+        buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET + offset]      = (uint8_t)plan->classes[class_index].mode;
+        buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET + offset]   = (uint8_t)plan->classes[class_index].primary_access;
+        buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET + offset] = (uint8_t)plan->classes[class_index].secondary_access;
+        buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET + offset]  = 0U;
+    }
 
     *length = LINKG_SWITCH_WIRE_PLAN_SYNC_SIZE;
 
@@ -571,6 +607,8 @@ int linkg_switch_wire_encode_maintenance_ack(uint32_t message_id, const linkg_sw
  */
 int linkg_switch_wire_decode(const uint8_t *buffer, size_t length, linkg_switch_wire_message_t *message)
 {
+    uint32_t                             class_index;
+    uint32_t                             offset;
     linkg_switch_wire_maintenance_t     *maintenance;
     linkg_switch_wire_maintenance_ack_t *maintenance_ack;
     linkg_switch_wire_plan_sync_t       *plan;
@@ -632,21 +670,20 @@ int linkg_switch_wire_decode(const uint8_t *buffer, size_t length, linkg_switch_
                 return -EMSGSIZE;
             }
 
-            if (buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET] != 0U)
-            {
-                return -EINVAL;
-            }
-
             plan = &message->payload.plan_sync;
 
-            plan->mode =
-                (linkg_switch_wire_mode_t)buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET];
+            for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+            {
+                offset = class_index * LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE;
+                if (buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_RESERVED_OFFSET + offset] != 0U)
+                {
+                    return -EINVAL;
+                }
 
-            plan->primary_access =
-                (linkg_switch_wire_access_t)buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET];
-
-            plan->secondary_access =
-                (linkg_switch_wire_access_t)buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET];
+                plan->classes[class_index].mode             = (linkg_switch_wire_mode_t)buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET + offset];
+                plan->classes[class_index].primary_access   = (linkg_switch_wire_access_t)buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET + offset];
+                plan->classes[class_index].secondary_access = (linkg_switch_wire_access_t)buffer[LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET + offset];
+            }
 
             ret = _linkg_switch_wire_validate_plan(plan);
             if (ret != 0)
