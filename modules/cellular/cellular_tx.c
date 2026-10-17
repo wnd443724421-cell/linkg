@@ -30,12 +30,15 @@
 #include "cellular_tx_queue.h"
 #include "cellular_wire.h"
 
+
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX     32U                                   // 单次发送调度最大Packet数量
-#define LINKG_CELLULAR_TX_QUEUE_BATCH_COUNT  5U                                    // 单业务等待队列最多缓存批次数
-#define LINKG_CELLULAR_TX_CONTROL_SIZE       CMSG_SPACE(sizeof(struct in6_pktinfo))// 单个IPv6 PKTINFO控制区大小
-#define LINKG_CELLULAR_TX_PEER_SLOTS         256U                                  // 最多256个IPv6对端Sequence状态
+#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX                32U                                   // 单次发送调度最大Packet数量
+#define LINKG_CELLULAR_TX_QUEUE_REALTIME_BATCH_COUNT    1U                                    // REALTIME队列缓存1批，共32包
+#define LINKG_CELLULAR_TX_QUEUE_VIDEO_BATCH_COUNT       5U                                    // VIDEO队列缓存5批，共160包
+#define LINKG_CELLULAR_TX_QUEUE_DATA_BATCH_COUNT        5U                                    // DATA队列缓存5批，共160包
+#define LINKG_CELLULAR_TX_CONTROL_SIZE                  CMSG_SPACE(sizeof(struct in6_pktinfo))// 单个IPv6 PKTINFO控制区大小
+#define LINKG_CELLULAR_TX_PEER_SLOTS                    256U                                  // 最多256个IPv6对端Sequence状态
 
 /****************************** 内部类型 ******************************/
 
@@ -85,7 +88,6 @@ struct linkg_cellular_tx
     const uint16_t                    *service_ports;                                // 借用Cellular Link业务端口数组
     const char                        *interface_name;                               // 借用蜂窝出口接口名称
     uint32_t                          capacity;                                      // 单次发送调度最大提交Packet数量
-    uint32_t                          queue_capacity;                                // 单业务等待队列最大Packet数量
     _Atomic bool                      started;                                       // 发送模块运行状态
 };
 
@@ -802,6 +804,13 @@ static int _linkg_cellular_tx_dispatch_once_locked(linkg_cellular_tx_t *tx, link
  */
 linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds, const uint16_t *service_ports, const char *interface_name)
 {
+    static const uint32_t queue_batch_counts[LINKG_LINK_TX_CLASS_COUNT] =
+    {
+        [LINKG_LINK_TX_CLASS_REALTIME] = LINKG_CELLULAR_TX_QUEUE_REALTIME_BATCH_COUNT,
+        [LINKG_LINK_TX_CLASS_VIDEO]    = LINKG_CELLULAR_TX_QUEUE_VIDEO_BATCH_COUNT,
+        [LINKG_LINK_TX_CLASS_DATA]     = LINKG_CELLULAR_TX_QUEUE_DATA_BATCH_COUNT
+    };
+
     linkg_cellular_tx_t *tx;
     uint32_t             class_index;
     int                  ret;
@@ -821,7 +830,6 @@ linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds
     tx->service_ports  = service_ports;
     tx->interface_name = interface_name;
     tx->capacity       = capacity;
-    tx->queue_capacity = capacity * LINKG_CELLULAR_TX_QUEUE_BATCH_COUNT;
 
     ret = _linkg_cellular_tx_generate_session(&tx->session_id);
     if (ret != 0)
@@ -840,7 +848,7 @@ linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds
 
     for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
     {
-        tx->queues[class_index] = linkg_cellular_tx_queue_create(tx->queue_capacity);
+        tx->queues[class_index] = linkg_cellular_tx_queue_create(capacity * queue_batch_counts[class_index]);
         if (tx->queues[class_index] == NULL)
         {
             goto fail_queues;

@@ -31,18 +31,24 @@
 #include "wifi_wire.h"
 #include "linkg_log.h"
 
+
 /****************************** 发送参数 ******************************/
 
-#define LINKG_WIFI_TX_BATCH_SIZE_MAX        32U                                                                                  // 单次发送调度最大Packet数量
-#define LINKG_WIFI_TX_QUEUE_BATCH_COUNT     16U                                                                                  // 单业务等待队列最多缓存批次数
-#define LINKG_WIFI_TX_IPV4_HEADER_SIZE      20U                                                                                  // IPv4最小头部长度
-#define LINKG_WIFI_TX_UDP_HEADER_SIZE       8U                                                                                   // UDP头部长度
-#define LINKG_WIFI_TX_MTU                   1500U                                                                                // Wi-Fi接口MTU
-#define LINKG_WIFI_TX_UDP_PAYLOAD_MAX       (LINKG_WIFI_TX_MTU - LINKG_WIFI_TX_IPV4_HEADER_SIZE - LINKG_WIFI_TX_UDP_HEADER_SIZE) // 单个UDP报文最大负载
-#define LINKG_WIFI_TX_TRANSPORT_PAYLOAD_MAX (LINKG_WIFI_TX_UDP_PAYLOAD_MAX - LINKG_WIFI_WIRE_HEADER_SIZE)                        // Wi-Fi私有头之后的最大Transport报文长度
-#define LINKG_WIFI_NODE_SLOT_COUNT          256U                                                                                 // uint8_t Node ID直接索引空间
-#define LINKG_WIFI_TX_DIAG_LOG_INTERVAL_US  1000000ULL                                                                           // 发送异常诊断日志最小时间间隔
-#define LINKG_WIFI_TX_DIAG_COUNT_STEP       1000ULL                                                                              // 高频异常累计到该步长后才检查日志时间
+#define LINKG_WIFI_TX_BATCH_SIZE_MAX                32U                                                                                  // 单次发送调度最大Packet数量
+#define LINKG_WIFI_TX_QUEUE_REALTIME_BATCH_COUNT    1U                                                                                   // REALTIME队列缓存1批，共32包
+#define LINKG_WIFI_TX_QUEUE_VIDEO_BATCH_COUNT       5U                                                                                   // VIDEO队列缓存5批，共160包
+#define LINKG_WIFI_TX_QUEUE_DATA_BATCH_COUNT        5U                                                                                   // DATA队列缓存5批，共160包
+
+#define LINKG_WIFI_TX_IPV4_HEADER_SIZE              20U                                                                                  // IPv4最小头部长度
+#define LINKG_WIFI_TX_UDP_HEADER_SIZE               8U                                                                                   // UDP头部长度
+#define LINKG_WIFI_TX_MTU                           1500U                                                                                // Wi-Fi接口MTU
+#define LINKG_WIFI_TX_UDP_PAYLOAD_MAX               (LINKG_WIFI_TX_MTU - LINKG_WIFI_TX_IPV4_HEADER_SIZE - LINKG_WIFI_TX_UDP_HEADER_SIZE) // 单个UDP报文最大负载
+#define LINKG_WIFI_TX_TRANSPORT_PAYLOAD_MAX         (LINKG_WIFI_TX_UDP_PAYLOAD_MAX - LINKG_WIFI_WIRE_HEADER_SIZE)                        // Wi-Fi私有头之后的最大Transport报文长度
+
+#define LINKG_WIFI_NODE_SLOT_COUNT                  256U                                                                                 // uint8_t Node ID直接索引空间
+#define LINKG_WIFI_TX_DIAG_LOG_INTERVAL_US          1000000ULL                                                                           // 发送异常诊断日志最小时间间隔
+#define LINKG_WIFI_TX_DIAG_COUNT_STEP               1000ULL                                                                              // 高频异常累计到该步长后才检查日志时间
+
 
 /****************************** 内部类型 ******************************/
 
@@ -122,7 +128,6 @@ struct linkg_wifi_tx
     const uint16_t               *service_ports;                                 // 借用Wi-Fi Link业务端口数组
 
     uint32_t                      capacity;                                      // 单次发送调度最大提交Packet数量
-    uint32_t                      queue_capacity;                                // 单个业务等待队列最大Packet数量
 
     uint64_t                      dropped_total;                                 // 当前进程生命周期主动丢包总数
     uint64_t                      dropped_by_reason[LINKG_WIFI_TX_DROP_REASON_COUNT]; // 各主动丢包原因累计数量
@@ -974,6 +979,13 @@ static int _linkg_wifi_tx_dispatch_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_t
  */
 linkg_wifi_tx_t *linkg_wifi_tx_create(uint32_t capacity, int *socket_fds, const uint16_t *service_ports)
 {
+    static const uint32_t queue_batch_counts[LINKG_WIFI_TRAFFIC_COUNT] =
+    {
+        [LINKG_WIFI_TRAFFIC_REALTIME] = LINKG_WIFI_TX_QUEUE_REALTIME_BATCH_COUNT,
+        [LINKG_WIFI_TRAFFIC_VIDEO]    = LINKG_WIFI_TX_QUEUE_VIDEO_BATCH_COUNT,
+        [LINKG_WIFI_TRAFFIC_DATA]     = LINKG_WIFI_TX_QUEUE_DATA_BATCH_COUNT
+    };
+
     linkg_wifi_tx_t *tx;
     uint32_t         index;
     int              ret;
@@ -992,10 +1004,9 @@ linkg_wifi_tx_t *linkg_wifi_tx_create(uint32_t capacity, int *socket_fds, const 
         return NULL;
     }
 
-    tx->socket_fds     = socket_fds;
-    tx->service_ports  = service_ports;
-    tx->capacity       = capacity;
-    tx->queue_capacity = capacity * LINKG_WIFI_TX_QUEUE_BATCH_COUNT;
+    tx->socket_fds    = socket_fds;
+    tx->service_ports = service_ports;
+    tx->capacity      = capacity;
 
     ret = _linkg_wifi_tx_generate_session_id(&tx->session_id);
     if (ret != 0)
@@ -1019,7 +1030,7 @@ linkg_wifi_tx_t *linkg_wifi_tx_create(uint32_t capacity, int *socket_fds, const 
 
     for (index = 0U; index < LINKG_WIFI_TRAFFIC_COUNT; index++)
     {
-        tx->queues[index] = linkg_wifi_tx_queue_create(tx->queue_capacity);
+        tx->queues[index] = linkg_wifi_tx_queue_create(capacity * queue_batch_counts[index]);
         if (tx->queues[index] == NULL)
         {
             goto fail_queues;

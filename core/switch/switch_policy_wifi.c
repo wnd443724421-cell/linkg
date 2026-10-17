@@ -19,8 +19,9 @@
 
 /****************************** 内部辅助 ******************************/
 
+
 /**
- * @brief 判断当前Cellular备用链路是否具备基本使用条件。
+ * @brief 判断当前Cellular链路是否具备基本使用条件。
  */
 static bool _linkg_switch_policy_cellular_usable(const linkg_switch_policy_input_t *input)
 {
@@ -34,14 +35,14 @@ static bool _linkg_switch_policy_cellular_usable(const linkg_switch_policy_input
     cellular = &input->observation.cellular;
 
     if (!cellular->available ||
-        cellular->link_id == LINKG_LINK_ID_INVALID ||
-        input->plan.secondary_link_id != cellular->link_id)
+        cellular->link_id == LINKG_LINK_ID_INVALID)
     {
         return false;
     }
 
     return true;
 }
+
 
 /**
  * @brief 判断当前Wi-Fi主链路是否已经发生明确硬故障。
@@ -98,6 +99,7 @@ static int _linkg_switch_policy_switch_to_cellular(const linkg_switch_policy_inp
 
 /****************************** 单链路处理 ******************************/
 
+
 /**
  * @brief 将Wi-Fi主链路发送计划切换为双链路冗余。
  */
@@ -123,10 +125,16 @@ static int _linkg_switch_policy_enter_dual_verify(const linkg_switch_policy_inpu
         return -EINVAL;
     }
 
+    // 确保当前主备Link与观测中的Wi-Fi、Cellular实例一致。
+    if (input->plan.primary_link_id != input->observation.wifi.link_id ||
+        input->plan.secondary_link_id != input->observation.cellular.link_id)
+    {
+        return -ESTALE;
+    }
+
     plan      = input->plan;
     plan.mode = LINKG_SEND_MODE_REDUNDANT;
-    plan.primary_link_id   = LINKG_LINK_ACCESS_WIFI;
-    plan.secondary_link_id = LINKG_LINK_ACCESS_CELLULAR;
+
     return linkg_switch_plan_commit_local(input->peer_node_id, input->peer_generation, &plan, now_us);
 }
 
