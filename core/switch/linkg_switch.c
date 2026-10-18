@@ -40,6 +40,23 @@ linkg_switch_context_t g_switch =
 
 static pthread_mutex_t g_switch_lifecycle_lock = PTHREAD_MUTEX_INITIALIZER; // 串行化Switch生命周期操作
 
+/****************************** 接入约束 ******************************/
+
+/**
+ * @brief 读取本机及指定Peer的Maintenance约束，供发送目标获取时复核。
+ */
+bool linkg_switch_access_blocked(uint8_t peer_node_id, linkg_link_access_t access)
+{
+    linkg_switch_peer_runtime_t *peer;
+    bool                         blocked;
+
+    pthread_mutex_lock(&g_switch.lock);
+    peer    = linkg_switch_find_peer_locked(peer_node_id);
+    blocked = g_switch.initialized && linkg_switch_maintenance_access_blocked_locked(peer == NULL ? NULL : &peer->maintenance, access);
+    pthread_mutex_unlock(&g_switch.lock);
+    return blocked;
+}
+
 /****************************** 内部辅助 ******************************/
 
 /**
@@ -71,85 +88,27 @@ static int _linkg_switch_validate_packet_pool(const linkg_packet_pool_t *packet_
 }
 
 /**
- * @brief 清理单次运行状态并保留当前Peer发送计划和本地主动消息序列。
+ * @brief 清空Switch全部业务运行状态，不保留旧Peer与发送计划。
  *
- * STA保留下一PLAN_SYNC消息编号，AP保留下一质量报告消息编号，
- * Switch同时保留下一Maintenance事务编号，避免普通stop/start后
- * 本地主动消息序列重新从零开始。
+ * 仅在Worker尚未启动或已经停止，并且Transport接收回调已经排空时调用。
+ * Peer、三类Plan、同步事务、Maintenance、观测和事件队列全部清空。
  *
- * 当前Maintenance事务、远端Maintenance状态和END确认事务均属于
- * 单次运行状态，必须在新一轮start前清理。
+ * 不重置永久Mutex、Condition、Thread对象及Transport运行代际。
+ * 保留进程内Peer代际和主动消息编号，避免迟到事件复用旧标识。
+ * 调用方必须持有g_switch.lock。
  */
-static void _linkg_switch_reset_session_locked(void)
-{
-    linkg_switch_peer_runtime_t *peer;
-    uint32_t                     message_id;
-    uint32_t                     index;
-
-    linkg_switch_event_reset_locked();
-
-    memset(&g_switch.local_maintenance, 0, sizeof(g_switch.local_maintenance));
-
-    for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
-    {
-        peer = &g_switch.peers[index];
-
-        // Maintenance属于Peer公共单次运行状态，不随角色保留。
-        memset(&peer->maintenance, 0, sizeof(peer->maintenance));
-
-        if (!peer->used)
-        {
-            continue;
-        }
-
-        if (g_switch.role == LINKG_DEVICE_ROLE_STA)
-        {
-            message_id = peer->role.sta.next_plan_message_id;
-
-            memset(&peer->role, 0, sizeof(peer->role));
-
-            peer->role.sta.next_plan_message_id = message_id;
-        }
-        else if (g_switch.role == LINKG_DEVICE_ROLE_AP)
-        {
-            message_id = peer->role.ap.report_message_id;
-
-            memset(&peer->role, 0, sizeof(peer->role));
-
-            peer->role.ap.report_message_id = message_id;
-        }
-        else
-        {
-            memset(&peer->role, 0, sizeof(peer->role));
-        }
-    }
-
-    g_switch.next_observation_us = 0U;
-    g_switch.next_reconcile_us   = 0U;
-    g_switch.next_report_us      = 0U;
-    g_switch.sta_check_pending   = false;
-}
-
-
-/**
- * @brief 清空全部Peer及单次运行状态，不回退Transport Handler运行代际。
- */
-static void _linkg_switch_reset_all_locked(void)
+static void _linkg_switch_reset_runtime_locked(void)
 {
     memset(g_switch.peers, 0, sizeof(g_switch.peers));
     memset(&g_switch.local_maintenance, 0, sizeof(g_switch.local_maintenance));
 
     linkg_switch_event_reset_locked();
 
-    g_switch.next_peer_generation         = 0U;
-    g_switch.next_reconcile_us            = 0U;
-    g_switch.next_maintenance_message_id  = 0U;
-    g_switch.next_observation_us          = 0U;
-    g_switch.next_report_us               = 0U;
-    g_switch.rx_users                     = 0U;
-    g_switch.worker_tid_valid             = false;
-    g_switch.handler_registered           = false;
-    g_switch.running                      = false;
+    g_switch.next_observation_us = 0U;
+    g_switch.next_reconcile_us   = 0U;
+    g_switch.next_report_us      = 0U;
+    g_switch.next_policy_us      = 0U;
+    g_switch.sta_check_pending   = false;
 }
 
 /**
@@ -201,7 +160,7 @@ bool linkg_switch_enter_receive(void *user_data, linkg_device_role_t *role, uint
 
         *role          = g_switch.role;
         *local_node_id = g_switch.local_node_id;
-        accepted       = true;
+        accepted = true;
     }
 
     pthread_mutex_unlock(&g_switch.lock);
@@ -288,7 +247,7 @@ int linkg_switch_init(linkg_packet_pool_t *packet_pool)
 
     pthread_mutex_lock(&g_switch.lock);
 
-    _linkg_switch_reset_all_locked();
+    _linkg_switch_reset_runtime_locked();
 
     g_switch.packet_pool   = packet_pool;
     g_switch.role          = local->role;
@@ -306,7 +265,7 @@ int linkg_switch_init(linkg_packet_pool_t *packet_pool)
 }
 
 /**
- * @brief 启动Switch Worker并注册Transport SWITCH交付回调。
+ * @brief 从空业务状态启动Switch Worker并注册Transport SWITCH交付回调。
  */
 int linkg_switch_start(void)
 {
@@ -346,7 +305,7 @@ int linkg_switch_start(void)
 
     now_us = linkg_time_monotonic_us();
 
-    _linkg_switch_reset_session_locked();
+    _linkg_switch_reset_runtime_locked();
 
     g_switch.next_observation_us = now_us;
     g_switch.next_reconcile_us   = now_us;
@@ -367,7 +326,7 @@ int linkg_switch_start(void)
         pthread_mutex_lock(&g_switch.lock);
 
         g_switch.running = false;
-        _linkg_switch_reset_session_locked();
+        _linkg_switch_reset_runtime_locked();
 
         goto out;
     }
@@ -383,9 +342,12 @@ int linkg_switch_start(void)
         cleanup_ret = linkg_thread_stop(&g_switch.thread);
 
         pthread_mutex_lock(&g_switch.lock);
-        _linkg_switch_reset_session_locked();
 
-        if (cleanup_ret != 0)
+        if (cleanup_ret == 0)
+        {
+            _linkg_switch_reset_runtime_locked();
+        }
+        else
         {
             ret = cleanup_ret;
         }
@@ -414,7 +376,9 @@ out:
 }
 
 /**
- * @brief 停止Switch Worker、注销Transport回调并排空已进入的RX访问者。
+ * @brief 停止Switch Worker、注销Transport回调并清空全部业务运行状态。
+ *
+ * 排空已进入的RX访问者后清除Peer、发送计划和全部控制事务。
  *
  * 调用方必须从应用控制线程执行，禁止从Switch Worker内部调用。
  */
@@ -478,7 +442,7 @@ int linkg_switch_stop(void)
     ret = _linkg_switch_drain_receive_locked();
     if (ret == 0)
     {
-        _linkg_switch_reset_session_locked();
+        _linkg_switch_reset_runtime_locked();
     }
 
     pthread_mutex_unlock(&g_switch.lock);
@@ -495,7 +459,7 @@ int linkg_switch_stop(void)
 /**
  * @brief 释放已经停止的Switch模块初始化资源。
  *
- * 永久Mutex、Condition和run_token保留，用于隔离延迟到达的旧Transport回调。
+ * 永久Mutex、Condition及进程内代际计数保留，用于隔离迟到回调。
  */
 int linkg_switch_deinit(void)
 {
@@ -525,17 +489,8 @@ int linkg_switch_deinit(void)
     g_switch.role          = LINKG_DEVICE_ROLE_UNKNOWN;
     g_switch.local_node_id = LINKG_RESOURCE_NODE_ID_INVALID;
 
-    memset(g_switch.peers, 0, sizeof(g_switch.peers));
-    memset(&g_switch.local_maintenance, 0, sizeof(g_switch.local_maintenance));
-
-    linkg_switch_event_reset_locked();
-
-    g_switch.next_peer_generation         = 0U;
-    g_switch.next_reconcile_us            = 0U;
-    g_switch.next_maintenance_message_id  = 0U;
-    g_switch.next_observation_us          = 0U;
-    g_switch.next_report_us               = 0U;
-    g_switch.worker_tid_valid             = false;
+    // Switch退出时不保留任何Peer业务状态；安全代际编号仍留在进程内。
+    _linkg_switch_reset_runtime_locked();
 
     pthread_mutex_unlock(&g_switch.lock);
 
@@ -551,7 +506,6 @@ out:
 
     return ret;
 }
-
 
 /****************************** 计划管理 ******************************/
 
@@ -569,6 +523,30 @@ int linkg_switch_set_plan(uint8_t peer_node_id, const linkg_send_plan_t *plan)
 int linkg_switch_get_plan(uint8_t peer_node_id, linkg_send_plan_t *plan)
 {
     return linkg_switch_plan_get(peer_node_id, plan);
+}
+
+/**
+ * @brief 读取指定业务计划，所有写入仍以完整Peer计划为单位。
+ */
+int linkg_switch_get_class_plan(uint8_t peer_node_id, linkg_transport_class_t traffic_class, linkg_class_send_plan_t *plan)
+{
+    linkg_send_plan_t peer_plan;
+    int               ret;
+
+    if (plan == NULL || (uint32_t)traffic_class >= LINKG_TRANSPORT_CLASS_COUNT)
+    {
+        return -EINVAL;
+    }
+
+    ret = linkg_switch_plan_get(peer_node_id, &peer_plan);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    *plan = peer_plan.classes[traffic_class];
+
+    return 0;
 }
 
 /**

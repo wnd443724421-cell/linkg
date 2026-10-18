@@ -1,6 +1,6 @@
 /**
  * @file switch_maintenance.c
- * @brief LinkG链路切换接入维护实现
+ * @brief LinkG本机与对端Access维护、尽力迁移及END通知事务
  * @author Dawn
  * @version 1.0.0
  * @date 2026-09-19
@@ -38,11 +38,13 @@ typedef struct
 {
     uint8_t           peer_node_id;    // 当前直接Peer节点编号
     uint32_t          peer_generation; // 当前Peer运行代际
-    bool              notify_peer;     // 是否有可用备份Path、需要通知远端
-    bool              apply_plan;      // 当前是否需要修改本地发送计划
-    linkg_send_plan_t plan;            // Maintenance迁移后的本地发送计划
+    bool              notify_peer;     // 仅有可用备用Path时通知对端
+    bool              apply_plan;      // 本机是否需要避开维护链路
+    linkg_send_plan_t plan;            // 避让维护链路后的完整三类本地计划
+    linkg_send_plan_t previous;        // 修改前完整计划，防止覆盖并发更新
 } linkg_switch_maintenance_peer_action_t;
-/****************************** 内部辅助 ******************************/
+
+/****************************** 基础校验与错误处理 ******************************/
 
 /**
  * @brief 判断Maintenance支持的本地Access是否合法。
@@ -86,6 +88,8 @@ static void _linkg_switch_maintenance_record_error(int error, int *first_error)
         *first_error = error;
     }
 }
+
+/****************************** Access转换与时间编号 ******************************/
 
 /**
  * @brief 将本地Link Access转换为Maintenance Wire Access。
@@ -194,28 +198,37 @@ static uint32_t _linkg_switch_maintenance_allocate_message_id_locked(void)
     return message_id;
 }
 
+/****************************** Maintenance使用约束 ******************************/
+
 /**
- * @brief 判断当前是否仍存在等待END确认的本机Maintenance事务。
+ * @brief 统一判断当前Access是否被本机维护或指定Peer的远端维护阻断。
+ *
+ * 调用方必须持有g_switch.lock。
  */
-static bool _linkg_switch_maintenance_end_pending_locked(void)
+bool linkg_switch_maintenance_access_blocked_locked(const linkg_switch_maintenance_peer_runtime_t *runtime, linkg_link_access_t access)
 {
-    uint32_t index;
-
-    for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
+    if (!_linkg_switch_maintenance_access_valid(access))
     {
-        if (!g_switch.peers[index].used)
-        {
-            continue;
-        }
+        return false;
+    }
 
-        if (g_switch.peers[index].maintenance.end_tx.active)
-        {
-            return true;
-        }
+    if (g_switch.local_maintenance.active &&
+        g_switch.local_maintenance.access == access)
+    {
+        return true;
+    }
+
+    if (runtime != NULL &&
+        runtime->remote.active &&
+        runtime->remote.access == access)
+    {
+        return true;
     }
 
     return false;
 }
+
+/****************************** Peer备用Path与避让计划 ******************************/
 
 /**
  * @brief 判断指定Peer当前Access是否具备可用Path。
@@ -266,17 +279,23 @@ static bool _linkg_switch_maintenance_peer_access_available_locked(const linkg_s
 }
 
 /**
- * @brief 判断当前发送计划是否实际使用指定Link。
+ * @brief 判断单类计划的实际发送Path是否包含指定Link。
+ *
+ * SINGLE只使用Primary，Secondary仅是备用候选；REDUNDANT两条Path均在发送。
  */
-static bool _linkg_switch_maintenance_plan_uses_link(const linkg_send_plan_t *plan, uint32_t link_id)
+static bool _linkg_switch_maintenance_plan_uses_link(const linkg_class_send_plan_t *plan, uint32_t link_id)
 {
     if (plan == NULL || link_id == LINKG_LINK_ID_INVALID)
     {
         return false;
     }
 
-    if (plan->mode == LINKG_SEND_MODE_SINGLE ||
-        plan->mode == LINKG_SEND_MODE_REDUNDANT)
+    if (plan->mode == LINKG_SEND_MODE_SINGLE)
+    {
+        return plan->primary_link_id == link_id;
+    }
+
+    if (plan->mode == LINKG_SEND_MODE_REDUNDANT)
     {
         return plan->primary_link_id == link_id ||
                plan->secondary_link_id == link_id;
@@ -286,67 +305,64 @@ static bool _linkg_switch_maintenance_plan_uses_link(const linkg_send_plan_t *pl
 }
 
 /**
- * @brief 根据当前Maintenance约束构造指定Peer迁移到备用Access的本地发送计划。
+ * @brief 为指定Peer构造避开维护Access的完整本地发送计划。
  *
- * 只有当前计划实际使用被维护Access，并且备用Access可用且未被其它Maintenance
- * 禁止时才形成新的单链路发送计划。
+ * 仅在可用且未被维护的备用Path存在时才修改当前使用维护Path的业务。
+ * 已在备用Path发送的类别保持不变；无备份时原计划不变，交给发送层阻断。
  */
-static bool _linkg_switch_maintenance_build_escape_plan_locked(const linkg_switch_peer_runtime_t *peer,
-                                                                linkg_link_access_t blocked_access,
-                                                                uint32_t blocked_link_id,
-                                                                linkg_link_access_t alternate_access,
-                                                                uint32_t alternate_link_id,
-                                                                linkg_send_plan_t *plan)
+static bool _linkg_switch_maintenance_build_escape_plan_locked(const linkg_switch_peer_runtime_t *peer, linkg_link_access_t blocked_access, uint32_t blocked_link_id, linkg_link_access_t alternate_access, uint32_t alternate_link_id, linkg_send_plan_t *plan)
 {
+    linkg_class_send_plan_t *current;
+    uint32_t                 class_index;
+    bool                     changed;
+
     if (peer == NULL || plan == NULL)
     {
         return false;
     }
 
-    if (!_linkg_switch_maintenance_access_valid(blocked_access) ||
-        !_linkg_switch_maintenance_access_valid(alternate_access))
+    if (!_linkg_switch_maintenance_access_valid(blocked_access) || !_linkg_switch_maintenance_access_valid(alternate_access))
     {
         return false;
     }
 
-    if (blocked_link_id == LINKG_LINK_ID_INVALID ||
-        alternate_link_id == LINKG_LINK_ID_INVALID)
+    if (blocked_link_id == LINKG_LINK_ID_INVALID || alternate_link_id == LINKG_LINK_ID_INVALID)
     {
         return false;
     }
 
-    if (!_linkg_switch_maintenance_plan_uses_link(&peer->plan, blocked_link_id))
+    if (!_linkg_switch_maintenance_peer_access_available_locked(peer, alternate_access) ||
+        linkg_switch_maintenance_access_blocked_locked(&peer->maintenance, alternate_access))
     {
         return false;
     }
 
-    if (!_linkg_switch_maintenance_peer_access_available_locked(peer, alternate_access))
+    *plan   = peer->plan;
+    changed = false;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
-        return false;
+        current = &plan->classes[class_index];
+        if (!_linkg_switch_maintenance_plan_uses_link(current, blocked_link_id))
+        {
+            continue;
+        }
+
+        current->mode              = LINKG_SEND_MODE_SINGLE;
+        current->primary_link_id   = alternate_link_id;
+        current->secondary_link_id = LINKG_LINK_ID_INVALID;
+        changed                    = true;
     }
 
-    if (linkg_switch_maintenance_access_blocked_locked(&peer->maintenance, alternate_access))
-    {
-        return false;
-    }
-
-    memset(plan, 0, sizeof(*plan));
-
-    plan->mode              = LINKG_SEND_MODE_SINGLE;
-    plan->primary_link_id   = alternate_link_id;
-    plan->secondary_link_id = LINKG_LINK_ID_INVALID;
-
-    return true;
+    return changed;
 }
+
+/****************************** 控制消息发送 ******************************/
 
 /**
  * @brief 向指定直接Peer发送Maintenance BEGIN或END通知。
  */
-static int _linkg_switch_maintenance_send(linkg_packet_pool_t *packet_pool,
-                                           uint8_t peer_node_id,
-                                           uint32_t message_id,
-                                           linkg_link_access_t access,
-                                           linkg_switch_wire_maintenance_phase_t phase)
+static int _linkg_switch_maintenance_send(linkg_packet_pool_t *packet_pool, uint8_t peer_node_id, uint32_t message_id, linkg_link_access_t access, linkg_switch_wire_maintenance_phase_t phase)
 {
     linkg_switch_wire_maintenance_t maintenance;
 
@@ -374,10 +390,7 @@ static int _linkg_switch_maintenance_send(linkg_packet_pool_t *packet_pool,
 /**
  * @brief 向指定直接Peer发送Maintenance END确认。
  */
-static int _linkg_switch_maintenance_send_ack(linkg_packet_pool_t *packet_pool,
-                                               uint8_t peer_node_id,
-                                               uint32_t message_id,
-                                               linkg_link_access_t access)
+static int _linkg_switch_maintenance_send_ack(linkg_packet_pool_t *packet_pool, uint8_t peer_node_id, uint32_t message_id, linkg_link_access_t access)
 {
     linkg_switch_wire_maintenance_ack_t ack;
 
@@ -400,358 +413,37 @@ static int _linkg_switch_maintenance_send_ack(linkg_packet_pool_t *packet_pool,
                                                  &ack);
 }
 
+/****************************** 本机Maintenance事务辅助 ******************************/
+
 /**
- * @brief 处理对端Maintenance BEGIN事件。
+ * @brief 判断当前是否仍存在等待END确认的本机Maintenance事务。
  */
-static int _linkg_switch_maintenance_process_begin(const linkg_switch_event_t *event, uint64_t now_us)
+static bool _linkg_switch_maintenance_end_pending_locked(void)
 {
-    linkg_switch_maintenance_remote_runtime_t *remote;
-    linkg_switch_peer_runtime_t               *peer;
-    linkg_send_plan_t                          plan;
-    linkg_link_access_t                        access;
-    linkg_link_access_t                        alternate_access;
-    uint32_t                                   blocked_link_id;
-    uint32_t                                   alternate_link_id;
-    bool                                       backup_available;
-    bool                                       apply_plan;
-    int                                        ret;
+    uint32_t index;
 
-    access = _linkg_switch_maintenance_access_from_wire(event->payload.maintenance.access);
-    if (!_linkg_switch_maintenance_access_valid(access))
+    for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
     {
-        return -EINVAL;
-    }
-
-    alternate_access  = _linkg_switch_maintenance_alternate_access(access);
-    blocked_link_id   = linkg_link_manager_get_id(access);
-    alternate_link_id = linkg_link_manager_get_id(alternate_access);
-
-    memset(&plan, 0, sizeof(plan));
-    apply_plan = false;
-
-    pthread_mutex_lock(&g_switch.lock);
-
-    if (!g_switch.initialized)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ENODEV;
-    }
-
-    if (!g_switch.running)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ESHUTDOWN;
-    }
-
-    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
-    if (peer == NULL)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ESTALE;
-    }
-
-    remote = &peer->maintenance.remote;
-
-    if (event->message_id == remote->last_message_id)
-    {
-        if (remote->active && remote->access != access)
+        if (!g_switch.peers[index].used)
         {
-            pthread_mutex_unlock(&g_switch.lock);
-            return -EPROTO;
+            continue;
         }
 
-        // 同一事务BEGIN重复到达或该事务已经结束，均不重复执行副作用。
-        pthread_mutex_unlock(&g_switch.lock);
-        return 0;
-    }
-
-    if (!_linkg_switch_maintenance_message_id_newer(event->message_id, remote->last_message_id))
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return 0;
-    }
-
-    // 备份Path有效性与是否需要本机Plan迁移是两个独立判断。
-    backup_available = alternate_link_id != LINKG_LINK_ID_INVALID &&
-                       _linkg_switch_maintenance_peer_access_available_locked(peer, alternate_access) &&
-                       !linkg_switch_maintenance_access_blocked_locked(&peer->maintenance, alternate_access);
-
-    apply_plan = backup_available &&
-                 _linkg_switch_maintenance_build_escape_plan_locked(peer,
-                                                                     access,
-                                                                     blocked_link_id,
-                                                                     alternate_access,
-                                                                     alternate_link_id,
-                                                                     &plan);
-
-    remote->last_message_id = event->message_id;
-
-    if (!backup_available)
-    {
-        remote->active     = false;
-        remote->access     = LINKG_LINK_ACCESS_NONE;
-        remote->started_us = 0U;
-        remote->expires_us = 0U;
-
-        pthread_mutex_unlock(&g_switch.lock);
-
-        LINKG_LOG_DEBUG("SWITCH-MAINT: BEGIN ignored, peer=%u id=%u access=%d reason=no-backup",
-                        (unsigned int)event->peer_node_id,
-                        (unsigned int)event->message_id,
-                        (int)access);
-        return 0;
-    }
-
-    remote->active     = true;
-    remote->access     = access;
-    remote->started_us = now_us;
-    remote->expires_us = _linkg_switch_maintenance_add_us(now_us, LINKG_SWITCH_MAINTENANCE_REMOTE_TIMEOUT_US);
-
-    pthread_mutex_unlock(&g_switch.lock);
-
-    LINKG_LOG_DEBUG("SWITCH-MAINT: BEGIN received, peer=%u id=%u access=%d escape_plan=%d",
-                    (unsigned int)event->peer_node_id,
-                    (unsigned int)event->message_id,
-                    (int)access,
-                    apply_plan ? 1 : 0);
-
-    if (!apply_plan)
-    {
-        return 0;
-    }
-
-    ret = linkg_switch_plan_apply_local(event->peer_node_id, event->peer_generation, &plan);
-    if (_linkg_switch_maintenance_expected_state_error(ret))
-    {
-        return 0;
-    }
-
-    return ret;
-}
-
-
-/**
- * @brief 处理对端Maintenance END事件并返回对应确认。
- */
-static int _linkg_switch_maintenance_process_end(const linkg_switch_event_t *event, uint64_t now_us)
-{
-    linkg_switch_maintenance_remote_runtime_t *remote;
-    linkg_packet_pool_t                       *packet_pool;
-    linkg_switch_peer_runtime_t               *peer;
-    linkg_link_access_t                        access;
-    bool                                       send_ack;
-
-    (void)now_us;
-
-    access = _linkg_switch_maintenance_access_from_wire(event->payload.maintenance.access);
-    if (!_linkg_switch_maintenance_access_valid(access))
-    {
-        return -EINVAL;
-    }
-
-    packet_pool = NULL;
-    send_ack    = false;
-
-    pthread_mutex_lock(&g_switch.lock);
-
-    if (!g_switch.initialized)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ENODEV;
-    }
-
-    if (!g_switch.running)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ESHUTDOWN;
-    }
-
-    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
-    if (peer == NULL)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ESTALE;
-    }
-
-    remote = &peer->maintenance.remote;
-
-    if (event->message_id == remote->last_message_id)
-    {
-        if (remote->active && remote->access != access)
+        if (g_switch.peers[index].maintenance.end_tx.active)
         {
-            pthread_mutex_unlock(&g_switch.lock);
-            return -EPROTO;
+            return true;
         }
-
-        remote->active     = false;
-        remote->access     = LINKG_LINK_ACCESS_NONE;
-        remote->started_us = 0U;
-        remote->expires_us = 0U;
-
-        packet_pool = g_switch.packet_pool;
-        send_ack    = true;
-
-        pthread_mutex_unlock(&g_switch.lock);
-
-        LINKG_LOG_DEBUG("SWITCH-MAINT: END received, peer=%u id=%u access=%d duplicate_or_current=1",
-                        (unsigned int)event->peer_node_id,
-                        (unsigned int)event->message_id,
-                        (int)access);
-
-        if (!linkg_switch_peer_generation_current(event->peer_node_id, event->peer_generation))
-        {
-            return -ESTALE;
-        }
-
-        return _linkg_switch_maintenance_send_ack(packet_pool,
-                                                   event->peer_node_id,
-                                                   event->message_id,
-                                                   access);
-    }
-
-    if (_linkg_switch_maintenance_message_id_newer(event->message_id, remote->last_message_id))
-    {
-        /**
-         * BEGIN可能丢失而END先到。
-         * 仍然记录该事务已经结束，避免迟到BEGIN再次激活Maintenance。
-         */
-        remote->last_message_id = event->message_id;
-        remote->active          = false;
-        remote->access          = LINKG_LINK_ACCESS_NONE;
-        remote->started_us      = 0U;
-        remote->expires_us      = 0U;
-
-        packet_pool = g_switch.packet_pool;
-        send_ack    = true;
-    }
-
-    pthread_mutex_unlock(&g_switch.lock);
-
-    if (!send_ack)
-    {
-        return 0;
-    }
-
-    LINKG_LOG_DEBUG("SWITCH-MAINT: END received, peer=%u id=%u access=%d begin_missing=1",
-                    (unsigned int)event->peer_node_id,
-                    (unsigned int)event->message_id,
-                    (int)access);
-
-    if (!linkg_switch_peer_generation_current(event->peer_node_id, event->peer_generation))
-    {
-        return -ESTALE;
-    }
-
-    return _linkg_switch_maintenance_send_ack(packet_pool,
-                                               event->peer_node_id,
-                                               event->message_id,
-                                               access);
-}
-
-
-/**
- * @brief 处理对端Maintenance END确认事件。
- */
-static int _linkg_switch_maintenance_process_ack(const linkg_switch_event_t *event)
-{
-    linkg_switch_maintenance_end_tx_runtime_t *end_tx;
-    linkg_switch_peer_runtime_t               *peer;
-    linkg_link_access_t                        access;
-
-    access = _linkg_switch_maintenance_access_from_wire(event->payload.maintenance_ack.access);
-    if (!_linkg_switch_maintenance_access_valid(access))
-    {
-        return -EINVAL;
-    }
-
-    pthread_mutex_lock(&g_switch.lock);
-
-    if (!g_switch.initialized)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ENODEV;
-    }
-
-    if (!g_switch.running)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ESHUTDOWN;
-    }
-
-    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
-    if (peer == NULL)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -ESTALE;
-    }
-
-    end_tx = &peer->maintenance.end_tx;
-
-    if (!end_tx->active)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return 0;
-    }
-
-    if (end_tx->message_id != event->message_id)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return 0;
-    }
-
-    if (end_tx->access != access)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return -EPROTO;
-    }
-
-    memset(end_tx, 0, sizeof(*end_tx));
-
-    pthread_mutex_unlock(&g_switch.lock);
-
-    LINKG_LOG_DEBUG("SWITCH-MAINT: END ACK complete, peer=%u id=%u access=%d",
-                    (unsigned int)event->peer_node_id,
-                    (unsigned int)event->message_id,
-                    (int)access);
-
-    return 0;
-}
-
-
-/****************************** 使用约束 ******************************/
-
-/**
- * @brief 判断指定Peer当前Access是否被本机或对端Maintenance禁止使用。
- *
- * 调用方必须持有g_switch.lock。
- */
-bool linkg_switch_maintenance_access_blocked_locked(const linkg_switch_maintenance_peer_runtime_t *runtime, linkg_link_access_t access)
-{
-    if (!_linkg_switch_maintenance_access_valid(access))
-    {
-        return false;
-    }
-
-    if (g_switch.local_maintenance.active &&
-        g_switch.local_maintenance.access == access)
-    {
-        return true;
-    }
-
-    if (runtime != NULL &&
-        runtime->remote.active &&
-        runtime->remote.access == access)
-    {
-        return true;
     }
 
     return false;
 }
 
-/****************************** 本机维护控制 ******************************/
+/****************************** 本机Maintenance生命周期 ******************************/
 
 /**
- * @brief 开始本机指定Access维护，仅通知具有可用备用Path的直接Peer。
+ * @brief 本机立即禁用维护Access，并尽力迁移和通知有备用Path的Peer。
+ *
+ * 无备份时不通知对端；发送BEGIN失败也不撤销本机维护，不阻止Owner重启。
  */
 int linkg_switch_maintenance_begin(linkg_link_access_t access)
 {
@@ -844,6 +536,7 @@ int linkg_switch_maintenance_begin(linkg_link_access_t access)
 
         actions[action_count].peer_node_id    = peer->peer_node_id;
         actions[action_count].peer_generation = peer->generation;
+        actions[action_count].previous        = peer->plan;
 
         actions[action_count].apply_plan =
             _linkg_switch_maintenance_build_escape_plan_locked(peer,
@@ -890,9 +583,8 @@ int linkg_switch_maintenance_begin(linkg_link_access_t access)
 
         if (actions[index].apply_plan)
         {
-            ret = linkg_switch_plan_apply_local(actions[index].peer_node_id,
-                                                 actions[index].peer_generation,
-                                                 &actions[index].plan);
+            ret = linkg_switch_plan_update_if_current(actions[index].peer_node_id, actions[index].peer_generation,
+                                                      &actions[index].previous, &actions[index].plan, false, now_us);
             if (ret != 0)
             {
                 if (!_linkg_switch_maintenance_expected_state_error(ret))
@@ -930,23 +622,22 @@ int linkg_switch_maintenance_begin(linkg_link_access_t access)
     return 0;
 }
 
-
 /**
- * @brief 结束本机指定Access维护并启动END确认流程。
+ * @brief 解除本机Access维护，并为此前通知过的Peer启动END确认事务。
  *
  * 当前不存在本机Maintenance时视为已经结束，直接返回成功。
  */
 int linkg_switch_maintenance_end(linkg_link_access_t access)
 {
-    linkg_packet_pool_t             *packet_pool;
-    linkg_switch_peer_runtime_t     *peer;
-    uint8_t                          peer_node_ids[LINKG_SWITCH_PEER_MAX];
-    uint32_t                         peer_generations[LINKG_SWITCH_PEER_MAX];
-    uint32_t                         message_id;
-    uint32_t                         peer_count;
-    uint32_t                         index;
-    uint64_t                         now_us;
-    int                              ret;
+    linkg_packet_pool_t         *packet_pool;
+    linkg_switch_peer_runtime_t *peer;
+    uint8_t                      peer_node_ids[LINKG_SWITCH_PEER_MAX];
+    uint32_t                     peer_generations[LINKG_SWITCH_PEER_MAX];
+    uint32_t                     message_id;
+    uint32_t                     peer_count;
+    uint32_t                     index;
+    uint64_t                     now_us;
+    int                          ret;
 
     if (!_linkg_switch_maintenance_access_valid(access))
     {
@@ -1022,7 +713,7 @@ int linkg_switch_maintenance_end(linkg_link_access_t access)
         peer->maintenance.end_tx.next_retry_us = _linkg_switch_maintenance_add_us(now_us, LINKG_SWITCH_MAINTENANCE_END_RETRY_INTERVAL_US);
         peer->maintenance.end_tx.deadline_us   = _linkg_switch_maintenance_add_us(now_us, LINKG_SWITCH_MAINTENANCE_END_TIMEOUT_US);
 
-        peer_node_ids[peer_count]   = peer->peer_node_id;
+        peer_node_ids[peer_count]    = peer->peer_node_id;
         peer_generations[peer_count] = peer->generation;
         peer_count++;
     }
@@ -1074,7 +765,294 @@ int linkg_switch_maintenance_end(linkg_link_access_t access)
     return 0;
 }
 
-/****************************** 事件处理 ******************************/
+/****************************** 对端Maintenance事件 ******************************/
+
+/**
+ * @brief 接收对端维护通知，仅在有备用Path时记录远端阻断并尽力避让。
+ */
+static int _linkg_switch_maintenance_process_begin(const linkg_switch_event_t *event, uint64_t now_us)
+{
+    linkg_switch_maintenance_remote_runtime_t *remote;
+    linkg_switch_peer_runtime_t               *peer;
+    linkg_send_plan_t                          plan;
+    linkg_send_plan_t                          previous;
+    linkg_link_access_t                        access;
+    linkg_link_access_t                        alternate_access;
+    uint32_t                                   blocked_link_id;
+    uint32_t                                   alternate_link_id;
+    bool                                       backup_available;
+    bool                                       apply_plan;
+    int                                        ret;
+
+    access = _linkg_switch_maintenance_access_from_wire(event->payload.maintenance.access);
+    if (!_linkg_switch_maintenance_access_valid(access))
+    {
+        return -EINVAL;
+    }
+
+    alternate_access  = _linkg_switch_maintenance_alternate_access(access);
+    blocked_link_id   = linkg_link_manager_get_id(access);
+    alternate_link_id = linkg_link_manager_get_id(alternate_access);
+
+    memset(&plan, 0, sizeof(plan));
+    apply_plan = false;
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (!g_switch.initialized)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENODEV;
+    }
+
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
+    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
+    if (peer == NULL)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESTALE;
+    }
+
+    remote = &peer->maintenance.remote;
+
+    if (event->message_id == remote->last_message_id)
+    {
+        if (remote->active && remote->access != access)
+        {
+            pthread_mutex_unlock(&g_switch.lock);
+            return -EPROTO;
+        }
+
+        // 同一事务BEGIN重复到达或该事务已经结束，均不重复执行副作用。
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    if (!_linkg_switch_maintenance_message_id_newer(event->message_id, remote->last_message_id))
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    // 备份Path有效性与是否需要本机Plan迁移是两个独立判断。
+    backup_available = alternate_link_id != LINKG_LINK_ID_INVALID &&
+                       _linkg_switch_maintenance_peer_access_available_locked(peer, alternate_access) &&
+                       !linkg_switch_maintenance_access_blocked_locked(&peer->maintenance, alternate_access);
+
+    previous = peer->plan;
+    apply_plan = backup_available &&
+                 _linkg_switch_maintenance_build_escape_plan_locked(peer,
+                                                                     access,
+                                                                     blocked_link_id,
+                                                                     alternate_access,
+                                                                     alternate_link_id,
+                                                                     &plan);
+
+    remote->last_message_id = event->message_id;
+
+    if (!backup_available)
+    {
+        remote->active     = false;
+        remote->access     = LINKG_LINK_ACCESS_NONE;
+        remote->started_us = 0U;
+        remote->expires_us = 0U;
+
+        pthread_mutex_unlock(&g_switch.lock);
+
+        LINKG_LOG_DEBUG("SWITCH-MAINT: BEGIN ignored, peer=%u id=%u access=%d reason=no-backup",
+                        (unsigned int)event->peer_node_id,
+                        (unsigned int)event->message_id,
+                        (int)access);
+        return 0;
+    }
+
+    remote->active     = true;
+    remote->access     = access;
+    remote->started_us = now_us;
+    remote->expires_us = _linkg_switch_maintenance_add_us(now_us, LINKG_SWITCH_MAINTENANCE_REMOTE_TIMEOUT_US);
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    LINKG_LOG_DEBUG("SWITCH-MAINT: BEGIN received, peer=%u id=%u access=%d escape_plan=%d",
+                    (unsigned int)event->peer_node_id,
+                    (unsigned int)event->message_id,
+                    (int)access,
+                    apply_plan ? 1 : 0);
+
+    if (!apply_plan)
+    {
+        return 0;
+    }
+
+    ret = linkg_switch_plan_update_if_current(event->peer_node_id, event->peer_generation, &previous, &plan, false, now_us);
+    if (_linkg_switch_maintenance_expected_state_error(ret))
+    {
+        return 0;
+    }
+
+    return ret;
+}
+
+/**
+ * @brief 处理对端Maintenance END，解除远端限制并确认该事务。
+ *
+ * 同编号END可重复确认；比最新编号更旧的END忽略。
+ * BEGIN丢失但END先到时仍记录该编号，阻止迟到BEGIN重新激活维护。
+ */
+static int _linkg_switch_maintenance_process_end(const linkg_switch_event_t *event, uint64_t now_us)
+{
+    linkg_switch_maintenance_remote_runtime_t *remote;
+    linkg_switch_peer_runtime_t               *peer;
+    linkg_packet_pool_t                       *packet_pool;
+    linkg_link_access_t                        access;
+
+    (void)now_us;
+
+    access = _linkg_switch_maintenance_access_from_wire(event->payload.maintenance.access);
+    if (!_linkg_switch_maintenance_access_valid(access))
+    {
+        return -EINVAL;
+    }
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (!g_switch.initialized)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENODEV;
+    }
+
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
+    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
+    if (peer == NULL)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESTALE;
+    }
+
+    remote = &peer->maintenance.remote;
+
+    if (event->message_id == remote->last_message_id)
+    {
+        if (remote->active && remote->access != access)
+        {
+            pthread_mutex_unlock(&g_switch.lock);
+            return -EPROTO;
+        }
+    }
+    else if (_linkg_switch_maintenance_message_id_newer(event->message_id, remote->last_message_id))
+    {
+        remote->last_message_id = event->message_id;
+    }
+    else
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    remote->active     = false;
+    remote->access     = LINKG_LINK_ACCESS_NONE;
+    remote->started_us = 0U;
+    remote->expires_us = 0U;
+    packet_pool        = g_switch.packet_pool;
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    if (!linkg_switch_peer_generation_current(event->peer_node_id, event->peer_generation))
+    {
+        return -ESTALE;
+    }
+
+    LINKG_LOG_DEBUG("SWITCH-MAINT: END received, peer=%u id=%u access=%d",
+                    (unsigned int)event->peer_node_id,
+                    (unsigned int)event->message_id,
+                    (int)access);
+
+    return _linkg_switch_maintenance_send_ack(packet_pool,
+                                              event->peer_node_id,
+                                              event->message_id,
+                                              access);
+}
+
+/**
+ * @brief 处理对端Maintenance END确认事件。
+ */
+static int _linkg_switch_maintenance_process_ack(const linkg_switch_event_t *event)
+{
+    linkg_switch_maintenance_end_tx_runtime_t *end_tx;
+    linkg_switch_peer_runtime_t               *peer;
+    linkg_link_access_t                        access;
+
+    access = _linkg_switch_maintenance_access_from_wire(event->payload.maintenance_ack.access);
+    if (!_linkg_switch_maintenance_access_valid(access))
+    {
+        return -EINVAL;
+    }
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (!g_switch.initialized)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ENODEV;
+    }
+
+    if (!g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESHUTDOWN;
+    }
+
+    peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
+    if (peer == NULL)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -ESTALE;
+    }
+
+    end_tx = &peer->maintenance.end_tx;
+
+    if (!end_tx->active)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    if (end_tx->message_id != event->message_id)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    if (end_tx->access != access)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -EPROTO;
+    }
+
+    memset(end_tx, 0, sizeof(*end_tx));
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    LINKG_LOG_DEBUG("SWITCH-MAINT: END ACK complete, peer=%u id=%u access=%d",
+                    (unsigned int)event->peer_node_id,
+                    (unsigned int)event->message_id,
+                    (int)access);
+
+    return 0;
+}
+
+/****************************** Worker事件分发 ******************************/
 
 /**
  * @brief 处理Worker收到的Maintenance控制事件。
@@ -1115,7 +1093,7 @@ int linkg_switch_maintenance_process_event(const linkg_switch_event_t *event, ui
     }
 }
 
-/****************************** 周期处理 ******************************/
+/****************************** Worker周期任务 ******************************/
 
 /**
  * @brief 处理Maintenance远端保护超时和END重试事务。
@@ -1192,18 +1170,18 @@ int linkg_switch_maintenance_process(uint64_t now_us)
         peer_generation = peer->generation;
         peer_node_id    = peer->peer_node_id;
         remote          = &peer->maintenance.remote;
-        end_tx       = &peer->maintenance.end_tx;
+        end_tx          = &peer->maintenance.end_tx;
 
         if (remote->active &&
             remote->expires_us != 0U &&
             now_us >= remote->expires_us)
         {
-            remote_timeout_access       = remote->access;
-            remote_timeout_message_id   = remote->last_message_id;
-            remote->active              = false;
-            remote->access              = LINKG_LINK_ACCESS_NONE;
-            remote->started_us          = 0U;
-            remote->expires_us          = 0U;
+            remote_timeout_access     = remote->access;
+            remote_timeout_message_id = remote->last_message_id;
+            remote->active            = false;
+            remote->access            = LINKG_LINK_ACCESS_NONE;
+            remote->started_us        = 0U;
+            remote->expires_us        = 0U;
 
             // last_message_id必须保留，用于过滤迟到的旧BEGIN。
             remote_timeout = true;
@@ -1228,9 +1206,9 @@ int linkg_switch_maintenance_process(uint64_t now_us)
                     end_tx->retry_count++;
                 }
 
-                retry_access     = end_tx->access;
-                retry_message_id = end_tx->message_id;
-                retry_count      = end_tx->retry_count;
+                retry_access          = end_tx->access;
+                retry_message_id      = end_tx->message_id;
+                retry_count           = end_tx->retry_count;
                 end_tx->next_retry_us = _linkg_switch_maintenance_add_us(now_us, LINKG_SWITCH_MAINTENANCE_END_RETRY_INTERVAL_US);
 
                 packet_pool = g_switch.packet_pool;
@@ -1290,7 +1268,6 @@ int linkg_switch_maintenance_process(uint64_t now_us)
 
     return first_error;
 }
-
 
 /**
  * @brief 获取下一次Maintenance定时处理截止时间，调用方持有Switch锁。

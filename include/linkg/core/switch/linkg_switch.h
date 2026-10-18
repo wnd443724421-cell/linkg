@@ -7,6 +7,7 @@
 #define LINKG_SWITCH_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,8 +65,9 @@ int linkg_switch_remove_plan(uint8_t peer_node_id);
 
 /****************************** 接入维护 ******************************/
 
-int linkg_switch_begin_maintenance(linkg_link_access_t access);
-int linkg_switch_end_maintenance(linkg_link_access_t access);
+int  linkg_switch_begin_maintenance(linkg_link_access_t access);
+int  linkg_switch_end_maintenance(linkg_link_access_t access);
+bool linkg_switch_access_blocked(uint8_t peer_node_id, linkg_link_access_t access);
 
 #ifdef __cplusplus
 }

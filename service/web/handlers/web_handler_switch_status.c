@@ -96,7 +96,7 @@ static const char *_linkg_web_switch_status_link_access_string(uint32_t link_id)
         return "none";
     }
 
-    wifi_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    wifi_link_id     = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
     cellular_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
 
     if (wifi_link_id != LINKG_LINK_ID_INVALID && link_id == wifi_link_id)
@@ -283,11 +283,11 @@ error:
 /**
  * @brief 向JSON对象写入发送计划。
  */
-static int _linkg_web_switch_status_json_add_plan(cJSON *parent, const char *key, const linkg_send_plan_t *source, bool valid)
+static int _linkg_web_switch_status_json_add_class_plan(cJSON *parent, const char *key, const linkg_class_send_plan_t *source, bool valid)
 {
-    linkg_send_plan_t plan;
-    cJSON            *object;
-    int               ret;
+    linkg_class_send_plan_t plan;
+    cJSON                  *object;
+    int                     ret;
 
     if (parent == NULL || key == NULL || source == NULL)
     {
@@ -342,6 +342,71 @@ static int _linkg_web_switch_status_json_add_plan(cJSON *parent, const char *key
     return LINKG_JSON_OK;
 
 error:
+    cJSON_Delete(object);
+
+    return ret;
+}
+
+/**
+ * @brief 向JSON写入完整Peer业务计划，保留每类独立的模式和主备链路。
+ */
+static int _linkg_web_switch_status_json_add_plan(cJSON *parent, const char *key, const linkg_send_plan_t *source, bool valid)
+{
+    static const char *const class_names[LINKG_TRANSPORT_CLASS_COUNT] =
+    {
+        "realtime",
+        "video",
+        "data"
+    };
+    cJSON   *object;
+    cJSON   *classes;
+    uint32_t class_index;
+    int      ret;
+
+    if (parent == NULL || key == NULL || source == NULL)
+    {
+        return LINKG_JSON_ERR_PARAM;
+    }
+
+    object  = cJSON_CreateObject();
+    classes = cJSON_CreateObject();
+    if (object == NULL || classes == NULL)
+    {
+        cJSON_Delete(object);
+        cJSON_Delete(classes);
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    ret = linkg_json_add_bool(object, "valid", valid);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        ret = _linkg_web_switch_status_json_add_class_plan(classes, class_names[class_index], &source->classes[class_index], valid);
+        if (ret != LINKG_JSON_OK)
+        {
+            goto error;
+        }
+    }
+
+    ret = linkg_json_add_object(object, "classes", classes);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    classes = NULL;
+    ret     = linkg_json_add_object(parent, key, object);
+    if (ret == LINKG_JSON_OK)
+    {
+        return LINKG_JSON_OK;
+    }
+
+error:
+    cJSON_Delete(classes);
     cJSON_Delete(object);
 
     return ret;
@@ -640,6 +705,91 @@ static int _linkg_web_switch_status_json_add_probes(cJSON *parent, const linkg_s
 /****************************** STA状态 ******************************/
 
 /**
+ * @brief 输出STA最近一次PLAN_SYNC的精简同步诊断状态。
+ *
+ * confirmed仅表示最近一次STA主动同步得到AP确认，不表示双方当前本地Plan完全一致。
+ * 取消(-ECANCELED)归类为local，超时(-ETIMEDOUT)归类为uncertain。
+ * 其余失败状态来自当前PLAN_SYNC的AP拒绝结果。
+ */
+static int _linkg_web_switch_status_json_add_plan_sync(cJSON *parent, const linkg_switch_plan_sync_status_t *source)
+{
+    const char *state;
+    cJSON      *object;
+    int         ret;
+
+    if (source->message_id == 0U || source->last_status == -ECANCELED)
+    {
+        state = "local";
+    }
+    else if (source->confirmed)
+    {
+        state = "confirmed";
+    }
+    else if (source->active)
+    {
+        state = "syncing";
+    }
+    else if (source->last_status == -ETIMEDOUT)
+    {
+        state = "uncertain";
+    }
+    else if (source->last_status < 0 && source->last_status != -EINPROGRESS)
+    {
+        state = "rejected";
+    }
+    else
+    {
+        state = "local";
+    }
+
+    object = cJSON_CreateObject();
+    if (object == NULL)
+    {
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    ret = linkg_json_add_string(object, "state", state);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_bool(object, "active", source->active);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_bool(object, "confirmed", source->confirmed);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_uint32(object, "message_id", source->message_id);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_int(object, "last_status", source->last_status);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_object(parent, "plan_sync", object);
+    if (ret == LINKG_JSON_OK)
+    {
+        return LINKG_JSON_OK;
+    }
+
+error:
+    cJSON_Delete(object);
+    return ret;
+}
+
+/**
  * @brief 向JSON对象写入STA Wi-Fi运行状态。
  */
 static int _linkg_web_switch_status_json_add_sta_wifi(cJSON *parent, const linkg_switch_sta_wifi_status_t *source, uint64_t collected_us)
@@ -914,6 +1064,12 @@ static int _linkg_web_switch_status_json_add_sta(cJSON *data, const linkg_switch
     }
 
     ret = _linkg_web_switch_status_json_add_plan(sta, "plan", &source->plan, source->peer_present);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = _linkg_web_switch_status_json_add_plan_sync(sta, &source->plan_sync);
     if (ret != LINKG_JSON_OK)
     {
         goto error;

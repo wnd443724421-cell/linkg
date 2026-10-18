@@ -1,4 +1,3 @@
-
 /**
  * @file switch_policy_internal.h
  * @brief LinkG链路切换策略内部定义
@@ -39,7 +38,7 @@ typedef struct
 {
     uint8_t                    peer_node_id;     // 当前直接AP节点编号
     uint32_t                   peer_generation;  // 当前Peer运行代际
-    linkg_send_plan_t          plan;             // 当前生效发送计划
+    linkg_send_plan_t          plan;             // 当前全部业务生效发送计划
     linkg_switch_observation_t observation;      // 当前最新观测快照
     bool                       wifi_blocked;     // 当前Wi-Fi是否被Maintenance禁止使用
     bool                       cellular_blocked; // 当前Cellular是否被Maintenance禁止使用

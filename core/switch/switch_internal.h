@@ -1,6 +1,6 @@
 /**
  * @file switch_internal.h
- * @brief LinkG链路切换内部运行定义
+ * @brief LinkG Switch内部运行状态及模块间共享接口
  * @author Dawn
  * @version 1.0.0
  * @date 2026-09-18
@@ -14,10 +14,11 @@
 #include <stdint.h>
 
 #include "linkg_device_config.h"
+#include "linkg_packet_pool.h"
 #include "linkg_switch.h"
 #include "linkg_system_resources.h"
 #include "linkg_thread.h"
-#include "linkg_packet_pool.h"
+
 #include "switch_event.h"
 #include "switch_maintenance.h"
 #include "switch_observation.h"
@@ -25,123 +26,123 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_SWITCH_THREAD_NAME                "linkg-switch"                     // Switch后台线程名称
-#define LINKG_SWITCH_PEER_MAX                   LINKG_RESOURCE_NETWORK_STA_MAX     // 最大直接Peer运行槽位数量
-#define LINKG_SWITCH_PEER_GENERATION_INVALID    0U                                 // 无效Peer运行代际
-#define LINKG_SWITCH_OBSERVATION_INTERVAL_US    250000ULL                          // 默认观测快照刷新周期
-#define LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US 500000ULL                          // 发送计划硬校准周期
+#define LINKG_SWITCH_THREAD_NAME                "linkg-switch"                  // Switch后台Worker线程名称
+#define LINKG_SWITCH_PEER_MAX                   LINKG_RESOURCE_NETWORK_STA_MAX // 直接Peer运行槽位容量，由系统资源定义
+#define LINKG_SWITCH_PEER_GENERATION_INVALID    0U                             // 无效Peer运行代际
+#define LINKG_SWITCH_OBSERVATION_INTERVAL_US    250000ULL                      // STA观测快照刷新周期
+#define LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US 500000ULL                      // AP/STA发送计划校准周期
 
-/****************************** Peer运行状态 ******************************/
-
+/****************************** STA侧Peer运行状态 ******************************/
 
 typedef struct
 {
-    linkg_switch_observation_t        observation;                       // 最近一次完整切换观测快照
+    linkg_switch_observation_t       observation;                       // 最近一次完整链路观测快照
+    linkg_switch_traffic_sampler_t   wifi_traffic_sampler;              // Wi-Fi业务流量差分采样基线
 
-    linkg_switch_traffic_sampler_t    wifi_traffic_sampler;              // Wi-Fi Path业务流量采样基线
+    linkg_switch_loss_sampler_t      wifi_downlink_loss_sampler;        // AP到STA Wi-Fi Wire丢包采样基线
+    linkg_switch_load_sampler_t      wifi_uplink_load_sampler;          // STA到AP Wi-Fi Load丢包采样基线
+    linkg_switch_loss_sampler_t      cellular_downlink_loss_sampler;    // AP到STA Cellular Wire丢包采样基线
+    linkg_switch_load_sampler_t      cellular_uplink_load_sampler;      // STA到AP Cellular Load丢包采样基线
 
-    linkg_switch_loss_sampler_t       wifi_downlink_loss_sampler;        // AP到STA Wi-Fi Wire丢包采样基线
-    linkg_switch_load_sampler_t       wifi_uplink_load_sampler;          // STA到AP Wi-Fi Load丢包采样基线
+    linkg_switch_loss_observation_t  remote_wifi_uplink_loss;           // AP上报的STA到AP Wi-Fi Wire丢包
+    linkg_switch_loss_observation_t  remote_wifi_downlink_load;         // AP上报的AP到STA Wi-Fi Load丢包
+    linkg_switch_loss_observation_t  remote_cellular_uplink_loss;       // AP上报的STA到AP Cellular Wire丢包
+    linkg_switch_loss_observation_t  remote_cellular_downlink_load;     // AP上报的AP到STA Cellular Load丢包
 
-    linkg_switch_loss_sampler_t       cellular_downlink_loss_sampler;    // AP到STA Cellular Wire丢包采样基线
-    linkg_switch_load_sampler_t       cellular_uplink_load_sampler;      // STA到AP Cellular Load丢包采样基线
-
-    linkg_switch_loss_observation_t   remote_wifi_uplink_loss;           // AP上报的STA到AP Wi-Fi Wire丢包
-    linkg_switch_loss_observation_t   remote_wifi_downlink_load;         // AP上报的AP到STA Wi-Fi Load丢包
-    linkg_switch_loss_observation_t   remote_cellular_uplink_loss;       // AP上报的STA到AP Cellular Wire丢包
-    linkg_switch_loss_observation_t   remote_cellular_downlink_load;     // AP上报的AP到STA Cellular Load丢包
-
-    linkg_switch_plan_sync_runtime_t  plan_sync;                         // 当前STA到AP发送计划同步事务
-
-    uint32_t                          remote_quality_report_id;          // 最近接收的AP质量报告编号
-    uint32_t                          next_plan_message_id;              // 下一发送计划同步消息编号基线
+    linkg_switch_plan_sync_runtime_t plan_sync;                        // 当前STA向AP同步完整三类发送计划的事务
+    uint32_t                         remote_quality_report_id;         // 最近接收的AP质量报告编号
 } linkg_switch_sta_peer_runtime_t;
 
-
+/****************************** AP侧Peer运行状态 ******************************/
 
 typedef struct
 {
-    linkg_switch_loss_sampler_t      wifi_uplink_loss_sampler;          // STA到AP Wi-Fi Wire丢包采样基线
-    linkg_switch_load_sampler_t      wifi_downlink_load_sampler;        // AP到STA Wi-Fi Load丢包采样基线
+    linkg_switch_loss_sampler_t     wifi_uplink_loss_sampler;          // STA到AP Wi-Fi Wire丢包采样基线
+    linkg_switch_load_sampler_t     wifi_downlink_load_sampler;        // AP到STA Wi-Fi Load丢包采样基线
+    linkg_switch_loss_sampler_t     cellular_uplink_loss_sampler;      // STA到AP Cellular Wire丢包采样基线
+    linkg_switch_load_sampler_t     cellular_downlink_load_sampler;    // AP到STA Cellular Load丢包采样基线
 
-    linkg_switch_loss_sampler_t      cellular_uplink_loss_sampler;      // STA到AP Cellular Wire丢包采样基线
-    linkg_switch_load_sampler_t      cellular_downlink_load_sampler;    // AP到STA Cellular Load丢包采样基线
+    linkg_switch_loss_observation_t wifi_uplink_loss;                  // 最近一次STA到AP Wi-Fi Wire丢包
+    linkg_switch_loss_observation_t wifi_downlink_load;                // 最近一次AP到STA Wi-Fi Load丢包
+    linkg_switch_loss_observation_t cellular_uplink_loss;              // 最近一次STA到AP Cellular Wire丢包
+    linkg_switch_loss_observation_t cellular_downlink_load;            // 最近一次AP到STA Cellular Load丢包
 
-    linkg_switch_loss_observation_t  wifi_uplink_loss;                  // 最近一次STA到AP Wi-Fi Wire丢包
-    linkg_switch_loss_observation_t  wifi_downlink_load;                // 最近一次AP到STA Wi-Fi Load丢包
+    bool                            wifi_path_available;               // 当前Peer的Wi-Fi业务Path是否可用
+    bool                            cellular_path_available;           // 当前Peer的Cellular业务Path是否可用
+    uint64_t                        path_updated_us;                   // 最近一次Path状态刷新时间
 
-    linkg_switch_loss_observation_t  cellular_uplink_loss;              // 最近一次STA到AP Cellular Wire丢包
-    linkg_switch_loss_observation_t  cellular_downlink_load;            // 最近一次AP到STA Cellular Load丢包
-
-    bool                             wifi_path_available;               // 当前Wi-Fi Path是否存在且可用
-    bool                             cellular_path_available;           // 当前Cellular Path是否存在且可用
-    uint64_t                         path_updated_us;                   // 最近一次Path状态刷新时间
-
-    uint32_t                         report_message_id;                 // 最近分配的Quality Report消息编号
-    uint32_t                         remote_plan_message_id;            // 最近处理的STA发送计划同步编号
-    int32_t                          remote_plan_status;                // 最近一次发送计划同步处理结果
+    uint32_t                        report_message_id;                // 最近分配的Quality Report消息编号
+    uint32_t                        remote_plan_message_id;           // 最近处理的STA PLAN_SYNC消息编号
+    int32_t                         remote_plan_status;               // 上述PLAN_SYNC的处理结果，供重复消息重发ACK
 } linkg_switch_ap_peer_runtime_t;
 
+/****************************** Peer公共运行状态 ******************************/
+
 typedef struct
 {
-    bool                                    used;         // 当前Peer槽位是否已经使用
-    uint8_t                                 peer_node_id; // 当前直接Peer节点编号
-    uint32_t                                generation;   // 当前Peer运行代际
-    linkg_send_plan_t                       plan;         // 当前唯一生效发送计划
-    linkg_switch_maintenance_peer_runtime_t maintenance;  // 当前Peer Maintenance运行状态
+    bool                                    used;          // 当前Peer槽位是否已分配
+    uint8_t                                 peer_node_id;  // 当前直接Peer节点编号
+    uint32_t                                generation;    // 当前Peer运行代际，区分同编号Peer的重新注册
+    linkg_send_plan_t                       plan;          // 当前完整三类业务发送计划，一次整组更新
+    linkg_switch_maintenance_peer_runtime_t maintenance;   // 当前Peer的远端Maintenance及本机通知事务状态
 
     union
     {
-        linkg_switch_sta_peer_runtime_t sta; // STA面对直接AP的切换运行状态
-        linkg_switch_ap_peer_runtime_t  ap;  // AP面对直接STA的被动执行运行状态
+        linkg_switch_sta_peer_runtime_t sta;              // STA侧：观测采样和PLAN_SYNC事务状态
+        linkg_switch_ap_peer_runtime_t  ap;               // AP侧：观测、Path和PLAN_SYNC接收状态
     } role;
 } linkg_switch_peer_runtime_t;
 
-/****************************** 模块上下文 ******************************/
+/****************************** Switch全局运行上下文 ******************************/
 
 typedef struct
 {
-    pthread_mutex_t                          lock;                         // 模块状态锁，保护全部Switch共享运行状态
-    pthread_cond_t                           rx_condition;                 // 等待已进入Transport回调全部退出
-    linkg_thread_t                           thread;                       // Switch后台工作线程
+    pthread_mutex_t                          lock;                         // Switch共享状态锁
+    pthread_cond_t                           rx_condition;                 // 等待已进入的Transport回调退出
+    linkg_thread_t                           thread;                       // 唯一Switch Worker线程对象
     pthread_t                                worker_tid;                   // 当前Worker线程标识
-    linkg_packet_pool_t                     *packet_pool;                  // 外部Packet Pool，仅借用，不拥有生命周期
+    linkg_packet_pool_t                     *packet_pool;                  // 外部Packet Pool，仅借用，不管理其生命周期
+
     linkg_switch_peer_runtime_t              peers[LINKG_SWITCH_PEER_MAX]; // 全部直接Peer运行状态
-    linkg_switch_event_queue_t               event_queue;                  // 待Worker处理的内部控制事件
-    linkg_switch_maintenance_local_runtime_t local_maintenance;            // 当前本机Access Maintenance运行状态
-    linkg_device_role_t                      role;                         // 当前本机设备角色
-    uint8_t                                  local_node_id;                // 当前本机节点编号
-    uintptr_t                                run_token;                    // 当前Transport Handler运行代际
-    uint32_t                                 rx_users;                     // 当前正在执行的Transport回调数量
-    uint32_t                                 next_peer_generation;         // 下一Peer运行代际编号基线
-    uint32_t                                 next_maintenance_message_id;  // 下一Maintenance事务消息编号基线
-    uint64_t                                 next_observation_us;          // STA下一轮观测刷新时间
+    linkg_switch_event_queue_t               event_queue;                  // 等待Worker处理的Switch控制事件
+    linkg_switch_maintenance_local_runtime_t local_maintenance;            // 本机正在维护的Access，约束所有Peer
+
+    linkg_device_role_t                      role;                         // 本机AP或STA角色
+    uint8_t                                  local_node_id;                // 本机节点编号
+
+    uintptr_t                                run_token;                    // Transport接收Handler运行代际，过滤旧回调
+    uint32_t                                 rx_users;                     // 正在执行的Transport接收回调数
+    uint32_t                                 next_peer_generation;         // 进程内Peer代际分配基线，Peer重建不回退
+    uint32_t                                 next_plan_message_id;         // 进程内STA PLAN_SYNC编号分配基线，Peer重建不回退
+    uint32_t                                 next_maintenance_message_id;  // 进程内本机Maintenance事务编号分配基线
+
+    uint64_t                                 next_observation_us;          // STA下一轮观测快照刷新时间
     uint64_t                                 next_reconcile_us;            // AP/STA下一轮发送计划校准时间
     uint64_t                                 next_report_us;               // AP下一轮质量上报时间
-    uint64_t                                 next_policy_us;               // STA下一轮切换策略检查时间
-    bool                                     sta_check_pending;            // 是否存在待执行的立即策略检查
-    bool                                     worker_tid_valid;             // Worker线程标识当前是否有效
-    bool                                     handler_registered;           // SWITCH Transport Handler是否已注册
-    bool                                     initialized;                  // 模块是否已经初始化
-    bool                                     running;                      // Switch是否正在运行
+    uint64_t                                 next_policy_us;               // STA下一轮切换策略处理时间
+    bool                                     sta_check_pending;            // STA是否存在待处理的立即策略检查请求
+
+    bool                                     worker_tid_valid;             // 当前Worker线程标识是否有效
+    bool                                     handler_registered;           // SWITCH Transport接收Handler是否已注册
+    bool                                     initialized;                  // Switch模块是否完成初始化
+    bool                                     running;                      // Switch当前是否处于运行期
 } linkg_switch_context_t;
 
 /****************************** 全局上下文 ******************************/
 
 extern linkg_switch_context_t g_switch;
 
-/****************************** Peer管理 ******************************/
+/****************************** Peer查找 ******************************/
 
 linkg_switch_peer_runtime_t *linkg_switch_find_peer_locked(uint8_t peer_node_id);
 linkg_switch_peer_runtime_t *linkg_switch_find_peer_generation_locked(uint8_t peer_node_id, uint32_t generation);
 bool                         linkg_switch_peer_generation_current(uint8_t peer_node_id, uint32_t generation);
 
-/****************************** Runtime ******************************/
+/****************************** Worker入口 ******************************/
 
 void linkg_switch_worker(linkg_thread_t *thread, void *user_data);
 
-
-/****************************** Transport接收 ******************************/
+/****************************** Transport接收生命周期 ******************************/
 
 bool linkg_switch_enter_receive(void *user_data, linkg_device_role_t *role, uint8_t *local_node_id);
 void linkg_switch_leave_receive(void);
