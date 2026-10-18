@@ -76,10 +76,10 @@ bool linkg_path_probe_endpoint_equal(const linkg_path_endpoint_t *left, const li
  */
 int linkg_path_probe_read_target(linkg_device_role_t role, uint8_t local_node_id, uint8_t peer_node_id, uint32_t link_id, linkg_path_endpoint_t *endpoint)
 {
-    linkg_node_peer_snapshot_t  peer;
-    linkg_link_t               *link;
-    linkg_path_t               *path;
-    int                         ret;
+    linkg_node_peer_snapshot_t peer;
+    linkg_link_t              *link;
+    linkg_path_t              *path;
+    int                        ret;
 
     if (endpoint == NULL || peer_node_id == local_node_id || link_id == LINKG_LINK_ID_INVALID)
     {
@@ -778,13 +778,13 @@ static int _linkg_path_probe_collect_targets(linkg_path_probe_observed_peer_t *o
  */
 static void _linkg_path_probe_refresh_targets(uint64_t now_us)
 {
-    linkg_path_probe_observed_peer_t  observed[LINKG_PATH_PROBE_PEER_MAX];
-    linkg_path_probe_peer_runtime_t  *peer;
-    bool                              seen[LINKG_PATH_PROBE_PEER_MAX];
-    uint32_t                          count;
-    uint32_t                          index;
-    uint32_t                          slot;
-    int                               ret;
+    linkg_path_probe_observed_peer_t observed[LINKG_PATH_PROBE_PEER_MAX];
+    linkg_path_probe_peer_runtime_t *peer;
+    bool                             seen[LINKG_PATH_PROBE_PEER_MAX];
+    uint32_t                         count;
+    uint32_t                         index;
+    uint32_t                         slot;
+    int                              ret;
 
     memset(observed, 0, sizeof(observed));
     memset(seen, 0, sizeof(seen));
@@ -897,10 +897,10 @@ static void _linkg_path_probe_update_pps_locked(linkg_path_probe_path_runtime_t 
 
     if (!path->pps_sample_initialized || business_packets < path->pps_last_business_packets || now_us < path->pps_sample_started_us)
     {
-        path->pps_sample_started_us      = now_us;
-        path->pps_last_business_packets  = business_packets;
-        path->current_pps                = 0U;
-        path->pps_sample_initialized     = true;
+        path->pps_sample_started_us     = now_us;
+        path->pps_last_business_packets = business_packets;
+        path->current_pps               = 0U;
+        path->pps_sample_initialized    = true;
         return;
     }
 
@@ -914,8 +914,8 @@ static void _linkg_path_probe_update_pps_locked(linkg_path_probe_path_runtime_t 
     pps           = (delta_packets * 1000000ULL) / elapsed_us;
 
     path->current_pps               = pps > UINT32_MAX ? UINT32_MAX : (uint32_t)pps;
-    path->pps_sample_started_us      = now_us;
-    path->pps_last_business_packets  = business_packets;
+    path->pps_sample_started_us     = now_us;
+    path->pps_last_business_packets = business_packets;
 }
 
 /**
@@ -924,9 +924,9 @@ static void _linkg_path_probe_update_pps_locked(linkg_path_probe_path_runtime_t 
 static void _linkg_path_probe_refresh_policy(uint64_t now_us)
 {
     linkg_path_probe_peer_runtime_t *peer;
-    linkg_path_stats_t                stats;
-    linkg_path_endpoint_t             endpoint;
-    linkg_path_t                     *path;
+    linkg_path_stats_t               stats;
+    linkg_path_endpoint_t            endpoint;
+    linkg_path_t                    *path;
     linkg_send_plan_t                plan;
     uint64_t                         generation;
     uint64_t                         interval_us;
@@ -980,9 +980,22 @@ static void _linkg_path_probe_refresh_policy(uint64_t now_us)
     }
 
     ret              = linkg_switch_get_plan(peer_node_id, &plan);
-    cellular_primary = ret == 0 && (plan.mode == LINKG_SEND_MODE_SINGLE || plan.mode == LINKG_SEND_MODE_REDUNDANT) && plan.primary_link_id == link_id;
-    interval_us      = LINKG_PATH_PROBE_INTERVAL_US;
-    current_pps      = UINT32_MAX;
+    cellular_primary = false;
+
+    if (ret == 0)
+    {
+        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        {
+            if ((plan.classes[index].mode == LINKG_SEND_MODE_SINGLE || plan.classes[index].mode == LINKG_SEND_MODE_REDUNDANT) &&
+                plan.classes[index].primary_link_id == link_id)
+            {
+                cellular_primary = true;
+                break;
+            }
+        }
+    }
+    interval_us = LINKG_PATH_PROBE_INTERVAL_US;
+    current_pps = UINT32_MAX;
 
     pthread_mutex_lock(&g_path_probe.lock);
     peer = _linkg_path_probe_find_peer_locked(peer_node_id);

@@ -6,7 +6,7 @@
  * @date 2026-08-26
  */
 
-#define _POSIX_C_SOURCE               200809L                                            // 启用POSIX.1-2008接口
+#define _POSIX_C_SOURCE               200809L                                           // 启用POSIX.1-2008接口
 
 #include "wifi_hostapd.h"
 
@@ -31,16 +31,16 @@
 
 /****************************** 模块常量 ******************************/
 
-#define WIFI_HOSTAPD_PROGRAM          "hostapd"                                          // hostapd程序名称
-#define WIFI_HOSTAPD_TEMPLATE_DIR     "/app/current/wireless"                            // hostapd模板目录
-#define WIFI_HOSTAPD_20MHZ_TEMPLATE   WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_20mhz.conf"    // 20MHz hostapd模板
-#define WIFI_HOSTAPD_40MHZ_TEMPLATE   WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_40mhz.conf"    // 40MHz hostapd模板
-#define WIFI_HOSTAPD_80MHZ_TEMPLATE   WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_80mhz.conf"    // 80MHz hostapd模板
-#define WIFI_HOSTAPD_NARROW_TEMPLATE  WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_narrow.conf"   // 窄带hostapd模板
-#define WIFI_HOSTAPD_RUNTIME_CONFIG   WIFI_SERVICE_RUNTIME_DIR "/hostapd.conf"           // hostapd运行配置
-#define WIFI_HOSTAPD_CTRL_PATH        "/var/run/hostapd/" LINKG_RESOURCE_INTERFACE_WIFI  // hostapd控制套接字
-#define WIFI_HOSTAPD_STATUS_REPLY_MAX 512U                                               // hostapd状态响应最大长度
-#define WIFI_HOSTAPD_READY_WAIT_MS    8000U                                              // AP VAP整体就绪等待时间
+#define WIFI_HOSTAPD_PROGRAM          "hostapd"                                         // hostapd程序名称
+#define WIFI_HOSTAPD_TEMPLATE_DIR     "/app/current/wireless"                           // hostapd模板目录
+#define WIFI_HOSTAPD_20MHZ_TEMPLATE   WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_20mhz.conf"   // 20MHz hostapd模板
+#define WIFI_HOSTAPD_40MHZ_TEMPLATE   WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_40mhz.conf"   // 40MHz hostapd模板
+#define WIFI_HOSTAPD_80MHZ_TEMPLATE   WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_80mhz.conf"   // 80MHz hostapd模板
+#define WIFI_HOSTAPD_NARROW_TEMPLATE  WIFI_HOSTAPD_TEMPLATE_DIR "/hostapd_narrow.conf"  // 窄带hostapd模板
+#define WIFI_HOSTAPD_RUNTIME_CONFIG   WIFI_SERVICE_RUNTIME_DIR "/hostapd.conf"          // hostapd运行配置
+#define WIFI_HOSTAPD_CTRL_PATH        "/var/run/hostapd/" LINKG_RESOURCE_INTERFACE_WIFI // hostapd控制套接字
+#define WIFI_HOSTAPD_STATUS_REPLY_MAX 512U                                              // hostapd状态响应最大长度
+#define WIFI_HOSTAPD_READY_WAIT_MS    8000U                                             // AP VAP整体就绪等待时间
 
 /****************************** 全局状态 ******************************/
 
@@ -550,6 +550,20 @@ static int _wifi_hostapd_wait_ready(void)
 /****************************** 配置同步 ******************************/
 
 /**
+ * @brief 窄带AP固定允许一个STA，宽带继续采用对应模板的多STA配置。
+ */
+static int _wifi_hostapd_update_station_limit(char **content, size_t *length, const linkg_wifi_config_t *config)
+{
+    if (config->wideband.work_mode != LINKG_WIFI_WORK_MODE_NARROW)
+    {
+        return 0;
+    }
+
+    // 设置接口兼容模板缺项，并将重复配置合并为一个有效键。
+    return linkg_text_set_key_value(content, length, "max_num_sta", "1");
+}
+
+/**
  * @brief 根据AP配置更新hostapd运行配置。
  */
 int wifi_hostapd_update_config(const linkg_wifi_config_t *config)
@@ -557,10 +571,10 @@ int wifi_hostapd_update_config(const linkg_wifi_config_t *config)
     const char *template_path;
     const char *hardware_mode;
     char       *content = NULL;
-    char        channel_value[16];
+    char channel_value[16];
     size_t      length = 0U;
-    int         formatted_length;
-    int         ret;
+    int formatted_length;
+    int ret;
 
     if (config == NULL)
     {
@@ -643,7 +657,13 @@ int wifi_hostapd_update_config(const linkg_wifi_config_t *config)
     {
         goto cleanup;
     }
-    
+
+    ret = _wifi_hostapd_update_station_limit(&content, &length, config);
+    if (ret != 0)
+    {
+        goto cleanup;
+    }
+
     ret = _wifi_hostapd_update_protocol(&content, &length, config);
     if (ret != 0)
     {
