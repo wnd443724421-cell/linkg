@@ -1198,10 +1198,8 @@ error:
  */
 static int _linkg_web_overview_build_node_json(const linkg_web_overview_node_info_t *info, cJSON **out)
 {
-    const char *primary_link;
     const char *relation;
     const char *role;
-    const char *send_mode;
     char        virtual_ip[INET_ADDRSTRLEN];
     cJSON      *node;
     cJSON      *traffic;
@@ -1259,28 +1257,6 @@ static int _linkg_web_overview_build_node_json(const linkg_web_overview_node_inf
 
     if (info->relation == LINKG_WEB_OVERVIEW_NODE_RELATION_DIRECT)
     {
-        // 保留旧实时业务摘要字段，页面改用plan展示三类业务。
-        send_mode    = _linkg_web_overview_send_mode_string(info->plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].mode);
-        primary_link = _linkg_web_overview_access_string(_linkg_web_overview_link_id_access(info->plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].primary_link_id));
-
-        if (send_mode == NULL)
-        {
-            cJSON_Delete(node);
-            return -EINVAL;
-        }
-
-        ret = linkg_json_add_string(node, "send_mode", send_mode);
-        if (ret != LINKG_JSON_OK)
-        {
-            goto error;
-        }
-
-        ret = linkg_json_add_string(node, "primary_link", primary_link);
-        if (ret != LINKG_JSON_OK)
-        {
-            goto error;
-        }
-
         ret = _linkg_web_overview_add_plan_json(node, info);
         if (ret != LINKG_JSON_OK)
         {

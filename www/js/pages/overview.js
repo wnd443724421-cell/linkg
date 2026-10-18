@@ -217,36 +217,102 @@
     }
 
     /**
-     * 格式化组网节点当前主链路。
+     * 将接入类型转换为显示名称。
      */
-    function formatNodePrimaryLink(node)
+    function formatPlanAccess(access)
     {
-        if (node.relation !== "direct")
-        {
-            return "--";
-        }
-
-        if (node.send_mode === "redundant")
-        {
-            return "Wi-Fi + 蜂窝";
-        }
-
-        if (node.send_mode !== "single")
-        {
-            return "无";
-        }
-
-        if (node.primary_link === "wifi")
+        if (access === "wifi")
         {
             return "Wi-Fi";
         }
 
-        if (node.primary_link === "cellular")
+        if (access === "cellular")
         {
-            return "蜂窝";
+            return "5G";
         }
 
         return "无";
+    }
+
+    /**
+     * 格式化单类业务的模式与主备链路。
+     */
+    function formatClassPath(plan)
+    {
+        if (plan == null)
+        {
+            return "--";
+        }
+
+        if (plan.mode === "none")
+        {
+            return "无可用链路";
+        }
+
+        if (plan.mode === "single")
+        {
+            return formatPlanAccess(plan.primary_link) + " 单发" +
+                ((plan.secondary_link === "wifi" || plan.secondary_link === "cellular") ?
+                    " · 备用 " + formatPlanAccess(plan.secondary_link) : " · 无备用");
+        }
+
+        if (plan.mode === "redundant")
+        {
+            return formatPlanAccess(plan.primary_link) + " + " +
+                formatPlanAccess(plan.secondary_link) + " 双发";
+        }
+
+        return "未知模式";
+    }
+
+    /**
+     * 概览直接展示三类完整发送计划，不折叠成全局主链路摘要。
+     */
+    function renderNodePlanCell(cell, node)
+    {
+        const plan = node.plan;
+        const entries = [["realtime", "实时"], ["video", "视频"], ["data", "数据"]];
+        let signature;
+
+        cell.className = "overview-node-plan";
+
+        if (node.relation !== "direct" || plan == null || plan.valid !== true || plan.classes == null ||
+            entries.some(function (entry) { return plan.classes[entry[0]] == null; }))
+        {
+            cell.textContent = node.relation === "direct" ? "计划尚未建立" : "--";
+            cell.dataset.planSignature = "";
+            return;
+        }
+
+        signature = entries.map(function (entry) {
+            const current = plan.classes[entry[0]];
+            return entry[0] + ":" + current.mode + ":" + current.primary_link + ":" + current.secondary_link;
+        }).join("|");
+
+        if (cell.dataset.planSignature === signature)
+        {
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+
+        entries.forEach(function (entry) {
+            const row = document.createElement("div");
+            const label = document.createElement("span");
+            const value = document.createElement("span");
+
+            row.className = "overview-plan-row";
+            label.className = "overview-plan-class";
+            value.className = "overview-plan-value";
+            label.textContent = entry[1];
+            value.textContent = formatClassPath(plan.classes[entry[0]]);
+            row.appendChild(label);
+            row.appendChild(value);
+            fragment.appendChild(row);
+        });
+
+        cell.replaceChildren(fragment);
+        cell.dataset.planSignature = signature;
     }
 
     /**
@@ -394,7 +460,7 @@
             String(node.node_id),
             node.virtual_ip || "--",
             formatNodeRelation(node),
-            formatNodePrimaryLink(node),
+            "",
             wifiAvailable,
             cellularAvailable,
             traffic.tx,
@@ -414,6 +480,12 @@
 
         values.forEach(function (value, index) {
             const cell = row.cells[index];
+
+            if (index === 3)
+            {
+                renderNodePlanCell(cell, node);
+                return;
+            }
 
             if (cell.textContent !== value)
             {
@@ -438,7 +510,8 @@
         appendTableCell(row, String(node.node_id), "overview-node-id");
         appendTableCell(row, node.virtual_ip || "--");
         appendTableCell(row, formatNodeRelation(node));
-        appendTableCell(row, formatNodePrimaryLink(node));
+        appendTableCell(row, "");
+        renderNodePlanCell(row.cells[3], node);
         appendTableCell(row, wifiAvailable, wifiAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
         appendTableCell(row, cellularAvailable, cellularAvailable === "可用" ? "overview-path-available" : "overview-path-unavailable");
         appendTableCell(row, traffic.tx, "overview-node-rate");

@@ -90,26 +90,26 @@
 .overview-internet-state.is-offline { color: var(--linkg-color-text-secondary); }
 .overview-table-wrap {
     width: 100%;
-    /* 表头 + 8 行节点；更多节点在表格内滚动。 */
+    /* 三类计划提高单行高度，超出范围时在表格内部滚动。 */
     max-height: 396px;
     overflow: auto;
     scrollbar-gutter: stable;
 }
 .overview-node-table {
     width: 100%;
-    min-width: 800px;
+    min-width: 1050px;
     table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
     font-size: 13px;
     font-variant-numeric: tabular-nums;
 }
-.node-col-id { width: 8%; }
-.node-col-ip { width: 18%; }
+.node-col-id { width: 6%; }
+.node-col-ip { width: 14%; }
 .node-col-relation { width: 12%; }
-.node-col-link { width: 16%; }
-.node-col-path { width: 11%; }
-.node-col-rate { width: 12%; }
+.node-col-link { width: 30%; }
+.node-col-path { width: 9%; }
+.node-col-rate { width: 10%; }
 .overview-node-table th, .overview-node-table td {
     height: 44px;
     padding: 10px 16px;
@@ -140,6 +140,8 @@
 .overview-node-table tbody tr:hover { background: #f8fafc; }
 .overview-node-table tr.is-local { background: #fcfdff; }
 .overview-node-id { font-weight: 600; }
+.overview-plan-link { font-size: 12px; color: var(--linkg-color-primary); }
+.overview-plan-link:hover { color: var(--linkg-color-primary-hover); text-decoration: underline; }
 .overview-node-table td.overview-path-available { color: var(--linkg-color-success); }
 .overview-node-table td.overview-path-unavailable { color: var(--linkg-color-text-secondary); }
 .overview-node-table td.overview-table-empty {
@@ -151,4 +153,35 @@
     .overview-device-item { padding: 18px 16px; }
     .overview-status-list { padding-left: 16px; padding-right: 16px; }
     .overview-status-row { grid-template-columns: 84px minmax(0, 1fr); }
+}
+
+/****************************** 三类独立发送计划 ******************************/
+
+.overview-node-table td.overview-node-plan {
+    height: auto;
+    padding: 8px 12px;
+    text-align: left;
+    white-space: normal;
+    overflow: visible;
+}
+
+.overview-plan-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-height: 24px;
+    line-height: 22px;
+    white-space: nowrap;
+}
+
+.overview-plan-class {
+    flex: 0 0 30px;
+    font-size: 12px;
+    color: var(--linkg-color-text-secondary);
+}
+
+.overview-plan-value {
+    min-width: 0;
+    font-size: 12px;
+    color: var(--linkg-color-text);
 }

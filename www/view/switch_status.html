@@ -94,26 +94,35 @@
                 </div>
 
                 <div class="switch-status-detail-item">
-                    <span class="switch-status-detail-label">发送模式</span>
-                    <span id="switchStatusStaPlanMode" class="switch-status-detail-value">--</span>
+                    <span class="switch-status-detail-label">远端计划确认</span>
+                    <span id="switchStatusStaPlanSyncState" class="switch-status-detail-value">--</span>
                 </div>
 
                 <div class="switch-status-detail-item">
-                    <span class="switch-status-detail-label">主链路</span>
-                    <span id="switchStatusStaPlanPrimary" class="switch-status-detail-value">--</span>
+                    <span class="switch-status-detail-label">事务结果</span>
+                    <span id="switchStatusStaPlanSyncRecovery" class="switch-status-detail-value">--</span>
                 </div>
 
-                <div class="switch-status-detail-item">
-                    <span class="switch-status-detail-label">备用链路</span>
-                    <span id="switchStatusStaPlanSecondary" class="switch-status-detail-value">--</span>
-                </div>
+            </div>
+
+            <div class="page-table-wrap">
+                <table class="page-table switch-status-plan-table" aria-label="三类业务独立发送计划">
+                    <thead>
+                        <tr><th>业务</th><th>发送模式</th><th>主链路</th><th>备用 / 冗余链路</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>实时</td><td id="switchStatusStaRealtimeMode">--</td><td id="switchStatusStaRealtimePrimary">--</td><td id="switchStatusStaRealtimeSecondary">--</td></tr>
+                        <tr><td>视频</td><td id="switchStatusStaVideoMode">--</td><td id="switchStatusStaVideoPrimary">--</td><td id="switchStatusStaVideoSecondary">--</td></tr>
+                        <tr><td>数据</td><td id="switchStatusStaDataMode">--</td><td id="switchStatusStaDataPrimary">--</td><td id="switchStatusStaDataSecondary">--</td></tr>
+                    </tbody>
+                </table>
             </div>
         </section>
 
         <div class="switch-status-link-grid switch-status-section">
             <section class="page-card switch-status-link-card">
                 <div class="page-card-header">
-                    <h2 class="page-card-title">Wi-Fi 业务链路</h2>
+                    <h2 class="page-card-title">Wi-Fi 链路</h2>
                     <span id="switchStatusStaWifiBadge" class="switch-status-badge is-neutral">--</span>
                 </div>
 
@@ -126,7 +135,7 @@
 
             <section class="page-card switch-status-link-card">
                 <div class="page-card-header">
-                    <h2 class="page-card-title">5G 备用链路</h2>
+                    <h2 class="page-card-title">5G 链路</h2>
                     <span id="switchStatusStaCellularBadge" class="switch-status-badge is-neutral">--</span>
                 </div>
 

@@ -378,29 +378,6 @@
     }
 
     /**
-     * 将后台链路名称转换为界面显示名称。
-     */
-    function formatActiveLink(activeLink)
-    {
-        if (activeLink === "wifi")
-        {
-            return "Wi-Fi";
-        }
-
-        if (activeLink === "cellular")
-        {
-            return "5G";
-        }
-
-        if (activeLink === "none")
-        {
-            return "无可用链路";
-        }
-
-        return "未知";
-    }
-
-    /**
      * 设置Header运行状态指示灯。
      */
     function setHeaderIndicator(state)
@@ -422,7 +399,7 @@
     }
 
     /**
-     * 渲染Header运行状态。
+     * Header只展示设备身份；状态灯代表查询成功，不代表业务Path可用。
      */
     function renderHeader(data)
     {
@@ -434,61 +411,27 @@
             return;
         }
 
-        if (data == null || typeof data.role !== "string")
+        if (data == null || !Number.isInteger(data.node_id) ||
+            (data.role !== "ap" && data.role !== "sta"))
         {
-            throw new Error("Header状态数据无效");
+            throw new Error("Header基础设备状态无效");
         }
 
-        if (data.role === "sta")
-        {
-            statusText.title = "";
-            text =
-                "STA · 本机节点：" +
-                data.node_id +
-                " · 当前链路：" +
-                formatActiveLink(data.active_link);
-
-            if (data.active_link === "none")
-            {
-                setHeaderIndicator("is-warning");
-            }
-            else
-            {
-                setHeaderIndicator("is-online");
-            }
-
-            statusText.textContent = text;
-            return;
-        }
+        text = (data.role === "ap" ? "AP" : "STA") + " · 本机节点：" + data.node_id;
 
         if (data.role === "ap")
         {
-            statusText.title = "在线对端：当前在线的其他组网节点数量，不包含本机。";
-            text =
-                "AP · 本机节点：" +
-                data.node_id +
-                " · 在线对端：" +
-                data.peer_count +
-                " · Wi-Fi：" +
-                data.wifi_count +
-                " / 5G：" +
-                data.cellular_count;
-
-            if (data.none_count > 0)
+            if (!Number.isInteger(data.peer_count) || data.peer_count < 0)
             {
-                text += " / 无链路 " + data.none_count;
-                setHeaderIndicator("is-warning");
-            }
-            else
-            {
-                setHeaderIndicator("is-online");
+                throw new Error("Header直连节点数量无效");
             }
 
-            statusText.textContent = text;
-            return;
+            text += " · 直连 STA：" + data.peer_count;
         }
 
-        throw new Error("未知的设备角色");
+        statusText.title = "状态查询正常；三类业务计划请在概览或切换状态页查看。";
+        statusText.textContent = text;
+        setHeaderIndicator("is-online");
     }
 
     /**

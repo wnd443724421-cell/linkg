@@ -252,7 +252,7 @@
     /**
      * 格式化完整发送计划。
      */
-    function formatPlan(plan)
+    function formatClassPlan(plan)
     {
         if (plan == null || plan.valid !== true)
         {
@@ -275,6 +275,68 @@
         }
 
         return "未知计划";
+    }
+
+    /**
+     * 按稳定业务顺序格式化完整Peer计划，使用文本绑定展示。
+     */
+    function formatPlanClasses(plan, formatter)
+    {
+        if (plan == null || plan.valid !== true || plan.classes == null)
+        {
+            return "--";
+        }
+
+        return [["realtime", "实时"], ["video", "视频"], ["data", "数据"]]
+            .map(function (entry)
+            {
+                const current = plan.classes[entry[0]];
+                return entry[1] + "：" + (current != null ? formatter(current) : "--");
+            })
+            .join("；");
+    }
+
+    /**
+     * 格式化完整Peer三类业务发送计划。
+     */
+    function formatPlan(plan)
+    {
+        return formatPlanClasses(plan, formatClassPlan);
+    }
+
+    /**
+     * 合并一致的业务计划，运行概况只显示紧凑摘要。
+     */
+    function formatPlanSummary(plan)
+    {
+        if (plan == null || plan.valid !== true || plan.classes == null)
+        {
+            return "--";
+        }
+
+        const classes = [plan.classes.realtime, plan.classes.video, plan.classes.data];
+        if (classes.some(function (current) { return current == null || current.valid !== true; }))
+        {
+            return "--";
+        }
+
+        const signature = function (current) {
+            return [current.mode, current.primary && current.primary.link_id, current.secondary && current.secondary.link_id].join(":");
+        };
+
+        return classes.every(function (current) { return signature(current) === signature(classes[0]); }) ? "全部 · " + formatClassPlan(classes[0]) : "按业务配置";
+    }
+
+    /**
+     * 判断完整Peer计划是否至少存在一类可发送业务。
+     */
+    function hasActivePlan(plan)
+    {
+        return plan != null && plan.valid === true && plan.classes != null &&
+            ["realtime", "video", "data"].some(function (key)
+            {
+                return plan.classes[key] != null && plan.classes[key].mode !== "none";
+            });
     }
 
     /**
@@ -495,9 +557,36 @@
 
         setText("switchStatusStaPeerNode", peerPresent && Number.isInteger(sta.peer_node_id) ? "节点 " + sta.peer_node_id : "未连接");
         setText("switchStatusStaObservationAge", observationValid ? formatAge(sta.observation_age_ms) : "--");
-        setText("switchStatusStaPlanMode", plan != null && plan.valid === true ? formatPlanMode(plan.mode) : "--");
-        setText("switchStatusStaPlanPrimary", plan != null && plan.valid === true ? formatPlanLink(plan.primary, true) : "--");
-        setText("switchStatusStaPlanSecondary", plan != null && plan.valid === true ? formatPlanLink(plan.secondary, true) : "--");
+        const sync = sta.plan_sync;
+        const syncLabels = {local: "本地计划，未确认", syncing: "正在同步", confirmed: "AP 已确认", rejected: "最近事务被拒绝", uncertain: "远端结果未确认"};
+        const state = peerPresent && sync != null ? sync.state : null;
+
+        setStateText("switchStatusStaPlanSyncState", syncLabels[state] || "--", state === "confirmed" ? "switch-status-path-online" : "");
+        setText("switchStatusStaPlanSyncRecovery",
+            state == null ? "--" :
+            state === "confirmed" ? "最近事务确认成功" :
+            state === "syncing" ? "等待 AP 应答" :
+            state === "uncertain" ? "结果未知，可能重试" :
+            state === "rejected" ? "最近事务被拒绝，可能重试" :
+            "当前仅维护本地计划");
+
+        const recoveryElement = document.getElementById("switchStatusStaPlanSyncRecovery");
+        if (recoveryElement != null)
+        {
+            recoveryElement.title = state === "uncertain" ?
+                "超时不代表 AP 未应用计划；当前接口不公开恢复重试次数。" :
+                state === "rejected" ?
+                "最近事务被 AP 拒绝；当前接口不公开恢复重试次数。" : "";
+        }
+        [["realtime", "Realtime"], ["video", "Video"], ["data", "Data"]].forEach(function (entry) {
+            const current = plan != null && plan.valid === true && plan.classes != null ? plan.classes[entry[0]] : null;
+            const valid = current != null && current.valid === true;
+            const prefix = "switchStatusSta" + entry[1];
+
+            setText(prefix + "Mode", valid ? formatPlanMode(current.mode) : "--");
+            setText(prefix + "Primary", valid ? formatPlanLink(current.primary, true) : "--");
+            setText(prefix + "Secondary", valid ? formatPlanLink(current.secondary, true) : "--");
+        });
     }
 
     /**
@@ -703,7 +792,16 @@
             let maintenanceCell;
 
             appendTableCell(row, Number.isInteger(peer.node_id) ? peer.node_id : "--", "");
-            appendTableCell(row, formatPlan(peer.plan), "");
+            const planCell = appendTableCell(row, "", "switch-status-peer-plans");
+            [["realtime", "实时"], ["video", "视频"], ["data", "数据"]].forEach(function (entry) {
+                const current = peer.plan != null && peer.plan.valid === true && peer.plan.classes != null ? peer.plan.classes[entry[0]] : null;
+                const line = document.createElement("div");
+                const backup = current != null && current.valid === true && current.mode === "single" ? "（备 " + formatPlanLink(current.secondary, false) + "）" : "";
+
+                line.textContent = entry[1] + "：" + formatClassPlan(current) + backup;
+                line.title = current != null && current.valid === true ? "主链路：" + formatPlanLink(current.primary, true) + "；备用 / 冗余链路：" + formatPlanLink(current.secondary, true) : "--";
+                planCell.appendChild(line);
+            });
             appendTableCell(row, pathValid ? (wifiAvailable ? "可用" : "不可用") : "--", pathValid ? (wifiAvailable ? "switch-status-path-online" : "switch-status-path-offline") : "");
             appendTableCell(row, pathValid ? (cellularAvailable ? "可用" : "不可用") : "--", pathValid ? (cellularAvailable ? "switch-status-path-online" : "switch-status-path-offline") : "");
             appendTableCell(row, loss != null && loss.valid === true ? formatLoss(loss.loss_permille) + " · " + loss.sample_packets + " 包" : "--", "");
@@ -752,7 +850,7 @@
             const sta = data.sta;
 
             peerSummary = sta.peer_present === true && Number.isInteger(sta.peer_node_id) ? "AP 节点 " + sta.peer_node_id : "未连接 AP";
-            planSummary = formatPlan(sta.plan);
+            planSummary = formatPlanSummary(sta.plan);
 
             if (localMaintenance.active === true)
             {
@@ -770,9 +868,13 @@
             {
                 overall = "等待链路观测";
             }
-            else if (sta.plan == null || sta.plan.valid !== true || sta.plan.mode === "none")
+            else if (!hasActivePlan(sta.plan))
             {
                 overall = "无可用链路";
+            }
+            else if (sta.plan_sync != null && sta.plan_sync.state !== "confirmed")
+            {
+                overall = sta.plan_sync.state === "rejected" ? "计划被 AP 拒绝" : sta.plan_sync.state === "uncertain" ? "计划结果未确认" : sta.plan_sync.state === "syncing" ? "计划同步中" : "本地计划运行中";
             }
             else
             {
@@ -784,7 +886,7 @@
             const ap = data.ap;
 
             peerSummary = ap.peer_count + " 个 STA";
-            planSummary = ap.peer_count > 0 ? (ap.peer_count === 1 ? formatPlan(ap.peers[0].plan) : ap.peer_count + " 个独立计划") : "--";
+            planSummary = ap.peer_count > 0 ? (ap.peer_count === 1 ? formatPlanSummary(ap.peers[0].plan) : ap.peer_count + " 个对端 · 按业务配置") : "--";
             overall = localMaintenance.active === true ? "本机维护中" : (ap.peer_count > 0 ? "运行正常" : "等待 STA 接入");
         }
 

@@ -143,15 +143,23 @@
 .switch-status-probe-table th:nth-child(2) { width: 30%; }
 .switch-status-probe-table th:nth-child(3) { width: 38%; }
 .switch-status-probe-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
+.switch-status-plan-table { min-width: 540px; }
+.switch-status-plan-table th:first-child { width: 14%; }
+.switch-status-plan-table th:nth-child(2) { width: 22%; }
+.switch-status-plan-table th:nth-child(3),
+.switch-status-plan-table th:nth-child(4) { width: 32%; }
+.switch-status-plan-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .switch-status-peer-table { min-width: 960px; }
-.switch-status-peer-table th:nth-child(1) { width: 8%; }
-.switch-status-peer-table th:nth-child(2) { width: 21%; }
+.switch-status-peer-table th:nth-child(1) { width: 6%; }
+.switch-status-peer-table th:nth-child(2) { width: 31%; }
 .switch-status-peer-table th:nth-child(3),
-.switch-status-peer-table th:nth-child(4) { width: 11%; }
+.switch-status-peer-table th:nth-child(4) { width: 9%; }
 .switch-status-peer-table th:nth-child(5) { width: 16%; }
-.switch-status-peer-table th:nth-child(6) { width: 18%; }
-.switch-status-peer-table th:nth-child(7) { width: 15%; }
+.switch-status-peer-table th:nth-child(6) { width: 16%; }
+.switch-status-peer-table th:nth-child(7) { width: 13%; }
 .switch-status-peer-table td { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.switch-status-peer-table td.switch-status-peer-plans { white-space: normal; }
+.switch-status-peer-plans > div { line-height: 22px; }
 .switch-status-peer-table td:first-child { font-weight: 600; color: var(--linkg-color-primary); }
 .switch-status-path-online { font-weight: 500; color: var(--linkg-color-success); }
 .switch-status-path-offline { color: var(--linkg-color-text-muted); }
