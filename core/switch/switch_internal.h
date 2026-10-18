@@ -120,7 +120,7 @@ typedef struct
     uint64_t                                 next_reconcile_us;            // AP/STA下一轮发送计划校准时间
     uint64_t                                 next_report_us;               // AP下一轮质量上报时间
     uint64_t                                 next_policy_us;               // STA下一轮切换策略处理时间
-    bool                                     sta_check_pending;            // STA是否存在待处理的立即策略检查请求
+    bool                                     reconcile_pending;            // AP/STA是否存在待处理的立即发送计划校准请求
 
     bool                                     worker_tid_valid;             // 当前Worker线程标识是否有效
     bool                                     handler_registered;           // SWITCH Transport接收Handler是否已注册

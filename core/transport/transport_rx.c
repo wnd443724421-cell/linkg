@@ -2,7 +2,7 @@
  * @file transport_rx.c
  * @brief LinkG逻辑传输层批量接收实现
  * @author Dawn
- * @version 1.4.0
+ * @version 1.4.1
  * @date 2026-09-11
  */
 
@@ -24,10 +24,10 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE              32U        // 单次Transport内部处理最大物理帧数量
-#define LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX            32U        // 单个Transport类型最大本机交付数量
-#define LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID          UINT32_MAX // 无效物理来源分组索引
-#define LINKG_TRANSPORT_RX_SOURCE_GROUP_LOG_INTERVAL_MS  1000ULL    // 物理来源分组溢出日志最小间隔
+#define LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE             32U        // 单次Transport内部处理最大物理帧数量
+#define LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX           32U        // 单个Transport类型最大本机交付数量
+#define LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID         UINT32_MAX // 无效物理来源分组索引
+#define LINKG_TRANSPORT_RX_SOURCE_GROUP_LOG_INTERVAL_MS 1000ULL    // 物理来源分组溢出日志最小间隔
 
 /****************************** 本机交付 ******************************/
 
@@ -36,9 +36,11 @@
  */
 typedef struct
 {
-    linkg_transport_delivery_t items[LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX]; // 本机交付元素，可混合业务Class
-    bool                       owned[LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX]; // Transport是否持有对应Packet引用
-    uint32_t                   count;                                        // 当前元素数量
+    linkg_transport_delivery_t  items[LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX];       // 本机交付元素，可混合业务Class
+    linkg_transport_peer_t     *peers[LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX];       // 接收时直接Peer固定槽位，仅借用
+    uint32_t                    peer_epochs[LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX]; // 接收时捕获的Peer代际
+    bool                        owned[LINKG_TRANSPORT_RX_DELIVERY_BATCH_MAX];       // Transport是否持有对应Packet引用
+    uint32_t                    count;                                              // 当前元素数量
 } linkg_transport_delivery_batch_t;
 
 /****************************** 中继交付 ******************************/
@@ -48,9 +50,11 @@ typedef struct
  */
 typedef struct
 {
-    linkg_transport_forward_item_t items[LINKG_TRANSPORT_FORWARD_BATCH_MAX]; // 同一业务Class中继元素
-    bool                           owned[LINKG_TRANSPORT_FORWARD_BATCH_MAX]; // Transport是否持有对应Packet引用
-    uint32_t                       count;                                    // 当前元素数量
+    linkg_transport_forward_item_t  items[LINKG_TRANSPORT_FORWARD_BATCH_MAX];       // 同一业务Class中继元素
+    linkg_transport_peer_t         *peers[LINKG_TRANSPORT_FORWARD_BATCH_MAX];       // 入站直接Peer固定槽位，仅借用
+    uint32_t                        peer_epochs[LINKG_TRANSPORT_FORWARD_BATCH_MAX]; // 入站Peer代际
+    bool                            owned[LINKG_TRANSPORT_FORWARD_BATCH_MAX];       // Transport是否持有对应Packet引用
+    uint32_t                        count;                                          // 当前元素数量
 } linkg_transport_forward_batch_t;
 
 /****************************** 批量接收状态 ******************************/
@@ -198,13 +202,53 @@ static void _linkg_transport_rx_record_batch_stats(const linkg_transport_rx_batc
  */
 static void _linkg_transport_rx_flush_delivery(linkg_transport_type_t type, linkg_transport_delivery_batch_t *batch)
 {
-    linkg_transport_handler_func_t handler;
-    void                          *handler_user_data;
-    uint32_t                       index;
-    int                            ret;
+    linkg_transport_handler_func_t   handler;
+    void                            *handler_user_data;
+    linkg_transport_rx_batch_stats_t stats;
+    uint32_t                         output_count;
+    uint32_t                         index;
+    int                              ret;
 
     if (batch == NULL || batch->count == 0U)
     {
+        return;
+    }
+
+    // 在真正交给上层Handler之前复核代际，剔除窗口接受后已被Reset的旧Peer数据。
+    memset(&stats, 0, sizeof(stats));
+    output_count = 0U;
+
+    for (index = 0U; index < batch->count; index++)
+    {
+        if (!linkg_transport_peer_epoch_matches(batch->peers[index], batch->peer_epochs[index]))
+        {
+            stats.stale_epoch_frames++;
+
+            if (batch->owned[index] && batch->items[index].packet != NULL)
+            {
+                linkg_packet_release(batch->items[index].packet);
+            }
+
+            continue;
+        }
+
+        if (output_count != index)
+        {
+            batch->items[output_count]       = batch->items[index];
+            batch->peers[output_count]       = batch->peers[index];
+            batch->peer_epochs[output_count] = batch->peer_epochs[index];
+            batch->owned[output_count]       = batch->owned[index];
+        }
+
+        output_count++;
+    }
+
+    batch->count = output_count;
+    _linkg_transport_rx_record_batch_stats(&stats);
+
+    if (batch->count == 0U)
+    {
+        memset(batch, 0, sizeof(*batch));
         return;
     }
 
@@ -244,7 +288,7 @@ static void _linkg_transport_rx_flush_delivery(linkg_transport_type_t type, link
 /**
  * @brief 将一个本机Payload加入指定Transport类型批次。
  */
-static void _linkg_transport_rx_append_delivery(uint32_t ingress_link_id, linkg_transport_type_t type, linkg_transport_class_t traffic_class, uint8_t source_node_id, uint8_t peer_node_id, linkg_packet_t *packet, bool owned, linkg_transport_delivery_batch_t *batch)
+static void _linkg_transport_rx_append_delivery(uint32_t ingress_link_id, linkg_transport_type_t type, linkg_transport_class_t traffic_class, uint8_t source_node_id, uint8_t peer_node_id, linkg_transport_peer_t *peer, uint32_t peer_epoch, linkg_packet_t *packet, bool owned, linkg_transport_delivery_batch_t *batch)
 {
     linkg_transport_delivery_t *delivery;
 
@@ -266,7 +310,9 @@ static void _linkg_transport_rx_append_delivery(uint32_t ingress_link_id, linkg_
     delivery->source_node_id  = source_node_id;
     delivery->peer_node_id    = peer_node_id;
 
-    batch->owned[batch->count] = owned;
+    batch->peers[batch->count]       = peer;
+    batch->peer_epochs[batch->count] = peer_epoch;
+    batch->owned[batch->count]       = owned;
     batch->count++;
 }
 
@@ -289,7 +335,7 @@ static int _linkg_transport_rx_append_normal_delivery(const linkg_transport_rx_s
 
     type = (linkg_transport_type_t)state->header.type;
 
-    _linkg_transport_rx_append_delivery(state->ingress_link_id, type, state->traffic_class, state->header.source_node_id, state->peer_node_id, item->packet, false, batch);
+    _linkg_transport_rx_append_delivery(state->ingress_link_id, type, state->traffic_class, state->header.source_node_id, state->peer_node_id, state->peer, state->peer_epoch, item->packet, false, batch);
 
     return 0;
 }
@@ -311,7 +357,7 @@ static void _linkg_transport_rx_append_reassembled_delivery(const linkg_transpor
 
     type = (linkg_transport_type_t)state->header.type;
 
-    _linkg_transport_rx_append_delivery(LINKG_LINK_ID_INVALID, type, state->traffic_class, state->header.source_node_id, state->peer_node_id, packet, true, batch);
+    _linkg_transport_rx_append_delivery(LINKG_LINK_ID_INVALID, type, state->traffic_class, state->header.source_node_id, state->peer_node_id, state->peer, state->peer_epoch, packet, true, batch);
 }
 
 /**
@@ -339,11 +385,51 @@ static void _linkg_transport_rx_flush_forward(linkg_transport_class_t traffic_cl
     int                                    results[LINKG_TRANSPORT_FORWARD_BATCH_MAX];
     linkg_transport_forward_handler_func_t handler;
     void                                  *handler_user_data;
+    linkg_transport_rx_batch_stats_t       stats;
+    uint32_t                               output_count;
     uint32_t                               index;
     int                                    ret;
 
     if (batch == NULL || batch->count == 0U)
     {
+        return;
+    }
+
+    // Forward可能跨越多个RX Chunk，此处必须以入站Peer代际再次过滤旧帧。
+    memset(&stats, 0, sizeof(stats));
+    output_count = 0U;
+
+    for (index = 0U; index < batch->count; index++)
+    {
+        if (!linkg_transport_peer_epoch_matches(batch->peers[index], batch->peer_epochs[index]))
+        {
+            stats.stale_epoch_frames++;
+
+            if (batch->owned[index] && batch->items[index].packet != NULL)
+            {
+                linkg_packet_release(batch->items[index].packet);
+            }
+
+            continue;
+        }
+
+        if (output_count != index)
+        {
+            batch->items[output_count]       = batch->items[index];
+            batch->peers[output_count]       = batch->peers[index];
+            batch->peer_epochs[output_count] = batch->peer_epochs[index];
+            batch->owned[output_count]       = batch->owned[index];
+        }
+
+        output_count++;
+    }
+
+    batch->count = output_count;
+    _linkg_transport_rx_record_batch_stats(&stats);
+
+    if (batch->count == 0U)
+    {
+        memset(batch, 0, sizeof(*batch));
         return;
     }
 
@@ -411,7 +497,9 @@ static void _linkg_transport_rx_append_forward(const linkg_transport_rx_state_t 
     forward_item->destination_node_id = state->header.destination_node_id;
     forward_item->peer_node_id        = state->peer_node_id;
 
-    batch->owned[batch->count] = false;
+    batch->peers[batch->count]       = state->peer;
+    batch->peer_epochs[batch->count] = state->peer_epoch;
+    batch->owned[batch->count]       = false;
     batch->count++;
 }
 
@@ -420,7 +508,7 @@ static void _linkg_transport_rx_append_forward(const linkg_transport_rx_state_t 
  *
  * @note Pair输出的两个Packet引用均由当前Forward Batch接管。
  */
-static void _linkg_transport_rx_append_forward_pair(linkg_transport_class_t traffic_class, const linkg_transport_forward_item_t *items, linkg_transport_forward_batch_t *batch)
+static void _linkg_transport_rx_append_forward_pair(linkg_transport_class_t traffic_class, const linkg_transport_forward_item_t *items, linkg_transport_peer_t *peer, uint32_t peer_epoch, linkg_transport_forward_batch_t *batch)
 {
     uint32_t index;
 
@@ -436,8 +524,10 @@ static void _linkg_transport_rx_append_forward_pair(linkg_transport_class_t traf
 
     for (index = 0U; index < LINKG_TRANSPORT_FRAGMENT_COUNT_MAX; index++)
     {
-        batch->items[batch->count] = items[index];
-        batch->owned[batch->count] = true;
+        batch->items[batch->count]       = items[index];
+        batch->peers[batch->count]       = peer;
+        batch->peer_epochs[batch->count] = peer_epoch;
+        batch->owned[batch->count]       = true;
         batch->count++;
     }
 }
@@ -464,9 +554,9 @@ static void _linkg_transport_rx_record_source_group_overflow(uint32_t group_coun
 {
     static _Atomic uint64_t next_log_ms;
     static _Atomic uint64_t overflow_count;
-    uint64_t                expected_log_ms;
-    uint64_t                now_ms;
-    uint64_t                count;
+    uint64_t expected_log_ms;
+    uint64_t now_ms;
+    uint64_t count;
 
     atomic_fetch_add_explicit(&overflow_count, 1U, memory_order_relaxed);
 
@@ -828,7 +918,7 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
     {
         for (index = 0U; index < reassembly_count; index++)
         {
-            state_index = state_indices[index];
+            state_index                           = state_indices[index];
             states[state_index].reassembly_result = ret;
             stats->invalid_frames++;
 
@@ -895,6 +985,20 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
             continue;
         }
 
+        // RX Window通过后Peer仍可能被重置；不允许旧代际继续进入交付或中继。
+        if (!linkg_transport_peer_epoch_matches(states[index].peer, states[index].peer_epoch))
+        {
+            stats->stale_epoch_frames++;
+
+            if (states[index].completed_packet != NULL)
+            {
+                linkg_packet_release(states[index].completed_packet);
+                states[index].completed_packet = NULL;
+            }
+
+            continue;
+        }
+
         type = (linkg_transport_type_t)states[index].header.type;
 
         if (states[index].header.destination_node_id == g_transport.local_node_id)
@@ -919,7 +1023,7 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
             continue;
         }
 
-        if (g_transport.local_role != LINKG_DEVICE_ROLE_AP)
+        if (g_transport.local_role != LINKG_DEVICE_ROLE_AP || forward_batches == NULL)
         {
             continue;
         }
@@ -979,7 +1083,7 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
             continue;
         }
 
-        _linkg_transport_rx_append_forward_pair(states[index].traffic_class, pair_items, &forward_batches[states[index].traffic_class]);
+        _linkg_transport_rx_append_forward_pair(states[index].traffic_class, pair_items, states[index].peer, states[index].peer_epoch, &forward_batches[states[index].traffic_class]);
     }
 }
 
@@ -992,14 +1096,13 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
  */
 void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *frames, uint32_t count)
 {
-    linkg_transport_delivery_batch_t  delivery_batches[LINKG_TRANSPORT_TYPE_COUNT];
-    linkg_transport_forward_batch_t   forward_batches[LINKG_TRANSPORT_CLASS_COUNT];
-    linkg_transport_rx_state_t        states[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
-    linkg_link_rx_item_t              items[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
-    linkg_transport_rx_batch_stats_t  stats;
-    linkg_transport_reorder_frame_t   completed;
-    uint32_t                          end_sequence;
-    uint32_t                          index;
+    linkg_transport_delivery_batch_t delivery_batches[LINKG_TRANSPORT_TYPE_COUNT];
+    linkg_transport_rx_state_t       states[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
+    linkg_link_rx_item_t             items[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
+    linkg_transport_rx_batch_stats_t stats;
+    linkg_transport_reorder_frame_t  completed;
+    uint32_t                         end_sequence;
+    uint32_t                         index;
 
     if (frames == NULL || count == 0U || count > LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE)
     {
@@ -1007,7 +1110,6 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
     }
 
     memset(delivery_batches, 0, sizeof(delivery_batches));
-    memset(forward_batches, 0, sizeof(forward_batches));
     memset(states, 0, sizeof(states));
     memset(items, 0, sizeof(items));
     memset(&stats, 0, sizeof(stats));
@@ -1025,17 +1127,17 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
             continue;
         }
 
-        items[index].packet              = frames[index].packet;
-        states[index].header             = frames[index].header;
-        states[index].fragment_header    = frames[index].fragment_header;
-        states[index].peer               = frames[index].peer;
-        states[index].peer_epoch         = frames[index].peer_epoch;
-        states[index].peer_node_id       = frames[index].peer_node_id;
-        states[index].ingress_link_id    = frames[index].ingress_link_id;
-        states[index].traffic_class      = frames[index].traffic_class;
-        states[index].fragmented         = frames[index].fragmented;
-        states[index].window_result      = LINKG_TRANSPORT_WINDOW_ACCEPT;
-        states[index].reassembly_result  = -EINPROGRESS;
+        items[index].packet             = frames[index].packet;
+        states[index].header            = frames[index].header;
+        states[index].fragment_header   = frames[index].fragment_header;
+        states[index].peer              = frames[index].peer;
+        states[index].peer_epoch        = frames[index].peer_epoch;
+        states[index].peer_node_id      = frames[index].peer_node_id;
+        states[index].ingress_link_id   = frames[index].ingress_link_id;
+        states[index].traffic_class     = frames[index].traffic_class;
+        states[index].fragmented        = frames[index].fragmented;
+        states[index].window_result     = LINKG_TRANSPORT_WINDOW_ACCEPT;
+        states[index].reassembly_result = -EINPROGRESS;
     }
 
     _linkg_transport_rx_reassemble_batch(items, states, count, &stats);
@@ -1074,7 +1176,8 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
         }
     }
 
-    _linkg_transport_rx_dispatch_batch(items, states, count, delivery_batches, forward_batches, &stats);
+    // Reorder只接受目标为本机的USER_DATA，故不需要Forward批次数组。
+    _linkg_transport_rx_dispatch_batch(items, states, count, delivery_batches, NULL, &stats);
     _linkg_transport_rx_flush_deliveries(delivery_batches);
     _linkg_transport_rx_record_batch_stats(&stats);
 }
@@ -1087,10 +1190,10 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
  */
 static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count)
 {
-    bool                            loaded[LINKG_RESOURCE_NETWORK_STA_MAX];
-    bool                            redundant[LINKG_RESOURCE_NETWORK_STA_MAX];
+    bool                            loaded[LINKG_RESOURCE_NETWORK_STA_MAX][LINKG_TRANSPORT_CLASS_COUNT];
+    bool                            redundant[LINKG_RESOURCE_NETWORK_STA_MAX][LINKG_TRANSPORT_CLASS_COUNT];
     linkg_transport_reorder_frame_t frame;
-    linkg_send_plan_t               plan;
+    linkg_class_send_plan_t         plan;
     uint32_t                        group_index;
     uint32_t                        index;
     int                             ret;
@@ -1109,14 +1212,14 @@ static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_
 
         group_index = states[index].source_group_index;
 
-        if (!loaded[group_index])
+        if (!loaded[group_index][states[index].traffic_class])
         {
-            ret = linkg_switch_get_plan(states[index].peer_node_id, &plan);
-            redundant[group_index] = ret == 0 && plan.mode == LINKG_SEND_MODE_REDUNDANT;
-            loaded[group_index]    = true;
+            ret                                                 = linkg_switch_get_class_plan(states[index].peer_node_id, states[index].traffic_class, &plan);
+            redundant[group_index][states[index].traffic_class] = ret == 0 && plan.mode == LINKG_SEND_MODE_REDUNDANT;
+            loaded[group_index][states[index].traffic_class]    = true;
         }
 
-        if (!redundant[group_index])
+        if (!redundant[group_index][states[index].traffic_class])
         {
             // 只通知序号基线和模式切换，不将SINGLE Packet送入Reorder缓存。
             ret = linkg_transport_reorder_note_single(states[index].peer, states[index].peer_epoch,

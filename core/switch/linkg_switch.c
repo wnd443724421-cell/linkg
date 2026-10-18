@@ -108,7 +108,7 @@ static void _linkg_switch_reset_runtime_locked(void)
     g_switch.next_reconcile_us   = 0U;
     g_switch.next_report_us      = 0U;
     g_switch.next_policy_us      = 0U;
-    g_switch.sta_check_pending   = false;
+    g_switch.reconcile_pending   = false;
 }
 
 /**
@@ -578,9 +578,10 @@ int linkg_switch_end_maintenance(linkg_link_access_t access)
 /****************************** 运行控制 ******************************/
 
 /**
- * @brief 请求Switch Worker立即执行一次STA观测与切换策略检查。
+ * @brief 请求Switch Worker立即执行一次发送计划资源校准。
  *
- * 多次未处理的请求合并为一次，不改变原有250ms观测周期。
+ * AP和STA均支持，多次未处理请求合并为一次。
+ * 不改变500ms Reconcile周期，也不提前执行STA质量切换策略。
  */
 int linkg_switch_wakeup(void)
 {
@@ -600,24 +601,18 @@ int linkg_switch_wakeup(void)
         return -ESHUTDOWN;
     }
 
-    if (g_switch.role != LINKG_DEVICE_ROLE_STA)
+    if (g_switch.reconcile_pending)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
     }
 
-    if (g_switch.sta_check_pending)
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return 0;
-    }
-
-    g_switch.sta_check_pending = true;
+    g_switch.reconcile_pending = true;
 
     ret = linkg_thread_wakeup(&g_switch.thread);
     if (ret != 0)
     {
-        g_switch.sta_check_pending = false;
+        g_switch.reconcile_pending = false;
     }
 
     pthread_mutex_unlock(&g_switch.lock);

@@ -24,7 +24,7 @@
 /****************************** 模块常量 ******************************/
 
 #define LINKG_SCHEDULER_TX_CHUNK_MAX   32U                 // Scheduler内部单次工作Chunk最大Packet数量
-#define LINKG_SCHEDULER_PEER_GROUP_MAX  LINKG_NODE_PEER_MAX // 单个Chunk最大直接Peer分组数量
+#define LINKG_SCHEDULER_PEER_GROUP_MAX LINKG_NODE_PEER_MAX // 单个Chunk最大直接Peer分组数量
 
 /****************************** 内部类型 ******************************/
 
@@ -44,9 +44,9 @@ typedef struct
 
 /****************************** 模块状态 ******************************/
 
-static _Atomic bool    g_scheduler_initialized      = false;
-static _Atomic bool    g_scheduler_sta_peer_cached  = false;
-static _Atomic uint8_t g_scheduler_sta_peer_node_id = 0U;
+static _Atomic bool    g_scheduler_initialized      = false; // Scheduler是否已初始化
+static _Atomic bool    g_scheduler_sta_peer_cached  = false; // STA直接Peer缓存是否有效
+static _Atomic uint8_t g_scheduler_sta_peer_node_id = 0U;    // 缓存的STA直接Peer节点编号
 
 /****************************** 参数校验 ******************************/
 
@@ -140,7 +140,7 @@ static int _linkg_scheduler_find_sta_peer(uint8_t *peer_node_id)
     if (atomic_load(&g_scheduler_sta_peer_cached))
     {
         cached_node_id = atomic_load(&g_scheduler_sta_peer_node_id);
-        ret = linkg_node_get_peer_snapshot(cached_node_id, &snapshot);
+        ret            = linkg_node_get_peer_snapshot(cached_node_id, &snapshot);
         if (ret == 0)
         {
             if (snapshot.info.role != LINKG_DEVICE_ROLE_AP)
@@ -308,9 +308,9 @@ static void _linkg_scheduler_set_forward_group_result(int *results, const linkg_
 static int _linkg_scheduler_acquire_target(uint8_t peer_node_id, uint32_t link_id, linkg_transport_tx_target_t *target)
 {
     linkg_path_endpoint_t destination;
-    linkg_path_t          *path;
-    linkg_link_t          *link;
-    int                    ret;
+    linkg_path_t         *path;
+    linkg_link_t         *link;
+    int                   ret;
 
     if (!_linkg_scheduler_node_id_valid(peer_node_id) ||
         !_linkg_scheduler_link_id_valid(link_id) ||
@@ -329,6 +329,12 @@ static int _linkg_scheduler_acquire_target(uint8_t peer_node_id, uint32_t link_i
     if (!linkg_link_is_running(link))
     {
         return -ENETDOWN;
+    }
+
+    // 在获取Path前阻止选取本机或对端正在Maintenance的Access。
+    if (linkg_switch_access_blocked(peer_node_id, linkg_link_get_access(link)))
+    {
+        return -EBUSY;
     }
 
     path = NULL;
@@ -370,21 +376,62 @@ static void _linkg_scheduler_release_targets(linkg_transport_tx_target_t *target
 }
 
 /**
- * @brief 根据当前策略和Switch计划构造同一直接Peer的Transport Target数组。
+ * @brief 为Switch控制消息选择所有可用的物理Path。
  *
- * @note REDUNDANT模式仍只调用一次Transport；可用主备链路作为同一Context中的多个Target。
- *       主链路暂时不可用时允许备用链路单独承担当前发送。
+ * @note 控制消息不依赖任何业务Class的发送计划，Wi-Fi与Cellular均可用时
+ *       尽力双发；只有一条可用时继续单发。Maintenance屏蔽由Target获取层执行。
  */
-static int _linkg_scheduler_build_targets(uint8_t peer_node_id, linkg_scheduler_policy_t policy, uint32_t specified_link_id, linkg_transport_tx_target_t *targets, uint32_t *target_count)
+static int _linkg_scheduler_build_control_targets(uint8_t peer_node_id, linkg_transport_tx_target_t *targets, uint32_t *target_count)
 {
-    linkg_send_plan_t plan;
-    uint32_t          count;
-    bool              redundant;
-    int               primary_error;
-    int               secondary_error;
-    int               ret;
+    uint32_t link_ids[LINKG_TRANSPORT_TX_TARGET_MAX];
+    uint32_t index;
+    uint32_t count;
+    int      ret;
+
+    memset(targets, 0, sizeof(*targets) * LINKG_TRANSPORT_TX_TARGET_MAX);
+    *target_count = 0U;
+
+    link_ids[0] = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    link_ids[1] = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
+    count       = 0U;
+
+    for (index = 0U; index < LINKG_TRANSPORT_TX_TARGET_MAX; index++)
+    {
+        if (link_ids[index] == LINKG_LINK_ID_INVALID ||
+            (index != 0U && link_ids[index] == link_ids[0]))
+        {
+            continue;
+        }
+
+        ret = _linkg_scheduler_acquire_target(peer_node_id, link_ids[index], &targets[count]);
+        if (ret == 0)
+        {
+            count++;
+        }
+    }
+
+    *target_count = count;
+
+    return count == 0U ? -ENETDOWN : 0;
+}
+
+/**
+ * @brief 根据当前调度策略构造同一直接Peer的Transport Target数组。
+ *
+ * DEFAULT严格执行当前业务Class的Plan：SINGLE只发送Primary，
+ * REDUNDANT发送Primary和Secondary；若其中一条不可用则尽力使用另一条。
+ * 控制消息使用独立REDUNDANT策略，不读取业务Plan；Probe使用SPECIFIED。
+ */
+static int _linkg_scheduler_build_targets(uint8_t peer_node_id, linkg_transport_class_t traffic_class, linkg_scheduler_policy_t policy, uint32_t specified_link_id, linkg_transport_tx_target_t *targets, uint32_t *target_count)
+{
+    linkg_class_send_plan_t plan;
+    uint32_t                count;
+    int                     primary_error;
+    int                     secondary_error;
+    int                     ret;
 
     if (!_linkg_scheduler_node_id_valid(peer_node_id) ||
+        !_linkg_scheduler_class_valid(traffic_class) ||
         !_linkg_scheduler_policy_valid(policy) ||
         targets == NULL ||
         target_count == NULL)
@@ -412,22 +459,30 @@ static int _linkg_scheduler_build_targets(uint8_t peer_node_id, linkg_scheduler_
         return 0;
     }
 
+    if (policy == LINKG_SCHEDULER_POLICY_REDUNDANT)
+    {
+        return _linkg_scheduler_build_control_targets(peer_node_id, targets, target_count);
+    }
+
     memset(&plan, 0, sizeof(plan));
 
-    ret = linkg_switch_get_plan(peer_node_id, &plan);
+    ret = linkg_switch_get_class_plan(peer_node_id, traffic_class, &plan);
     if (ret != 0)
     {
         return ret;
     }
+
     if (plan.mode == LINKG_SEND_MODE_NONE)
     {
         return -ENETDOWN;
     }
+
     if (plan.mode != LINKG_SEND_MODE_SINGLE &&
         plan.mode != LINKG_SEND_MODE_REDUNDANT)
     {
         return -EINVAL;
     }
+
     if (!_linkg_scheduler_link_id_valid(plan.primary_link_id))
     {
         return -ENODEV;
@@ -440,9 +495,8 @@ static int _linkg_scheduler_build_targets(uint8_t peer_node_id, linkg_scheduler_
         count++;
     }
 
-    redundant = policy == LINKG_SCHEDULER_POLICY_REDUNDANT || plan.mode == LINKG_SEND_MODE_REDUNDANT;
-
-    if (!redundant)
+    // SINGLE下Secondary只作备用，不允许因为Primary故障就在此隐式切换。
+    if (plan.mode == LINKG_SEND_MODE_SINGLE)
     {
         if (count == 0U)
         {
@@ -472,6 +526,7 @@ static int _linkg_scheduler_build_targets(uint8_t peer_node_id, linkg_scheduler_
         {
             return primary_error;
         }
+
         if (secondary_error != 0)
         {
             return secondary_error;
@@ -487,7 +542,7 @@ static int _linkg_scheduler_build_targets(uint8_t peer_node_id, linkg_scheduler_
 /****************************** 普通发送 ******************************/
 
 /**
- * @brief 调度同一直接Peer的一批普通Transport逻辑Packet。
+ * @brief 调度同一直接Peer的一批Transport逻辑Packet。
  */
 static int _linkg_scheduler_submit_tx_group(const linkg_scheduler_tx_context_t *scheduler_context, linkg_scheduler_tx_item_t *items, const linkg_scheduler_peer_group_t *group)
 {
@@ -511,6 +566,7 @@ static int _linkg_scheduler_submit_tx_group(const linkg_scheduler_tx_context_t *
     }
 
     ret = _linkg_scheduler_build_targets(group->peer_node_id,
+                                         scheduler_context->traffic_class,
                                          scheduler_context->policy,
                                          scheduler_context->specified_link_id,
                                          targets,
@@ -693,6 +749,7 @@ static int _linkg_scheduler_submit_forward_group(linkg_transport_class_t traffic
     }
 
     ret = _linkg_scheduler_build_targets(group->peer_node_id,
+                                         traffic_class,
                                          LINKG_SCHEDULER_POLICY_DEFAULT,
                                          LINKG_LINK_ID_INVALID,
                                          targets,
@@ -950,7 +1007,9 @@ int linkg_scheduler_deinit(void)
 /**
  * @brief 批量调度上层已经确定业务类别的Transport逻辑Packet。
  *
- * @note Scheduler不接管调用方持有的Packet原始引用；一个调用只对应一个traffic_class。
+ * @note Scheduler不接管调用方持有的Packet原始引用；一个调用只对应一个traffic_class和调度策略。
+ *       TUN业务使用DEFAULT，Switch控制消息使用REDUNDANT，Path Probe使用SPECIFIED；
+ *       三者由不同上层调用单独提交，不会在同一个Batch中混合。
  *       本机角色和STA唯一AP Peer只在大Batch开始时解析一次。
  *       调用方可以提交任意数量Packet，Scheduler固定按最多32个Packet拆分内部Chunk。
  *       每个Chunk再根据最终destination_node_id解析直接Peer并按Peer分组，同一Peer组同步调用一次Transport。

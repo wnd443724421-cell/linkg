@@ -237,6 +237,53 @@ static bool _linkg_switch_plan_equal(const linkg_send_plan_t *left, const linkg_
 }
 
 
+/**
+ * @brief 判断两份完整Plan的实际发送目标是否一致。
+ *
+ * NONE不使用Path，SINGLE只使用Primary，Secondary仅是备用候选；
+ * REDUNDANT同时使用Primary和Secondary。仅备用候选变化不应中断
+ * Policy正在等待ACK的PLAN_SYNC事务。
+ */
+static bool _linkg_switch_plan_tx_targets_equal(const linkg_send_plan_t *left, const linkg_send_plan_t *right)
+{
+    const linkg_class_send_plan_t *a;
+    const linkg_class_send_plan_t *b;
+    uint32_t                       class_index;
+
+    if (left == NULL || right == NULL)
+    {
+        return false;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        a = &left->classes[class_index];
+        b = &right->classes[class_index];
+
+        if (a->mode != b->mode)
+        {
+            return false;
+        }
+
+        if (a->mode == LINKG_SEND_MODE_NONE)
+        {
+            continue;
+        }
+
+        if (a->primary_link_id != b->primary_link_id)
+        {
+            return false;
+        }
+
+        if (a->mode == LINKG_SEND_MODE_REDUNDANT && a->secondary_link_id != b->secondary_link_id)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /****************************** 计划协议转换 ******************************/
 
 /**
@@ -804,7 +851,8 @@ int linkg_switch_plan_remove(uint8_t peer_node_id)
  * @brief 仅在本机应用指定直接Peer发送计划，不触发远端计划同步。
  *
  * 用于Maintenance逃逸计划和Reconcile本地收敛；不承担STA到AP同步。
- * 调用成功后新的发送计划立即成为该Peer唯一生效计划，
+ * SINGLE的Secondary候选变化保留未完成的旧同步事务；实际发送目标
+ * 变化则撤销旧事务，防止后续Worker继续重试过期目标。
  * 不创建PLAN_SYNC事务，也不发送任何Switch控制消息。
  */
 static int _linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan)
@@ -849,8 +897,10 @@ static int _linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_ge
         return -EBUSY;
     }
 
-    if (!_linkg_switch_plan_equal(&peer->plan, plan))
+    if (!_linkg_switch_plan_equal(&peer->plan, plan) &&
+        !_linkg_switch_plan_tx_targets_equal(&peer->plan, plan))
     {
+        // 仅发送目标变化才撤销旧事务；SINGLE备用候选变化不影响旧同步。
         _linkg_switch_plan_cancel_sync_locked(peer);
     }
 

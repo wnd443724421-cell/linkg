@@ -112,13 +112,11 @@ static void _linkg_switch_runtime_process_events(uint64_t now_us)
 }
 
 /**
- * @brief 执行STA当前到期或主动请求的一轮观测与策略处理。
+ * @brief 执行STA当前到期的一轮观测与策略处理。
  *
  * STA仅存在一个直接AP Peer。
  *
- * 正常周期由Observation的250ms周期驱动；
- * 主动请求允许在正常周期之间额外执行一轮检查，
- * 但不改变原有Observation周期。
+ * 仅由Observation的250ms周期驱动。
  *
  * 只有当前Peer成功刷新Observation后，才允许执行本轮Policy。
  */
@@ -128,14 +126,12 @@ static void _linkg_switch_runtime_process_sta(uint64_t now_us)
     uint32_t index;
     uint8_t  peer_node_id;
     bool     periodic_due;
-    bool     immediate_pending;
     bool     peer_found;
     int      ret;
 
     peer_node_id     = 0U;
     peer_generation  = LINKG_SWITCH_PEER_GENERATION_INVALID;
     periodic_due     = false;
-    immediate_pending= false;
     peer_found       = false;
 
     pthread_mutex_lock(&g_switch.lock);
@@ -150,19 +146,14 @@ static void _linkg_switch_runtime_process_sta(uint64_t now_us)
 
     periodic_due = g_switch.next_observation_us == 0U || now_us >= g_switch.next_observation_us;
 
-    immediate_pending = g_switch.sta_check_pending;
-
-    if (!periodic_due && !immediate_pending)
+    if (!periodic_due)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return;
     }
 
-    if (periodic_due)
-    {
-        // 周期任务不补跑错过的历史周期，只从本轮重新安排下一次。
-        g_switch.next_observation_us = now_us + LINKG_SWITCH_OBSERVATION_INTERVAL_US;
-    }
+    // 周期任务不补跑错过的历史周期，只从本轮重新安排下一次。
+    g_switch.next_observation_us = now_us + LINKG_SWITCH_OBSERVATION_INTERVAL_US;
 
     for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
     {
@@ -292,23 +283,38 @@ static void _linkg_switch_runtime_process_maintenance(uint64_t now_us)
 }
 
 /**
- * @brief 执行AP/STA当前到期的一轮发送计划硬校准。
+ * @brief 执行AP/STA到期或外部请求的一轮本地发送计划资源校准。
+ *
+ * 主动请求不修改500ms周期的下一次截止时间。
+ * pending在开始处理之前消费；执行期间产生的新请求仍能唤醒下一轮。
  */
 static void _linkg_switch_runtime_process_reconcile(uint64_t now_us)
 {
+    bool periodic_due;
     bool due;
     int  ret;
 
     pthread_mutex_lock(&g_switch.lock);
 
-    due = g_switch.initialized &&
-          g_switch.running &&
-          (g_switch.next_reconcile_us == 0U || now_us >= g_switch.next_reconcile_us);
+    if (!g_switch.initialized || !g_switch.running)
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return;
+    }
+
+    periodic_due = g_switch.next_reconcile_us == 0U || now_us >= g_switch.next_reconcile_us;
+    due          = periodic_due || g_switch.reconcile_pending;
 
     if (due)
     {
-        // 不补跑历史周期，只安排下一轮校准。
-        g_switch.next_reconcile_us = now_us + LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US;
+        // 先消费当前请求，避免执行期间新通知被本轮结束时清除。
+        g_switch.reconcile_pending = false;
+
+        if (periodic_due)
+        {
+            // 仅周期到期才更新下一截止时间；不补跑错过的历史周期。
+            g_switch.next_reconcile_us = now_us + LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US;
+        }
     }
 
     pthread_mutex_unlock(&g_switch.lock);

@@ -332,6 +332,9 @@ static int _linkg_discovery_cleanup_expired_paths_locked(linkg_discovery_peer_t 
         if (ret == 0)
         {
             memset(&peer->liveness[index], 0, sizeof(peer->liveness[index]));
+
+            // Access存活超时后请求本地Reconcile尽快修复发送计划。
+            _linkg_discovery_notify_switch_path_changed_locked(peer->report.node.node_id, true);
         }
         else if (first_error == 0)
         {
@@ -389,6 +392,9 @@ int _linkg_discovery_deactivate_access_locked(linkg_link_access_t access, uint64
             if (ret == 0)
             {
                 memset(&peer->liveness[access_index], 0, sizeof(peer->liveness[access_index]));
+
+                // 其他Access仍在线时提前校准已撤销Path的本地计划。
+                _linkg_discovery_notify_switch_path_changed_locked(peer->report.node.node_id, true);
             }
             else
             {

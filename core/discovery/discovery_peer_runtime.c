@@ -9,6 +9,7 @@
 #include "discovery_internal.h"
 
 #include <errno.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -17,6 +18,7 @@
 #include "linkg_link_manager.h"
 #include "linkg_log.h"
 #include "linkg_node.h"
+#include "linkg_path.h"
 #include "linkg_route.h"
 #include "linkg_switch.h"
 #include "linkg_transport.h"
@@ -142,6 +144,107 @@ int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t 
     return 1;
 }
 
+/****************************** Path变化检测 ******************************/
+
+/**
+ * @brief 判断两个Path Endpoint是否在网络寻址语义上相同。
+ *
+ * 只比较地址、端口及IPv6 Scope，不比较sockaddr_storage填充字节。
+ * 与Node模块的Endpoint等价判定保持一致。
+ */
+static bool _linkg_discovery_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right)
+{
+    const struct sockaddr_in6 *left6;
+    const struct sockaddr_in6 *right6;
+    const struct sockaddr_in  *left4;
+    const struct sockaddr_in  *right4;
+
+    if (left == NULL || right == NULL || left->length != right->length || left->address.ss_family != right->address.ss_family)
+    {
+        return false;
+    }
+
+    if (left->address.ss_family == AF_INET)
+    {
+        left4  = (const struct sockaddr_in *)&left->address;
+        right4 = (const struct sockaddr_in *)&right->address;
+
+        return left4->sin_addr.s_addr == right4->sin_addr.s_addr && left4->sin_port == right4->sin_port;
+    }
+
+    if (left->address.ss_family == AF_INET6)
+    {
+        left6  = (const struct sockaddr_in6 *)&left->address;
+        right6 = (const struct sockaddr_in6 *)&right->address;
+
+        return memcmp(&left6->sin6_addr, &right6->sin6_addr, sizeof(left6->sin6_addr)) == 0 &&
+               left6->sin6_port == right6->sin6_port &&
+               left6->sin6_scope_id == right6->sin6_scope_id;
+    }
+
+    return false;
+}
+
+/**
+ * @brief 注册之前判断本次Access是否引入新的活动Path或更换Endpoint。
+ *
+ * 返回true表示没有已确认的同Endpoint活动Path；调用方只有在后续
+ * register_access_path成功后，才把它计为真实Path变化。
+ * 查询失败时保守标记为变化，避免漏掉恢复事件；周期Reconcile仍负责兜底。
+ * 调用方必须持有Discovery状态锁。
+ */
+static bool _linkg_discovery_access_path_changed_locked(const linkg_discovery_report_t *report, linkg_link_access_t access)
+{
+    const linkg_path_endpoint_t *endpoint;
+    linkg_path_endpoint_t        current_endpoint;
+    linkg_path_t                *path;
+    uint32_t                     link_id;
+    bool                         changed;
+    int                          ret;
+
+    link_id = _linkg_discovery_report_link_id(report, access);
+    if (link_id == LINKG_LINK_ID_INVALID)
+    {
+        return false;
+    }
+
+    endpoint = access == LINKG_LINK_ACCESS_WIFI ? &report->wifi_endpoint : &report->cellular_endpoint;
+    path     = NULL;
+
+    ret = linkg_node_acquire_path(report->node.node_id, link_id, &path, &current_endpoint);
+    if (ret != 0)
+    {
+        return true;
+    }
+
+    changed = !_linkg_discovery_endpoint_equal(&current_endpoint, endpoint);
+    linkg_path_release(path);
+
+    return changed;
+}
+
+/**
+ * @brief 实际Path变化后请求本地Switch Worker立即执行一次资源校准。
+ *
+ * AP/STA均只投递事件，不在Discovery锁内执行Reconcile、Policy或PLAN_SYNC。
+ * 唤醒失败不撤销已生效的Node Path/Discovery Report；周期检查负责兜底。
+ */
+void _linkg_discovery_notify_switch_path_changed_locked(uint8_t node_id, bool changed)
+{
+    int ret;
+
+    if (!changed)
+    {
+        return;
+    }
+
+    ret = linkg_switch_wakeup();
+    if (ret != 0 && ret != -ENODEV && ret != -ESHUTDOWN)
+    {
+        LINKG_LOG_WARN("DISCOVERY: switch wakeup failed after path change, node=%u error=%d", (unsigned int)node_id, ret);
+    }
+}
+
 /****************************** Path注销 ******************************/
 
 /**
@@ -153,7 +256,7 @@ int _linkg_discovery_register_access_path_locked(const linkg_discovery_report_t 
 int _linkg_discovery_unregister_access_path_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access)
 {
     uint32_t link_id;
-    int ret;
+    int      ret;
 
     if (peer == NULL || !peer->used || !peer->online)
     {
@@ -181,7 +284,6 @@ int _linkg_discovery_unregister_access_path_locked(linkg_discovery_peer_t *peer,
 
     return 0;
 }
-
 
 /**
  * @brief 注销新Report明确撤销的旧业务Path。
@@ -254,6 +356,7 @@ static int _linkg_discovery_unregister_invalidated_paths_locked(linkg_discovery_
 static void _linkg_discovery_build_default_send_plan(const linkg_discovery_report_t *report, linkg_link_access_t access, linkg_send_plan_t *plan)
 {
     uint32_t link_id;
+    uint32_t class_index;
 
     if (report == NULL || plan == NULL)
     {
@@ -261,19 +364,14 @@ static void _linkg_discovery_build_default_send_plan(const linkg_discovery_repor
     }
 
     memset(plan, 0, sizeof(*plan));
-
-    plan->mode              = LINKG_SEND_MODE_NONE;
-    plan->primary_link_id   = LINKG_LINK_ID_INVALID;
-    plan->secondary_link_id = LINKG_LINK_ID_INVALID;
-
     link_id = _linkg_discovery_report_link_id(report, access);
-    if (link_id == LINKG_LINK_ID_INVALID)
-    {
-        return;
-    }
 
-    plan->mode            = LINKG_SEND_MODE_SINGLE;
-    plan->primary_link_id = link_id;
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        plan->classes[class_index].mode              = link_id == LINKG_LINK_ID_INVALID ? LINKG_SEND_MODE_NONE : LINKG_SEND_MODE_SINGLE;
+        plan->classes[class_index].primary_link_id   = link_id;
+        plan->classes[class_index].secondary_link_id = LINKG_LINK_ID_INVALID;
+    }
 }
 
 /**
@@ -307,7 +405,7 @@ static int _linkg_discovery_ensure_bootstrap_send_plan_locked(const linkg_discov
 
     _linkg_discovery_build_default_send_plan(report, access, &plan);
 
-    if (plan.mode == LINKG_SEND_MODE_NONE || plan.primary_link_id == LINKG_LINK_ID_INVALID)
+    if (plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].mode == LINKG_SEND_MODE_NONE || plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].primary_link_id == LINKG_LINK_ID_INVALID)
     {
         return -EINVAL;
     }
@@ -318,7 +416,7 @@ static int _linkg_discovery_ensure_bootstrap_send_plan_locked(const linkg_discov
         LINKG_LOG_WARN("DISCOVERY: bootstrap send plan failed, node=%u access=%s primary_link=%u error=%d",
                        (unsigned int)report->node.node_id,
                        _linkg_discovery_access_name(access),
-                       plan.primary_link_id,
+                       plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].primary_link_id,
                        ret);
         return ret;
     }
@@ -326,7 +424,7 @@ static int _linkg_discovery_ensure_bootstrap_send_plan_locked(const linkg_discov
     LINKG_LOG_INFO("DISCOVERY: bootstrap send plan created, node=%u access=%s primary_link=%u",
                    (unsigned int)report->node.node_id,
                    _linkg_discovery_access_name(access),
-                   plan.primary_link_id);
+                   plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].primary_link_id);
 
     return 0;
 }
@@ -422,11 +520,11 @@ int _linkg_discovery_cleanup_peer_route_locked(linkg_discovery_peer_t *peer)
 int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
 {
     linkg_send_plan_t plan;
-    const char *stage;
-    bool transport_registered;
-    bool switch_registered;
-    int path_result;
-    int ret;
+    const char       *stage;
+    bool              transport_registered;
+    bool              switch_registered;
+    int               path_result;
+    int               ret;
 
     if (peer == NULL || report == NULL)
     {
@@ -479,7 +577,7 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
     path_result = _linkg_discovery_register_access_path_locked(report, access);
     if (path_result < 0)
     {
-        ret = path_result;
+        ret   = path_result;
         stage = "path";
         goto rollback;
     }
@@ -526,6 +624,9 @@ int _linkg_discovery_register_peer_locked(linkg_discovery_peer_t *peer, linkg_li
                    path_result > 0 ? 1U : 0U,
                    g_discovery.peer_count);
 
+    // 首次上线创建业务Path成功后，也应尽快执行本地计划资源校准。
+    _linkg_discovery_notify_switch_path_changed_locked(report->node.node_id, path_result > 0);
+
     return 0;
 
 rollback:
@@ -571,7 +672,7 @@ int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
     ret = _linkg_discovery_unregister_access_path_locked(peer, LINKG_LINK_ACCESS_WIFI);
     if (ret != 0)
     {
-        /* Path辅助函数已记录实际注销错误。 */
+        // Path辅助函数已记录实际注销错误。
         if (first_error == 0)
         {
             first_error = ret;
@@ -581,7 +682,7 @@ int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
     ret = _linkg_discovery_unregister_access_path_locked(peer, LINKG_LINK_ACCESS_CELLULAR);
     if (ret != 0)
     {
-        /* Path辅助函数已记录实际注销错误。 */
+        // Path辅助函数已记录实际注销错误。
         if (first_error == 0)
         {
             first_error = ret;
@@ -615,12 +716,13 @@ int _linkg_discovery_reset_peer_session_locked(linkg_discovery_peer_t *peer)
  * 撤销新Report明确失效的旧业务Path，仅注册或更新本次接收Access的业务Path。
  * 当前Peer没有发送计划时，为首次有效业务Path建立Bootstrap计划。
  * 运行资源更新成功后提交完整Peer Report。
- * 预留STA业务Path变化通知；实际判定和PLAN_SYNC由Switch负责。
+ * 实际Path变化请求AP/STA本地Reconcile；策略和PLAN_SYNC职责不变。
  *
  * 调用方必须持有Discovery状态锁。
  */
 int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
 {
+    bool access_path_changed;
     bool path_changed;
     int  ret;
 
@@ -638,7 +740,7 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link
 
     path_changed = false;
 
-    /* 撤销新Report明确失效的旧业务Path。 */
+    // 撤销新Report明确失效的旧业务Path。
     ret = _linkg_discovery_unregister_invalidated_paths_locked(peer, report);
     if (ret < 0)
     {
@@ -650,7 +752,10 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link
         path_changed = true;
     }
 
-    /* 仅注册或更新本次实际接收Access对应的业务Path。 */
+    // 注册前读取当前活动Path，避免将重复确认误判为Path变化。
+    access_path_changed = _linkg_discovery_access_path_changed_locked(report, access);
+
+    // 仅注册或更新本次实际接收Access对应的业务Path。
     ret = _linkg_discovery_register_access_path_locked(report, access);
     if (ret < 0)
     {
@@ -659,7 +764,7 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link
 
     if (ret > 0)
     {
-        path_changed = true;
+        path_changed = path_changed || access_path_changed;
 
         ret = _linkg_discovery_ensure_bootstrap_send_plan_locked(report, access);
         if (ret != 0)
@@ -668,15 +773,11 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link
         }
     }
 
-    /* 保存完整Report，包括尚未通过对应Access确认的Endpoint。 */
+    // 保存完整Report，包括尚未通过对应Access确认的Endpoint。
     peer->report = *report;
 
-    /* 仅STA预留Path变化通知；接口实现后由Switch Worker重新观测与判定。 */
-    if (g_discovery.local_report.node.role == LINKG_DEVICE_ROLE_STA && path_changed)
-    {
-        /* TODO: 区分实际Path变化与重复更新，再接入Switch Worker事件通知。 */
-        /* linkg_switch_notify_path_changed(report->node.node_id); */
-    }
+    // 真实Path变化触发本地Reconcile；不额外执行质量切换策略。
+    _linkg_discovery_notify_switch_path_changed_locked(report->node.node_id, path_changed);
 
     return 0;
 }
@@ -686,13 +787,14 @@ int _linkg_discovery_update_peer_locked(linkg_discovery_peer_t *peer, linkg_link
  *
  * 同版本Report不替换已保存的完整状态，仅根据本次实际收到Report的
  * Access注册或更新对应业务Path；尚无发送计划时建立Bootstrap计划。
- * 同版本刷新不主动触发Switch，周期观测负责后续计划调整。
+ * 同版本重复确认不唤醒Switch；新增/恢复Path时请求立即Reconcile。
  *
  * 调用方必须持有Discovery状态锁。
  */
 int _linkg_discovery_refresh_peer_locked(linkg_discovery_peer_t *peer, linkg_link_access_t access, const linkg_discovery_report_t *report)
 {
-    int ret;
+    bool access_path_changed;
+    int  ret;
 
     if (peer == NULL || report == NULL || !peer->used || !peer->online)
     {
@@ -706,7 +808,10 @@ int _linkg_discovery_refresh_peer_locked(linkg_discovery_peer_t *peer, linkg_lin
         return -EINVAL;
     }
 
-    /* 仅确认本次实际收到Report的Access，使用Core已保存的完整状态。 */
+    // 同版本Report也可能首次恢复一条之前未注册的活动Path。
+    access_path_changed = _linkg_discovery_access_path_changed_locked(&peer->report, access);
+
+    // 仅确认本次实际收到Report的Access，使用Core已保存的完整状态。
     ret = _linkg_discovery_register_access_path_locked(&peer->report, access);
     if (ret < 0)
     {
@@ -720,6 +825,8 @@ int _linkg_discovery_refresh_peer_locked(linkg_discovery_peer_t *peer, linkg_lin
         {
             return ret;
         }
+
+        _linkg_discovery_notify_switch_path_changed_locked(peer->report.node.node_id, access_path_changed);
     }
 
     return 0;
