@@ -456,6 +456,92 @@ static int _linkg_discovery_validate_peer_relation_locked(const linkg_discovery_
     return -EINVAL;
 }
 
+/**
+ * @brief 检查STA上报的Wi-Fi MAC是否为有效单播地址。
+ */
+static bool _linkg_discovery_wifi_mac_valid(const uint8_t mac[LINKG_DISCOVERY_WIFI_MAC_SIZE])
+{
+    uint32_t index;
+
+    if (mac == NULL || (mac[0] & 0x01U) != 0U)
+    {
+        return false;
+    }
+
+    for (index = 0U; index < LINKG_DISCOVERY_WIFI_MAC_SIZE; index++)
+    {
+        if (mac[index] != 0U)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @brief 校验STA上报是否具有当前Node ID的MAC所有权。
+ *
+ * AP在线Peer已经绑定MAC时，拒绝其他MAC的上报。
+ * 蜂窝上报未提供MAC时，仅允许维持同一个Discovery Session。
+ *
+ * 调用方必须持有Discovery状态锁。
+ */
+static int _linkg_discovery_check_peer_mac_locked(linkg_link_access_t access, const linkg_discovery_peer_t *peer, const linkg_discovery_report_t *report)
+{
+    bool mac_valid;
+
+    if (g_discovery.local_report.node.role != LINKG_DEVICE_ROLE_AP)
+    {
+        return 0;
+    }
+
+    mac_valid = _linkg_discovery_wifi_mac_valid(report->wifi_mac);
+
+    if (access == LINKG_LINK_ACCESS_WIFI && !mac_valid)
+    {
+        return -EINVAL;
+    }
+
+    if (peer == NULL || !peer->online || !peer->wifi_mac_valid)
+    {
+        return 0;
+    }
+
+    if (mac_valid)
+    {
+        if (memcmp(peer->wifi_mac, report->wifi_mac, LINKG_DISCOVERY_WIFI_MAC_SIZE) != 0)
+        {
+            return -EADDRINUSE;
+        }
+
+        return 0;
+    }
+
+    if (report->session_id != peer->report.session_id)
+    {
+        return -EADDRINUSE;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 将有效Wi-Fi MAC绑定到当前Peer。
+ *
+ * 调用方必须持有Discovery状态锁。
+ */
+static void _linkg_discovery_bind_peer_wifi_mac_locked(linkg_discovery_peer_t *peer, const uint8_t mac[LINKG_DISCOVERY_WIFI_MAC_SIZE])
+{
+    if (peer == NULL || !_linkg_discovery_wifi_mac_valid(mac))
+    {
+        return;
+    }
+
+    memcpy(peer->wifi_mac, mac, LINKG_DISCOVERY_WIFI_MAC_SIZE);
+    peer->wifi_mac_valid = true;
+}
+
 /****************************** Peer事件 ******************************/
 
 /**
@@ -549,8 +635,8 @@ static int _linkg_discovery_restart_peer_locked(linkg_discovery_peer_t *peer, co
 /**
  * @brief 处理通过指定Discovery Access收到的直接Peer完整状态。
  *
- * 仅实际收到当前Report的Access刷新存活时间。
- * STALE Report不刷新任何存活状态。
+ * AP优先校验STA的MAC所有权，拒绝不同MAC抢占在线Peer。
+ * 仅接受的Report可以进入Session事件分类并刷新Access存活状态。
  *
  * 调用方必须持有Discovery状态锁。
  */
@@ -585,7 +671,14 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
         return ret;
     }
 
-    peer  = _linkg_discovery_find_peer_locked(report->node.node_id);
+    peer = _linkg_discovery_find_peer_locked(report->node.node_id);
+
+    ret = _linkg_discovery_check_peer_mac_locked(access, peer, report);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     event = _linkg_discovery_classify_peer_report(peer, report);
 
     switch (event)
@@ -600,7 +693,6 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
                 }
             }
 
-            /* 注册函数会覆盖Report，需预先保存离线Tombstone的旧Session ID。 */
             old_session_id = peer->used ? peer->report.session_id : 0U;
 
             ret = _linkg_discovery_register_peer_locked(peer, access, report);
@@ -614,9 +706,15 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
                 peer->previous_session_id = old_session_id;
             }
 
+            memset(peer->wifi_mac, 0, sizeof(peer->wifi_mac));
+            peer->wifi_mac_valid = false;
+
+            _linkg_discovery_bind_peer_wifi_mac_locked(peer, report->wifi_mac);
+
             peer->session_closed = false;
             _linkg_discovery_clear_peer_liveness_locked(peer);
             _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
+
             return 0;
 
         case LINKG_DISCOVERY_PEER_EVENT_REFRESH:
@@ -626,6 +724,7 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
                 return ret;
             }
 
+            _linkg_discovery_bind_peer_wifi_mac_locked(peer, report->wifi_mac);
             _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
 
             return 0;
@@ -637,6 +736,7 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
                 return ret;
             }
 
+            _linkg_discovery_bind_peer_wifi_mac_locked(peer, report->wifi_mac);
             _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
 
             return 0;
@@ -648,13 +748,14 @@ int _linkg_discovery_handle_peer_report_locked(linkg_link_access_t access, const
                 return ret;
             }
 
+            _linkg_discovery_bind_peer_wifi_mac_locked(peer, report->wifi_mac);
+
             _linkg_discovery_clear_peer_liveness_locked(peer);
             _linkg_discovery_mark_liveness_seen_locked(peer, access_index, now_us);
 
             ret = _linkg_discovery_refresh_peer_locked(peer, access, report);
             if (ret == -EBUSY)
             {
-                /* 本轮运行资源暂不可用，后续同版本Report可重试。 */
                 return 0;
             }
 

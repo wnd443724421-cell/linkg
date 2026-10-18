@@ -53,14 +53,16 @@ typedef struct
 
 typedef struct
 {
-    bool                       used;                          // Peer状态槽位是否已使用
-    bool                       online;                        // Peer当前是否在线
-    bool                       session_closed;                // 当前Discovery Session是否已经主动结束
-    bool                       route_cleanup_pending;         // Peer虚拟路由是否等待继续清理
-    linkg_discovery_report_t   report;                        // 最近接受的完整Peer状态
-    linkg_discovery_liveness_t liveness[LINKG_NODE_PATH_MAX]; // 各物理Access存活状态
-    uint64_t                   previous_session_id;           // 上一次已被替代的Discovery Session ID
-    uint64_t                   offline_since_us;              // Peer进入离线状态时间
+    bool                       used;                                    // Peer状态槽位是否已使用
+    bool                       online;                                  // Peer当前是否在线
+    bool                       session_closed;                          // 当前Discovery Session是否已经主动结束
+    bool                       route_cleanup_pending;                   // Peer虚拟路由是否等待继续清理
+    linkg_discovery_report_t   report;                                  // 最近接受的完整Peer状态
+    linkg_discovery_liveness_t liveness[LINKG_NODE_PATH_MAX];           // 各物理Access存活状态
+    uint64_t                   previous_session_id;                     // 上一次已被替代的Discovery Session ID
+    uint64_t                   offline_since_us;                        // Peer进入离线状态时间
+    uint8_t                    wifi_mac[LINKG_DISCOVERY_WIFI_MAC_SIZE]; // 已绑定的STA Wi-Fi MAC
+    bool                       wifi_mac_valid;                          // 是否存在有效MAC绑定
 } linkg_discovery_peer_t;
 
 /****************************** Channel状态 ******************************/

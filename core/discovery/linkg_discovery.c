@@ -867,6 +867,98 @@ out:
     return ret;
 }
 
+
+/**
+ * @brief 查询Wi-Fi RX当前允许接收的直接Peer MAC。
+ *
+ * AP接收STA数据时必须匹配Peer已经绑定的Wi-Fi MAC。
+ * STA接收AP数据时仅确认直接AP Peer在线，暂不强制比较MAC。
+ *
+ * 本函数只读取Discovery状态，不修改Peer生命周期或存活时间。
+ */
+int linkg_discovery_wifi_rx_get_authorized_mac(uint8_t node_id, uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH], bool *require_mac)
+{
+    const linkg_discovery_peer_t *peer;
+    uint32_t                      index;
+    int                           unlock_ret;
+    int                           ret;
+
+    if (mac == NULL || require_mac == NULL ||
+        node_id < LINKG_RESOURCE_NODE_ID_MIN ||
+        node_id > LINKG_RESOURCE_NODE_ID_MAX)
+    {
+        return -EINVAL;
+    }
+
+    memset(mac, 0, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+    *require_mac = false;
+
+    if (!g_discovery.initialized)
+    {
+        return -ENODEV;
+    }
+
+    ret = pthread_mutex_lock(&g_discovery.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    ret = -ENOENT;
+
+    if (!g_discovery.running)
+    {
+        ret = -ESHUTDOWN;
+        goto out;
+    }
+
+    for (index = 0U; index < LINKG_NODE_PEER_MAX; index++)
+    {
+        peer = &g_discovery.peers[index];
+
+        if (!peer->used || !peer->online || peer->session_closed)
+        {
+            continue;
+        }
+
+        if (peer->report.node.node_id != node_id)
+        {
+            continue;
+        }
+
+        ret = -EACCES;
+
+        if (g_discovery.local_report.node.role == LINKG_DEVICE_ROLE_AP)
+        {
+            if (peer->report.node.role != LINKG_DEVICE_ROLE_STA ||
+                !peer->wifi_mac_valid)
+            {
+                break;
+            }
+
+            memcpy(mac, peer->wifi_mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+            *require_mac = true;
+            ret = 0;
+        }
+        else if (g_discovery.local_report.node.role == LINKG_DEVICE_ROLE_STA &&
+                 peer->report.node.role == LINKG_DEVICE_ROLE_AP)
+        {
+            ret = 0;
+        }
+
+        break;
+    }
+
+out:
+    unlock_ret = pthread_mutex_unlock(&g_discovery.lock);
+    if (unlock_ret != 0 && ret == 0)
+    {
+        ret = -unlock_ret;
+    }
+
+    return ret;
+}
+
 /**
  * @brief 获取STA当前已知在线组网节点总数。
  *

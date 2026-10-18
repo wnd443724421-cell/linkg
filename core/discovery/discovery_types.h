@@ -20,18 +20,20 @@ extern "C" {
 
 #define LINKG_DISCOVERY_PATH_WIFI_VALID     (1U << 0) // Wi-Fi Endpoint有效
 #define LINKG_DISCOVERY_PATH_CELLULAR_VALID (1U << 1) // Cellular Endpoint有效
+#define LINKG_DISCOVERY_WIFI_MAC_SIZE        6U       // Wi-Fi MAC地址长度
 #define LINKG_DISCOVERY_PATH_VALID_MASK     (LINKG_DISCOVERY_PATH_WIFI_VALID | LINKG_DISCOVERY_PATH_CELLULAR_VALID) // 有效路径标志掩码
 
 /****************************** 设备状态 ******************************/
 
 typedef struct
 {
-    uint64_t              session_id;        // 当前Discovery运行会话
-    uint64_t              revision;          // 当前设备状态版本
-    linkg_node_info_t     node;              // 节点逻辑身份
-    linkg_path_endpoint_t wifi_endpoint;     // Wi-Fi数据面Endpoint
-    linkg_path_endpoint_t cellular_endpoint; // Cellular数据面Endpoint
-    uint8_t               path_flags;        // 当前有效Path标志
+    uint64_t              session_id;                            // 当前Discovery运行会话
+    uint64_t              revision;                              // 当前设备状态版本
+    linkg_node_info_t     node;                                  // 节点逻辑身份
+    linkg_path_endpoint_t wifi_endpoint;                         // Wi-Fi数据面Endpoint
+    linkg_path_endpoint_t cellular_endpoint;                     // Cellular数据面Endpoint
+    uint8_t               path_flags;                            // 当前有效Path标志
+    uint8_t               wifi_mac[LINKG_DISCOVERY_WIFI_MAC_SIZE]; // STA的Wi-Fi MAC身份
 } linkg_discovery_report_t;
 
 /****************************** AP同步 ******************************/

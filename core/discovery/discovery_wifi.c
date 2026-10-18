@@ -549,7 +549,7 @@ static int _linkg_discovery_wifi_send_ap_sync(uint64_t now_us, bool broadcast_du
     return first_error;
 }
 
-/** @brief STA向已知AP单播当前完整Report。 */
+/** @brief STA向已知AP单播当前完整Report，并携带本机Wi-Fi MAC。 */
 static int _linkg_discovery_wifi_send_sta_report(void)
 {
     uint8_t                  buffer[LINKG_DISCOVERY_WIRE_STA_REPORT_SIZE];
@@ -573,6 +573,12 @@ static int _linkg_discovery_wifi_send_sta_report(void)
     memset(buffer, 0, sizeof(buffer));
 
     ret = linkg_discovery_channel_get_local_report(&report);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_network_interface_get_mac(LINKG_RESOURCE_INTERFACE_WIFI, report.wifi_mac);
     if (ret != 0)
     {
         return ret;

@@ -397,10 +397,13 @@ int linkg_discovery_wire_decode_header(const uint8_t *buffer, uint32_t length, l
 
 /**
  * @brief 编码完整STA状态上报报文。
+ *
+ * 原有57B Report后追加6B Wi-Fi MAC。
  */
 int linkg_discovery_wire_encode_sta_report(const linkg_discovery_report_t *report, uint8_t *buffer, uint32_t capacity, uint32_t *length)
 {
     linkg_discovery_wire_header_t header;
+    uint32_t                      mac_offset;
     int                           ret;
 
     if (report == NULL || buffer == NULL || length == NULL)
@@ -420,7 +423,7 @@ int linkg_discovery_wire_encode_sta_report(const linkg_discovery_report_t *repor
     header.magic          = LINKG_DISCOVERY_WIRE_MAGIC;
     header.version        = LINKG_DISCOVERY_WIRE_VERSION;
     header.type           = LINKG_DISCOVERY_MESSAGE_STA_REPORT;
-    header.payload_length = LINKG_DISCOVERY_WIRE_REPORT_SIZE;
+    header.payload_length = LINKG_DISCOVERY_WIRE_REPORT_SIZE + LINKG_DISCOVERY_WIFI_MAC_SIZE;
 
     ret = linkg_discovery_wire_encode_header(&header, buffer, capacity);
     if (ret != 0)
@@ -434,6 +437,10 @@ int linkg_discovery_wire_encode_sta_report(const linkg_discovery_report_t *repor
         return ret;
     }
 
+    mac_offset = LINKG_DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_REPORT_SIZE;
+
+    memcpy(&buffer[mac_offset], report->wifi_mac, LINKG_DISCOVERY_WIFI_MAC_SIZE);
+
     *length = LINKG_DISCOVERY_WIRE_STA_REPORT_SIZE;
 
     return 0;
@@ -441,11 +448,14 @@ int linkg_discovery_wire_encode_sta_report(const linkg_discovery_report_t *repor
 
 /**
  * @brief 解码完整STA状态上报报文。
+ *
+ * 先解码原有57B Report，再读取追加的6B Wi-Fi MAC。
  */
 int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t length, linkg_discovery_report_t *report)
 {
     linkg_discovery_wire_header_t header;
     uint32_t                      expected_length;
+    uint32_t                      mac_offset;
     int                           ret;
 
     if (buffer == NULL || report == NULL)
@@ -464,13 +474,14 @@ int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t lengt
         return ret;
     }
 
-    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC || header.version != LINKG_DISCOVERY_WIRE_VERSION ||
+    if (header.magic != LINKG_DISCOVERY_WIRE_MAGIC ||
+        header.version != LINKG_DISCOVERY_WIRE_VERSION ||
         header.type != LINKG_DISCOVERY_MESSAGE_STA_REPORT)
     {
         return -EPROTO;
     }
 
-    if (header.payload_length != LINKG_DISCOVERY_WIRE_REPORT_SIZE)
+    if (header.payload_length != LINKG_DISCOVERY_WIRE_REPORT_SIZE + LINKG_DISCOVERY_WIFI_MAC_SIZE)
     {
         return -EMSGSIZE;
     }
@@ -482,7 +493,17 @@ int linkg_discovery_wire_decode_sta_report(const uint8_t *buffer, uint32_t lengt
         return -EMSGSIZE;
     }
 
-    return linkg_discovery_wire_decode_report(&buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE], header.payload_length, report);
+    ret = linkg_discovery_wire_decode_report(&buffer[LINKG_DISCOVERY_WIRE_HEADER_SIZE], LINKG_DISCOVERY_WIRE_REPORT_SIZE, report);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    mac_offset = LINKG_DISCOVERY_WIRE_HEADER_SIZE + LINKG_DISCOVERY_WIRE_REPORT_SIZE;
+
+    memcpy(report->wifi_mac, &buffer[mac_offset], LINKG_DISCOVERY_WIFI_MAC_SIZE);
+
+    return 0;
 }
 
 /****************************** AP同步报文 ******************************/

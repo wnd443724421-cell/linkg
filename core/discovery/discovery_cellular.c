@@ -516,6 +516,12 @@ static int _linkg_discovery_cellular_send_sta_report(void)
         return ret;
     }
 
+    ret = linkg_network_interface_get_mac(LINKG_RESOURCE_INTERFACE_WIFI, report.wifi_mac);
+    if (ret != 0)
+    {
+        memset(report.wifi_mac, 0, sizeof(report.wifi_mac));
+    }
+
     ret = linkg_discovery_wire_encode_sta_report(&report, buffer, sizeof(buffer), &length);
     if (ret != 0)
     {

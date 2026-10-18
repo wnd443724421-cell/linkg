@@ -30,7 +30,8 @@
 #include "wifi_tx_queue.h"
 #include "wifi_wire.h"
 #include "linkg_log.h"
-
+#include "linkg_network_ops.h"
+#include "linkg_system_resources.h"
 
 /****************************** 发送参数 ******************************/
 
@@ -118,27 +119,28 @@ typedef struct
  */
 struct linkg_wifi_tx
 {
-    pthread_mutex_t               lock;                                          // 三业务队列、流控检查、Sequence和发送调度串行锁
-    linkg_wifi_tx_scratch_t       scratch[LINKG_WIFI_TRAFFIC_COUNT];             // 三业务预分配Scratch
-    linkg_wifi_tx_queue_t        *queues[LINKG_WIFI_TRAFFIC_COUNT];              // 三业务等待FIFO
-    linkg_wifi_flowctrl_t        *flowctrl;                                      // Wi-Fi设备发送流控Gate
+    pthread_mutex_t               lock;                                               // 三业务队列、流控检查、Sequence和发送调度串行锁
+    linkg_wifi_tx_scratch_t       scratch[LINKG_WIFI_TRAFFIC_COUNT];                  // 三业务预分配Scratch
+    linkg_wifi_tx_queue_t        *queues[LINKG_WIFI_TRAFFIC_COUNT];                   // 三业务等待FIFO
+    linkg_wifi_flowctrl_t        *flowctrl;                                           // Wi-Fi设备发送流控Gate
     linkg_wifi_tx_peer_sequence_t peer_sequences[LINKG_WIFI_TRAFFIC_COUNT][LINKG_WIFI_NODE_SLOT_COUNT]; // 每个业务类别每个对端独立Wi-Fi Sequence
-    uint32_t                      session_id;                                    // 当前Wi-Fi TX实例全局会话ID
-    int                          *socket_fds;                                    // 借用Wi-Fi Link业务Socket数组
-    const uint16_t               *service_ports;                                 // 借用Wi-Fi Link业务端口数组
+    uint32_t                      session_id;                                         // 当前Wi-Fi TX实例全局会话ID
+    uint8_t                       source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH];       // 当前发送端wlan0 MAC
+    int                          *socket_fds;                                         // 借用Wi-Fi Link业务Socket数组
+    const uint16_t               *service_ports;                                      // 借用Wi-Fi Link业务端口数组
 
-    uint32_t                      capacity;                                      // 单次发送调度最大提交Packet数量
+    uint32_t                      capacity;                                           // 单次发送调度最大提交Packet数量
 
-    uint64_t                      dropped_total;                                 // 当前进程生命周期主动丢包总数
+    uint64_t                      dropped_total;                                      // 当前进程生命周期主动丢包总数
     uint64_t                      dropped_by_reason[LINKG_WIFI_TX_DROP_REASON_COUNT]; // 各主动丢包原因累计数量
-    uint64_t                      last_drop_log_us[LINKG_WIFI_TX_DROP_REASON_COUNT];   // 各主动丢包原因最近诊断日志时间
-    uint64_t                      flowctrl_blocked_since_us;                      // 当前Flowctrl连续阻塞起始时间
-    uint64_t                      last_flowctrl_log_us;                           // 最近一次Flowctrl阻塞日志时间
-    uint64_t                      socket_backpressure_count;                     // sendmmsg短时背压累计次数
-    uint64_t                      last_socket_backpressure_log_us;               // 最近一次Socket背压诊断日志时间
-    bool                          flowctrl_blocked;                               // 当前是否处于Flowctrl连续阻塞状态
+    uint64_t                      last_drop_log_us[LINKG_WIFI_TX_DROP_REASON_COUNT];  // 各主动丢包原因最近诊断日志时间
+    uint64_t                      flowctrl_blocked_since_us;                          // 当前Flowctrl连续阻塞起始时间
+    uint64_t                      last_flowctrl_log_us;                               // 最近一次Flowctrl阻塞日志时间
+    uint64_t                      socket_backpressure_count;                          // sendmmsg短时背压累计次数
+    uint64_t                      last_socket_backpressure_log_us;                    // 最近一次Socket背压诊断日志时间
+    bool                          flowctrl_blocked;                                   // 当前是否处于Flowctrl连续阻塞状态
 
-    _Atomic bool                  started;                                       // 发送模块运行状态
+    _Atomic bool                  started;                                            // 发送模块运行状态
 };
 
 /****************************** 会话标识 ******************************/
@@ -692,9 +694,13 @@ static int _linkg_wifi_tx_send_once_locked(linkg_wifi_tx_t *tx, linkg_wifi_traff
 
         reserved_counts[peer_node_id]++;
 
-        scratch->peer_states[index]         = peer_state;
+        scratch->peer_states[index]        = peer_state;
         scratch->headers[index].session_id = htonl(tx->session_id);
         scratch->headers[index].sequence   = htonl(sequence);
+        scratch->headers[index].version    = LINKG_WIFI_WIRE_VERSION;
+        scratch->headers[index].reserved   = 0U;
+
+        memcpy(scratch->headers[index].source_mac, tx->source_mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
 
         scratch->destinations[index]          = *target;
         scratch->destinations[index].sin_port = htons(tx->service_ports[traffic_class]);
@@ -1090,12 +1096,15 @@ void linkg_wifi_tx_destroy(linkg_wifi_tx_t *tx)
     free(tx);
 }
 
+
 /**
- * @brief 启动Wi-Fi发送模块。
+ * @brief 启动Wi-Fi发送模块，并读取本机Wi-Fi MAC。
  */
 int linkg_wifi_tx_start(linkg_wifi_tx_t *tx)
 {
+    uint8_t source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH];
     uint32_t index;
+    bool     nonzero;
     int      ret;
 
     if (tx == NULL)
@@ -1124,12 +1133,38 @@ int linkg_wifi_tx_start(linkg_wifi_tx_t *tx)
         }
     }
 
+    ret = linkg_network_interface_get_mac(LINKG_RESOURCE_INTERFACE_WIFI, source_mac);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&tx->lock);
+        return ret;
+    }
+
+    nonzero = false;
+
+    for (index = 0U; index < LINKG_NETWORK_MAC_ADDRESS_LENGTH; index++)
+    {
+        if (source_mac[index] != 0U)
+        {
+            nonzero = true;
+            break;
+        }
+    }
+
+    if (!nonzero || (source_mac[0] & 0x01U) != 0U)
+    {
+        pthread_mutex_unlock(&tx->lock);
+        return -EINVAL;
+    }
+
     ret = linkg_wifi_flowctrl_start(tx->flowctrl);
     if (ret != 0)
     {
         pthread_mutex_unlock(&tx->lock);
         return ret;
     }
+
+    memcpy(tx->source_mac, source_mac, sizeof(tx->source_mac));
 
     atomic_store(&tx->started, true);
 

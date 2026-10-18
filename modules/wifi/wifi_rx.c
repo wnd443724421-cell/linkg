@@ -32,6 +32,7 @@
 #include "wifi_rx_queue.h"
 #include "wifi_traffic.h"
 #include "wifi_wire.h"
+#include "linkg_discovery.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -49,6 +50,11 @@
 #define LINKG_WIFI_RX_RETRY_MS                  1U                                                                                   // Queue或Packet Pool暂不可用时重试间隔
 #define LINKG_WIFI_NODE_SLOT_COUNT              256U                                                                                 // uint8_t Node ID直接索引空间
 #define LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE      64U                                                                                  // Wi-Fi链路Sequence乱序窗口大小
+#define LINKG_WIFI_RX_MAC_CHECK_UNKNOWN         0U                                                                                   // 本批次尚未查询该Node
+#define LINKG_WIFI_RX_MAC_CHECK_ANY             1U                                                                                   // 已注册AP Peer，不强制比较MAC
+#define LINKG_WIFI_RX_MAC_CHECK_MATCH           2U                                                                                   // 必须匹配Discovery授权MAC
+#define LINKG_WIFI_RX_MAC_CHECK_DENY            3U                                                                                   // 当前Node不允许接收
+#define LINKG_WIFI_RX_MAC_LOG_INTERVAL_US       1000000ULL                                                                           // 非法来源日志间隔
 
 _Static_assert(LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE == 64U, "Wi-Fi RX sequence window must be 64");
 
@@ -67,20 +73,23 @@ typedef struct
     uint64_t received_packets;       // 当前业务类别累计唯一成功接收Wi-Fi Packet数量
     uint64_t confirmed_lost_packets; // 当前业务类别累计64窗口确认丢失Packet数量
     bool     initialized;            // 当前Session当前业务类别是否已经建立Sequence窗口
+    uint8_t  source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH]; // 当前已接受的发送端MAC
+    bool     source_mac_valid;                             // 是否已经建立来源MAC基线
 } linkg_wifi_rx_class_stats_t;
 
 /**
  * @brief 单个Wi-Fi对端接收Session与三业务累计统计状态。
  *
- * session_id由发送端Wi-Fi TX对象统一生成，三个业务类别共享同一Session生命周期。
- * Session切换时同时重建三业务Sequence窗口，但各业务累计received/lost统计不清零。
- * previous_session_id只用于丢弃上一代Session的迟到报文，避免Session回切。
+ * Session切换时重建三业务Sequence窗口，累计统计不清零。
+ * 来源MAC变化时清理旧Session，允许新合法Peer重新建立接收基线。
  */
 typedef struct
 {
     uint32_t                    session_id;                         // 当前对端Wi-Fi TX Session ID
     uint32_t                    previous_session_id;                // 上一个已经退役的Wi-Fi TX Session ID
     linkg_wifi_rx_class_stats_t classes[LINKG_WIFI_TRAFFIC_COUNT]; // 三业务独立Sequence窗口和累计统计
+    uint8_t                     source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH]; // 当前已接受的来源MAC
+    bool                        source_mac_valid;                   // 是否已经建立来源MAC基线
     bool                        initialized;                        // 当前节点是否已经建立Session
 } linkg_wifi_rx_peer_stats_t;
 
@@ -97,6 +106,9 @@ typedef struct
     uint8_t                    peer_node_ids[LINKG_WIFI_RX_BATCH_SIZE_MAX];  // 当前有效Packet对应Node ID
     struct mmsghdr             messages[LINKG_WIFI_RX_BATCH_SIZE_MAX];       // recvmmsg消息数组
     struct iovec               iovecs[LINKG_WIFI_RX_BATCH_SIZE_MAX][2];      // Wi-Fi头+Transport Packet双iovec
+    uint8_t                    mac_check_states[LINKG_WIFI_NODE_SLOT_COUNT]; // 按Node ID缓存本批次查询结果
+    uint8_t                    source_macs[LINKG_WIFI_RX_BATCH_SIZE_MAX][LINKG_NETWORK_MAC_ADDRESS_LENGTH];  // 已接收Packet的来源MAC
+    uint8_t                    authorized_macs[LINKG_WIFI_NODE_SLOT_COUNT][LINKG_NETWORK_MAC_ADDRESS_LENGTH];// 本批次授权MAC快照
 } linkg_wifi_rx_scratch_t;
 
 /**
@@ -124,6 +136,9 @@ struct linkg_wifi_rx
 
     _Atomic bool               started;                                      // 接收模块运行状态
     _Atomic bool               notify_pending;                               // Link RX通知周期是否已经激活
+
+    uint64_t rejected_source_count;                                          // MAC或Peer身份不匹配的累计丢包数
+    uint64_t last_reject_log_us;                                             // 最近一次非法来源日志时间
 };
 
 /****************************** 内部辅助 ******************************/
@@ -293,29 +308,40 @@ static void _linkg_wifi_rx_record_sequence_locked(linkg_wifi_rx_class_stats_t *c
     class_stats->received_packets++;
 }
 
+
 /**
- * @brief 更新指定Peer的Wi-Fi Session和Sequence接收状态。
+ * @brief 更新已经通过来源MAC校验的Wi-Fi Session和Sequence统计。
  *
- * 首次收到Peer报文时直接建立Session基线。同一Session按64位窗口统计。
- * 收到新的Session时将当前Session保存为previous_session_id并立即建立新窗口，
- * 不把旧窗口未确认缺口计为丢包。上一代Session的迟到报文直接拒绝。
+ * MAC变化表示Discovery已授权新的物理Peer，重新建立Wi-Fi
+ * Session与三业务Sequence窗口，但保持累计接收和丢包统计。
  *
- * @return true表示当前Packet属于有效当前Session，可继续向Transport交付；
- *         false表示属于上一代已经退役的Session，应在Wi-Fi RX层丢弃。
- *
- * @note 调用方必须持有rx->peer_stats_lock。
+ * 调用方必须持有rx->peer_stats_lock。
  */
-static bool _linkg_wifi_rx_record_wire_locked(linkg_wifi_rx_t *rx, uint8_t peer_node_id, linkg_wifi_traffic_class_t traffic_class, uint32_t session_id, uint32_t sequence)
+static bool _linkg_wifi_rx_record_wire_locked(linkg_wifi_rx_t *rx, uint8_t peer_node_id, linkg_wifi_traffic_class_t traffic_class, const uint8_t source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH], uint32_t session_id, uint32_t sequence)
 {
     linkg_wifi_rx_class_stats_t *class_stats;
     linkg_wifi_rx_peer_stats_t  *peer_stats;
 
-    if (traffic_class >= LINKG_WIFI_TRAFFIC_COUNT)
+    if (traffic_class >= LINKG_WIFI_TRAFFIC_COUNT || source_mac == NULL)
     {
         return false;
     }
 
-    peer_stats  = &rx->peer_stats[peer_node_id];
+    peer_stats = &rx->peer_stats[peer_node_id];
+
+    if (!peer_stats->source_mac_valid ||
+        memcmp(peer_stats->source_mac, source_mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH) != 0)
+    {
+        memcpy(peer_stats->source_mac, source_mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+
+        peer_stats->source_mac_valid    = true;
+        peer_stats->session_id          = 0U;
+        peer_stats->previous_session_id = 0U;
+        peer_stats->initialized         = false;
+
+        _linkg_wifi_rx_reset_peer_windows(peer_stats);
+    }
+
     class_stats = &peer_stats->classes[traffic_class];
 
     if (!peer_stats->initialized)
@@ -384,6 +410,118 @@ static int _linkg_wifi_rx_source_node_id(const struct sockaddr_in *source, uint8
     *peer_node_id = node_id;
 
     return 0;
+}
+
+
+/**
+ * @brief 校验本批次Packet来源是否属于Discovery认可的Peer。
+ *
+ * 每个Node ID在当前批次内最多查询一次Discovery。
+ * AP执行严格MAC匹配；STA接收AP时保留已有直接Peer准入语义。
+ *
+ * 本函数不持有peer_stats_lock。
+ */
+static bool _linkg_wifi_rx_source_mac_allowed(linkg_wifi_rx_scratch_t *scratch, uint8_t peer_node_id, const uint8_t source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
+{
+    uint8_t  state;
+    uint32_t index;
+    bool     require_mac;
+    bool     nonzero;
+    int      ret;
+
+    if (scratch == NULL || source_mac == NULL)
+    {
+        return false;
+    }
+
+    if ((source_mac[0] & 0x01U) != 0U)
+    {
+        return false;
+    }
+
+    nonzero = false;
+
+    for (index = 0U; index < LINKG_NETWORK_MAC_ADDRESS_LENGTH; index++)
+    {
+        if (source_mac[index] != 0U)
+        {
+            nonzero = true;
+            break;
+        }
+    }
+
+    if (!nonzero)
+    {
+        return false;
+    }
+
+    state = scratch->mac_check_states[peer_node_id];
+
+    if (state == LINKG_WIFI_RX_MAC_CHECK_UNKNOWN)
+    {
+        require_mac = false;
+
+        ret = linkg_discovery_wifi_rx_get_authorized_mac(peer_node_id,
+                                                          scratch->authorized_macs[peer_node_id],
+                                                          &require_mac);
+
+        if (ret != 0)
+        {
+            state = LINKG_WIFI_RX_MAC_CHECK_DENY;
+        }
+        else if (require_mac)
+        {
+            state = LINKG_WIFI_RX_MAC_CHECK_MATCH;
+        }
+        else
+        {
+            state = LINKG_WIFI_RX_MAC_CHECK_ANY;
+        }
+
+        scratch->mac_check_states[peer_node_id] = state;
+    }
+
+    if (state == LINKG_WIFI_RX_MAC_CHECK_ANY)
+    {
+        return true;
+    }
+
+    if (state == LINKG_WIFI_RX_MAC_CHECK_MATCH)
+    {
+        return memcmp(scratch->authorized_macs[peer_node_id],
+                      source_mac,
+                      LINKG_NETWORK_MAC_ADDRESS_LENGTH) == 0;
+    }
+
+    return false;
+}
+
+
+/**
+ * @brief 记录非法Wi-Fi来源，限制高频冲突场景的日志开销。
+ */
+static void _linkg_wifi_rx_record_source_rejected(linkg_wifi_rx_t *rx, uint8_t peer_node_id, const uint8_t source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
+{
+    uint64_t now_us;
+
+    rx->rejected_source_count++;
+
+    now_us = linkg_time_monotonic_us();
+
+    if (rx->last_reject_log_us != 0U &&
+        now_us >= rx->last_reject_log_us &&
+        now_us - rx->last_reject_log_us < LINKG_WIFI_RX_MAC_LOG_INTERVAL_US)
+    {
+        return;
+    }
+
+    rx->last_reject_log_us = now_us;
+
+    WIFI_WARN("RX非法来源, node=%u mac=%02X:%02X:%02X:%02X:%02X:%02X rejected=%llu",
+              (unsigned int)peer_node_id,
+              source_mac[0], source_mac[1], source_mac[2],
+              source_mac[3], source_mac[4], source_mac[5],
+              (unsigned long long)rx->rejected_source_count);
 }
 
 /**
@@ -714,6 +852,8 @@ static int _linkg_wifi_rx_receive_once(linkg_wifi_rx_t *rx, linkg_wifi_traffic_c
     received_count = (uint32_t)ret;
     valid_count    = 0U;
 
+    memset(scratch->mac_check_states, LINKG_WIFI_RX_MAC_CHECK_UNKNOWN, sizeof(scratch->mac_check_states));
+
     for (index = 0U; index < received_count; index++)
     {
         packet = scratch->packets[index];
@@ -758,6 +898,23 @@ static int _linkg_wifi_rx_receive_once(linkg_wifi_rx_t *rx, linkg_wifi_traffic_c
             continue;
         }
 
+        if (scratch->headers[index].version != LINKG_WIFI_WIRE_VERSION ||
+            scratch->headers[index].reserved != 0U)
+        {
+            linkg_packet_release(packet);
+            scratch->packets[index] = NULL;
+            continue;
+        }
+
+        if (!_linkg_wifi_rx_source_mac_allowed(scratch, peer_node_id, scratch->headers[index].source_mac))
+        {
+            _linkg_wifi_rx_record_source_rejected(rx, peer_node_id, scratch->headers[index].source_mac);
+
+            linkg_packet_release(packet);
+            scratch->packets[index] = NULL;
+            continue;
+        }
+
         session_id = ntohl(scratch->headers[index].session_id);
         sequence   = ntohl(scratch->headers[index].sequence);
 
@@ -782,6 +939,8 @@ static int _linkg_wifi_rx_receive_once(linkg_wifi_rx_t *rx, linkg_wifi_traffic_c
         scratch->peer_node_ids[valid_count] = peer_node_id;
         scratch->session_ids[valid_count]   = session_id;
         scratch->sequences[valid_count]     = sequence;
+
+        memcpy(scratch->source_macs[valid_count], scratch->headers[index].source_mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
 
         scratch->packets[index] = NULL;
         valid_count++;
@@ -827,6 +986,7 @@ static int _linkg_wifi_rx_receive_once(linkg_wifi_rx_t *rx, linkg_wifi_traffic_c
         if (!_linkg_wifi_rx_record_wire_locked(rx,
                                                scratch->peer_node_ids[index],
                                                traffic_class,
+                                               scratch->source_macs[index],
                                                scratch->session_ids[index],
                                                scratch->sequences[index]))
         {
