@@ -43,30 +43,30 @@ typedef struct
 
 typedef struct
 {
-    linkg_device_role_t      mode;                            // 当前Wi-Fi角色模式
+    linkg_device_role_t      mode;                           // 当前Wi-Fi角色模式
     char                     ssid[LINKG_WIFI_SSID_MAX + 1U]; // 当前Wi-Fi SSID
-    linkg_wifi_work_mode_t   work_mode;                       // 当前宽窄带工作模式
-    linkg_wifi_narrow_mode_t narrow_mode;                     // 当前窄带速率控制模式
-    uint16_t                 rate_level;                      // 当前固定窄带速率档位
-    uint16_t                 bandwidth_mhz;                   // 当前宽带带宽
-    uint16_t                 channel;                         // 当前工作信道
-    int32_t                  noise_dbm;                       // 当前工作信道噪声
-    bool                     noise_valid;                     // 当前噪声是否有效
-    int32_t                  snr_db;                          // 当前STA接收AP的信噪比
-    bool                     snr_valid;                       // 当前STA信噪比是否有效
+    linkg_wifi_work_mode_t   work_mode;                      // 当前宽窄带工作模式
+    linkg_wifi_narrow_mode_t narrow_mode;                    // 当前窄带速率控制模式
+    uint16_t                 rate_level;                     // 当前固定窄带速率档位
+    uint16_t                 bandwidth_mhz;                  // 当前宽带带宽
+    uint16_t                 channel;                        // 当前工作信道
+    int32_t                  noise_dbm;                      // 当前工作信道噪声
+    bool                     noise_valid;                    // 当前噪声是否有效
+    int32_t                  snr_db;                         // 当前STA接收AP的信噪比
+    bool                     snr_valid;                      // 当前STA信噪比是否有效
 } linkg_web_overview_wifi_info_t;
 
 typedef struct
 {
-    bool                          available;                                                              // 当前蜂窝状态快照是否可用
-    bool                          rsrp_valid;                                                             // 当前RSRP是否有效
-    int32_t                       rsrp_dbm;                                                               // 当前RSRP
-    bool                          plmn_valid;                                                             // 当前PLMN是否有效
+    bool                          available;                                                                // 当前蜂窝状态快照是否可用
+    bool                          rsrp_valid;                                                               // 当前RSRP是否有效
+    int32_t                       rsrp_dbm;                                                                 // 当前RSRP
+    bool                          plmn_valid;                                                               // 当前PLMN是否有效
     char                          plmn[LINKG_CELLULAR_MCC_MAX_LENGTH + LINKG_CELLULAR_MNC_MAX_LENGTH + 1U]; // 当前PLMN
-    linkg_cellular_network_type_t network_type;                                                           // 当前实际网络类型
-    bool                          ipv6_valid;                                                             // 当前全局IPv6是否有效
-    char                          ipv6[INET6_ADDRSTRLEN];                                                 // 当前Host全局IPv6
-    bool                          internet_available;                                                     // 当前公网是否验证可用
+    linkg_cellular_network_type_t network_type;                                                             // 当前实际网络类型
+    bool                          ipv6_valid;                                                               // 当前全局IPv6是否有效
+    char                          ipv6[INET6_ADDRSTRLEN];                                                   // 当前Host全局IPv6
+    bool                          internet_available;                                                       // 当前公网是否验证可用
 } linkg_web_overview_cellular_info_t;
 
 typedef enum
@@ -82,13 +82,13 @@ typedef struct
     linkg_device_role_t                role;                // 节点角色
     linkg_web_overview_node_relation_t relation;            // 节点关系
     struct in_addr                     virtual_ip;          // 节点虚拟IPv4地址
-    linkg_send_mode_t                  send_mode;           // 当前发送模式
-    linkg_link_access_t                primary_access;      // 当前主链路
+    linkg_send_plan_t                  plan;                // 直接Peer三类业务的完整发送计划快照
+    bool                               plan_valid;          // 是否成功获取当前发送计划
     bool                               wifi_path_valid;     // 当前Wi-Fi Path是否有效
     bool                               cellular_path_valid; // 当前Cellular Path是否有效
     bool                               traffic_valid;       // 当前Transport统计是否有效
-    uint64_t                           tx_bytes;             // 累计用户业务发送字节
-    uint64_t                           rx_bytes;             // 累计用户业务接收字节
+    uint64_t                           tx_bytes;            // 累计用户业务发送字节
+    uint64_t                           rx_bytes;            // 累计用户业务接收字节
 } linkg_web_overview_node_info_t;
 
 typedef struct
@@ -286,7 +286,7 @@ static linkg_link_access_t _linkg_web_overview_link_id_access(uint32_t link_id)
         return LINKG_LINK_ACCESS_NONE;
     }
 
-    wifi_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    wifi_link_id     = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
     cellular_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
 
     if (wifi_link_id != LINKG_LINK_ID_INVALID && link_id == wifi_link_id)
@@ -346,12 +346,11 @@ static int _linkg_web_overview_get_path_available(uint8_t node_id, linkg_link_ac
 }
 
 /**
- * @brief 获取直接Peer当前业务运行信息。
+ * @brief 获取直接Peer完整业务计划及全部业务流量信息。
  */
 static int _linkg_web_overview_get_direct_node_runtime(linkg_web_overview_node_info_t *info)
 {
     linkg_transport_peer_stats_t stats;
-    linkg_send_plan_t            plan;
     uint32_t                     class_index;
     int                          ret;
 
@@ -360,19 +359,18 @@ static int _linkg_web_overview_get_direct_node_runtime(linkg_web_overview_node_i
         return -EINVAL;
     }
 
-    info->send_mode           = LINKG_SEND_MODE_NONE;
-    info->primary_access      = LINKG_LINK_ACCESS_NONE;
+    memset(&info->plan, 0, sizeof(info->plan));
+    info->plan_valid          = false;
     info->wifi_path_valid     = false;
     info->cellular_path_valid = false;
     info->traffic_valid       = false;
     info->tx_bytes            = 0U;
     info->rx_bytes            = 0U;
 
-    ret = linkg_switch_get_plan(info->node_id, &plan);
+    ret = linkg_switch_get_plan(info->node_id, &info->plan);
     if (ret == 0)
     {
-        info->send_mode      = plan.mode;
-        info->primary_access = _linkg_web_overview_link_id_access(plan.primary_link_id);
+        info->plan_valid = true;
     }
     else if (ret != -ENOENT)
     {
@@ -908,7 +906,7 @@ static int _linkg_web_overview_build_wifi_json(const linkg_web_overview_wifi_inf
 
     *out = NULL;
 
-    mode = _linkg_web_overview_role_string(info->mode);
+    mode      = _linkg_web_overview_role_string(info->mode);
     work_mode = _linkg_web_overview_wifi_work_mode_string(info->work_mode);
 
     if (mode == NULL || work_mode == NULL)
@@ -1092,6 +1090,110 @@ static int _linkg_web_overview_build_cellular_json(const linkg_web_overview_cell
 }
 
 /**
+ * @brief 向概览计划写入单类业务的模式和主备接入摘要。
+ */
+static int _linkg_web_overview_add_class_plan_json(cJSON *classes, const char *name, const linkg_class_send_plan_t *plan)
+{
+    const char *mode;
+    cJSON      *current;
+    int         ret;
+
+    mode = _linkg_web_overview_send_mode_string(plan->mode);
+    if (mode == NULL)
+    {
+        return LINKG_JSON_ERR_PARAM;
+    }
+
+    current = cJSON_CreateObject();
+    if (current == NULL)
+    {
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    ret = linkg_json_add_string(current, "mode", mode);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_string(current, "primary_link", _linkg_web_overview_access_string(_linkg_web_overview_link_id_access(plan->primary_link_id)));
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_string(current, "secondary_link", _linkg_web_overview_access_string(_linkg_web_overview_link_id_access(plan->secondary_link_id)));
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_object(classes, name, current);
+    if (ret == LINKG_JSON_OK)
+    {
+        return LINKG_JSON_OK;
+    }
+
+error:
+    cJSON_Delete(current);
+    return ret;
+}
+
+/**
+ * @brief 向概览节点写入三类业务的完整计划摘要。
+ */
+static int _linkg_web_overview_add_plan_json(cJSON *node, const linkg_web_overview_node_info_t *info)
+{
+    static const char *const class_names[LINKG_TRANSPORT_CLASS_COUNT] = {"realtime", "video", "data"}; // 固定业务顺序
+    cJSON   *plan;
+    cJSON   *classes;
+    uint32_t class_index;
+    int      ret;
+
+    plan    = cJSON_CreateObject();
+    classes = cJSON_CreateObject();
+    if (plan == NULL || classes == NULL)
+    {
+        cJSON_Delete(plan);
+        cJSON_Delete(classes);
+        return LINKG_JSON_ERR_MEMORY;
+    }
+
+    ret = linkg_json_add_bool(plan, "valid", info->plan_valid);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        ret = _linkg_web_overview_add_class_plan_json(classes, class_names[class_index], &info->plan.classes[class_index]);
+        if (ret != LINKG_JSON_OK)
+        {
+            goto error;
+        }
+    }
+
+    ret = linkg_json_add_object(plan, "classes", classes);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    classes = NULL;
+    ret     = linkg_json_add_object(node, "plan", plan);
+    if (ret == LINKG_JSON_OK)
+    {
+        return LINKG_JSON_OK;
+    }
+
+error:
+    cJSON_Delete(classes);
+    cJSON_Delete(plan);
+    return ret;
+}
+
+/**
  * @brief 构造单个组网节点JSON对象。
  */
 static int _linkg_web_overview_build_node_json(const linkg_web_overview_node_info_t *info, cJSON **out)
@@ -1112,7 +1214,7 @@ static int _linkg_web_overview_build_node_json(const linkg_web_overview_node_inf
 
     *out = NULL;
 
-    role = _linkg_web_overview_role_string(info->role);
+    role     = _linkg_web_overview_role_string(info->role);
     relation = _linkg_web_overview_node_relation_string(info->relation);
 
     if (role == NULL || relation == NULL)
@@ -1157,8 +1259,9 @@ static int _linkg_web_overview_build_node_json(const linkg_web_overview_node_inf
 
     if (info->relation == LINKG_WEB_OVERVIEW_NODE_RELATION_DIRECT)
     {
-        send_mode = _linkg_web_overview_send_mode_string(info->send_mode);
-        primary_link = _linkg_web_overview_access_string(info->primary_access);
+        // 保留旧实时业务摘要字段，页面改用plan展示三类业务。
+        send_mode    = _linkg_web_overview_send_mode_string(info->plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].mode);
+        primary_link = _linkg_web_overview_access_string(_linkg_web_overview_link_id_access(info->plan.classes[LINKG_TRANSPORT_CLASS_REALTIME].primary_link_id));
 
         if (send_mode == NULL)
         {
@@ -1173,6 +1276,12 @@ static int _linkg_web_overview_build_node_json(const linkg_web_overview_node_inf
         }
 
         ret = linkg_json_add_string(node, "primary_link", primary_link);
+        if (ret != LINKG_JSON_OK)
+        {
+            goto error;
+        }
+
+        ret = _linkg_web_overview_add_plan_json(node, info);
         if (ret != LINKG_JSON_OK)
         {
             goto error;
