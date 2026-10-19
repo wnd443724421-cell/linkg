@@ -40,6 +40,9 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/output/lib/${ARCHITECTUR
 
 find_package(Threads REQUIRED)
 
+# Supervisor保持独立目标；产品构建不包含缩短超时的测试版本。
+add_subdirectory(supervisor)
+
 # /****************************** 头文件目录 ******************************/
 
 set(LINKG_INCLUDE_ROOTS

@@ -21,13 +21,13 @@
 
 /****************************** 上传配置 ******************************/
 
-#define LINKG_UPLOAD_UPGRADE_PATH       "/tmp/upgrade.tar.gz"     // 固件升级包暂存路径
-#define LINKG_UPLOAD_CONFIG_PATH        "/tmp/config_import.json" // 配置导入文件暂存路径
+#define LINKG_UPLOAD_UPGRADE_PATH       "/tmp/upgrade.tar.gz"       // 固件升级包暂存路径
+#define LINKG_UPLOAD_CONFIG_PATH        "/tmp/config_import.json"   // 配置导入文件暂存路径
 #define LINKG_UPLOAD_TEMP_TEMPLATE      "/tmp/.linkg-upload.XXXXXX" // 同目录原子替换临时文件
-#define LINKG_UPLOAD_LOCK_PATH          "/tmp/.linkg-upload.lock" // 并发上传互斥文件
-#define LINKG_UPLOAD_UPGRADE_MAX_SIZE   (64U * 1024U * 1024U)    // 升级包大小上限
-#define LINKG_UPLOAD_CONFIG_MAX_SIZE    (1U * 1024U * 1024U)     // 配置文件大小上限
-#define LINKG_UPLOAD_CHUNK_SIZE         (8U * 1024U)             // 流式传输缓冲区
+#define LINKG_UPLOAD_LOCK_PATH          "/tmp/.linkg-upload.lock"   // 并发上传互斥文件
+#define LINKG_UPLOAD_UPGRADE_MAX_SIZE   (64U * 1024U * 1024U)       // 升级包大小上限
+#define LINKG_UPLOAD_CONFIG_MAX_SIZE    (1U * 1024U * 1024U)        // 配置文件大小上限
+#define LINKG_UPLOAD_CHUNK_SIZE         (8U * 1024U)                // 流式传输缓冲区
 
 /****************************** 响应工具 ******************************/
 

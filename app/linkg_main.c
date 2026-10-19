@@ -30,6 +30,7 @@
 #include "linkg_route.h"
 #include "linkg_scheduler.h"
 #include "linkg_switch.h"
+#include "linkg_supervisor_client.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
 #include "linkg_transport.h"
@@ -1090,10 +1091,20 @@ int main(void)
         return EXIT_FAILURE;
     }
 
+    ret = linkg_supervisor_client_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("supervisor client initialization failed, error=%d", ret);
+        linkg_lifecycle_deinit();
+        linkg_log_deinit();
+        return EXIT_FAILURE;
+    }
+
     ret = linkg_device_info_init();
     if (ret != 0)
     {
         LINKG_LOG_ERROR("device information initialization failed, error=%d", ret);
+        linkg_supervisor_client_deinit();
         linkg_lifecycle_deinit();
         linkg_log_deinit();
         return EXIT_FAILURE;
@@ -1135,6 +1146,17 @@ int main(void)
 
         if (shutdown_ret == 0)
         {
+            ret = linkg_supervisor_client_ready();
+            if (ret != 0)
+            {
+                LINKG_LOG_ERROR("supervisor READY notification failed, error=%d", ret);
+                shutdown_ret = ret;
+                action       = LINKG_EXIT_ACTION_EXIT;
+            }
+        }
+
+        if (shutdown_ret == 0)
+        {
             LINKG_LOG_INFO("LinkG application ready");
 
             action = linkg_lifecycle_wait_for_exit();
@@ -1143,6 +1165,23 @@ int main(void)
         }
 
         /****************************** CLEANUP ******************************/
+
+        if (shutdown_ret == 0 && action == LINKG_EXIT_ACTION_RESTART_SERVICES)
+        {
+            ret = linkg_supervisor_client_restarting();
+            if (ret != 0)
+            {
+                LINKG_LOG_ERROR("supervisor RESTARTING notification failed, error=%d", ret);
+                shutdown_ret = ret;
+                action       = LINKG_EXIT_ACTION_EXIT;
+            }
+        }
+
+        if (shutdown_ret != 0 || action != LINKG_EXIT_ACTION_RESTART_SERVICES)
+        {
+            // 关闭通知通道，Supervisor等待有上限的正常清理，不误用4秒RUN期限。
+            linkg_supervisor_client_deinit();
+        }
 
         cleanup_ret = _linkg_app_cleanup();
         if (cleanup_ret != 0)
@@ -1178,6 +1217,8 @@ int main(void)
 
         LINKG_LOG_INFO("reloading configuration and restarting services");
     }
+
+    linkg_supervisor_client_deinit();
 
     ret = _linkg_app_execute_exit_action(action);
 
