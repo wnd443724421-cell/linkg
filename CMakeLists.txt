@@ -139,6 +139,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Threads::Threads
     m
     rt
+    crypt
 )
 
 # /****************************** 编译选项 ******************************/

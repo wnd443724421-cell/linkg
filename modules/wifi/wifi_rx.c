@@ -73,8 +73,6 @@ typedef struct
     uint64_t received_packets;       // 当前业务类别累计唯一成功接收Wi-Fi Packet数量
     uint64_t confirmed_lost_packets; // 当前业务类别累计64窗口确认丢失Packet数量
     bool     initialized;            // 当前Session当前业务类别是否已经建立Sequence窗口
-    uint8_t  source_mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH]; // 当前已接受的发送端MAC
-    bool     source_mac_valid;                             // 是否已经建立来源MAC基线
 } linkg_wifi_rx_class_stats_t;
 
 /**

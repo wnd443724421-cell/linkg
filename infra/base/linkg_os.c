@@ -24,6 +24,9 @@
 #include <pthread.h>
 #include <string.h>
 #include <time.h>
+#include <crypt.h>
+#include <pwd.h>
+#include <shadow.h>
 
 #include "linkg_log.h"
 #include "linkg_time.h"
@@ -535,6 +538,80 @@ int  linkg_os_shellf(const char *format, ...)
 
 /****************************** 系统管理 ******************************/
 
+
+/**
+ * @brief 判断Linux账户当前密码是否与指定密码一致。
+ *
+ * 优先读取Shadow密码数据库；不存在Shadow记录时兼容Passwd数据库。
+ * 使用已保存的盐值重新计算哈希，不修改任何密码文件。
+ *
+ * 返回1表示一致，0表示不一致，负数表示查询或计算失败。
+ */
+static int _linkg_os_user_password_matches(const char *username, const char *password)
+{
+    struct crypt_data crypt_state = {0};
+    struct passwd     passwd_entry;
+    struct passwd    *passwd_result;
+    struct spwd       shadow_entry;
+    struct spwd      *shadow_result;
+    char              lookup_buffer[8192];
+    const char       *stored_hash;
+    char             *computed_hash;
+    int               ret;
+
+    if (username == NULL || password == NULL)
+    {
+        return -EINVAL;
+    }
+
+    shadow_result = NULL;
+
+    ret = getspnam_r(username, &shadow_entry, lookup_buffer, sizeof(lookup_buffer), &shadow_result);
+    if (ret != 0 && ret != ENOENT)
+    {
+        return -ret;
+    }
+
+    if (ret == 0 && shadow_result != NULL)
+    {
+        stored_hash = shadow_result->sp_pwdp;
+    }
+    else
+    {
+        passwd_result = NULL;
+
+        ret = getpwnam_r(username, &passwd_entry, lookup_buffer, sizeof(lookup_buffer), &passwd_result);
+        if (ret != 0)
+        {
+            return -ret;
+        }
+
+        if (passwd_result == NULL)
+        {
+            return -ENOENT;
+        }
+
+        stored_hash = passwd_result->pw_passwd;
+    }
+
+    if (stored_hash == NULL || stored_hash[0] == '\0' ||
+        stored_hash[0] == '!' || stored_hash[0] == '*')
+    {
+        return 0;
+    }
+
+    errno = 0;
+
+    computed_hash = crypt_r(password, stored_hash, &crypt_state);
+    if (computed_hash == NULL || computed_hash[0] == '*')
+    {
+        return errno != 0 ? -errno : -EOPNOTSUPP;
+    }
+
+    return strcmp(computed_hash, stored_hash) == 0 ? 1 : 0;
+}
+
+
 /**
  * @brief 设置Linux系统用户密码。
  */
@@ -590,6 +667,18 @@ int linkg_os_set_user_password(const char *username, const char *password)
             LINKG_LOG_ERROR("OS: Invalid password format");
             return -EINVAL;
         }
+    }
+
+    ret = _linkg_os_user_password_matches(username, password);
+    if (ret == 1)
+    {
+        LINKG_LOG_INFO("OS: Password unchanged for user: %s", username);
+        return 0;
+    }
+
+    if (ret < 0)
+    {
+        LINKG_OS_WARN("Password verification failed, user=%s error=%d, fallback to chpasswd", username, ret);
     }
 
     fp = popen("chpasswd", "w");

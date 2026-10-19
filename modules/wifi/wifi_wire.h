@@ -18,7 +18,7 @@ extern "C"
 
 /****************************** Wire格式 ******************************/
 
-#define LINKG_WIFI_WIRE_VERSION 2U // Wi-Fi私有Wire协议版本
+#define LINKG_WIFI_WIRE_VERSION 1U // Wi-Fi私有Wire协议版本
 
 /**
  * @brief Wi-Fi链路私有头。
