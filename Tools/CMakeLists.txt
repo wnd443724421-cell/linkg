@@ -18,9 +18,17 @@ target_include_directories(cmain PRIVATE
     ${LINKG_ROOT}/include
 )
 
+add_executable(upgrade
+    upgrade/upgrade.c
+)
+
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_custom_command(TARGET cmain POST_BUILD
         COMMAND ${CMAKE_STRIP} $<TARGET_FILE:cmain>
         COMMENT "Stripping cmain"
+    )
+    add_custom_command(TARGET upgrade POST_BUILD
+        COMMAND ${CMAKE_STRIP} $<TARGET_FILE:upgrade>
+        COMMENT "Stripping upgrade"
     )
 endif()
