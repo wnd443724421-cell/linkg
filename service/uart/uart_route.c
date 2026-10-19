@@ -122,6 +122,8 @@ static void _uart_route_schedule_retry(linkg_uart_route_t *route, int error)
 {
     uint32_t retry_delay_ms;
 
+    (void)error;
+
     _uart_route_close_fd(&route->client_fd);
     _uart_route_close_fd(&route->fd);
 
@@ -147,8 +149,7 @@ static void _uart_route_schedule_retry(linkg_uart_route_t *route, int error)
     }
 
     atomic_fetch_add(&route->parent->stats.errors, 1U);
-    LINKG_LOG_WARN("UART: route uart=%u proto=%u port=%u error=%d retry_ms=%u", route->parent->config->uart_num,
-                   (unsigned)route->config->proto, route->config->port, error, retry_delay_ms);
+    //LINKG_LOG_DEBUG("UART: route uart=%u proto=%u port=%u error=%d retry_ms=%u", route->parent->config->uart_num, (unsigned)route->config->proto, route->config->port, error, retry_delay_ms);
 }
 
 /**
@@ -303,9 +304,7 @@ void uart_route_maintenance(linkg_uart_route_t *route, uint64_t now_ms)
     }
     else
     {
-        LINKG_LOG_INFO("UART: route ready uart=%u proto=%s endpoint=%s port=%u", route->parent->config->uart_num,
-                       route->config->proto == LINKG_UART_ROUTE_PROTO_TCP ? "tcp" : "udp",
-                       route->config->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL ? "local" : "remote", route->config->port);
+        //LINKG_LOG_INFO("UART: route ready uart=%u proto=%s endpoint=%s port=%u", route->parent->config->uart_num, route->config->proto == LINKG_UART_ROUTE_PROTO_TCP ? "tcp" : "udp", route->config->endpoint == LINKG_UART_ROUTE_ENDPOINT_LOCAL ? "local" : "remote", route->config->port);
     }
 }
 

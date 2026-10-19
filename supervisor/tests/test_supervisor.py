@@ -15,6 +15,8 @@ import time
 
 SUPERVISOR = os.path.abspath(sys.argv[1])
 MOCK = os.path.abspath(sys.argv[2])
+FAULTS = os.path.abspath(sys.argv[3])
+STOP_WAIT_SECONDS = 9 if "--production" in sys.argv[3:] else 4
 
 
 def require(condition, detail):
@@ -22,10 +24,11 @@ def require(condition, detail):
         raise AssertionError(detail)
 
 
-def run_case(mode, seconds, checks, expected_starts=None, minimum_starts=None):
+def run_case(mode, seconds, checks, expected_starts=None, minimum_starts=None, extra_environment=None):
     with tempfile.TemporaryDirectory(prefix="linkg-supervisor-") as directory:
         log_path = pathlib.Path(directory) / "log"
         environment = dict(os.environ, SUPERVISOR_MOCK_LOCK=directory + "/child.lock", SUPERVISOR_MOCK_STATE=directory + "/state")
+        environment.update(extra_environment or {})
         with log_path.open("w+") as log:
             process = subprocess.Popen(
                 [SUPERVISOR, "--lock-file", directory + "/supervisor.lock", MOCK, mode],
@@ -35,7 +38,7 @@ def run_case(mode, seconds, checks, expected_starts=None, minimum_starts=None):
                 time.sleep(seconds)
                 require(process.poll() is None, "Supervisor exited before explicit stop")
                 process.send_signal(signal.SIGTERM)
-                process.wait(timeout=4)
+                process.wait(timeout=STOP_WAIT_SECONDS)
             finally:
                 if process.poll() is None:
                     process.kill()
@@ -124,11 +127,28 @@ def backoff():
 
 
 def pipe_eof():
-    run_case("pipe-eof", 1.25, ["pipe=EOF waiting_for_waitpid", "timeout=STOPPING"], 2)
+    output = run_case("pipe-eof", 0.65, ["pipe=unexpected_EOF", "recovery error=-32"], minimum_starts=2)
+    require("state=STOPPING" not in output and "timeout=STOPPING" not in output, output)
+
+
+def eof_during_start_or_restart():
+    for mode in ["eof-startup", "eof-restart"]:
+        output = run_case(mode, 0.45, ["pipe=unexpected_EOF"], minimum_starts=2)
+        require("timeout=" not in output, output)
+
+
+def stopping_repeated_messages():
+    output = run_case("stopping-repeat", 1.25, ["state=STOPPING", "timeout=STOPPING"], minimum_starts=2)
+    require(output.count("state=RUNNING") == output.count("state=STARTING"), output)
+
+
+def stopping_during_start_or_restart():
+    for mode, seconds in [("stopping-startup", 0.95), ("stopping-restart", 1.25)]:
+        run_case(mode, seconds, ["state=STOPPING", "timeout=STOPPING"], minimum_starts=2)
 
 
 def cleanup_grace():
-    output = run_case("cleanup", 1.2, ["pipe=EOF", "exited code=0", "retry_ms=100"], 2)
+    output = run_case("cleanup", 1.2, ["state=STOPPING", "pipe=EOF", "exited code=0", "retry_ms=100"], 2)
     require("timeout=" not in output, output)
 
 
@@ -248,6 +268,130 @@ def client_protocol():
         os.close(read_fd)
 
 
+def client_stopping_protocol():
+    read_fd, write_fd = os.pipe2(os.O_NONBLOCK)
+    process = subprocess.Popen([MOCK, "cleanup"], env=dict(os.environ, LINKG_SUPERVISOR_FD=str(write_fd)), pass_fds=(write_fd,), stdout=subprocess.DEVNULL)
+    os.close(write_fd)
+    messages = []
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                data = os.read(read_fd, 128)
+                if not data:
+                    break
+                messages.extend(data)
+            except BlockingIOError:
+                pass
+            time.sleep(0.01)
+        process.wait(timeout=2)
+        require(messages[0] == 1 and messages[-1] == 4 and messages.count(4) == 1, str(messages))
+        require(process.returncode == 0, str(process.returncode))
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(read_fd)
+
+
+def fault_environment(directory, mode):
+    return dict(os.environ, LD_PRELOAD=FAULTS, LINKG_SUPERVISOR_FAULT_MODE=mode,
+                LINKG_SUPERVISOR_FAULT_MARKER=directory + "/inject", SUPERVISOR_MOCK_LOCK=directory + "/child.lock")
+
+
+def wait_for_log(process, path, text, timeout=4):
+    deadline = time.monotonic() + timeout
+    while True:
+        output = path.read_text()
+        if text in output:
+            return output
+        require(process.poll() is None and time.monotonic() < deadline, output)
+        time.sleep(0.02)
+
+
+def cleanup_fault(mode, stopping):
+    with tempfile.TemporaryDirectory(prefix="linkg-supervisor-fault-") as directory:
+        path = pathlib.Path(directory) / "log"
+        marker = pathlib.Path(directory) / "inject"
+        arguments = [SUPERVISOR, "--lock-file", directory + "/lock", MOCK, "healthy"]
+        with path.open("w+") as log:
+            process = subprocess.Popen(arguments, env=fault_environment(directory, mode), stdout=log, stderr=log)
+            try:
+                output = wait_for_log(process, path, "state=RUNNING")
+                child = int(re.search(r"pid=(\d+) state=RUNNING", output)[1])
+                marker.touch()
+                if stopping:
+                    process.terminate()
+                else:
+                    os.kill(child, signal.SIGSTOP if mode == "kill" else signal.SIGKILL)
+                wait_for_log(process, path, "cleanup unresolved")
+                if stopping:
+                    second = subprocess.run(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=2)
+                    require(second.returncode == 1 and "lock failed" in second.stderr, second.stderr)
+                    process.wait(timeout=5)
+                    require(process.returncode == 0, path.read_text())
+                else:
+                    deadline = time.monotonic() + 5
+                    while path.read_text().count("state=RUNNING") < 2:
+                        require(process.poll() is None and time.monotonic() < deadline, path.read_text())
+                        time.sleep(0.02)
+            finally:
+                marker.unlink(missing_ok=True)
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
+        output = path.read_text()
+        require("MOCK_OVERLAP" not in output and "cleanup unresolved" in output, output)
+        require(("FAULT kill attempt=2" if mode == "kill" else "FAULT waitpid attempt=3") in output, output)
+        starts = re.findall(r"pid=(\d+) state=STARTING", output)
+        require(len(starts) == (1 if stopping else 2), output)
+        require(all(not pathlib.Path("/proc", child).exists() for child in starts), output)
+
+
+def unresolved_child_identity():
+    with tempfile.TemporaryDirectory(prefix="linkg-supervisor-unknown-") as directory:
+        path = pathlib.Path(directory) / "log"
+        marker = pathlib.Path(directory) / "inject"
+        arguments = [SUPERVISOR, "--lock-file", directory + "/lock", MOCK, "healthy"]
+        with path.open("w+") as log:
+            process = subprocess.Popen(arguments, env=fault_environment(directory, "unknown"), stdout=log, stderr=log)
+            try:
+                output = wait_for_log(process, path, "state=RUNNING")
+                child = re.search(r"pid=(\d+) state=RUNNING", output)[1]
+                marker.touch()
+                process.terminate()
+                wait_for_log(process, path, "cleanup unresolved")
+                time.sleep(0.4)
+                output = path.read_text()
+                require(process.poll() is None and pathlib.Path("/proc", child).exists(), output)
+                require("FAULT unsafe_signal" not in output and output.count("state=STARTING") == 1, output)
+                require(1 <= output.count("cleanup unresolved") <= 5, output)
+                second = subprocess.run(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=2)
+                require(second.returncode == 1 and "lock failed" in second.stderr, second.stderr)
+            finally:
+                marker.unlink(missing_ok=True)
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=5)
+            require(process.returncode == 0 and not pathlib.Path("/proc", child).exists(), path.read_text())
+
+
+def stopping_send_failure():
+    with tempfile.TemporaryDirectory(prefix="linkg-supervisor-send-") as directory:
+        pathlib.Path(directory, "inject").touch()
+        output = run_case("cleanup", 0.65, ["pipe=unexpected_EOF"], minimum_starts=2,
+                          extra_environment=fault_environment(directory, "stopping-write"))
+        require("state=STOPPING" not in output, output)
+
+
+def control_send_failure(mode, child_mode, code, forbidden_state):
+    with tempfile.TemporaryDirectory(prefix="linkg-supervisor-control-") as directory:
+        pathlib.Path(directory, "inject").touch()
+        output = run_case(child_mode, 0.7, [f"exited code={code}"], minimum_starts=2,
+                          extra_environment=fault_environment(directory, mode))
+        require(forbidden_state not in output and "timeout=" not in output, output)
+
+
 def singleton():
     with tempfile.TemporaryDirectory(prefix="linkg-supervisor-lock-") as directory:
         arguments = [SUPERVISOR, "--lock-file", directory + "/lock", MOCK, "healthy"]
@@ -306,9 +450,12 @@ def production_heartbeat():
 
 
 def production_kill():
-    output = run_case("ignore-term", 7.5, ["timeout=HEARTBEAT", "signal=SIGKILL", "exited signal=9"], 2)
+    configuration = pathlib.Path(__file__).parents[1] / "include/supervisor_config.h"
+    term_ms = int(re.findall(r"^#define SUPERVISOR_TERMINATE_MS\s+(\d+)U", configuration.read_text(), re.MULTILINE)[-1])
+    recovery_ms = 4000 + term_ms + 1000
+    output = run_case("ignore-term", (recovery_ms + 700) / 1000, ["timeout=HEARTBEAT", "signal=SIGKILL", "exited signal=9"], 2)
     stamps = [int(stamp) for stamp, _ in re.findall(r"t=(\d+) pid=(\d+) state=STARTING", output)]
-    require(7000 <= stamps[1] - stamps[0] < 7500, output)
+    require(recovery_ms <= stamps[1] - stamps[0] < recovery_ms + 600, output)
 
 
 def production_healthy():
@@ -322,18 +469,34 @@ def production_normal_exit():
     require(1000 <= stamps[1] - stamps[0] < 1500, output)
 
 
+def production_cleanup():
+    output = run_case("cleanup-long", 7.6, ["state=STOPPING", "exited code=0"], minimum_starts=2)
+    require("timeout=" not in output, output)
+
+
+def production_unexpected_eof():
+    output = run_case("pipe-eof", 1.5, ["pipe=unexpected_EOF", "retry_ms=1000"], minimum_starts=2)
+    require("state=STOPPING" not in output, output)
+
+
 TESTS = [healthy, startup, heartbeat_before_ready, heartbeat_timeout, abnormal_exit, crash, restarting,
          restarting_timeout, repeated_restarting, repeated_ready, force_kill, backoff, pipe_eof,
          cleanup_grace, normal_exit, restart_cycles, standalone, bad_environment,
          lambda: client_pipe_error(True), lambda: client_pipe_error(False), client_protocol, singleton,
          fd_leaks, missing_program, early_clean_exit, stable_reset, client_descriptor_flags, fast_normal_exit,
-         externally_terminated_child]
+         externally_terminated_child, eof_during_start_or_restart, stopping_repeated_messages,
+         stopping_during_start_or_restart, client_stopping_protocol, stopping_send_failure,
+         lambda: cleanup_fault("kill", False), lambda: cleanup_fault("waitpid", False),
+         lambda: cleanup_fault("kill", True), lambda: cleanup_fault("waitpid", True), unresolved_child_identity,
+         lambda: control_send_failure("ready-write", "healthy", 10, "state=RUNNING"),
+         lambda: control_send_failure("restarting-write", "restart", 11, "state=RESTARTING")]
 
 
 if __name__ == "__main__":
     if "--production" in sys.argv[3:]:
         TESTS = [production_startup, production_restart_timeout, production_restart30,
-                 production_heartbeat, production_kill, production_healthy, production_normal_exit]
+                 production_heartbeat, production_kill, production_healthy, production_normal_exit,
+                 production_cleanup, production_unexpected_eof]
     failures = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         jobs = {executor.submit(test): test.__name__ + f"[{index}]" for index, test in enumerate(TESTS)}

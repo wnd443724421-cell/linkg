@@ -1,6 +1,6 @@
 /**
  * @file linkg_gpio.h
- * @brief Linux平台通用GPIO操作接口
+ * @brief Linux平台GPIO字符设备接口，独占句柄随进程退出释放
  */
 
 #ifndef LINKG_GPIO_H
@@ -20,7 +20,7 @@ typedef enum
     LINUX_GPIO_DIRECTION_OUTPUT = 1  // 输出模式
 } linux_gpio_direction_t;
 
-typedef struct linux_gpio linux_gpio_t; // GPIO实例，由调用方负责关闭
+typedef struct linux_gpio linux_gpio_t; // GPIO实例，正常退出时由调用方关闭
 
 /****************************** 生命周期 ******************************/
 

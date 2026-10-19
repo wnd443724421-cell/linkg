@@ -292,7 +292,7 @@ close_pipe:
 }
 
 /**
- * @brief 停止唯一心跳线程并关闭写端，供正常退出或系统重启前调用。
+ * @brief 停止心跳并通知STOPPING，然后关闭写端供正常退出或系统重启。
  */
 void linkg_supervisor_client_deinit(void)
 {
@@ -304,6 +304,8 @@ void linkg_supervisor_client_deinit(void)
     pthread_mutex_lock(&g_supervisor_client.lock);
     g_supervisor_client.running  = false;
     g_supervisor_client.stopping = true;
+    // 发送失败仍执行关闭，Supervisor会将缺少STOPPING的EOF识别为通信故障。
+    (void)_supervisor_client_send_locked(LINKG_SUPERVISOR_STOPPING);
     pthread_cond_signal(&g_supervisor_client.changed);
     pthread_mutex_unlock(&g_supervisor_client.lock);
 

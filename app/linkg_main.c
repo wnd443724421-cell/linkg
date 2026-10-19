@@ -1196,8 +1196,7 @@ int main(void)
             action = LINKG_EXIT_ACTION_EXIT;
         }
 
-        if (shutdown_ret != 0 ||
-            action != LINKG_EXIT_ACTION_RESTART_SERVICES)
+        if (shutdown_ret != 0 || action != LINKG_EXIT_ACTION_RESTART_SERVICES)
         {
             break;
         }

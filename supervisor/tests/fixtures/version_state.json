@@ -4,9 +4,7 @@
   "stable_release_partition": "v1",
   "releases": {
     "v1": {
-      "version": "V1.0.0",
-      "kernel_slot": "boot_a",
-      "kernel_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "kernel_slot": "boot_a"
     },
     "v2": {
 

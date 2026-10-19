@@ -1,100 +1,161 @@
-# LinkG Supervisor V0.1
+# LinkG Supervisor V0.2
 
-独立守护 `/app/current/bin/linkg`，负责启动、READY、RUN心跳、进程内服务重启识别和故障后重新拉起。
+Supervisor 独立常驻，负责选择 v1/v2、启动唯一的 LinkG、监控 READY/HEARTBEAT/RESTARTING/STOPPING、确认候选版本及失败回滚。保留 V0.1 的匿名 Pipe 单字节协议、waitpid 回收、TERM/KILL 和稳定版本退避恢复。
 
-Supervisor初始化成功后常驻。LinkG退出码0、非零退出和信号终止均会触发回收与退避重启，不会导致Supervisor随之退出。停止守护必须明确向Supervisor发送TERM/INT/QUIT，或由系统关机终止它。
+本版不安装 OTA 包、不校验或刷写 Kernel、不提供 Web/LinkG 升级请求接口，不改 U-Boot、设备树、分区表或开机脚本。
 
-本版不安装升级包，不读取版本JSON，不选择A/B版本，不操作Kernel、U-Boot ENV或硬件看门狗。现有 `supervisor_boot.*`、`supervisor_version.*` 和版本JSON夹具仍是后续阶段的空框架，不参与编译。
+## 文件与启动
 
-## 编译
+~~~text
+/app/version_state.json
+/app/releases/v1/bin/linkg
+/app/releases/v2/bin/linkg
+/app/current -> /app/releases/v1 或 /app/releases/v2
+/www/releases/v1
+/www/releases/v2
+/www/current -> /www/releases/v1 或 /www/releases/v2
+/var/run/linkg-supervisor.lock
+~~~
 
-在仓库根目录执行。独立目标只依赖C17、POSIX/Linux接口和项目公共协议头，不链接LinkG业务模块。
+版本 JSON 只有以下结构，空对象表示未安装，不能启动：
 
-```bash
-# x86独立构建和测试，测试参数与产品可执行文件相互隔离
-cmake -S supervisor -B /tmp/linkg-supervisor-v01-build -DLINKG_SUPERVISOR_BUILD_TESTS=ON
-cmake --build /tmp/linkg-supervisor-v01-build -j4
-ctest --test-dir /tmp/linkg-supervisor-v01-build --output-on-failure -j2
+~~~json
+{
+  "schema_version": 1,
+  "release_partition": "v1",
+  "stable_release_partition": "v1",
+  "releases": {
+    "v1": {"kernel_slot": "boot_a"},
+    "v2": {}
+  }
+}
+~~~
 
-# 完整x86 LinkG及Supervisor构建
-cmake -S . -B /tmp/linkg-supervisor-v01-x86 -DARCHITECTURE=x86
-cmake --build /tmp/linkg-supervisor-v01-x86 --target linkg linkg-supervisor -j4
+schema_version 只能为 1，Release 只能为 v1/v2，Kernel 只能为 boot_a/boot_b。拒绝未知字段、重复键、损坏 JSON、内嵌零字符和未安装的稳定 Release。不增加事务字段或专用事务日志。
 
-# ARM独立交叉构建；沿用项目工具链所需的STAGING_DIR
+Supervisor 是状态 JSON 的唯一持久化写入者。当前可在 Supervisor 停止时预置候选 JSON 测试；正式运行时不得由 LinkG、Web 或维护脚本直接并发改写状态。未来安装模块通过专用请求由 Supervisor 提交候选，本版不实现该请求接口。
+
+默认启动 /usr/sbin/linkg-supervisor。可配置状态与安装路径：
+
+正式部署应由唯一的 init/procd 入口运行 Supervisor，停止旧 linkg_watchdog.sh，避免两套守护同时拉起 LinkG。本版不修改这些启动入口。
+
+~~~bash
+/usr/sbin/linkg-supervisor \
+    --lock-file /var/run/linkg-supervisor.lock \
+    --state-file /app/version_state.json \
+    --app-root /app \
+    --web-root /www
+~~~
+
+显式指定子程序保留 V0.1 进程守护模式，此时不启用版本管理：
+
+~~~bash
+linkg-supervisor --lock-file /tmp/supervisor-demo.lock -- /absolute/program arg
+~~~
+
+## 开机和试运行
+
+先获取单实例锁，再读取 JSON、核对实际 Kernel 和 ENV、检查 App/Web 安装目录与可执行文件，最后协调切换两个 current 并启动 LinkG。实际 Kernel 只认 /proc/cmdline 中唯一且合法的 kernel_slot=boot_a/boot_b，不使用 ENV 的期望值替代它。无法确认时常驻记录错误并退避，不启动可能依赖错误 Kernel 的 App。
+
+| 状态或期限 | 正式参数 |
+|---|---|
+| 首次 READY | 60 秒 |
+| HEARTBEAT | 客户端每 1 秒发送，4 秒超时 |
+| RESTARTING | 60 秒，重复消息不续期 |
+| 显式 STOPPING | RUN 中收到后最长 60 秒清理，重复消息不续期 |
+| 候选确认 | 首次或重新 READY 后，连续 RUNNING 满 60 秒且心跳有效 |
+| 稳定版本故障退避 | 1、2、4、8、16、30 秒，连续 RUN 60 秒后清零 |
+| SIGTERM 宽限 | 沿用当前配置 5000ms，之后 SIGKILL 并回收 |
+
+RESTARTING 不累计候选稳定时间，重新 READY 后重新计满 60 秒。READY 本身不表示升级成功。候选在确认前退出（包括退出码 0）、崩溃、通知异常或超时，回收旧进程后立即回滚，不进入无限重启。
+
+稳定确认完成后继续守护当前版本，后续普通进程故障使用 V0.1 退避恢复，不再回滚旧 Release。单独停止 LinkG 会被拉起；维护时应停止 Supervisor，由它回收 LinkG 后再操作。
+
+## 三次事务及中断恢复
+
+| 事务 | 第一步 | 第二步 | 后续 |
+|---|---|---|---|
+| PREPARE（未来安装请求） | JSON 设目标候选、保留旧 stable | ENV 设候选 Kernel 及旧稳定 Kernel，开启试启动保护 | reboot |
+| ROLLBACK（本版实现） | JSON 目标恢复旧 stable | ENV 恢复稳定 Kernel，bootcount=0、upgrade_available=0 | Kernel 不同才 reboot |
+| CONFIRM（本版实现） | ENV 完整确认新稳定 Kernel | JSON stable 更新为候选 | 继续守护当前进程 |
+
+每次开机都执行恢复判断：
+
+| JSON 与实际 Kernel / ENV | 动作 |
+|---|---|
+| JSON 为候选，实际仍是旧稳定 Kernel，两个映射不同 | 取消候选并恢复旧 Release；包括 PREPARE 只写完 JSON 和 U-Boot 已回退 |
+| JSON 已回滚旧稳定版本，实际仍是新 Kernel | 继续修复 ENV 并 reboot；本轮不启动旧 App |
+| JSON 为候选，实际是候选 Kernel，完整 ENV 已确认候选 Kernel | 补写稳定 JSON，完成中断的 CONFIRM |
+| JSON 为候选，实际是候选 Kernel，ENV 尚未完整确认 | 保留或修复试启动保护，开始完整 60 秒试运行 |
+| v1/v2 使用相同 Kernel，JSON 仍是候选 | 不能从 ENV 推断 App 已通过测试；重新计满 60 秒 |
+| JSON 为稳定，实际 Kernel 与映射一致 | 修复一致的稳定 ENV、切换两个 current、正常守护 |
+
+“完整 ENV 已确认”要求 boot_partition 和 stable_boot_partition 均为候选 Kernel，bootcount=0 且 upgrade_available=0，并且实际 Kernel 匹配、启动命令校验通过；不能只检查 boot_partition。
+
+JSON 采用同目录临时文件、fsync、rename 和父目录 fsync。ENV 失败不写稳定 JSON；JSON 保存或目录同步失败时不在内存中宣称成功，保留候选监控并重试。rename 已成功而目录同步失败可能导致当前文件已变化，后续比较接受完整的目标状态并重新完成持久化。
+
+ENV 辅助命令等待期间继续处理 Pipe 和真实子进程退出，稳定 JSON 提交前再次检查健康状态，避免慢速 ENV 操作遮蔽心跳故障或进程退出。
+
+current 使用临时软链接加 rename；切换任一失败时恢复两条旧链接并禁止启动。两条链接不能作为一组原子提交，断电重启后按 JSON 与实际 Kernel 重新协调，完成后才启动 LinkG。不删除任何 Release 目录。
+
+无论失败回滚、正常恢复或 Supervisor 主动停止，都先确认旧 LinkG 回收。waitpid/waitid 失败时保留 PID 和进程锁并退避重试，不启动第二个 LinkG，不用无效 PID 掩盖回收失败。
+
+## ENV 交互和边界
+
+使用设备实际的 /usr/sbin/fw_printenv、/usr/sbin/fw_setenv，通过 argv 执行，不拼接 Shell 命令。读取并校验 boot_partition、stable_boot_partition、bootcount、upgrade_available、bootlimit 及现有启动命令。四项更新通过 fw_setenv -s 批量提交，检查返回结果，再重新读取验证。即使失败时可能已写入，也不会把失败当作成功。
+
+ENV 已正确时不重复写 Flash；候选进程重启不清零 bootcount，App-only 升级不作不必要的槽位切换。bootlimit 由用户自行配置为 5，本版不修改它，也不维护自己的启动计数。SDK bootcount_error 的判断为 bootcount > bootlimit，即 1～5 次尝试后在下一次启动进入 altbootcmd。
+
+按用户补充边界，不实现 ENV 擦写中的突然掉电保护，不添加 ENV 冗余方案、专用事务日志或 U-Boot 修改。恢复前提是有效 ENV 可以被现有工具和 U-Boot 正确读取。ENV 自身损坏或两端选择不同快照时，不承诺只靠 JSON 顺序恢复系统。
+
+只读调查另发现：SDK U-Boot 的 Sunxi 保存和导入使用递增 flags；当前 OpenWrt uboot-envtools 2021.01 的 NOR 分支使用布尔 flags。板上工具哈希与 SDK 产物相同。该兼容性差异未在本轮修改 SDK；部署前需单独核对读回结果与重启后 U-Boot 的实际选择，不能用 Mock 宣称通过。
+
+## 构建与自动测试
+
+在仓库根目录执行：
+
+~~~bash
+cmake -S supervisor -B /tmp/linkg-supervisor-v02-x86 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLINKG_SUPERVISOR_BUILD_TESTS=ON \
+    -DCMAKE_C_FLAGS="-Werror -Wmaybe-uninitialized"
+cmake --build /tmp/linkg-supervisor-v02-x86 -j4
+ctest --test-dir /tmp/linkg-supervisor-v02-x86 --output-on-failure
+~~~
+
+测试目标分离：
+
+- 正式 Supervisor：真实 60 秒参数，无测试 ENV/reboot 替身入口。
+- linkg-supervisor-test：缩短时间，必须提供独立 ENV、cmdline 和 reboot 文件替身，缺失时不访问真实 ENV。
+- linkg-supervisor-release-timing：仅替换 I/O，保留正式 60 秒、4 秒参数，验证真实时间窗口。
+- supervisor-release-faults：只在测试进程中注入 JSON rename、目录 fsync 和软链接失败。
+
+ARM 交叉构建：
+
+~~~bash
 export T113_TOOLCHAIN_DIR=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain
 export STAGING_DIR="$T113_TOOLCHAIN_DIR"
-cmake -S supervisor -B /tmp/linkg-supervisor-v01-arm-only -DCMAKE_TOOLCHAIN_FILE="$PWD/toolchains/arm.cmake"
-cmake --build /tmp/linkg-supervisor-v01-arm-only -j4
+cmake -S supervisor -B /tmp/linkg-supervisor-v02-arm \
+    -DCMAKE_TOOLCHAIN_FILE="$PWD/toolchains/arm.cmake" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS="-Werror -Wmaybe-uninitialized"
+cmake --build /tmp/linkg-supervisor-v02-arm -j4
+~~~
 
-# 常规项目构建也会生成Supervisor
-./build.sh x86
-./build.sh arm
-```
+根工程构建仍生成 output/bin/arm/linkg-supervisor。只链接仓库现有 cJSON 源码及 C/POSIX 接口，不依赖 LinkG 业务模块。
 
-根工程产物为 `output/bin/x86/linkg-supervisor` 或 `output/bin/arm/linkg-supervisor`；独立构建的产物位于对应CMake构建目录。独立工程安装前缀设为 `/usr` 时，对应部署位置为 `/usr/sbin/linkg-supervisor`。本次没有执行安装或接管开机服务。
+## 实板验证清单
 
-## 通信和状态
+本轮不覆盖正式程序、不修改启动服务、不调整 bootlimit、不写真实 ENV 或 Kernel、不重启正式板。
 
-Supervisor以 `pipe2(O_NONBLOCK | O_CLOEXEC)` 创建匿名管道。fork之后父进程关闭写端，子进程关闭读端；仅初次exec前清除写端CLOEXEC，并通过 `LINKG_SUPERVISOR_FD` 传给LinkG。客户端校验写端是FIFO，重新设置CLOEXEC并移除环境变量，避免后续exec程序继承通知通道。
+当前 192.168.1.1 和 192.168.3.1 的只读结果均为单 boot 分区、无 kernel_slot、缺少 A/B ENV，不能直接用作本版 A/B 验收。具备正确 A/B 固件后仍需验证：
 
-每个消息恰好一个字节，无结构体填充和字节序问题；常量定义在 `include/linkg/base/linkg_supervisor_protocol.h`。
+1. 实际 cmdline 槽位与每次 U-Boot 启动一致。
+2. ENV 批处理写入、读回及重启后的选择一致，确认工具 flags 兼容性和执行时间。
+3. 同 Kernel 回滚不重启、跨 Kernel 回滚重启后启动稳定 App。
+4. ENV 先确认而 JSON 仍为候选时补完成功提交。
+5. JSON 先回滚而 ENV 未恢复时继续恢复正确 Kernel。
+6. 两条 current 链接在 JFFS2/overlay 上可原子替换并协调恢复。
+7. 新 LinkG 实际正常退出及强杀后的板级资源恢复。
 
-| 字节值 | 消息 | 使用时机 |
-|---|---|---|
-| 1 | READY | 首次或服务重启后的 `_linkg_app_start()` 成功 |
-| 2 | HEARTBEAT | 仅RUN阶段，每1秒发送 |
-| 3 | RESTARTING | 确认服务重启动作后、cleanup之前发送 |
-
-```mermaid
-stateDiagram-v2
-    [*] --> STARTING: fork / exec
-    STARTING --> RUNNING: READY，60秒内
-    RUNNING --> RUNNING: HEARTBEAT，刷新4秒期限
-    RUNNING --> RESTARTING: RESTARTING
-    RESTARTING --> RUNNING: READY，60秒内
-    RUNNING --> STOPPING: Pipe EOF
-    STARTING --> RECOVER: 60秒到期或提前退出
-    RUNNING --> RECOVER: 4秒到期或异常退出
-    RESTARTING --> RECOVER: 60秒到期或异常退出
-    STOPPING --> RECOVER: 清理超时或异常退出
-    STOPPING --> RECOVER: waitpid确认退出，包括退出码0
-    RECOVER --> STARTING: TERM / KILL / waitpid / 退避
-```
-
-所有期限使用 `CLOCK_MONOTONIC`。STARTING中的心跳无效；RESTARTING中的心跳无效，重复RESTARTING不延长60秒窗口；RUNNING中的重复READY不刷新心跳期限。
-
-客户端只创建一个心跳线程，跨所有进程内服务重启复用。RESTARTING通知与心跳由同一互斥锁串行化，保证通知之后不会再出现RUN心跳。READY或RESTARTING发生EAGAIN/EINTR时立即返回错误，主入口结束本轮进程并由Supervisor恢复；周期心跳发生EAGAIN/EINTR时跳过本次，不阻塞业务。EPIPE通过调用线程临时屏蔽并消费本次生成的SIGPIPE处理，不修改进程全局SIGPIPE处理器。
-
-正常EXIT和REBOOT_SYSTEM路径在业务cleanup前停止心跳线程并关闭管道，Supervisor观察到EOF后进入最长60秒的STOPPING清理窗口。EOF只代表通知结束，不代表进程退出：必须由waitpid确认。STARTING/RESTARTING中的EOF保留原有期限，不延长窗口。
-
-LinkG的任何退出都触发恢复，包括首次READY前退出、退出码0、非零退出码和信号终止。管道EOF仅允许旧进程完成有上限的清理，不表示停止守护。Supervisor自身接收TERM/INT/QUIT时停止恢复，清理子进程后退出；系统reboot由LinkG原有路径执行。维护或关机需要先停止Supervisor，单独停止LinkG会被重新拉起。
-
-## 恢复和所有权
-
-故障后只向自身fork得到的PID发送SIGTERM，最多等待2秒，再发送SIGKILL，最终由waitpid回收。回收失败时Supervisor保持常驻，按退避继续清理旧PID，不启动第二个LinkG；若进程处于不可中断内核等待，SIGKILL后的waitpid可能仍需等待，期间也不会启动第二个实例。
-
-连续故障退避为1、2、4、8、16、30、30秒；连续RUN满60秒后清零。服务重启窗口不计入稳定运行时间。每轮均关闭管道，退出时关闭进程锁；锁文件保留，避免unlink后不同进程锁到不同inode。
-
-默认锁路径 `/run/linkg-supervisor.lock`。测试可通过 `--lock-file` 指定独立路径，可执行文件路径和参数放在其后：
-
-```bash
-/tmp/linkg-supervisor-v01-build/linkg-supervisor \
-    --lock-file /tmp/linkg-supervisor-demo.lock \
-    /tmp/linkg-supervisor-v01-build/supervisor-mock-production healthy
-```
-
-模拟程序不修改网络或系统密码。正式LinkG本身具有业务和系统初始化副作用，不能用模拟程序的测试结果宣称完整业务在x86运行通过。
-
-Supervisor不按进程名扫描或清理其他实例，也不管理LinkG启动的第三方守护进程。PDEATHSIG在Supervisor异常消失时给直接子进程发送TERM；不承诺Supervisor被SIGKILL后，对拒绝或阻塞TERM的子进程完成回收。
-
-## 与现有启动脚本的关系
-
-当前SDK的 `openwrt/openwrt/files/etc/rc.local` 启动 `/app/current/bin/linkg_watchdog.sh`。该脚本每秒使用 `pidof linkg` 判断是否重新启动，不能与新Supervisor同时负责正式LinkG。
-
-本次只实现和测试，不修改SDK、rc.local、procd或板上进程。后续部署需要在同一次受控维护中停止并撤销旧脚本启动入口，确认旧LinkG退出，再由唯一的init/procd入口启动Supervisor。init/procd将来只守护Supervisor；Supervisor负责LinkG，避免两层同时拉起LinkG。boa等现有业务入口本次不调整。
-
-## 验收边界
-
-可执行模拟测试覆盖进程及通知协议基本活性；独立心跳线程不能检测所有业务线程死锁、无线失联或业务功能失效。正常清理窗口、启动窗口、服务重启窗口都有上限；硬件掉电、Kernel卡死和Supervisor自身故障恢复不属于本版本。
-
-测试清单与复现说明见 [tests/README.md](tests/README.md)，代码职责见 [docs/MODULES.md](docs/MODULES.md)。
+这些项目不能由 x86 Mock、ARM 编译或源码检查替代。源码职责见 [docs/MODULES.md](docs/MODULES.md)。

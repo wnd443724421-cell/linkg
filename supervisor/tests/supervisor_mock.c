@@ -118,6 +118,7 @@ static int _mock_client(const char *mode)
 
     if (ret != 0)
     {
+        linkg_supervisor_client_deinit();
         return 10;
     }
 
@@ -128,6 +129,7 @@ static int _mock_client(const char *mode)
             _mock_sleep(150U);
             if (linkg_supervisor_client_restarting() != 0)
             {
+                linkg_supervisor_client_deinit();
                 return 11;
             }
 
@@ -160,11 +162,11 @@ static int _mock_client(const char *mode)
         return 17;
     }
 
-    if (strcmp(mode, "clean") == 0 || strcmp(mode, "cleanup") == 0)
+    if (strcmp(mode, "clean") == 0 || strcmp(mode, "cleanup") == 0 || strcmp(mode, "cleanup-long") == 0)
     {
         _mock_sleep(150U);
         linkg_supervisor_client_deinit();
-        _mock_sleep(strcmp(mode, "cleanup") == 0 ? 600U : 0U);
+        _mock_sleep(strcmp(mode, "cleanup-long") == 0 ? 6000U : strcmp(mode, "cleanup") == 0 ? 600U : 0U);
         return 0;
     }
 
@@ -222,7 +224,7 @@ int main(int argc, char **argv)
 
     if (strcmp(mode, "healthy") == 0 || strcmp(mode, "restart") == 0 || strcmp(mode, "restart30") == 0 || strcmp(mode, "cycles") == 0 ||
         strcmp(mode, "exit") == 0 || strcmp(mode, "crash") == 0 || strcmp(mode, "clean") == 0 ||
-        strcmp(mode, "cleanup") == 0 || strcmp(mode, "probe") == 0 || strcmp(mode, "recover-stable") == 0)
+        strcmp(mode, "cleanup") == 0 || strcmp(mode, "cleanup-long") == 0 || strcmp(mode, "probe") == 0 || strcmp(mode, "recover-stable") == 0)
     {
         return _mock_client(mode);
     }
@@ -239,13 +241,44 @@ int main(int argc, char **argv)
         signal(SIGTERM, SIG_IGN);
     }
 
-    if (strcmp(mode, "startup") != 0 && strcmp(mode, "startup-heartbeat") != 0)
+    if (strcmp(mode, "startup") != 0 && strcmp(mode, "startup-heartbeat") != 0 &&
+        strcmp(mode, "stopping-startup") != 0 && strcmp(mode, "eof-startup") != 0)
     {
         _mock_send(descriptor, LINKG_SUPERVISOR_READY);
     }
 
     if (strcmp(mode, "pipe-eof") == 0)
     {
+        close(descriptor);
+    }
+
+    if (strcmp(mode, "stopping-startup") == 0)
+    {
+        _mock_sleep(300U);
+        _mock_send(descriptor, LINKG_SUPERVISOR_STOPPING);
+        close(descriptor);
+    }
+
+    if (strcmp(mode, "stopping-restart") == 0)
+    {
+        _mock_send(descriptor, LINKG_SUPERVISOR_RESTARTING);
+        _mock_sleep(400U);
+        _mock_send(descriptor, LINKG_SUPERVISOR_STOPPING);
+        close(descriptor);
+    }
+
+    if (strcmp(mode, "stopping-repeat") == 0)
+    {
+        _mock_send(descriptor, LINKG_SUPERVISOR_STOPPING);
+    }
+
+    if (strcmp(mode, "eof-startup") == 0 || strcmp(mode, "eof-restart") == 0)
+    {
+        if (strcmp(mode, "eof-restart") == 0)
+        {
+            _mock_send(descriptor, LINKG_SUPERVISOR_RESTARTING);
+        }
+
         close(descriptor);
     }
 
@@ -281,6 +314,14 @@ int main(int argc, char **argv)
         if (strcmp(mode, "ready-repeat") == 0)
         {
             _mock_send(descriptor, LINKG_SUPERVISOR_READY);
+        }
+
+        if (strcmp(mode, "stopping-repeat") == 0)
+        {
+            _mock_send(descriptor, LINKG_SUPERVISOR_STOPPING);
+            _mock_send(descriptor, LINKG_SUPERVISOR_READY);
+            _mock_send(descriptor, LINKG_SUPERVISOR_RESTARTING);
+            _mock_send(descriptor, LINKG_SUPERVISOR_HEARTBEAT);
         }
 
         _mock_sleep(100U);
