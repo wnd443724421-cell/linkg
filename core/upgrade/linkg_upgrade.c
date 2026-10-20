@@ -27,6 +27,9 @@
 
 #include "linkg_thread.h"
 
+#include "upgrade_archive.h"
+#include "upgrade_manifest.h"
+
 /****************************** 模块常量 ******************************/
 
 #define LINKG_UPGRADE_THREAD_NAME        "linkg_upgrade"                      // 升级安装线程名称
@@ -211,26 +214,45 @@ failed:
 /**
  * @brief 处理已接管的升级任务。
  *
- * 此处为占位实现，不触碰App、Web、Kernel或Supervisor状态。
- * 后续由归档、清单、安装及PREPARE子模块替换任务主体。
+ * 当前仅执行升级包结构检查和解压，不触碰App、Web、Kernel或Supervisor状态。
+ * 已接入FILES.txt校验；Release安装留给后续子模块实现。
  */
 static void _linkg_upgrade_process_package(const char *task_path)
 {
     int ret;
-    int error;
+    int cleanup_error;
+    linkg_upgrade_stage_t failure_stage;
 
-    // 当前未接入归档安装模块，必须明确报告未实现，不允许返回成功。
-    ret   = unlink(task_path);
-    error = ret != 0 ? -errno : 0;
+    // 校验归档根目录并提取到/tmp/upgrade。
+    ret           = upgrade_archive_extract(task_path, "/tmp");
+    failure_stage = LINKG_UPGRADE_STAGE_ARCHIVE_VERIFY;
+
+    if (ret == 0)
+    {
+        pthread_mutex_lock(&g_upgrade.lock);
+        g_upgrade.status.stage    = LINKG_UPGRADE_STAGE_MANIFEST_VERIFY;
+        g_upgrade.status.progress = 15U;
+        (void)snprintf(g_upgrade.status.message, sizeof(g_upgrade.status.message), "%s", "正在校验FILES.txt和文件SHA-256");
+        pthread_mutex_unlock(&g_upgrade.lock);
+
+        ret           = upgrade_manifest_verify("/tmp/upgrade");
+        failure_stage = LINKG_UPGRADE_STAGE_MANIFEST_VERIFY;
+    }
+
+    cleanup_error = unlink(task_path) == 0 ? 0 : -errno;
 
     pthread_mutex_lock(&g_upgrade.lock);
-    if (error != 0)
+    if (ret != 0)
     {
-        _linkg_upgrade_set_failed_locked(LINKG_UPGRADE_STAGE_NONE, error, "临时升级包清理失败");
+        _linkg_upgrade_set_failed_locked(failure_stage, ret, "升级包解压或完整性校验失败");
+    }
+    else if (cleanup_error != 0)
+    {
+        _linkg_upgrade_set_failed_locked(LINKG_UPGRADE_STAGE_MANIFEST_VERIFY, cleanup_error, "升级包临时文件清理失败");
     }
     else
     {
-        _linkg_upgrade_set_failed_locked(LINKG_UPGRADE_STAGE_NONE, -ENOSYS, "升级包解析与安装功能尚未实现");
+        _linkg_upgrade_set_failed_locked(LINKG_UPGRADE_STAGE_TARGET_PREPARE, -ENOSYS, "完整性校验通过，Release安装尚未实现");
     }
 
     g_upgrade.package_path[0] = '\0';

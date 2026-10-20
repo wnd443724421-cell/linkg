@@ -258,8 +258,7 @@ static bool _linkg_switch_policy_wifi_load_within_cellular_limit(const linkg_swi
     limit_bps = (uint64_t)cellular.max_load_mbps * 1000000ULL;
 
     // 使用减法避免直接累加两个uint64_t速率产生溢出。
-    return traffic->tx_bps <= limit_bps &&
-           traffic->rx_bps <= limit_bps - traffic->tx_bps;
+    return traffic->tx_bps <= limit_bps && traffic->rx_bps <= limit_bps - traffic->tx_bps;
 }
 
 /**
