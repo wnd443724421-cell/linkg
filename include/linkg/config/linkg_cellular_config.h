@@ -24,9 +24,9 @@ extern "C" {
 #define LINKG_CELLULAR_PIN_MIN                4U   // SIM PIN最小长度
 #define LINKG_CELLULAR_PIN_MAX                8U   // SIM PIN最大长度
 
-#define LINKG_CELLULAR_MAX_LOAD_MBPS_DEFAULT 15U   // 默认最大业务负载20 Mbps
+#define LINKG_CELLULAR_MAX_LOAD_MBPS_DEFAULT 15U   // 默认最大业务负载15 Mbps
 #define LINKG_CELLULAR_MAX_LOAD_MBPS_MIN      1U   // 最小1 Mbps
-#define LINKG_CELLULAR_MAX_LOAD_MBPS_MAX    100U   // 最大1000 Mbps
+#define LINKG_CELLULAR_MAX_LOAD_MBPS_MAX    100U   // 最大100 Mbps
 
 /****************************** 类型定义 ******************************/
 

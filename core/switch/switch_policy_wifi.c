@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "linkg_config.h"
 #include "linkg_link.h"
 
 #include "switch_plan.h"
@@ -225,6 +226,43 @@ static int _linkg_switch_policy_wifi_migrate_load(const linkg_switch_policy_inpu
 }
 
 /**
+ * @brief 判断当前Wi-Fi双向业务速率是否不超过配置的蜂窝负载上限。
+ *
+ * 只控制Load迁移准入，不影响Wire Loss质量判断。
+ * 速率采样无效或配置读取失败时，不执行Load迁移。
+ */
+static bool _linkg_switch_policy_wifi_load_within_cellular_limit(const linkg_switch_policy_input_t *input)
+{
+    const linkg_switch_traffic_observation_t *traffic;
+    linkg_cellular_config_t                   cellular;
+    uint64_t                                  limit_bps;
+    int                                       ret;
+
+    if (input == NULL)
+    {
+        return false;
+    }
+
+    traffic = &input->observation.wifi.traffic;
+    if (!traffic->valid || traffic->updated_us == 0U)
+    {
+        return false;
+    }
+
+    ret = linkg_config_get_cellular(&cellular);
+    if (ret != 0)
+    {
+        return false;
+    }
+
+    limit_bps = (uint64_t)cellular.max_load_mbps * 1000000ULL;
+
+    // 使用减法避免直接累加两个uint64_t速率产生溢出。
+    return traffic->tx_bps <= limit_bps &&
+           traffic->rx_bps <= limit_bps - traffic->tx_bps;
+}
+
+/**
  * @brief 处理Wi-Fi单发业务的Wire丢包和Queue Overflow异常。
  *
  * Wire Loss达到BAD时进入冗余验证。
@@ -253,7 +291,8 @@ static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_in
         return ret;
     }
 
-    if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD)
+    if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD &&
+        _linkg_switch_policy_wifi_load_within_cellular_limit(input))
     {
         return _linkg_switch_policy_wifi_migrate_load(input, now_us);
     }

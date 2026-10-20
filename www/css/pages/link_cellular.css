@@ -276,12 +276,12 @@
 }
 .cellular-switch input:disabled + .cellular-switch-track { opacity: 0.45; }
 .cellular-switch-label { font-size: 13px; }
-.cellular-form-body { padding: 20px; }
+.cellular-form-body { padding: 16px 20px; }
 .cellular-form-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     align-items: start;
-    gap: 20px;
+    gap: 16px;
 }
 .cellular-field {
     min-width: 0;
@@ -318,6 +318,17 @@
     color: var(--linkg-color-text-muted);
     font-size: 11px;
     line-height: 1.5;
+}
+.cellular-number-wrap { position: relative; }
+.cellular-number-wrap input { padding-right: 56px; }
+.cellular-number-unit {
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    transform: translateY(-50%);
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    pointer-events: none;
 }
 .cellular-password-wrap { position: relative; }
 .cellular-password-wrap input { padding-right: 44px; }
@@ -409,6 +420,9 @@
         border-right: 0;
         border-bottom: 1px solid var(--linkg-color-border-light);
     }
+}
+@media (max-width: 720px) {
+    .cellular-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
     .cellular-switch-track,

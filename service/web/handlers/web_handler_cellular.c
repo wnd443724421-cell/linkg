@@ -72,6 +72,26 @@ static bool _linkg_web_cellular_config_equal(const linkg_config_t *left, const l
 }
 
 /**
+ * @brief 判断蜂窝配置修改是否需要重启网络。
+ *
+ * 仅修改负载上限时不重启蜂窝模块，切换策略直接读取最新全局配置。
+ */
+static bool _linkg_web_cellular_requires_restart(const linkg_config_t *left, const linkg_config_t *right)
+{
+    const linkg_cellular_config_t *a;
+    const linkg_cellular_config_t *b;
+
+    a = &left->links.cellular;
+    b = &right->links.cellular;
+
+    return left->paths.cellular.enabled != right->paths.cellular.enabled ||
+           a->enabled != b->enabled ||
+           a->network_mode != b->network_mode ||
+           strcmp(a->apn, b->apn) != 0 ||
+           strcmp(a->pin, b->pin) != 0;
+}
+
+/**
  * @brief 在蜂窝网络配置提交失败后恢复旧配置。
  */
 static int _linkg_web_cellular_restore_config(const linkg_config_t *config, bool restore_network)
@@ -819,6 +839,7 @@ int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response)
     const cJSON   *cellular;
     const char    *error_message;
     cJSON         *data;
+    bool           restart_network;
     bool           restore_network;
     int            restore_ret;
     int            ret;
@@ -879,6 +900,7 @@ int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response)
         return _linkg_web_response_success(LINKG_WEB_CMD_CELLULAR_CONFIG_SET, data, NULL, response);
     }
 
+    restart_network = _linkg_web_cellular_requires_restart(&old_config, &new_config);
     restore_network = false;
     error_message   = NULL;
 
@@ -895,20 +917,23 @@ int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response)
         goto rollback;
     }
 
-    ret = linkg_network_set_cellular_config(&new_config.links.cellular);
-    if (ret != 0)
+    if (restart_network)
     {
-        error_message = "更新Network蜂窝网络配置失败";
-        goto rollback;
-    }
+        ret = linkg_network_set_cellular_config(&new_config.links.cellular);
+        if (ret != 0)
+        {
+            error_message = "更新Network蜂窝网络配置失败";
+            goto rollback;
+        }
 
-    restore_network = true;
+        restore_network = true;
 
-    ret = linkg_network_restart_cellular();
-    if (ret != 0)
-    {
-        error_message = "请求蜂窝网络重启失败";
-        goto rollback;
+        ret = linkg_network_restart_cellular();
+        if (ret != 0)
+        {
+            error_message = "请求蜂窝网络重启失败";
+            goto rollback;
+        }
     }
 
     data = cJSON_CreateObject();
@@ -917,7 +942,7 @@ int _linkg_web_handler_cellular_config_set(const cJSON *param, char **response)
         return -ENOMEM;
     }
 
-    ret = linkg_json_add_string(data, "apply", "restart");
+    ret = linkg_json_add_string(data, "apply", restart_network ? "restart" : "dynamic");
     if (ret != LINKG_JSON_OK)
     {
         cJSON_Delete(data);
@@ -981,6 +1006,12 @@ int _linkg_web_handler_cellular_status_get(const cJSON *param, char **response)
     }
 
     ret = linkg_json_add_bool(data, "path_enabled", config.paths.cellular.enabled);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_uint32(data, "max_load_mbps", config.links.cellular.max_load_mbps);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
