@@ -51,6 +51,8 @@ static const linkg_web_command_entry_t g_web_commands[] =
     {LINKG_WEB_CMD_DEVICE_INFO_GET,       _linkg_web_handler_device_info_get},
     {LINKG_WEB_CMD_DEVICE_ROLE_SET,       _linkg_web_handler_device_role_set},
     {LINKG_WEB_CMD_DEVICE_RESTART,        _linkg_web_handler_device_restart},
+    {LINKG_WEB_CMD_UPGRADE_START,         _linkg_web_handler_upgrade_start},
+    {LINKG_WEB_CMD_UPGRADE_STATUS_GET,    _linkg_web_handler_upgrade_status_get},
     {LINKG_WEB_CMD_INVALID,               NULL}
 };
 

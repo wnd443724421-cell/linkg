@@ -2,6 +2,7 @@
 """Exercise managed Supervisor with isolated release trees and ENV/reboot doubles."""
 
 import concurrent.futures
+import ctypes
 import json
 import os
 import pathlib
@@ -70,13 +71,15 @@ class Fixture:
         self.log = None
 
     def start(self, extra_environment=None):
+        if self.log is not None:
+            self.log.close()
         self.log = (self.root / "log").open("a")
         environment = dict(os.environ, LINKG_RELEASE_TEST_ROOT=str(self.root))
         environment["LD_PRELOAD"] = str(FAULTS)
         if PRODUCTION:
             environment["LINKG_RELEASE_TEST_PRODUCTION"] = "1"
         environment.update(extra_environment or {})
-        for name, file in [("CMDLINE", "cmdline"), ("PRINTENV", "printenv"), ("SETENV", "setenv"), ("REBOOT", "reboot")]:
+        for name, file in [("CMDLINE", "cmdline"), ("PRINTENV", "printenv"), ("SETENV", "setenv"), ("REBOOT", "reboot"), ("ENV_LOCK", "env.lock")]:
             environment["LINKG_SUPERVISOR_TEST_" + name] = str(self.root / file)
         self.process = subprocess.Popen(
             [str(SUPERVISOR), "--lock-file", str(self.root / "lock"), "--state-file", str(self.state),
@@ -123,6 +126,7 @@ class Fixture:
         if self.log is not None:
             self.log.close()
         require("RELEASE_OVERLAP" not in self.output(), self.output())
+        reap_adopted(self)
         for _, pid, _ in self.starts():
             require(not pathlib.Path("/proc", pid).exists(), "Child still alive: " + self.output())
 
@@ -130,6 +134,7 @@ class Fixture:
         try:
             self.stop()
         finally:
+            cleanup_env_doubles(self)
             self.temporary.cleanup()
 
 
@@ -532,6 +537,286 @@ def production_confirmation(f):
     require(len(f.starts()) == 1, f.output())
 
 
+def tool_events(f, kind=None, phase=None):
+    path = f.root / "tool-events"
+    lines = path.read_text().splitlines() if path.exists() else []
+    records = [json.loads(line) for line in lines if line.endswith("}")]
+    return [record for record in records if (kind is None or record["kind"] == kind) and
+            (phase is None or record["phase"] == phase)]
+
+
+def reap_adopted(f):
+    pids = {int(row[1]) for row in f.starts()} | {row["pid"] for row in tool_events(f)}
+    for pid in pids:
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+
+
+def cleanup_env_doubles(f):
+    # Only this test harness may release/kill its own hung doubles after a failed assertion.
+    (f.root / "write-release").touch()
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        reap_adopted(f)
+        pids = [row["pid"] for row in tool_events(f) if pathlib.Path("/proc", str(row["pid"])).exists()]
+        if not pids:
+            return
+        time.sleep(0.03)
+    for pid in set(pids):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    reap_adopted(f)
+
+
+def env_wait(f, predicate, timeout=8):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        reap_adopted(f)
+        if predicate():
+            return
+        time.sleep(0.02)
+    raise AssertionError(f.output() + "\n" + str(tool_events(f)))
+
+
+def first_writer(f):
+    env_wait(f, lambda: bool(tool_events(f, "setenv", "start")))
+    return tool_events(f, "setenv", "start")[0]["pid"]
+
+
+def assert_no_env_overlap(f):
+    require(not (f.root / "env-overlap").exists(), str(tool_events(f)))
+
+
+def env_read_timeout(f):
+    (f.root / "read-delay").write_text("1.5")
+    f.start()
+    f.wait(lambda: "ENV read timeout" in f.output())
+    pid = tool_events(f, "printenv", "start")[0]["pid"]
+    f.wait(lambda: not pathlib.Path("/proc", str(pid)).exists())
+    require(not tool_events(f, "setenv"), f.output())
+    (f.root / "read-delay").unlink()
+    f.wait(lambda: bool(f.starts()))
+
+
+@options(different=True)
+def env_write_1500ms(f):
+    (f.root / "write-delay").write_text("1.5")
+    f.start()
+    pid = first_writer(f)
+    time.sleep(0.4)
+    require((f.root / "write-active").exists() and f.read_state()["stable_release_partition"] == "v1", f.output())
+    f.wait(lambda: "release=CONFIRMED" in f.output(), timeout=8)
+    require(not pathlib.Path("/proc", str(pid)).exists(), f.output())
+    require(len(tool_events(f, "setenv", "done")) == 1, str(tool_events(f)))
+    assert_no_env_overlap(f)
+
+
+@options(different=True)
+def env_write_3000ms(f):
+    (f.root / "write-delay").write_text("3")
+    f.start()
+    first_writer(f)
+    f.wait(lambda: "ENV write still running" in f.output())
+    require((f.root / "write-active").exists() and f.read_state()["stable_release_partition"] == "v1", f.output())
+    f.wait(lambda: "release=CONFIRMED" in f.output(), timeout=8)
+    require(f.output().count("ENV write still running") == 1, f.output())
+    require(len(tool_events(f, "setenv", "done")) == 1, str(tool_events(f)))
+
+
+@options(different=True, mode="exit-on-write")
+def env_exit_during_long_write(f):
+    (f.root / "write-delay").write_text("1.5")
+    f.start()
+    first_writer(f)
+    f.wait(lambda: (f.root / "reboot").exists(), timeout=8)
+    require("release=CONFIRMED" not in f.output() and f.read_state()["stable_release_partition"] == "v1", f.output())
+    require(len(tool_events(f, "setenv", "done")) == 2, str(tool_events(f)))
+    assert_no_env_overlap(f)
+
+
+@options(different=True, mode="heartbeat-on-write")
+def env_heartbeat_timeout_during_write(f):
+    env_exit_during_long_write(f)
+
+
+@options(different=True, mode="restart-on-write")
+def env_restarting_during_long_write(f):
+    (f.root / "write-delay").write_text("1.5")
+    f.start()
+    first_writer(f)
+    f.wait(lambda: "release=CONFIRMED" in f.output(), timeout=8)
+    ready = tool_events(f, phase="ready-again")[0]["at"]
+    require(time.monotonic() - ready >= 0.98, f.output())
+    require(len(f.starts()) == 1 and "confirmation pending" in f.output(), f.output())
+
+
+def env_stop_during_write(f, stop_signal):
+    (f.root / "write-delay").write_text("1.5")
+    f.start()
+    pid = first_writer(f)
+    f.process.send_signal(stop_signal)
+    time.sleep(0.35)
+    require(f.process.poll() is None and pathlib.Path("/proc", str(pid)).exists(), f.output())
+    require(f.read_state()["stable_release_partition"] == "v1", f.output())
+    f.process.wait(timeout=5)
+    require(f.process.returncode == 0 and not pathlib.Path("/proc", str(pid)).exists(), f.output())
+    require(tool_events(f, "setenv", "done") and "release=CONFIRMED" not in f.output(), f.output())
+    assert_no_env_overlap(f)
+
+
+@options(different=True)
+def env_sigterm_waits_for_write(f):
+    env_stop_during_write(f, signal.SIGTERM)
+
+
+@options(different=True)
+def env_sigint_waits_for_write(f):
+    env_stop_during_write(f, signal.SIGINT)
+
+
+@options(candidate=False)
+def env_startup_sigterm_waits_for_write(f):
+    e = f.environment()
+    e.update(boot_partition="boot_b", stable_boot_partition="boot_b")
+    (f.root / "env.json").write_text(json.dumps(e))
+    env_stop_during_write(f, signal.SIGTERM)
+    require(not f.starts(), f.output())
+
+
+@options(different=True)
+def env_sigkill_writer_survives(f):
+    (f.root / "write-delay").write_text("3")
+    (f.root / "write-output").touch()
+    f.start()
+    pid = first_writer(f)
+    lock_stat = (f.root / "env.lock").stat()
+    f.process.kill()
+    f.process.wait(timeout=2)
+    time.sleep(1.2)
+    require(pathlib.Path("/proc", str(pid)).exists(), f.output())
+    require(not tool_events(f, "setenv", "done"), str(tool_events(f)))
+    env_wait(f, lambda: bool(tool_events(f, "setenv", "done")))
+    env_wait(f, lambda: not pathlib.Path("/proc", str(pid)).exists())
+    require(f.read_state()["stable_release_partition"] == "v1", f.output())
+    require((f.root / "env.lock").stat().st_ino == lock_stat.st_ino, f.output())
+
+
+@options(different=True)
+def env_restart_waits_for_inherited_lock(f):
+    (f.root / "write-delay").write_text("3")
+    f.start()
+    pid = first_writer(f)
+    before = len(tool_events(f, "printenv", "start"))
+    f.process.kill()
+    f.process.wait(timeout=2)
+    f.start()
+    f.wait(lambda: "ENV lock waiting" in f.output())
+    require(pathlib.Path("/proc", str(pid)).exists() and len(tool_events(f, "setenv", "start")) == 1, f.output())
+    require(len(tool_events(f, "printenv", "start")) == before and len(f.starts()) == 1, str(tool_events(f)))
+    f.wait(lambda: "ENV confirmation recovering" in f.output(), timeout=8)
+    f.wait(lambda: len(f.starts()) == 2)
+    require(f.read_state()["stable_release_partition"] == "v2", f.output())
+    require(len(tool_events(f, "setenv", "start")) == 1, str(tool_events(f)))
+    assert_no_env_overlap(f)
+
+
+@options(different=True)
+def env_nonzero_after_long_write(f):
+    (f.root / "write-delay").write_text("1.5")
+    (f.root / "write-fail-after-delay").touch()
+    f.start()
+    first_writer(f)
+    f.wait(lambda: "confirmation pending" in f.output(), timeout=8)
+    require(f.read_state()["stable_release_partition"] == "v1" and "release=CONFIRMED" not in f.output(), f.output())
+    (f.root / "write-fail-after-delay").unlink()
+    f.wait(lambda: "release=CONFIRMED" in f.output(), timeout=8)
+
+
+@options(different=True)
+def env_write_success_readback_failure(f):
+    (f.root / "read-fail-after-write").touch()
+    f.start()
+    f.wait(lambda: "confirmation pending" in f.output())
+    require(tool_events(f, "setenv", "done") and f.environment()["stable_boot_partition"] == "boot_b", f.output())
+    require(f.read_state()["stable_release_partition"] == "v1" and "release=CONFIRMED" not in f.output(), f.output())
+    (f.root / "read-fail").unlink()
+    f.wait(lambda: "release=CONFIRMED" in f.output())
+    require(len(tool_events(f, "setenv", "start")) == 1, str(tool_events(f)))
+
+
+@options(different=True)
+def env_hung_writer_no_kill_or_retry(f):
+    (f.root / "write-hang").touch()
+    f.start()
+    pid = first_writer(f)
+    time.sleep(2.3)
+    require(f.process.poll() is None and pathlib.Path("/proc", str(pid)).exists(), f.output())
+    require(f.output().count("ENV write still running") == 1, f.output())
+    require(len(tool_events(f, "setenv", "start")) == 1 and not tool_events(f, "setenv", "done"), str(tool_events(f)))
+    require(f.read_state()["stable_release_partition"] == "v1" and not (f.root / "reboot").exists(), f.output())
+    f.process.terminate()
+    time.sleep(0.3)
+    require(f.process.poll() is None and pathlib.Path("/proc", str(pid)).exists(), f.output())
+    (f.root / "write-release").touch()
+    f.process.wait(timeout=5)
+    require(f.process.returncode == 0 and tool_events(f, "setenv", "done"), f.output())
+    require(f.read_state()["stable_release_partition"] == "v1", f.output())
+
+
+@options(different=True)
+def env_large_output_does_not_interrupt_write(f):
+    (f.root / "write-output").touch()
+    env_write_1500ms(f)
+
+
+@options(different=True)
+def env_poll_error_does_not_kill_writer(f):
+    (f.root / "fail-env-poll").touch()
+    env_write_1500ms(f)
+
+
+@options(different=True)
+def env_waitpid_error_does_not_kill_writer(f):
+    (f.root / "fail-env-wait").touch()
+    (f.root / "read-fail-after-write").touch()
+    (f.root / "write-delay").write_text("1.5")
+    f.start()
+    pid = first_writer(f)
+    f.wait(lambda: "ENV write waitpid" in f.output())
+    require(pathlib.Path("/proc", str(pid)).exists(), f.output())
+    f.wait(lambda: "confirmation pending" in f.output(), timeout=8)
+    require(tool_events(f, "setenv", "done") and f.read_state()["stable_release_partition"] == "v1", f.output())
+    (f.root / "read-fail").unlink()
+    f.wait(lambda: "release=CONFIRMED" in f.output())
+    require(len(tool_events(f, "setenv", "start")) == 1, str(tool_events(f)))
+
+
+@options(different=True)
+def env_orphan_hang_blocks_new_instance(f):
+    (f.root / "write-hang").touch()
+    f.start()
+    pid = first_writer(f)
+    f.process.kill()
+    f.process.wait(timeout=2)
+    f.start()
+    f.wait(lambda: "ENV lock waiting" in f.output())
+    require(pathlib.Path("/proc", str(pid)).exists() and len(tool_events(f, "setenv", "start")) == 1, f.output())
+    require(f.read_state()["stable_release_partition"] == "v1" and not (f.root / "reboot").exists(), f.output())
+    f.process.terminate()
+    f.process.wait(timeout=2)
+    require(f.process.returncode == 0 and pathlib.Path("/proc", str(pid)).exists(), f.output())
+    (f.root / "write-release").touch()
+    env_wait(f, lambda: bool(tool_events(f, "setenv", "done")))
+    f.start()
+    f.wait(lambda: len(f.starts()) == 2)
+    require(f.read_state()["stable_release_partition"] == "v2", f.output())
+    assert_no_env_overlap(f)
+
+
 def main():
     cases = [
         stable_start, candidate_confirmation, kernel_confirmation, ready_timeout, heartbeat_timeout, late_exit,
@@ -547,6 +832,15 @@ def main():
     failures = []
     if PRODUCTION:
         cases = [production_confirmation, ready_timeout, heartbeat_timeout, late_exit]
+    if "--env-lifecycle" in sys.argv:
+        # Adopt only isolated test orphans so SIGKILL scenarios can verify and reap them.
+        require(ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0, "subreaper unavailable")
+        cases = [env_read_timeout, env_write_1500ms, env_write_3000ms, env_exit_during_long_write,
+                 env_heartbeat_timeout_during_write, env_restarting_during_long_write, env_sigterm_waits_for_write,
+                 env_sigint_waits_for_write, env_startup_sigterm_waits_for_write, env_sigkill_writer_survives,
+                 env_restart_waits_for_inherited_lock, env_nonzero_after_long_write, env_write_success_readback_failure,
+                 env_hung_writer_no_kill_or_retry, env_large_output_does_not_interrupt_write, env_poll_error_does_not_kill_writer,
+                 env_waitpid_error_does_not_kill_writer, env_orphan_hang_blocks_new_instance]
     with concurrent.futures.ThreadPoolExecutor(max_workers=4 if PRODUCTION else 2) as pool:
         jobs = {pool.submit(scenario, case): case.__name__ for case in cases}
         for job in concurrent.futures.as_completed(jobs):

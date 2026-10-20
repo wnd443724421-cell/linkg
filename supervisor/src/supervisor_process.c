@@ -3,7 +3,7 @@
  * @brief LinkG子进程监控、通知状态机与有界故障恢复
  * @author Dawn
  * @version 0.2.0
- * @date 2026-10-19
+ * @date 2026-10-20
  */
 
 #include "supervisor_process.h"
@@ -82,6 +82,15 @@ static void _supervisor_signal(int signal_number)
     {
         g_supervisor_stop = 1;
     }
+}
+
+/**
+ * @brief 启动及回滚的ENV等待也响应正常退出，但不终止已执行的Flash写入。
+ */
+static int _supervisor_stop_progress(void *context)
+{
+    (void)context;
+    return g_supervisor_stop ? -ECANCELED : 0;
 }
 
 /**
@@ -664,7 +673,7 @@ static int _supervisor_monitor(supervisor_child_t *child, unsigned int *failures
 
                 supervisor_boot_set_progress(_supervisor_confirmation_progress, child);
                 ret = supervisor_release_confirm(release);
-                supervisor_boot_set_progress(NULL, NULL);
+                supervisor_boot_set_progress(_supervisor_stop_progress, NULL);
                 if (child->monitor_error != 0)
                 {
                     return child->monitor_error;
@@ -742,10 +751,12 @@ static int _supervisor_process_run(char *const child_arguments[], const char *lo
     ret = _supervisor_install_signals();
     if (ret == 0 && paths != NULL)
     {
+        supervisor_boot_set_progress(_supervisor_stop_progress, NULL);
         ret = supervisor_release_init(&release, paths);
     }
     if (ret != 0)
     {
+        supervisor_boot_set_progress(NULL, NULL);
         close(lock_fd);
         return ret;
     }
@@ -775,6 +786,12 @@ static int _supervisor_process_run(char *const child_arguments[], const char *lo
                     _supervisor_backoff(&failures, true);
                     continue;
                 }
+            }
+
+            if (g_supervisor_stop)
+            {
+                ret = 0;
+                break;
             }
 
             ret = _supervisor_spawn(&child, paths == NULL ? child_arguments : managed_arguments);
@@ -822,6 +839,7 @@ static int _supervisor_process_run(char *const child_arguments[], const char *lo
         _supervisor_backoff(&failures, true);
     }
 
+    supervisor_boot_set_progress(NULL, NULL);
     close(lock_fd);
     return g_supervisor_stop && child.child_pid <= 0 ? 0 : ret;
 }

@@ -21,15 +21,13 @@ typedef enum
     LINKG_SWITCH_POLICY_LOSS_BAD       // 明显丢包异常，需要启动链路质量验证
 } linkg_switch_policy_loss_state_t;
 
-/****************************** RF状态 ******************************/
+/****************************** Load状态 ******************************/
 
 typedef enum
 {
-    LINKG_SWITCH_POLICY_RF_UNKNOWN  = 0, // 无法确定当前RF状态
-    LINKG_SWITCH_POLICY_RF_GOOD,         // 当前RF环境良好
-    LINKG_SWITCH_POLICY_RF_NEUTRAL,      // 当前RF环境处于灰区
-    LINKG_SWITCH_POLICY_RF_DEGRADED      // 当前RF环境明显恶化
-} linkg_switch_policy_rf_state_t;
+    LINKG_SWITCH_POLICY_LOAD_NONE = 0, // 尚未达到队列溢出迁移条件
+    LINKG_SWITCH_POLICY_LOAD_BAD       // 需要迁移下一类Wi-Fi业务
+} linkg_switch_policy_load_state_t;
 
 /****************************** 内部类型 ******************************/
 
@@ -46,7 +44,7 @@ typedef struct
 /****************************** 质量判断 ******************************/
 
 int linkg_switch_policy_loss_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_loss_state_t *loss_state);
-int linkg_switch_policy_rf_evaluate(const linkg_switch_wifi_radio_observation_t *radio, linkg_switch_policy_rf_state_t *rf_state);
+int linkg_switch_policy_load_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_load_state_t *load_state);
 
 /****************************** 主链路策略 ******************************/
 

@@ -3,7 +3,7 @@
  * @brief 实际Kernel识别、Tina冗余ENV批量交互及重启
  * @author Dawn
  * @version 0.2.0
- * @date 2026-10-19
+ * @date 2026-10-20
  */
 
 #include "supervisor_boot.h"
@@ -17,20 +17,28 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/prctl.h>
 #include <sys/reboot.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "supervisor_config.h"
 #include "supervisor_storage.h"
 
 /****************************** 模块常量 ******************************/
 
 #define SUPERVISOR_BOOT_OUTPUT_SIZE 4096U // ENV及cmdline读取上限
-#define SUPERVISOR_BOOT_COMMAND_MS  1000U // 单个ENV工具的最长执行时间
 
 /****************************** 内部类型 ******************************/
+
+typedef enum
+{
+    SUPERVISOR_BOOT_READ  = 0, // 可超时终止的只读命令
+    SUPERVISOR_BOOT_WRITE      // 必须等待退出的Flash写入命令
+} supervisor_boot_command_t;
 
 typedef struct
 {
@@ -80,74 +88,251 @@ static uint64_t _supervisor_boot_now(void)
 }
 
 /**
- * @brief 无Shell执行ENV工具，有界捕获输出并回收辅助进程。
+ * @brief 限制等待循环频率，poll失败时仍避免忙循环。
  */
-static int _supervisor_boot_command(char *const arguments[], char *output, size_t capacity)
+static void _supervisor_boot_pause(void)
+{
+    struct timespec delay;
+
+    if (poll(NULL, 0U, SUPERVISOR_ENV_POLL_MS) < 0 && errno != EINTR)
+    {
+        delay.tv_sec  = 0;
+        delay.tv_nsec = (long)SUPERVISOR_ENV_POLL_MS * 1000000L;
+        nanosleep(&delay, NULL);
+    }
+}
+
+/**
+ * @brief 获取跨实例ENV事务锁，遗留写入未结束时等待且不删除锁文件。
+ */
+static int _supervisor_boot_lock(void)
+{
+    struct stat status;
+    const char *path;
+    uint64_t    started_ms;
+    uint64_t    last_warning_ms;
+    uint64_t    now_ms;
+    int         descriptor;
+    int         duplicate;
+    int         ret;
+    bool        warned;
+
+    path = _supervisor_boot_path("LINKG_SUPERVISOR_TEST_ENV_LOCK", SUPERVISOR_ENV_LOCK_FILE);
+    if (path == NULL)
+    {
+        return -EINVAL;
+    }
+
+    descriptor = open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (descriptor < 0)
+    {
+        return -errno;
+    }
+
+    if (descriptor <= STDERR_FILENO)
+    {
+        duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+        ret = -errno;
+        close(descriptor);
+        if (duplicate < 0)
+        {
+            return ret;
+        }
+
+        descriptor = duplicate;
+    }
+
+    if (fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode))
+    {
+        close(descriptor);
+        return -EINVAL;
+    }
+
+    started_ms      = _supervisor_boot_now();
+    last_warning_ms = started_ms;
+    warned          = false;
+    for (;;)
+    {
+        ret = supervisor_boot_checkpoint();
+        if (ret != 0)
+        {
+            close(descriptor);
+            return ret;
+        }
+
+        if (flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        {
+            return descriptor;
+        }
+
+        ret = -errno;
+        if (errno != EWOULDBLOCK && errno != EAGAIN && errno != EINTR)
+        {
+            close(descriptor);
+            return ret;
+        }
+
+        now_ms = _supervisor_boot_now();
+        if ((!warned && now_ms - started_ms >= SUPERVISOR_ENV_WRITE_WARN_MS) ||
+            (warned && now_ms - last_warning_ms >= SUPERVISOR_ENV_WAIT_LOG_MS))
+        {
+            fprintf(stderr, "Supervisor WARN ENV lock waiting; previous operation still owns lock\n");
+            last_warning_ms = now_ms;
+            warned = true;
+        }
+
+        _supervisor_boot_pause();
+    }
+}
+
+/**
+ * @brief 写入工具继承锁且不依赖父进程或输出管道，读取工具保留死亡清理。
+ */
+static void _supervisor_boot_exec(char *const arguments[], supervisor_boot_command_t type, int lock_fd, int read_fd, int write_fd, pid_t parent)
+{
+    const int        signals[] = {SIGINT, SIGTERM, SIGQUIT, SIGPIPE};
+    struct sigaction action;
+    int              null_fd;
+    size_t           index;
+
+    if (type == SUPERVISOR_BOOT_READ)
+    {
+        close(read_fd);
+        close(lock_fd);
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent || dup2(write_fd, STDOUT_FILENO) < 0)
+        {
+            _exit(127);
+        }
+
+        if (write_fd != STDOUT_FILENO)
+        {
+            close(write_fd);
+        }
+    }
+    else
+    {
+        // 不设置父进程死亡信号；父进程被强杀后，工具仍持有同一open-file-description的flock。
+        if (prctl(PR_SET_PDEATHSIG, 0) != 0 || fcntl(lock_fd, F_SETFD, 0) != 0)
+        {
+            _exit(127);
+        }
+
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = SIG_IGN;
+        sigemptyset(&action.sa_mask);
+        for (index = 0U; index < sizeof(signals) / sizeof(signals[0]); index++)
+        {
+            if (sigaction(signals[index], &action, NULL) != 0)
+            {
+                _exit(127);
+            }
+        }
+
+        // 写命令不需要解析输出，避免父进程退出后SIGPIPE或输出管道阻塞中断Flash操作。
+        null_fd = open("/dev/null", O_RDWR);
+        if (null_fd < 0 || dup2(null_fd, STDIN_FILENO) < 0 || dup2(null_fd, STDOUT_FILENO) < 0 || dup2(null_fd, STDERR_FILENO) < 0)
+        {
+            _exit(127);
+        }
+
+        if (null_fd > STDERR_FILENO)
+        {
+            close(null_fd);
+        }
+    }
+
+    execv(arguments[0], arguments);
+    _exit(127);
+}
+
+/**
+ * @brief 写入只做耗时告警，持续检查LinkG并等待真实退出，绝不主动发送终止信号。
+ */
+static int _supervisor_boot_wait_write(pid_t child)
+{
+    uint64_t started_ms;
+    uint64_t last_warning_ms;
+    uint64_t now_ms;
+    pid_t    result;
+    int      status;
+    int      ret;
+    int      error;
+    bool     wait_error;
+    bool     warned;
+
+    started_ms      = _supervisor_boot_now();
+    last_warning_ms = started_ms;
+    warned          = false;
+    wait_error      = false;
+    ret             = 0;
+    for (;;)
+    {
+        error = supervisor_boot_checkpoint();
+        if (error != 0 && ret == 0)
+        {
+            ret = error;
+        }
+
+        result = waitpid(child, &status, WNOHANG);
+        if (result == child)
+        {
+            fprintf(stderr, "Supervisor ENV write finished pid=%ld elapsed_ms=%llu status=%d\n", (long)child,
+                    (unsigned long long)(_supervisor_boot_now() - started_ms), status);
+            return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? ret : -EIO;
+        }
+
+        if (result < 0 && errno != EINTR)
+        {
+            // 无法确认回收时保持锁和等待，不将监控错误转化为强杀或写入成功。
+            error = -errno;
+            if (!wait_error)
+            {
+                fprintf(stderr, "Supervisor WARN ENV write waitpid pid=%ld error=%d; retaining lock and waiting\n", (long)child, error);
+                wait_error = true;
+            }
+
+            if (ret == 0)
+            {
+                ret = error;
+            }
+        }
+
+        now_ms = _supervisor_boot_now();
+        if ((!warned && now_ms - started_ms >= SUPERVISOR_ENV_WRITE_WARN_MS) ||
+            (warned && now_ms - last_warning_ms >= SUPERVISOR_ENV_WAIT_LOG_MS))
+        {
+            fprintf(stderr, "Supervisor WARN ENV write still running pid=%ld elapsed_ms=%llu error=%d\n", (long)child,
+                    (unsigned long long)(now_ms - started_ms), ret);
+            last_warning_ms = now_ms;
+            warned = true;
+        }
+
+        _supervisor_boot_pause();
+    }
+}
+
+/**
+ * @brief 读取命令有界捕获输出，超时或监控失败时安全终止并回收只读工具。
+ */
+static int _supervisor_boot_wait_read(pid_t child, int read_fd, char *output, size_t capacity)
 {
     struct pollfd descriptor;
     siginfo_t     information;
     uint64_t      started_ms;
     size_t        length;
     ssize_t       count;
-    pid_t         child;
     pid_t         result;
-    pid_t         parent;
-    int           descriptors[2];
     int           status;
     int           ret;
     int           progress_ret;
     int           progress_error;
-
-    if (arguments[0] == NULL || arguments[0][0] != '/')
-    {
-        return -EINVAL;
-    }
-
-    ret = supervisor_boot_checkpoint();
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    if (pipe2(descriptors, O_CLOEXEC | O_NONBLOCK) != 0)
-    {
-        return -errno;
-    }
-
-    parent = getpid();
-    child  = fork();
-    if (child == 0)
-    {
-        close(descriptors[0]);
-        if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent ||
-            dup2(descriptors[1], STDOUT_FILENO) < 0)
-        {
-            _exit(127);
-        }
-
-        if (descriptors[1] != STDOUT_FILENO)
-        {
-            close(descriptors[1]);
-        }
-
-        execv(arguments[0], arguments);
-        _exit(127);
-    }
-
-    ret = -errno;
-    close(descriptors[1]);
-    if (child < 0)
-    {
-        close(descriptors[0]);
-        return ret;
-    }
 
     length             = 0U;
     ret                = 0;
     result             = 0;
     progress_error     = 0;
     started_ms         = _supervisor_boot_now();
-    descriptor.fd      = descriptors[0];
+    descriptor.fd      = read_fd;
     descriptor.events  = POLLIN;
     descriptor.revents = 0;
     for (;;)
@@ -155,11 +340,11 @@ static int _supervisor_boot_command(char *const arguments[], char *output, size_
         progress_ret = supervisor_boot_checkpoint();
         if (progress_ret != 0 && progress_error == 0)
         {
-            // 继续等待本次工具结束，避免因控制通知在ENV擦写途中强杀辅助进程。
+            // 记录读取期间的健康变化，完成工具回收后再交由调用方处理。
             progress_error = progress_ret;
         }
 
-        count = read(descriptors[0], output + length, capacity - 1U - length);
+        count = read(read_fd, output + length, capacity - 1U - length);
         if (count > 0)
         {
             length += (size_t)count;
@@ -178,7 +363,7 @@ static int _supervisor_boot_command(char *const arguments[], char *output, size_
         result = waitpid(child, &status, WNOHANG);
         if (result == child)
         {
-            while ((count = read(descriptors[0], output + length, capacity - 1U - length)) > 0)
+            while ((count = read(read_fd, output + length, capacity - 1U - length)) > 0)
             {
                 length += (size_t)count;
             }
@@ -197,13 +382,23 @@ static int _supervisor_boot_command(char *const arguments[], char *output, size_
             break;
         }
 
-        if (started_ms == 0U || _supervisor_boot_now() - started_ms >= SUPERVISOR_BOOT_COMMAND_MS)
+        if (started_ms == 0U || _supervisor_boot_now() - started_ms >= SUPERVISOR_ENV_READ_MS)
         {
             ret = -ETIMEDOUT;
+            fprintf(stderr, "Supervisor ENV read timeout pid=%ld\n", (long)child);
             break;
         }
 
-        poll(&descriptor, 1U, 10);
+        if (poll(&descriptor, 1U, 10) < 0 && errno != EINTR)
+        {
+            ret = -errno;
+            break;
+        }
+
+        if ((descriptor.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0)
+        {
+            _supervisor_boot_pause();
+        }
     }
 
     if (ret != 0 && result != child)
@@ -227,7 +422,59 @@ static int _supervisor_boot_command(char *const arguments[], char *output, size_
     }
 
     output[length] = '\0';
-    close(descriptors[0]);
+    return ret;
+}
+
+/**
+ * @brief 无Shell启动明确类型的ENV工具，锁由调用方持有到读回验证结束。
+ */
+static int _supervisor_boot_command(char *const arguments[], supervisor_boot_command_t type, int lock_fd, char *output, size_t capacity)
+{
+    int   descriptors[2] = {-1, -1};
+    pid_t parent;
+    pid_t child;
+    int   ret;
+
+    if (arguments[0] == NULL || arguments[0][0] != '/' || capacity == 0U)
+    {
+        return -EINVAL;
+    }
+
+    ret = supervisor_boot_checkpoint();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (type == SUPERVISOR_BOOT_READ && pipe2(descriptors, O_CLOEXEC | O_NONBLOCK) != 0)
+    {
+        return -errno;
+    }
+
+    parent = getpid();
+    child  = fork();
+    if (child == 0)
+    {
+        _supervisor_boot_exec(arguments, type, lock_fd, descriptors[0], descriptors[1], parent);
+    }
+
+    ret = -errno;
+    if (descriptors[1] >= 0)
+    {
+        close(descriptors[1]);
+    }
+
+    if (child > 0)
+    {
+        ret = type == SUPERVISOR_BOOT_WRITE ? _supervisor_boot_wait_write(child) :
+              _supervisor_boot_wait_read(child, descriptors[0], output, capacity);
+    }
+
+    if (descriptors[0] >= 0)
+    {
+        close(descriptors[0]);
+    }
+
     return ret;
 }
 
@@ -264,7 +511,7 @@ static int _supervisor_boot_number(const char *text, unsigned long *value)
 /**
  * @brief 一次读取并验证当前Tina启动命令和全部相关ENV，不改bootlimit。
  */
-static int _supervisor_boot_read(supervisor_boot_env_t *environment)
+static int _supervisor_boot_read(supervisor_boot_env_t *environment, int lock_fd)
 {
     char          output[SUPERVISOR_BOOT_OUTPUT_SIZE];
     char         *arguments[] = {NULL, "boot_partition", "stable_boot_partition", "bootcount", "upgrade_available",
@@ -277,7 +524,7 @@ static int _supervisor_boot_read(supervisor_boot_env_t *environment)
     int           ret;
 
     arguments[0] = (char *)_supervisor_boot_path("LINKG_SUPERVISOR_TEST_PRINTENV", "/usr/sbin/fw_printenv");
-    ret = _supervisor_boot_command(arguments, output, sizeof(output));
+    ret = _supervisor_boot_command(arguments, SUPERVISOR_BOOT_READ, lock_fd, output, sizeof(output));
     if (ret != 0)
     {
         return ret;
@@ -345,7 +592,7 @@ static int _supervisor_boot_read(supervisor_boot_env_t *environment)
 /**
  * @brief 用fw_setenv批处理一次提交四项ENV，并读回验证实际持久化值。
  */
-static int _supervisor_boot_write(const supervisor_boot_env_t *desired)
+static int _supervisor_boot_write(const supervisor_boot_env_t *desired, int lock_fd)
 {
     supervisor_boot_env_t current;
     char                  temporary[] = "/tmp/linkg-supervisor-env-XXXXXX";
@@ -356,7 +603,7 @@ static int _supervisor_boot_write(const supervisor_boot_env_t *desired)
     int                   descriptor;
     int                   ret;
 
-    ret = _supervisor_boot_read(&current);
+    ret = _supervisor_boot_read(&current, lock_fd);
     if (ret != 0)
     {
         return ret;
@@ -395,13 +642,13 @@ static int _supervisor_boot_write(const supervisor_boot_env_t *desired)
     if (ret == 0)
     {
         arguments[0] = (char *)_supervisor_boot_path("LINKG_SUPERVISOR_TEST_SETENV", "/usr/sbin/fw_setenv");
-        ret = _supervisor_boot_command(arguments, output, sizeof(output));
+        ret = _supervisor_boot_command(arguments, SUPERVISOR_BOOT_WRITE, lock_fd, output, sizeof(output));
     }
 
     unlink(temporary);
     if (ret == 0)
     {
-        ret = _supervisor_boot_read(&current);
+        ret = _supervisor_boot_read(&current, lock_fd);
     }
 
     if (ret == 0 && (current.target != desired->target || current.stable != desired->stable ||
@@ -481,6 +728,7 @@ int supervisor_boot_actual(supervisor_kernel_t *kernel)
 int supervisor_boot_trial(supervisor_kernel_t target, supervisor_kernel_t stable)
 {
     supervisor_boot_env_t desired;
+    int                   lock_fd;
     int                   ret;
 
     if (supervisor_version_kernel_name(target) == NULL || supervisor_version_kernel_name(stable) == NULL)
@@ -488,20 +736,27 @@ int supervisor_boot_trial(supervisor_kernel_t target, supervisor_kernel_t stable
         return -EINVAL;
     }
 
-    ret = _supervisor_boot_read(&desired);
-    if (ret != 0)
+    lock_fd = _supervisor_boot_lock();
+    if (lock_fd < 0)
     {
-        return ret;
+        return lock_fd;
     }
 
-    desired.target = target;
-    desired.stable = stable;
-    if (target != stable)
+    ret = _supervisor_boot_read(&desired, lock_fd);
+    if (ret == 0)
     {
-        desired.upgrading = 1UL;
+        desired.target = target;
+        desired.stable = stable;
+        if (target != stable)
+        {
+            desired.upgrading = 1UL;
+        }
+
+        ret = _supervisor_boot_write(&desired, lock_fd);
     }
 
-    return _supervisor_boot_write(&desired);
+    close(lock_fd);
+    return ret;
 }
 
 /**
@@ -510,6 +765,8 @@ int supervisor_boot_trial(supervisor_kernel_t target, supervisor_kernel_t stable
 int supervisor_boot_stable(supervisor_kernel_t kernel)
 {
     supervisor_boot_env_t desired;
+    int                   lock_fd;
+    int                   ret;
 
     if (supervisor_version_kernel_name(kernel) == NULL)
     {
@@ -519,7 +776,16 @@ int supervisor_boot_stable(supervisor_kernel_t kernel)
     memset(&desired, 0, sizeof(desired));
     desired.target = kernel;
     desired.stable = kernel;
-    return _supervisor_boot_write(&desired);
+    lock_fd = _supervisor_boot_lock();
+    if (lock_fd < 0)
+    {
+        return lock_fd;
+    }
+
+    ret = _supervisor_boot_write(&desired, lock_fd);
+    // 不显式LOCK_UN：写工具继承同一锁描述符，只有全部持有者关闭才释放。
+    close(lock_fd);
+    return ret;
 }
 
 /**
@@ -528,16 +794,24 @@ int supervisor_boot_stable(supervisor_kernel_t kernel)
 int supervisor_boot_is_stable(supervisor_kernel_t kernel, bool *stable)
 {
     supervisor_boot_env_t environment;
+    int                   lock_fd;
     int                   ret;
 
     *stable = false;
-    ret = _supervisor_boot_read(&environment);
+    lock_fd = _supervisor_boot_lock();
+    if (lock_fd < 0)
+    {
+        return lock_fd;
+    }
+
+    ret = _supervisor_boot_read(&environment, lock_fd);
     if (ret == 0)
     {
         *stable = environment.target == kernel && environment.stable == kernel &&
                   environment.count == 0UL && environment.upgrading == 0UL;
     }
 
+    close(lock_fd);
     return ret;
 }
 
@@ -546,9 +820,16 @@ int supervisor_boot_is_stable(supervisor_kernel_t kernel, bool *stable)
  */
 int supervisor_boot_reboot(void)
 {
+    int ret;
+
+    ret = supervisor_boot_checkpoint();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
 #if defined(LINKG_SUPERVISOR_TEST_BUILD) || defined(LINKG_SUPERVISOR_TEST_IO)
     const char *path;
-    int         ret;
 
     path = _supervisor_boot_path("LINKG_SUPERVISOR_TEST_REBOOT", NULL);
     if (path == NULL)

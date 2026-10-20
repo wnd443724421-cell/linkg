@@ -185,14 +185,55 @@ static int _linkg_switch_policy_wifi_enter_dual_verify(const linkg_switch_policy
 }
 
 /**
- * @brief 处理Wi-Fi单发业务的质量异常。
+ * @brief 按DATA、VIDEO、REALTIME优先级依次迁移Wi-Fi业务。
  *
- * 当前Loss模块尚未实现窗口累计，故此路径暂不会因软退化触发。
- * SUSPECT的RF辅助确认以及业务分级策略在后续算法阶段补充。
+ * 每次只迁移一类业务，迁移后使用Cellular单发，
+ * 保留Wi-Fi备用候选，后续由恢复策略决定何时迁回。
+ */
+static int _linkg_switch_policy_wifi_migrate_load(const linkg_switch_policy_input_t *input, uint64_t now_us)
+{
+    static const linkg_transport_class_t order[] =
+    {
+        LINKG_TRANSPORT_CLASS_DATA,
+        LINKG_TRANSPORT_CLASS_VIDEO,
+        LINKG_TRANSPORT_CLASS_REALTIME
+    };
+
+    linkg_send_plan_t        plan;
+    linkg_class_send_plan_t *current;
+    uint32_t                 index;
+
+    plan = input->plan;
+
+    for (index = 0U; index < sizeof(order) / sizeof(order[0]); index++)
+    {
+        current = &plan.classes[order[index]];
+
+        if (!_linkg_switch_policy_wifi_has_cellular_backup(input, current))
+        {
+            continue;
+        }
+
+        current->mode              = LINKG_SEND_MODE_SINGLE;
+        current->primary_link_id   = input->observation.cellular.link_id;
+        current->secondary_link_id = input->observation.wifi.link_id;
+
+        return _linkg_switch_policy_wifi_commit(input, &plan, now_us);
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 处理Wi-Fi单发业务的Wire丢包和Queue Overflow异常。
+ *
+ * Wire Loss达到BAD时进入冗余验证。
+ * Load达到BAD时按优先级迁移下一类业务。
  */
 static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_input_t *input, uint64_t now_us)
 {
     linkg_switch_policy_loss_state_t loss_state;
+    linkg_switch_policy_load_state_t load_state;
     int                              ret;
 
     ret = linkg_switch_policy_loss_process(input, now_us, &loss_state);
@@ -201,12 +242,23 @@ static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_in
         return ret;
     }
 
-    if (loss_state != LINKG_SWITCH_POLICY_LOSS_BAD)
+    if (loss_state == LINKG_SWITCH_POLICY_LOSS_BAD)
     {
-        return 0;
+        return _linkg_switch_policy_wifi_enter_dual_verify(input, now_us);
     }
 
-    return _linkg_switch_policy_wifi_enter_dual_verify(input, now_us);
+    ret = linkg_switch_policy_load_process(input, now_us, &load_state);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD)
+    {
+        return _linkg_switch_policy_wifi_migrate_load(input, now_us);
+    }
+
+    return 0;
 }
 
 /****************************** Wi-Fi冗余健康检查 ******************************/

@@ -56,8 +56,9 @@ typedef struct
 typedef struct
 {
     bool     valid;          // 当前丢包统计窗口是否具有有效样本
-    uint32_t loss_permille;  // 当前窗口丢包率，单位千分比
-    uint32_t sample_packets; // 当前窗口参与统计的数据包数量
+    uint32_t lost_packets;   // 当前窗口实际确认的丢包数量
+    uint32_t sample_packets; // 当前窗口参与统计的总包数
+    uint32_t loss_permille;  // 仅用于对外显示的千分比丢包率
     uint64_t updated_us;     // 最近一次丢包状态更新时间
 } linkg_switch_status_loss_t;
 

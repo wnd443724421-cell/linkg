@@ -32,6 +32,32 @@
 #define LINKG_SWITCH_OBSERVATION_INTERVAL_US    250000ULL                      // STA观测快照刷新周期
 #define LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US 500000ULL                      // AP/STA发送计划校准周期
 
+/****************************** Wi-Fi Loss Policy运行状态 ******************************/
+
+typedef struct
+{
+    uint64_t last_uplink_updated_us;   // 最近处理的上行观测时间
+    uint64_t last_downlink_updated_us; // 最近处理的下行观测时间
+    uint64_t last_valid_us;            // 最近一次有效样本判断时间
+    uint32_t wifi_link_id;             // 当前积分归属的Wi-Fi Link
+    uint8_t  score;                    // 上下行融合后的异常积分
+    bool     initialized;              // 积分状态是否已经初始化
+} linkg_switch_loss_policy_runtime_t;
+
+/****************************** Load积分状态 ******************************/
+
+typedef struct
+{
+    linkg_send_plan_t plan;                     // 上一次判决使用的完整发送计划
+    uint64_t          last_uplink_updated_us;   // 上行最近消费的窗口时间戳
+    uint64_t          last_downlink_updated_us; // 下行最近消费的窗口时间戳
+    uint64_t          last_valid_us;            // 最近有效观测时间
+    uint32_t          wifi_link_id;             // 当前积分对应的Wi-Fi Link
+    uint8_t           score;                    // 当前共享积分，0~3
+    bool              initialized;              // 检测器是否初始化
+    bool              waiting_sync;             // 是否处于Plan同步过渡期
+} linkg_switch_load_policy_runtime_t;
+
 /****************************** STA侧Peer运行状态 ******************************/
 
 typedef struct
@@ -49,8 +75,11 @@ typedef struct
     linkg_switch_loss_observation_t  remote_cellular_uplink_loss;       // AP上报的STA到AP Cellular Wire丢包
     linkg_switch_loss_observation_t  remote_cellular_downlink_load;     // AP上报的AP到STA Cellular Load丢包
 
-    linkg_switch_plan_sync_runtime_t plan_sync;                        // 当前STA向AP同步完整三类发送计划的事务
-    uint32_t                         remote_quality_report_id;         // 最近接收的AP质量报告编号
+    linkg_switch_plan_sync_runtime_t plan_sync;                         // 当前STA向AP同步完整三类发送计划的事务
+    uint32_t                         remote_quality_report_id;          // 最近接收的AP质量报告编号
+
+    linkg_switch_loss_policy_runtime_t wifi_loss_policy;                // Wi-Fi双向丢包共享异常积分
+    linkg_switch_load_policy_runtime_t wifi_load_policy;                // Wi-Fi队列溢出检测器
 } linkg_switch_sta_peer_runtime_t;
 
 /****************************** AP侧Peer运行状态 ******************************/

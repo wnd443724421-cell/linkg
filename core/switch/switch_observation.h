@@ -39,17 +39,19 @@ typedef struct
 /****************************** 丢包观测 ******************************/
 
 /**
- * @brief 指定Peer、方向、统计窗口的丢包观测。
+ * @brief 指定Peer、方向、统计窗口的精确丢包观测。
  *
- * loss_permille使用千分比表示，0为无丢包，1000为全部丢包。
- * sample_packets为当前窗口参与计算的总帧数量。
+ * lost_packets为当前窗口实际确认的丢失报文数量。
+ * sample_packets为当前窗口成功接收与确认丢失的报文总数。
+ * 不跨窗口累计丢包样本。
+ *
  * 没有有效样本时valid必须为false，不能解释为0丢包。
  */
 typedef struct
 {
     bool     valid;          // 当前窗口是否存在有效丢包样本
-    uint32_t loss_permille;  // 当前丢包率，0~1000
-    uint32_t sample_packets; // 当前统计窗口参与计算的总帧数
+    uint32_t lost_packets;   // 当前窗口实际确认丢失的报文数
+    uint32_t sample_packets; // 当前窗口参与统计的总报文数
     uint64_t updated_us;     // 当前丢包统计更新时间
 } linkg_switch_loss_observation_t;
 
@@ -185,7 +187,7 @@ typedef struct
 /****************************** 观测操作 ******************************/
 
 int  linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generation, uint64_t now_us);
-int  linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t loss_permille, uint32_t sample_packets);
+int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t lost_packets, uint32_t sample_packets);
 void linkg_switch_observation_reset_locked(uint8_t peer_node_id);
 
 #endif

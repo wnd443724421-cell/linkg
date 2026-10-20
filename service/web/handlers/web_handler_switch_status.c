@@ -476,7 +476,7 @@ error:
 }
 
 /**
- * @brief 向JSON对象写入丢包状态。
+ * @brief 向JSON对象写入精确丢包数量及显示丢包率。
  */
 static int _linkg_web_switch_status_json_add_loss(cJSON *parent, const char *key, const linkg_switch_status_loss_t *source, uint64_t collected_us)
 {
@@ -495,13 +495,19 @@ static int _linkg_web_switch_status_json_add_loss(cJSON *parent, const char *key
         goto error;
     }
 
-    ret = linkg_json_add_uint32(object, "loss_permille", source->loss_permille);
+    ret = linkg_json_add_uint32(object, "lost_packets", source->lost_packets);
     if (ret != LINKG_JSON_OK)
     {
         goto error;
     }
 
     ret = linkg_json_add_uint32(object, "sample_packets", source->sample_packets);
+    if (ret != LINKG_JSON_OK)
+    {
+        goto error;
+    }
+
+    ret = linkg_json_add_uint32(object, "loss_permille", source->loss_permille);
     if (ret != LINKG_JSON_OK)
     {
         goto error;

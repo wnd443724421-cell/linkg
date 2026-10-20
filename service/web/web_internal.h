@@ -41,7 +41,9 @@ typedef enum
     LINKG_WEB_CMD_NETWORK_BASIC_RESTART = 1017, // 确认后异步重启全部服务
     LINKG_WEB_CMD_DEVICE_INFO_GET       = 1018, // 设备信息及角色状态
     LINKG_WEB_CMD_DEVICE_ROLE_SET       = 1019, // 保存AP/STA角色
-    LINKG_WEB_CMD_DEVICE_RESTART        = 1020  // 确认重启全部服务
+    LINKG_WEB_CMD_DEVICE_RESTART        = 1020, // 确认重启全部服务
+    LINKG_WEB_CMD_UPGRADE_START         = 1021, // 启动升级包校验与安装
+    LINKG_WEB_CMD_UPGRADE_STATUS_GET    = 1022  // 获取升级安装状态
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -96,6 +98,9 @@ int  _linkg_web_handler_network_basic_restart(const cJSON *param, char **respons
 int _linkg_web_handler_device_info_get(const cJSON *param, char **response);
 int _linkg_web_handler_device_role_set(const cJSON *param, char **response);
 int _linkg_web_handler_device_restart(const cJSON *param, char **response);
+
+int _linkg_web_handler_upgrade_start(const cJSON *param, char **response);
+int _linkg_web_handler_upgrade_status_get(const cJSON *param, char **response);
 
 #ifdef __cplusplus
 }

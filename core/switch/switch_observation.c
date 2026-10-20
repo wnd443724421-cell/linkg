@@ -147,28 +147,6 @@ static uint64_t _linkg_switch_observation_scale_ratio(uint64_t numerator, uint64
 }
 
 /**
- * @brief 根据丢失帧数与总样本数计算千分比，结果限定在0~1000。
- */
-static uint32_t _linkg_switch_observation_loss_permille(uint64_t lost_packets, uint64_t sample_packets)
-{
-    uint64_t ratio;
-
-    if (sample_packets == 0U || lost_packets == 0U)
-    {
-        return 0U;
-    }
-
-    if (lost_packets >= sample_packets)
-    {
-        return 1000U;
-    }
-
-    ratio = _linkg_switch_observation_scale_ratio(lost_packets, 1000ULL, sample_packets);
-
-    return ratio > 1000U ? 1000U : (uint32_t)ratio;
-}
-
-/**
  * @brief 将elapsed_ms时间转换为当前CLOCK_MONOTONIC微秒时间基准。
  */
 static uint64_t _linkg_switch_observation_elapsed_ms_to_monotonic_us(uint64_t updated_ms, uint64_t now_us, uint64_t elapsed_ms)
@@ -598,9 +576,9 @@ static void _linkg_switch_observation_update_traffic_locked(linkg_switch_sta_pee
 }
 
 /**
- * @brief 将本机RX累计Wire统计转换为当前窗口丢包观测，调用方持有Switch锁。
+ * @brief 将本机Wire接收累计统计转换成当前窗口精确丢包数量。
  *
- * 第一次建立基线、Link切换、计数回退或无RX数据时输出valid=false。
+ * 调用方已经持有Switch锁。
  */
 static void _linkg_switch_observation_update_wire_locked(linkg_switch_loss_sampler_t *sampler, uint32_t link_id, bool stats_valid, uint64_t received, uint64_t lost, uint64_t now_us, linkg_switch_loss_observation_t *observation)
 {
@@ -635,7 +613,7 @@ static void _linkg_switch_observation_update_wire_locked(linkg_switch_loss_sampl
     if (total_delta != 0U)
     {
         observation->valid          = true;
-        observation->loss_permille  = _linkg_switch_observation_loss_permille(lost_delta, total_delta);
+        observation->lost_packets   = _linkg_switch_observation_u32_saturate(lost_delta);
         observation->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
         observation->updated_us     = now_us;
     }
@@ -645,9 +623,10 @@ static void _linkg_switch_observation_update_wire_locked(linkg_switch_loss_sampl
 }
 
 /**
- * @brief 将本机TX累计Queue Overflow转换为当前窗口负载丢包，调用方持有Switch锁。
+ * @brief 将本机TX累计Queue Overflow转换成当前窗口精确Load丢包数量。
  *
- * Wi-Fi和Cellular统一采用success/(success+overflow)的分母口径。
+ * 调用方已经持有Switch锁。
+ * Wi-Fi和Cellular统一采用success/(success+overflow)的统计口径。
  */
 static void _linkg_switch_observation_update_load_locked(linkg_switch_load_sampler_t *sampler, uint32_t link_id, bool stats_valid, const linkg_path_stats_t *stats, uint64_t now_us, linkg_switch_loss_observation_t *observation)
 {
@@ -682,7 +661,7 @@ static void _linkg_switch_observation_update_load_locked(linkg_switch_load_sampl
     if (total_delta != 0U)
     {
         observation->valid          = true;
-        observation->loss_permille  = _linkg_switch_observation_loss_permille(overflow_delta, total_delta);
+        observation->lost_packets   = _linkg_switch_observation_u32_saturate(overflow_delta);
         observation->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
         observation->updated_us     = now_us;
     }
@@ -893,11 +872,9 @@ int linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generat
 }
 
 /**
- * @brief 兼容旧接口：单独更新AP上报的Wi-Fi上行Wire丢包观测。
- *
- * V2正常接收路径应使用linkg_switch_report_receive_quality()更新整份四项报告。
+ * @brief 更新指定STA Peer最近一次AP上报的Wi-Fi上行精确丢包观测。
  */
-int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t loss_permille, uint32_t sample_packets)
+int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t lost_packets, uint32_t sample_packets)
 {
     linkg_switch_sta_peer_runtime_t *runtime;
     linkg_switch_peer_runtime_t     *peer;
@@ -905,8 +882,7 @@ int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uin
 
     if (peer_node_id < LINKG_RESOURCE_NODE_ID_MIN ||
         peer_node_id > LINKG_RESOURCE_NODE_ID_MAX ||
-        loss_permille > 1000U ||
-        (sample_packets == 0U && loss_permille != 0U))
+        lost_packets > sample_packets)
     {
         return -EINVAL;
     }
@@ -942,14 +918,15 @@ int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uin
 
     runtime = &peer->role.sta;
 
-    if (runtime->remote_wifi_uplink_loss.valid && now_us < runtime->remote_wifi_uplink_loss.updated_us)
+    if (runtime->remote_wifi_uplink_loss.valid &&
+        now_us < runtime->remote_wifi_uplink_loss.updated_us)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
     }
 
     runtime->remote_wifi_uplink_loss.valid          = sample_packets != 0U;
-    runtime->remote_wifi_uplink_loss.loss_permille  = sample_packets != 0U ? loss_permille : 0U;
+    runtime->remote_wifi_uplink_loss.lost_packets   = lost_packets;
     runtime->remote_wifi_uplink_loss.sample_packets = sample_packets;
     runtime->remote_wifi_uplink_loss.updated_us     = now_us;
 
@@ -993,4 +970,6 @@ void linkg_switch_observation_reset_locked(uint8_t peer_node_id)
     memset(&runtime->remote_wifi_downlink_load, 0, sizeof(runtime->remote_wifi_downlink_load));
     memset(&runtime->remote_cellular_uplink_loss, 0, sizeof(runtime->remote_cellular_uplink_loss));
     memset(&runtime->remote_cellular_downlink_load, 0, sizeof(runtime->remote_cellular_downlink_load));
+    memset(&runtime->wifi_loss_policy, 0, sizeof(runtime->wifi_loss_policy));
+    memset(&runtime->wifi_load_policy, 0, sizeof(runtime->wifi_load_policy));
 }

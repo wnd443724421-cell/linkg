@@ -1,18 +1,20 @@
 /**
  * @file release_faults.c
- * @brief 仅测试使用的JSON及软链接持久化故障注入
+ * @brief 仅测试使用的持久化及ENV辅助等待故障注入
  * @author Dawn
  * @version 0.2.0
- * @date 2026-10-19
+ * @date 2026-10-20
  */
 
 #include <errno.h>
 #include <limits.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /****************************** 内部辅助 ******************************/
@@ -38,6 +40,60 @@ static bool _release_fault_enabled(const char *marker, const char *path, const c
 }
 
 /****************************** 故障注入 ******************************/
+
+/**
+ * @brief 仅对指定写工具注入一次waitpid错误，不影响LinkG回收。
+ */
+pid_t waitpid(pid_t process_id, int *status, int options)
+{
+    static bool injected = false; // 每个测试Supervisor只注入一次辅助写进程等待错误
+    const char *root;
+    char        path[PATH_MAX];
+    FILE       *stream;
+    long        writer;
+
+    root = getenv("LINKG_RELEASE_TEST_ROOT");
+    if (!injected && _release_fault_enabled("fail-env-wait", root, ""))
+    {
+        snprintf(path, sizeof(path), "%s/writer.pid", root);
+        stream = fopen(path, "r");
+        if (stream != NULL)
+        {
+            writer = -1;
+            if (fscanf(stream, "%ld", &writer) == 1 && writer == (long)process_id)
+            {
+                injected = true;
+            }
+
+            fclose(stream);
+            if (injected)
+            {
+                errno = EIO;
+                return -1;
+            }
+        }
+    }
+
+    return (pid_t)syscall(SYS_wait4, process_id, status, options, NULL);
+}
+
+/**
+ * @brief 模拟写工具等待时poll失败，要求产品路径继续等待且不忙循环。
+ */
+int poll(struct pollfd *descriptors, nfds_t count, int timeout)
+{
+    const char *root;
+
+    root = getenv("LINKG_RELEASE_TEST_ROOT");
+    if (count == 0U && _release_fault_enabled("fail-env-poll", root, "") &&
+        _release_fault_enabled("write-active", root, ""))
+    {
+        errno = EIO;
+        return -1;
+    }
+
+    return (int)syscall(SYS_poll, descriptors, count, timeout);
+}
 
 /**
  * @brief 在指定持久化边界返回错误，软链接只阻断向v2的切换而允许恢复v1。

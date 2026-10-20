@@ -95,38 +95,12 @@ static uint64_t _linkg_switch_report_u64_add(uint64_t a, uint64_t b)
 }
 
 /**
- * @brief 计算当前窗口千分比丢包率。
- */
-static uint32_t _linkg_switch_report_loss_permille(uint64_t lost_packets, uint64_t sample_packets)
-{
-    if (sample_packets == 0U || lost_packets == 0U)
-    {
-        return 0U;
-    }
-
-    if (lost_packets >= sample_packets)
-    {
-        return 1000U;
-    }
-
-    // 极大计数时先同比缩小，避免乘1000发生64位溢出。
-    while (lost_packets > UINT64_MAX / 1000ULL)
-    {
-        lost_packets >>= 1U;
-        sample_packets >>= 1U;
-    }
-
-    return (uint32_t)((lost_packets * 1000ULL) / sample_packets);
-}
-
-/**
- * @brief 校验单项报告，零样本必须对应零丢包率。
+ * @brief 校验单项报告，丢包数量不得超过总样本数量。
  */
 static bool _linkg_switch_report_loss_valid(const linkg_switch_wire_loss_t *loss)
 {
     return loss != NULL &&
-           loss->loss_permille <= 1000U &&
-           (loss->sample_packets != 0U || loss->loss_permille == 0U);
+           loss->lost_packets <= loss->sample_packets;
 }
 
 /**
@@ -293,7 +267,10 @@ static int _linkg_switch_report_collect_sample(uint8_t peer_node_id, uint32_t wi
 }
 
 /**
- * @brief 将有效Wire累计统计转换成当前窗口丢包率，调用方持有Switch锁。
+ * @brief 将有效Wire累计统计转换成当前窗口精确丢包数量。
+ *
+ * 调用方已经持有Switch锁。
+ * 只使用当前窗口差分，不累计历史窗口样本。
  */
 static void _linkg_switch_report_build_wire_locked(linkg_switch_loss_sampler_t *sampler, uint32_t link_id, const linkg_switch_report_path_sample_t *sample, linkg_switch_wire_loss_t *loss)
 {
@@ -327,7 +304,7 @@ static void _linkg_switch_report_build_wire_locked(linkg_switch_loss_sampler_t *
 
     if (total_delta != 0U)
     {
-        loss->loss_permille  = _linkg_switch_report_loss_permille(lost_delta, total_delta);
+        loss->lost_packets   = _linkg_switch_report_u32_saturate(lost_delta);
         loss->sample_packets = _linkg_switch_report_u32_saturate(total_delta);
     }
 
@@ -336,10 +313,10 @@ static void _linkg_switch_report_build_wire_locked(linkg_switch_loss_sampler_t *
 }
 
 /**
- * @brief 将发送端Path累计统计转换成当前窗口Load丢包率，调用方持有Switch锁。
+ * @brief 将发送端Path累计统计转换成当前窗口Load丢包数量。
  *
- * Wi-Fi和Cellular统一使用Queue Overflow，不在Token Bucket令牌不足时直接丢包。
- * failed/expired及其他主动丢弃不属于当前Load指标。
+ * 调用方已经持有Switch锁。
+ * Wi-Fi和Cellular统一统计TX Queue Overflow。
  */
 static void _linkg_switch_report_build_load_locked(linkg_switch_load_sampler_t *sampler, uint32_t link_id, const linkg_switch_report_path_sample_t *sample, linkg_switch_wire_loss_t *loss)
 {
@@ -373,7 +350,7 @@ static void _linkg_switch_report_build_load_locked(linkg_switch_load_sampler_t *
 
     if (total_delta != 0U)
     {
-        loss->loss_permille  = _linkg_switch_report_loss_permille(overflow_delta, total_delta);
+        loss->lost_packets   = _linkg_switch_report_u32_saturate(overflow_delta);
         loss->sample_packets = _linkg_switch_report_u32_saturate(total_delta);
     }
 
@@ -382,12 +359,14 @@ static void _linkg_switch_report_build_load_locked(linkg_switch_load_sampler_t *
 }
 
 /**
- * @brief 将Wire单项报告复制为本地观测缓存，调用方持有Switch锁。
+ * @brief 将单项报告复制为本地精确丢包观测缓存。
+ *
+ * 调用方已经持有Switch锁。
  */
 static void _linkg_switch_report_publish_loss_locked(linkg_switch_loss_observation_t *observation, const linkg_switch_wire_loss_t *loss, uint64_t now_us)
 {
     observation->valid          = loss->sample_packets != 0U;
-    observation->loss_permille  = loss->sample_packets != 0U ? loss->loss_permille : 0U;
+    observation->lost_packets   = loss->lost_packets;
     observation->sample_packets = loss->sample_packets;
     observation->updated_us     = now_us;
 }

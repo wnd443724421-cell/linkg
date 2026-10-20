@@ -80,4 +80,7 @@ if(LINKG_SUPERVISOR_BUILD_TESTS)
 
     add_test(NAME supervisor-release-production-timing COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_release.py" "$<TARGET_FILE:linkg-supervisor-release-timing>" "$<TARGET_FILE:supervisor-release-faults>" "$<TARGET_FILE:supervisor-faults>" --production)
     set_tests_properties(supervisor-release-production-timing PROPERTIES TIMEOUT 120)
+
+    add_test(NAME supervisor-env-lifecycle COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_release.py" "$<TARGET_FILE:linkg-supervisor-test>" "$<TARGET_FILE:supervisor-release-faults>" "$<TARGET_FILE:supervisor-faults>" --env-lifecycle)
+    set_tests_properties(supervisor-env-lifecycle PROPERTIES TIMEOUT 150)
 endif()

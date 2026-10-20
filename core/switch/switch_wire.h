@@ -98,15 +98,16 @@ typedef struct
 /****************************** 质量上报 ******************************/
 
 /**
- * @brief 单项丢包质量报告。
+ * @brief 单项当前窗口丢包质量报告。
  *
- * loss_permille为当前窗口千分比丢包率，范围0~1000。
- * sample_packets为当前窗口总样本数，0表示无有效样本。
+ * lost_packets为当前窗口实际确认丢失的报文数量。
+ * sample_packets为当前窗口总样本数量，包含成功与丢失报文。
+ * 样本数为0时，丢包数量必须为0。
  */
 typedef struct
 {
-    uint32_t loss_permille;  // 当前窗口丢包率，0~1000
-    uint32_t sample_packets; // 当前窗口参与计算的总帧数
+    uint32_t lost_packets;   // 当前窗口实际丢包数量
+    uint32_t sample_packets; // 当前窗口总样本数量
 } linkg_switch_wire_loss_t;
 
 /**

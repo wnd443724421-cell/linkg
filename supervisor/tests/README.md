@@ -1,5 +1,38 @@
 # Supervisor可执行测试
 
+## ENV工具生命周期回归
+
+`supervisor-env-lifecycle` 复用现有 Fixture、ENV/LinkG Mock 和故障注入，不调用真实 fw_setenv，不访问真实 Flash。READ/WRITE 的 1000ms 阈值不缩短；本组用缩短的候选健康窗口，原有正式时长组仍验证完整 60 秒。
+
+```bash
+ctest --test-dir /tmp/linkg-supervisor-v02-x86 -R '^supervisor-env-lifecycle$' --output-on-failure -V
+```
+
+| 新增用例 | 检查 |
+|---|---|
+| env_read_timeout | 读取超过1秒终止并回收，不产生写入 |
+| env_write_1500ms | 写入1.5秒不被杀，退出并读回后确认 |
+| env_write_3000ms | 写入3秒只告警一次，完成后确认 |
+| env_exit_during_long_write | LinkG退出不强杀工具，写完后回滚 |
+| env_heartbeat_timeout_during_write | 心跳失效不强杀工具、不错误确认 |
+| env_restarting_during_long_write | 处理RESTARTING，重新满足完整健康窗口 |
+| env_sigterm_waits_for_write | 正常停止先等待写入，再回收LinkG退出 |
+| env_sigint_waits_for_write | SIGINT采用相同等待策略 |
+| env_startup_sigterm_waits_for_write | 启动阶段写入也等待，停止后不启动LinkG |
+| env_sigkill_writer_survives | 父进程强杀后工具继续，输出也不依赖父进程管道 |
+| env_restart_waits_for_inherited_lock | 新实例在旧写入完成前不读写ENV、不启动App |
+| env_nonzero_after_long_write | 非零退出不确认，后续成功操作可以恢复 |
+| env_write_success_readback_failure | 已完成写入与读回不明确分开处理，不虚假确认 |
+| env_hung_writer_no_kill_or_retry | 持续挂起不强杀、不重试写入、不重启、不刷屏 |
+| env_large_output_does_not_interrupt_write | 大量stdout/stderr不触发写入中止 |
+| env_poll_error_does_not_kill_writer | 等待poll失败时仍继续等待并避免忙循环 |
+| env_waitpid_error_does_not_kill_writer | waitpid临时失败不强杀，真实回收后保留不明确结果 |
+| env_orphan_hang_blocks_new_instance | 遗留挂起工具持锁，新实例可正常停止但不能越过锁 |
+
+Mock 在独立文件记录工具 PID、start/done/failed 和时间，用于区分仍在执行、完成且验证成功、完成但返回或读回不明确。Mock 的独立互斥检查会记录 ENV_OVERLAP。SIGKILL 场景由测试进程担任 subreaper，收养并回收孤儿工具。只有测试清理可以通过 write-release 放行挂起工具，或在断言失败后终止已知的 Mock；这些路径不进入产品程序。
+
+## 现有进程与版本回归
+
 V0.2 新增 test_release.py、release_mock.py 和 release_faults.c，覆盖版本选择、健康窗口、同/跨 Kernel 回滚、两条 current 协调恢复、JSON/ENV 失败和中断恢复、回收失败不重叠启动。隔离替身不访问真实 Flash，reboot 只写测试标记。
 
 supervisor-release-scenarios 使用缩短时间；supervisor-release-production-timing 保留正式 60 秒窗口，实际验证第 10 秒停止心跳、第 50 秒退出、READY 60 秒超时以及连续运行 60 秒确认。后者只启用测试 I/O，不缩短产品时限。建议不额外并行 CTest，避免嵌套进程测试的时间断言受宿主机负载影响。
@@ -11,13 +44,13 @@ supervisor-release-scenarios 使用缩短时间；supervisor-release-production-
 ```bash
 cmake -S supervisor -B /tmp/linkg-supervisor-v01-build -DCMAKE_BUILD_TYPE=Release -DLINKG_SUPERVISOR_BUILD_TESTS=ON
 cmake --build /tmp/linkg-supervisor-v01-build -j4
-ctest --test-dir /tmp/linkg-supervisor-v01-build --output-on-failure -j2
+ctest --test-dir /tmp/linkg-supervisor-v01-build --output-on-failure -j1
 
 # 查看所有PASS和具体错误日志
 cat /tmp/linkg-supervisor-v01-build/Testing/Temporary/LastTest.log
 ```
 
-`supervisor-scenarios`使用独立的 `linkg-supervisor-test` / `supervisor-mock`：READY 600ms、心跳400ms、服务重启900ms、TERM等待200ms、退避100～800ms。产品目标 `linkg-supervisor` 从不设置测试宏，保持60s/4s/60s/6s和1～30s参数；6秒TERM宽限为用户最新实板确认值。
+`supervisor-scenarios`使用独立的 `linkg-supervisor-test` / `supervisor-mock`：READY 600ms、心跳400ms、服务重启900ms、TERM等待200ms、退避100～800ms。产品目标 `linkg-supervisor` 从不设置测试宏，保持当前配置的60s/4s/60s/5s和1～30s参数；本次没有修改产品生命周期参数。
 
 快速场景包括：
 

@@ -329,32 +329,35 @@ static int _linkg_switch_wire_decode_header(const uint8_t *buffer, size_t length
 
 /**
  * @brief 校验单项丢包质量指标。
+ *
+ * 实际丢包数量不能超过当前窗口总样本数。
+ * 零样本只允许对应零丢包。
  */
 static bool _linkg_switch_wire_loss_valid(const linkg_switch_wire_loss_t *loss)
 {
-    if (loss == NULL || loss->loss_permille > 1000U)
+    if (loss == NULL)
     {
         return false;
     }
 
-    return loss->sample_packets != 0U || loss->loss_permille == 0U;
+    return loss->lost_packets <= loss->sample_packets;
 }
 
 /**
- * @brief 按网络字节序编码一项丢包质量指标，占8字节。
+ * @brief 按网络字节序编码单项丢包质量指标，占8字节。
  */
 static void _linkg_switch_wire_encode_loss(uint8_t *buffer, const linkg_switch_wire_loss_t *loss)
 {
-    _linkg_switch_wire_write_u32(buffer, loss->loss_permille);
+    _linkg_switch_wire_write_u32(buffer,      loss->lost_packets);
     _linkg_switch_wire_write_u32(buffer + 4U, loss->sample_packets);
 }
 
 /**
- * @brief 按网络字节序解码一项丢包质量指标，占8字节。
+ * @brief 按网络字节序解码单项丢包质量指标，占8字节。
  */
 static void _linkg_switch_wire_decode_loss(const uint8_t *buffer, linkg_switch_wire_loss_t *loss)
 {
-    loss->loss_permille  = _linkg_switch_wire_read_u32(buffer);
+    loss->lost_packets   = _linkg_switch_wire_read_u32(buffer);
     loss->sample_packets = _linkg_switch_wire_read_u32(buffer + 4U);
 }
 

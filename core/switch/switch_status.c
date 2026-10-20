@@ -65,14 +65,27 @@ static void _linkg_switch_status_copy_traffic(linkg_switch_status_traffic_t *des
 }
 
 /**
- * @brief 复制单个真实丢包观测状态。
+ * @brief 将内部精确丢包观测复制为对外状态。
+ *
+ * 保留精确丢包数量，仅在状态展示边界计算千分比。
+ * Policy判决不使用该千分比。
  */
 static void _linkg_switch_status_copy_loss(linkg_switch_status_loss_t *destination, const linkg_switch_loss_observation_t *source)
 {
     destination->valid          = source->valid;
-    destination->loss_permille  = source->loss_permille;
+    destination->lost_packets   = source->lost_packets;
     destination->sample_packets = source->sample_packets;
+    destination->loss_permille  = 0U;
     destination->updated_us     = source->updated_us;
+
+    if (!source->valid ||
+        source->sample_packets == 0U ||
+        source->lost_packets > source->sample_packets)
+    {
+        return;
+    }
+
+    destination->loss_permille = (uint32_t)(((uint64_t)source->lost_packets * 1000ULL) / source->sample_packets);
 }
 
 /**

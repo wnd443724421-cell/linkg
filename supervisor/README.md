@@ -102,6 +102,14 @@ current 使用临时软链接加 rename；切换任一失败时恢复两条旧�
 
 ## ENV 交互和边界
 
+ENV 工具按 READ/WRITE 区分生命周期。读取保留 1000ms 硬超时，超时终止并回收只读工具；写入超过 1000ms 仅 WARN，之后每 30 秒提示仍在等待，直到工具真实退出并被 waitpid 回收。普通超时、LinkG 健康故障、Supervisor 正常退出和辅助等待错误均不向写工具发送 SIGTERM/SIGKILL。写工具永久挂起时保持等待和低频告警，不确认 JSON、不另启写入、不请求依赖此次写入的重启。
+
+所有 ENV 读取及读改写/读回事务遵守 `/var/run/linkg-supervisor-env.lock`。父进程以 CLOEXEC 打开并持有 flock，只有写工具在 exec 前清除该描述符的 CLOEXEC，继承同一打开文件描述的锁；不执行显式 LOCK_UN 或删除锁文件。父进程正常持有到工具回收及读回结束。父进程被 SIGKILL 后，写工具仍持锁，新 Supervisor 必须等待旧操作释放锁后才能读写 ENV。
+
+写工具不设置父进程死亡信号，并忽略 SIGINT/SIGTERM/SIGQUIT/SIGPIPE；标准输入输出及错误重定向到 `/dev/null`，避免父进程输出管道关闭间接中断写入。因此不保留写工具文本诊断，Supervisor 记录 PID、退出状态、耗时及后续读回错误。读取工具保留 PDEATHSIG(SIGKILL)。正常 SIGTERM/SIGINT 会取消确认，但先等当前写入结束再回收 LinkG 并退出；ENV 等待期间继续检查 Pipe、心跳和子进程状态。
+
+该锁只协调遵守此约定的 Supervisor/辅助工具，不自动约束外部手工运行的 fw_setenv、U-Boot 或其它 Flash 写入者。遗留工具若关闭继承描述符、主动解除锁或自行 fork 脱离执行，也需单独核实；当前调用的 fw_setenv 是前台执行工具。本版没有新增事务日志或版本状态字段，锁文件只是运行期互斥载体。
+
 使用设备实际的 /usr/sbin/fw_printenv、/usr/sbin/fw_setenv，通过 argv 执行，不拼接 Shell 命令。读取并校验 boot_partition、stable_boot_partition、bootcount、upgrade_available、bootlimit 及现有启动命令。四项更新通过 fw_setenv -s 批量提交，检查返回结果，再重新读取验证。即使失败时可能已写入，也不会把失败当作成功。
 
 ENV 已正确时不重复写 Flash；候选进程重启不清零 bootcount，App-only 升级不作不必要的槽位切换。bootlimit 由用户自行配置为 5，本版不修改它，也不维护自己的启动计数。SDK bootcount_error 的判断为 bootcount > bootlimit，即 1～5 次尝试后在下一次启动进入 altbootcmd。
@@ -129,6 +137,7 @@ ctest --test-dir /tmp/linkg-supervisor-v02-x86 --output-on-failure
 - linkg-supervisor-test：缩短时间，必须提供独立 ENV、cmdline 和 reboot 文件替身，缺失时不访问真实 ENV。
 - linkg-supervisor-release-timing：仅替换 I/O，保留正式 60 秒、4 秒参数，验证真实时间窗口。
 - supervisor-release-faults：只在测试进程中注入 JSON rename、目录 fsync 和软链接失败。
+- supervisor-env-lifecycle：验证超过 1 秒的写入、读取硬超时、正常停止等待、SIGKILL 后工具继续和锁继承、挂起及辅助监控错误。所有工具使用临时文件替身，只有测试清理可以显式释放或终止挂起 Mock。
 
 ARM 交叉构建：
 
