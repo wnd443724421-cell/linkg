@@ -1,0 +1,395 @@
+/* 基础网络：紧凑的信息摘要、并排网段卡片和一体化IPv4输入。 */
+.network-basic-page {
+    max-width: 960px;
+    padding-bottom: 8px;
+}
+.network-basic-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+}
+.network-basic-preview-tag {
+    flex: none;
+    margin-top: 3px;
+    padding: 5px 10px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: 999px;
+    background: var(--linkg-color-surface);
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.network-basic-section + .network-basic-section { margin-top: var(--page-space); }
+.network-basic-card-note {
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/****************************** 当前网络信息 ******************************/
+.network-basic-summary {
+    display: grid;
+    grid-template-columns: 180px repeat(2, minmax(0, 1fr));
+}
+.network-basic-summary-item {
+    min-width: 0;
+    padding: 18px 22px 19px;
+}
+.network-basic-summary-item + .network-basic-summary-item {
+    border-left: 1px solid var(--linkg-color-border-light);
+}
+.network-basic-summary-label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+}
+.network-basic-summary-value {
+    display: block;
+    overflow: hidden;
+    color: var(--linkg-color-text);
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -0.3px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.network-basic-summary-value.is-node { color: var(--linkg-color-primary); }
+.network-basic-summary-hint {
+    display: block;
+    margin-top: 5px;
+    color: var(--linkg-color-text-muted);
+    font-size: 12px;
+}
+
+/****************************** 节点配置 ******************************/
+.network-basic-node-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px 22px;
+    padding: 19px 22px;
+    border-bottom: 1px solid var(--linkg-color-border-light);
+}
+.network-basic-node-description {
+    display: flex;
+    flex: 0 0 220px;
+    flex-direction: column;
+    gap: 4px;
+}
+.network-basic-field-title {
+    display: block;
+    color: var(--linkg-color-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.45;
+}
+.network-basic-field-subtitle {
+    display: block;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.5;
+}
+.network-basic-node-input {
+    width: 78px;
+    height: 40px;
+    padding: 0 10px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+    outline: none;
+    background: var(--linkg-color-surface);
+    color: var(--linkg-color-text);
+    font-size: 15px;
+    font-weight: 600;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+.network-basic-node-input:focus {
+    border-color: var(--linkg-color-primary);
+    box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
+}
+.network-basic-node-range {
+    color: var(--linkg-color-text-muted);
+    font-size: 12px;
+}
+
+/****************************** 网段卡片 ******************************/
+.network-basic-networks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    padding: 18px 22px 22px;
+}
+.network-basic-network-card {
+    min-width: 0;
+    padding: 17px 17px 15px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: 8px;
+    background: #fcfdff;
+}
+.network-basic-network-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 54px;
+}
+.network-basic-network-heading > div { min-width: 0; }
+.network-basic-network-heading .network-basic-field-title {
+    margin: 0 0 4px;
+}
+.network-basic-network-tag {
+    flex: none;
+    padding: 3px 7px;
+    border-radius: 4px;
+    background: var(--linkg-color-primary-soft);
+    color: var(--linkg-color-primary);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+.network-basic-address {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: 100%;
+    margin-top: 12px;
+    padding: 4px 7px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: 7px;
+    background: var(--linkg-color-surface);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.network-basic-address:focus-within {
+    border-color: var(--linkg-color-primary);
+    box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
+}
+.network-basic-octet {
+    flex: 0 0 40px;
+    width: 40px;
+    min-width: 0;
+    height: 32px;
+    padding: 0 2px;
+    border: 0;
+    border-radius: 4px;
+    outline: none;
+    background: transparent;
+    color: var(--linkg-color-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 32px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+.network-basic-octet:focus { background: var(--linkg-color-primary-soft); }
+.network-basic-octet.is-fixed {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f1f3f7;
+    color: var(--linkg-color-text-muted);
+    cursor: default;
+    user-select: none;
+}
+.network-basic-dot {
+    flex: none;
+    width: 5px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1;
+    text-align: center;
+}
+.network-basic-prefix {
+    display: flex;
+    flex: none;
+    align-items: center;
+    height: 24px;
+    margin-left: 6px;
+    padding-left: 10px;
+    border-left: 1px solid var(--linkg-color-border);
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.network-basic-input-note {
+    margin-top: 10px;
+    color: var(--linkg-color-text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+/****************************** 操作区域 ******************************/
+.network-basic-form-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    min-height: 69px;
+    padding: 14px 22px;
+    border-top: 1px solid var(--linkg-color-border-light);
+}
+.network-basic-footer-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    max-width: 520px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+}
+.network-basic-notice-mark {
+    display: flex;
+    flex: 0 0 16px;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: var(--linkg-color-primary-soft);
+    color: var(--linkg-color-primary);
+    font-size: 11px;
+    font-family: Georgia, serif;
+    font-weight: 700;
+}
+.network-basic-form-actions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 9px;
+}
+.network-basic-button {
+    height: 35px;
+    min-width: 84px;
+    padding: 0 13px;
+    border: 1px solid transparent;
+    border-radius: var(--linkg-radius-medium);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.network-basic-button-secondary {
+    border-color: var(--linkg-color-border);
+    background: var(--linkg-color-surface);
+    color: var(--linkg-color-text-secondary);
+}
+.network-basic-button-primary {
+    background: var(--linkg-color-primary);
+    color: #fff;
+}
+.network-basic-button-secondary:hover:not(:disabled) {
+    border-color: var(--linkg-color-primary);
+    color: var(--linkg-color-primary);
+}
+.network-basic-button-primary:hover:not(:disabled) {
+    background: var(--linkg-color-primary-hover);
+}
+.network-basic-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.52;
+}
+
+/****************************** DHCP与接入帮助 ******************************/
+.network-basic-status {
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: var(--linkg-color-primary-soft);
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+.network-basic-status.is-error { background: #fff3ed; color: #a63e21; }
+.network-basic-status a { color: var(--linkg-color-primary); }
+.network-basic-dhcp {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+    padding: 15px 22px;
+    border-top: 1px solid var(--linkg-color-border-light);
+}
+.network-basic-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.network-basic-toggle-row .network-basic-field-subtitle { margin-top: 4px; }
+.network-basic-toggle-row input {
+    appearance: none;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 21px;
+    border-radius: 12px;
+    background: #cbd2dc;
+    position: relative;
+    cursor: pointer;
+}
+.network-basic-toggle-row input::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+}
+.network-basic-toggle-row input:checked { background: var(--linkg-color-primary); }
+.network-basic-toggle-row input:checked::after { transform: translateX(15px); }
+.network-basic-toggle-row input:disabled { opacity: 0.45; cursor: not-allowed; }
+.network-basic-toggle-row input:focus-visible { outline: 2px solid var(--linkg-color-primary); outline-offset: 3px; }
+.network-basic-help summary { padding: 15px 22px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.network-basic-help-content { padding: 0 22px 18px; color: var(--linkg-color-text-secondary); font-size: 12px; line-height: 1.8; }
+.network-basic-help-content p { margin: 0 0 12px; }
+.network-basic-warning { color: #a45d16; }
+.network-basic-help-mode { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; padding: 0; border: 0; }
+.network-basic-help-mode legend { width: 100%; margin: 0 0 9px; color: var(--linkg-color-text); font-size: 13px; font-weight: 600; }
+.network-basic-help-mode label { display: flex; gap: 10px; align-items: center; padding: 11px 12px; border: 1px solid var(--linkg-color-border); border-radius: 6px; background: var(--linkg-color-surface); cursor: pointer; }
+.network-basic-help-mode label:has(input:checked) { border-color: var(--linkg-color-primary); background: var(--linkg-color-primary-soft); }
+.network-basic-help-mode input { flex: none; accent-color: var(--linkg-color-primary); }
+.network-basic-help-mode strong, .network-basic-help-mode small { display: block; line-height: 1.5; }
+.network-basic-help-mode strong { color: var(--linkg-color-text); font-size: 13px; }
+.network-basic-help-mode small { color: var(--linkg-color-text-secondary); font-size: 11px; font-weight: 400; }
+.network-basic-help-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-bottom: 12px; }
+.network-basic-help-fields label { display: flex; flex-direction: column; gap: 4px; }
+.network-basic-help-fields small { display: block; font-size: 11px; line-height: 1.5; color: var(--linkg-color-text-muted); }
+.network-basic-help-fields input {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 9px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: 5px;
+    color: var(--linkg-color-text);
+    background: var(--linkg-color-surface);
+}
+#networkBasicCommands details { border-top: 1px solid var(--linkg-color-border-light); padding-bottom: 10px; }
+#networkBasicCommands summary { padding: 10px 0; font-size: 13px; }
+#networkBasicCommands pre { overflow-x: auto; padding: 12px; border-radius: 5px; background: #f4f6fa; line-height: 1.8; margin: 0 0 8px; }
+.network-basic-route-cleanup { margin: 12px 0 0 0; padding: 0 12px 10px; border: 1px solid var(--linkg-color-border-light); border-radius: 6px; }
+#networkBasicCommands .network-basic-route-cleanup summary { font-size: 12px; color: var(--linkg-color-text-secondary); }
+.network-basic-route-cleanup p { margin: 0 0 9px; font-size: 12px; color: var(--linkg-color-text-muted); }
+.network-basic-copy-buffer { position: fixed; top: -10000px; left: -10000px; }
+.network-basic-page input:disabled { cursor: not-allowed; }
+.network-basic-page [hidden] { display: none; }
+
+@media (max-width: 1000px) {
+    .network-basic-summary-item { padding: 17px 16px; }
+    .network-basic-node-row { padding: 17px 16px; }
+    .network-basic-networks { padding: 16px; gap: 12px; }
+    .network-basic-network-card { padding: 14px 12px; }
+    .network-basic-form-footer { padding: 14px 16px; }
+}
+@media (max-width: 770px) {
+    .network-basic-dhcp, .network-basic-help-fields, .network-basic-help-mode { grid-template-columns: 1fr; }
+    .network-basic-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .network-basic-summary-value { font-size: 18px; }
+    .network-basic-node-description { flex-basis: 175px; }
+    .network-basic-networks { grid-template-columns: 1fr; }
+    .network-basic-form-footer { flex-direction: column; align-items: flex-start; }
+    .network-basic-form-actions { align-self: flex-end; }
+}

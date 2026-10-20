@@ -1,0 +1,141 @@
+/* 串口页面沿用全局卡片和主题，表单按统一列宽排列。 */
+.serial-page [hidden] { display: none !important; }
+.serial-header, .serial-card-header, .serial-route-header, .serial-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+.serial-header { align-items: flex-start; }
+.serial-header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.serial-mobile-menu, .serial-menu-backdrop { display: none; }
+.serial-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 24px;
+    margin-bottom: 16px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 14px;
+}
+.serial-summary strong { color: var(--linkg-color-text); font-weight: 500; }
+.serial-ports { display: grid; gap: 20px; }
+.serial-port { min-width: 0; }
+.serial-enable { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; }
+.serial-enable input { accent-color: var(--linkg-color-primary); }
+.serial-body { padding: 16px 20px 20px; }
+.serial-status { margin: 0 0 14px; font-size: 14px; color: var(--linkg-color-text-secondary); }
+.serial-physical { display: grid; grid-template-columns: 1.1fr 1.4fr 1fr 1fr 1.1fr; gap: 12px; }
+.serial-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.serial-field > span { font-size: 14px; color: var(--linkg-color-text-secondary); }
+.serial-field select, .serial-field input {
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+    background: var(--linkg-color-surface);
+    color: var(--linkg-color-text);
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+}
+.serial-field select:disabled, .serial-field input:disabled {
+    opacity: 1;
+    background: var(--linkg-color-background);
+    color: var(--linkg-color-text-secondary);
+    -webkit-text-fill-color: var(--linkg-color-text-secondary);
+    cursor: not-allowed;
+}
+.serial-field select:focus, .serial-field input:focus {
+    outline: none;
+    border-color: var(--linkg-color-primary);
+    box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
+}
+.serial-note { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--linkg-color-text-secondary); overflow-wrap: anywhere; }
+.serial-rate { color: var(--linkg-color-text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.serial-route-header { margin-top: 20px; }
+.serial-route-header h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.serial-route-header h3 span { margin-left: 6px; font-weight: 400; color: var(--linkg-color-text-muted); }
+.serial-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.serial-routes { display: grid; gap: 12px; margin-top: 12px; }
+.serial-route {
+    min-width: 0;
+    margin: 0;
+    padding: 10px 12px 12px;
+    border: 1px solid var(--linkg-color-border-light);
+    border-radius: var(--linkg-radius-large);
+    background: #fbfcfe;
+}
+.serial-route legend { padding: 0 5px; font-size: 13px; color: var(--linkg-color-text-secondary); }
+.serial-route-fields { display: grid; grid-template-columns: 0.8fr 1fr 0.9fr 1.7fr 1fr auto; align-items: end; gap: 10px; }
+.serial-button {
+    height: 34px;
+    padding: 0 13px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+    background: var(--linkg-color-surface);
+    color: var(--linkg-color-text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.serial-button:hover:not(:disabled) { border-color: var(--linkg-color-primary); color: var(--linkg-color-primary); }
+.serial-button:focus-visible { outline: 2px solid var(--linkg-color-primary); outline-offset: 2px; }
+.serial-button:disabled { opacity: 0.55; cursor: default; }
+.serial-add { background: var(--linkg-color-primary-soft); color: var(--linkg-color-primary); }
+.serial-primary { background: var(--linkg-color-primary); border-color: var(--linkg-color-primary); color: #fff; }
+.serial-primary:hover:not(:disabled) { background: var(--linkg-color-primary-hover); color: #fff; }
+.serial-remove:hover:not(:disabled) { border-color: var(--linkg-color-danger); color: var(--linkg-color-danger); }
+.serial-empty { padding: 18px 10px; font-size: 14px; color: var(--linkg-color-text-muted); text-align: center; }
+.serial-footer { padding: 18px 0 8px; }
+.serial-message { min-width: 0; margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.serial-error, .serial-message.is-error { color: var(--linkg-color-danger); }
+.serial-error { margin: 8px 0 0; font-size: 13px; line-height: 1.6; }
+.serial-message.is-success { color: var(--linkg-color-success); }
+.serial-route.has-error { border-color: var(--linkg-color-danger); }
+@media (max-width: 1100px) {
+    .serial-route-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .serial-remove { justify-self: start; }
+}
+@media (max-width: 959px) {
+    body.serial-active { min-width: 0; }
+    body.serial-active .app-main { margin-left: 0; }
+    body.serial-active .app-sidebar {
+        z-index: 120;
+        visibility: hidden;
+        transform: translateX(-100%);
+        transition: transform 0.18s ease, visibility 0s linear 0.18s;
+    }
+    body.serial-active.serial-menu-open .app-sidebar {
+        visibility: visible;
+        transform: translateX(0);
+        box-shadow: 8px 0 24px rgba(31, 41, 55, 0.16);
+        transition-delay: 0s;
+    }
+    .serial-mobile-menu { display: inline-flex; align-items: center; }
+    .serial-menu-backdrop:not([hidden]) {
+        position: fixed;
+        z-index: 110;
+        top: var(--linkg-header-height);
+        right: 0;
+        bottom: 0;
+        left: 0;
+        display: block;
+        width: 100%;
+        height: auto;
+        background: rgba(31, 41, 55, 0.28);
+    }
+}
+@media (max-width: 700px) {
+    .serial-header, .serial-card-header, .serial-footer { align-items: flex-start; flex-direction: column; }
+    .serial-physical, .serial-route-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .serial-body { padding: 14px; }
+    .serial-route-header { align-items: flex-start; flex-direction: column; gap: 10px; }
+}
+@media (max-width: 380px) {
+    .serial-physical, .serial-route-fields { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+    body.serial-active .app-sidebar { transition: none; }
+}

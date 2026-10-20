@@ -276,7 +276,10 @@ static int _uart_route_open(linkg_uart_route_t *route)
     }
 
     route->fd             = fd;
-    route->retry_delay_ms = LINKG_UART_RETRY_INITIAL_MS;
+    if (route->state != LINKG_UART_ROUTE_CONNECTING)
+    {
+        route->retry_delay_ms = LINKG_UART_RETRY_INITIAL_MS;
+    }
     return 0;
 }
 

@@ -17,9 +17,8 @@
 
 typedef enum
 {
-    LINKG_SWITCH_POLICY_LOSS_NONE    = 0, // 当前无明显丢包异常
-    LINKG_SWITCH_POLICY_LOSS_SUSPECT,     // 轻微异常，需要RF辅助判断
-    LINKG_SWITCH_POLICY_LOSS_BAD          // 明显异常，无需RF辅助判断
+    LINKG_SWITCH_POLICY_LOSS_NONE = 0, // 尚未达到明显丢包异常触发条件
+    LINKG_SWITCH_POLICY_LOSS_BAD       // 明显丢包异常，需要启动链路质量验证
 } linkg_switch_policy_loss_state_t;
 
 /****************************** RF状态 ******************************/
