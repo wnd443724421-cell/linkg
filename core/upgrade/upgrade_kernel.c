@@ -6,9 +6,13 @@
  * @date 2026-10-20
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "upgrade_kernel.h"
+
+#include "linkg_release_state.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -24,11 +28,11 @@
 
 /****************************** 模块常量 ******************************/
 
-#define UPGRADE_KERNEL_IMAGE_RELATIVE_PATH  "/kernel/boot.img" // 升级包中Kernel镜像的相对位置
-#define UPGRADE_KERNEL_MTD_TABLE_PATH       "/proc/mtd"        // 当前系统实际MTD分区表
-#define UPGRADE_KERNEL_CMDLINE_PATH         "/proc/cmdline"    // 当前运行Kernel的实际槽位
-#define UPGRADE_KERNEL_IO_BYTES             16384U             // 分块哈希与Flash写入缓冲区大小
-#define UPGRADE_KERNEL_SHA256_BYTES         32U                // SHA-256摘要长度
+#define UPGRADE_KERNEL_IMAGE_RELATIVE_PATH "/kernel/boot.img"                                            // 升级包中Kernel镜像的相对位置
+#define UPGRADE_KERNEL_MTD_TABLE_PATH      linkg_release_path("LINKG_OTA_TEST_MTD_TABLE", "/proc/mtd")   // 当前系统实际MTD分区表
+#define UPGRADE_KERNEL_CMDLINE_PATH        linkg_release_path("LINKG_OTA_TEST_CMDLINE", "/proc/cmdline") // 当前运行Kernel的实际槽位
+#define UPGRADE_KERNEL_IO_BYTES            16384U                                                        // 分块哈希与Flash写入缓冲区大小
+#define UPGRADE_KERNEL_SHA256_BYTES        32U                                                           // SHA-256摘要长度
 
 /****************************** 内部类型 ******************************/
 
@@ -280,7 +284,7 @@ static int _upgrade_kernel_find_mtd(const char *name, char *path, size_t capacit
         return found == 0U ? -ENOENT : -EINVAL;
     }
 
-    length = snprintf(path, capacity, "/dev/mtd%u", matched_index);
+    length = snprintf(path, capacity, "%s/mtd%u", linkg_release_path("LINKG_OTA_TEST_DEV_ROOT", "/dev"), matched_index);
     return length < 0 || (size_t)length >= capacity ? -ENAMETOOLONG : 0;
 }
 
@@ -445,7 +449,7 @@ static int _upgrade_kernel_flash(int source_fd, int target_fd, uint64_t length, 
  *
  * 升级包必须已通过Manifest校验；不写入/app、不修改JSON或ENV。
  */
-int upgrade_kernel_prepare(const char *upgrade_dir, const char *stable_kernel_slot, char *target_kernel_slot, size_t slot_size)
+int upgrade_kernel_prepare_ex(const char *upgrade_dir, const char *stable_kernel_slot, char *target_kernel_slot, size_t slot_size, upgrade_kernel_before_write_t before_write, void *context)
 {
     uint8_t     image_hash[UPGRADE_KERNEL_SHA256_BYTES];
     uint8_t     flash_hash[UPGRADE_KERNEL_SHA256_BYTES];
@@ -560,7 +564,11 @@ int upgrade_kernel_prepare(const char *upgrade_dir, const char *stable_kernel_sl
     }
     else
     {
-        ret = _upgrade_kernel_flash(image_fd, target_fd, (uint64_t)image_stat.st_size, target_info.size);
+        ret = before_write == NULL ? 0 : before_write(context);
+        if (ret == 0)
+        {
+            ret = _upgrade_kernel_flash(image_fd, target_fd, (uint64_t)image_stat.st_size, target_info.size);
+        }
     }
     close(image_fd);
     close(target_fd);
@@ -588,4 +596,12 @@ int upgrade_kernel_prepare(const char *upgrade_dir, const char *stable_kernel_sl
 
     strcpy(target_kernel_slot, opposite);
     return 0;
+}
+
+/**
+ * @brief 保留既有独立Kernel处理接口，新安装流程通过回调记录实际刷写阶段。
+ */
+int upgrade_kernel_prepare(const char *upgrade_dir, const char *stable_kernel_slot, char *target_kernel_slot, size_t slot_size)
+{
+    return upgrade_kernel_prepare_ex(upgrade_dir, stable_kernel_slot, target_kernel_slot, slot_size, NULL, NULL);
 }

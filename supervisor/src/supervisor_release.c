@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "supervisor_boot.h"
 #include "supervisor_links.h"
@@ -50,7 +51,7 @@ static int _supervisor_release_commit(supervisor_release_t *release, const super
         return ret;
     }
 
-    ret = supervisor_version_save(release->paths.state_path, confirmed);
+    ret = supervisor_version_replace(release->paths.state_path, &release->version, confirmed);
     if (ret != 0)
     {
         return ret;
@@ -98,8 +99,9 @@ int supervisor_release_rollback(supervisor_release_t *release)
 
     desired        = release->version;
     desired.target = desired.stable;
+    desired.upgrade = LINKG_UPGRADE_PHASE_ROLLING_BACK;
     // 先持久化回滚目标；中途断电后仍能从JSON继续修复ENV及软链接。
-    ret = supervisor_version_save(release->paths.state_path, &desired);
+    ret = supervisor_version_replace(release->paths.state_path, &release->version, &desired);
 
     if (ret != 0)
     {
@@ -123,7 +125,7 @@ int supervisor_release_rollback(supervisor_release_t *release)
 /**
  * @brief 锁内读取状态、恢复中断事务、验证实际Kernel并协调两条软链接。
  */
-int supervisor_release_prepare(supervisor_release_t *release)
+static int _supervisor_release_prepare(supervisor_release_t *release)
 {
     supervisor_version_t confirmed;
     supervisor_kernel_t  actual;
@@ -171,6 +173,7 @@ int supervisor_release_prepare(supervisor_release_t *release)
             // 只有跨Kernel且四项ENV完整确认，才能补完ENV先于JSON的成功事务。
             confirmed        = release->version;
             confirmed.stable = confirmed.target;
+            confirmed.upgrade = LINKG_UPGRADE_PHASE_COMPLETED;
             fprintf(stderr, "Supervisor ENV confirmation recovering\n");
             ret = _supervisor_release_commit(release, &confirmed);
             if (ret != 0)
@@ -203,6 +206,23 @@ int supervisor_release_prepare(supervisor_release_t *release)
         fprintf(stderr, "Supervisor candidate preparation failed error=%d\n", ret);
         ret = supervisor_release_rollback(release);
         return ret == 0 ? -EAGAIN : ret;
+    }
+
+    if (ret == 0 && release->trial)
+    {
+        confirmed = release->version;
+        confirmed.upgrade = LINKG_UPGRADE_PHASE_TESTING;
+        ret = supervisor_version_replace(release->paths.state_path, &release->version, &confirmed);
+        if (ret == 0)
+        {
+            release->version = confirmed;
+        }
+        else
+        {
+            // 阶段显示失败不跳过必要启动，确认仍需完整事务校验。
+            fprintf(stderr, "Supervisor testing phase pending error=%d\n", ret);
+            ret = 0;
+        }
     }
 
     if (ret == 0)
@@ -240,8 +260,16 @@ int supervisor_release_confirm(supervisor_release_t *release)
         ret = supervisor_version_load(release->paths.state_path, &current);
     }
 
-    confirmed        = release->version;
-    confirmed.stable = confirmed.target;
+    if (ret == 0 && current.target == release->version.target && current.stable == release->version.stable &&
+        current.kernel[0] == release->version.kernel[0] && current.kernel[1] == release->version.kernel[1] &&
+        current.upgrade == LINKG_UPGRADE_PHASE_TESTING)
+    {
+        // testing的rename可能成功但目录同步失败，读回同一候选后继续安全确认。
+        release->version = current;
+    }
+    confirmed         = release->version;
+    confirmed.stable  = confirmed.target;
+    confirmed.upgrade = LINKG_UPGRADE_PHASE_COMPLETED;
     if (ret == 0 && !supervisor_version_equal(&current, &release->version) && !supervisor_version_equal(&current, &confirmed))
     {
         ret = -ESTALE;
@@ -253,4 +281,60 @@ int supervisor_release_confirm(supervisor_release_t *release)
     }
 
     return _supervisor_release_commit(release, &confirmed);
+}
+
+/**
+ * @brief 安装租约保护启动恢复，避免安装期间按旧快照修改版本状态。
+ */
+int supervisor_release_prepare(supervisor_release_t *release)
+{
+    int descriptor;
+    int ret;
+
+    descriptor = linkg_release_lock(release->paths.state_path, ".ota.lock", true);
+    if (descriptor < 0)
+    {
+        return descriptor;
+    }
+
+    ret = _supervisor_release_prepare(release);
+    close(descriptor);
+    return ret;
+}
+
+/**
+ * @brief 稳定App已READY后才记录回滚完成，安装中断结果可安全重试。
+ */
+void supervisor_release_running(supervisor_release_t *release)
+{
+    supervisor_version_t desired;
+    int                  ret;
+
+    desired = release->version;
+    if (desired.upgrade == LINKG_UPGRADE_PHASE_ROLLING_BACK)
+    {
+        desired.upgrade = LINKG_UPGRADE_PHASE_ROLLED_BACK;
+    }
+    else if (desired.upgrade == LINKG_UPGRADE_PHASE_VERIFYING || desired.upgrade == LINKG_UPGRADE_PHASE_INSTALLING ||
+             desired.upgrade == LINKG_UPGRADE_PHASE_FLASHING || desired.upgrade == LINKG_UPGRADE_PHASE_REBOOTING ||
+             desired.upgrade == LINKG_UPGRADE_PHASE_TESTING)
+    {
+        desired.upgrade = LINKG_UPGRADE_PHASE_FAILED;
+    }
+    else
+    {
+        return;
+    }
+
+    ret = supervisor_version_replace(release->paths.state_path, &release->version, &desired);
+    if (ret == 0)
+    {
+        release->version = desired;
+        release->status_warned = false;
+    }
+    else if (!release->status_warned)
+    {
+        fprintf(stderr, "Supervisor final phase pending error=%d\n", ret);
+        release->status_warned = true;
+    }
 }

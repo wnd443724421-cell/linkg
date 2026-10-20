@@ -539,7 +539,7 @@ int upgrade_manifest_verify(const char *upgrade_dir)
 
     if (snprintf(manifest_path, sizeof(manifest_path), "%s/%s", root, UPGRADE_MANIFEST_FILENAME) >= (int)sizeof(manifest_path) ||
         lstat(manifest_path, &info) != 0 || !S_ISREG(info.st_mode) || info.st_nlink != 1 ||
-        info.st_size <= 0 || info.st_size > UPGRADE_MANIFEST_MAX_SIZE)
+        info.st_size <= 0 || info.st_size > (off_t)UPGRADE_MANIFEST_MAX_SIZE)
     {
         free(root);
         return -EBADMSG;

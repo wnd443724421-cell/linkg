@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.12)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(linkg_supervisor VERSION 0.2.0 LANGUAGES C)
+    project(linkg_supervisor VERSION 0.3.0 LANGUAGES C)
 endif()
 
 set(CMAKE_C_STANDARD 17)
@@ -19,6 +19,9 @@ set(SUPERVISOR_SOURCES
     src/supervisor_links.c
     src/supervisor_release.c
     src/supervisor_storage.c
+    "${LINKG_SUPERVISOR_ROOT}/infra/base/linkg_atomic_file.c"
+    "${LINKG_SUPERVISOR_ROOT}/infra/base/linkg_release_state.c"
+    "${LINKG_SUPERVISOR_ROOT}/infra/base/linkg_boot_env.c"
     "${LINKG_SUPERVISOR_ROOT}/third_party/cjson/cJSON.c"
 )
 

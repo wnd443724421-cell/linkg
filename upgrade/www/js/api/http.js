@@ -11,7 +11,7 @@
      * @param {object|null} param 可选请求参数。
      * @returns {Promise<object>} LinkG完整JSON响应。
      */
-    async function request(cmd, param)
+    async function request(cmd, param, options)
     {
         const requestBody = {
             cmd: cmd
@@ -34,6 +34,13 @@
         }
 
         controller = new AbortController();
+        const signal = options && options.signal;
+        const abort = function () { controller.abort(); };
+        if (signal)
+        {
+            if (signal.aborted) { controller.abort(); }
+            else { signal.addEventListener("abort", abort, {once: true}); }
+        }
 
         timeoutId = setTimeout(function () {
             controller.abort();
@@ -50,6 +57,7 @@
                 cache: "no-store",
                 signal: controller.signal
             });
+            responseText = await httpResponse.text();
         }
         catch (error)
         {
@@ -63,14 +71,13 @@
         finally
         {
             clearTimeout(timeoutId);
+            if (signal) { signal.removeEventListener("abort", abort); }
         }
 
         if (!httpResponse.ok)
         {
             throw new Error("HTTP请求失败：" + httpResponse.status);
         }
-
-        responseText = await httpResponse.text();
 
         if (responseText.length === 0)
         {

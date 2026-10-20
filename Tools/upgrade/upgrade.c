@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -21,13 +22,23 @@
 
 /****************************** 上传配置 ******************************/
 
-#define LINKG_UPLOAD_UPGRADE_PATH       "/tmp/upgrade.tar.gz"       // 固件升级包暂存路径
-#define LINKG_UPLOAD_CONFIG_PATH        "/tmp/config_import.json"   // 配置导入文件暂存路径
-#define LINKG_UPLOAD_TEMP_TEMPLATE      "/tmp/.linkg-upload.XXXXXX" // 同目录原子替换临时文件
-#define LINKG_UPLOAD_LOCK_PATH          "/tmp/.linkg-upload.lock"   // 并发上传互斥文件
-#define LINKG_UPLOAD_UPGRADE_MAX_SIZE   (64U * 1024U * 1024U)       // 升级包大小上限
-#define LINKG_UPLOAD_CONFIG_MAX_SIZE    (1U * 1024U * 1024U)        // 配置文件大小上限
-#define LINKG_UPLOAD_CHUNK_SIZE         (8U * 1024U)                // 流式传输缓冲区
+#define LINKG_UPLOAD_UPGRADE_PATH     "/tmp/upgrade.tar.gz"       // 固件升级包暂存路径
+#define LINKG_UPLOAD_CONFIG_PATH      "/tmp/config_import.json"   // 配置导入文件暂存路径
+#define LINKG_UPLOAD_TEMP_TEMPLATE    "/tmp/.linkg-upload.XXXXXX" // 同目录原子替换临时文件
+#define LINKG_UPLOAD_LOCK_PATH        "/tmp/.linkg-upload.lock"   // 并发上传互斥文件
+#define LINKG_UPLOAD_UPGRADE_MAX_SIZE (64U * 1024U * 1024U)       // 升级包大小上限
+#define LINKG_UPLOAD_CONFIG_MAX_SIZE  (1U * 1024U * 1024U)        // 配置文件大小上限
+#define LINKG_UPLOAD_CHUNK_SIZE       (8U * 1024U)                // 流式传输缓冲区
+
+// 仅隔离测试构建允许替换临时路径，正式CGI固定使用上面的产品路径。
+#ifdef LINKG_OTA_TEST_IO
+#undef LINKG_UPLOAD_UPGRADE_PATH
+#undef LINKG_UPLOAD_CONFIG_PATH
+#undef LINKG_UPLOAD_LOCK_PATH
+#define LINKG_UPLOAD_UPGRADE_PATH getenv("LINKG_OTA_TEST_UPLOAD")
+#define LINKG_UPLOAD_CONFIG_PATH  getenv("LINKG_OTA_TEST_CONFIG")
+#define LINKG_UPLOAD_LOCK_PATH    getenv("LINKG_OTA_TEST_UPLOAD_LOCK")
+#endif
 
 /****************************** 响应工具 ******************************/
 
@@ -202,13 +213,25 @@ int main(void)
     const char *method;
     const char *type;
     const char *target;
+#ifdef LINKG_OTA_TEST_IO
+    char        temporary[PATH_MAX];
+#else
     char        temporary[] = LINKG_UPLOAD_TEMP_TEMPLATE;
+#endif
     size_t      limit;
     size_t      length;
     int         lock_fd;
     int         file_fd;
     int         ret;
 
+#ifdef LINKG_OTA_TEST_IO
+    if (getenv("LINKG_OTA_TEST_UPLOAD_TEMP") == NULL || LINKG_UPLOAD_UPGRADE_PATH == NULL ||
+        LINKG_UPLOAD_CONFIG_PATH == NULL || LINKG_UPLOAD_LOCK_PATH == NULL ||
+        snprintf(temporary, sizeof(temporary), "%s", getenv("LINKG_OTA_TEST_UPLOAD_TEMP")) >= (int)sizeof(temporary))
+    {
+        return EXIT_FAILURE;
+    }
+#endif
     method = getenv("REQUEST_METHOD");
     if (method == NULL || strcmp(method, "POST") != 0)
     {

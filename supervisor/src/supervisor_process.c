@@ -171,7 +171,7 @@ static int _supervisor_move_descriptor(int *descriptor)
 /**
  * @brief 在单线程fork子进程中建立通知环境并执行指定程序。
  */
-static void _supervisor_exec(char *const arguments[], int read_fd, int write_fd, pid_t parent_pid)
+static void _supervisor_exec(char *const arguments[], int read_fd, int write_fd, pid_t parent_pid, bool managed)
 {
     const int        signals[] = {SIGINT, SIGTERM, SIGQUIT, SIGCHLD};
     struct sigaction action;
@@ -204,6 +204,21 @@ static void _supervisor_exec(char *const arguments[], int read_fd, int write_fd,
         _exit(127);
     }
 
+    if (managed)
+    {
+        snprintf(descriptor_text, sizeof(descriptor_text), "%ld", (long)parent_pid);
+        if (setenv("LINKG_SUPERVISOR_STATE_SCHEMA", "1", 1) != 0 ||
+            setenv("LINKG_SUPERVISOR_PID", descriptor_text, 1) != 0)
+        {
+            _exit(127);
+        }
+    }
+    else
+    {
+        unsetenv("LINKG_SUPERVISOR_STATE_SCHEMA");
+        unsetenv("LINKG_SUPERVISOR_PID");
+    }
+
     execv(arguments[0], arguments);
     perror("Supervisor execv");
     _exit(127);
@@ -212,7 +227,7 @@ static void _supervisor_exec(char *const arguments[], int read_fd, int write_fd,
 /**
  * @brief 创建非阻塞管道并启动一个受监控子进程。
  */
-static int _supervisor_spawn(supervisor_child_t *child, char *const arguments[])
+static int _supervisor_spawn(supervisor_child_t *child, char *const arguments[], bool managed)
 {
     int   descriptors[2];
     int   ret;
@@ -241,7 +256,7 @@ static int _supervisor_spawn(supervisor_child_t *child, char *const arguments[])
     child_pid  = fork();
     if (child_pid == 0)
     {
-        _supervisor_exec(arguments, descriptors[0], descriptors[1], parent_pid);
+        _supervisor_exec(arguments, descriptors[0], descriptors[1], parent_pid, managed);
     }
 
     ret = -errno;
@@ -654,6 +669,11 @@ static int _supervisor_monitor(supervisor_child_t *child, unsigned int *failures
             }
         }
 
+        if (release != NULL && !release->trial && child->state == SUPERVISOR_STATE_RUNNING)
+        {
+            supervisor_release_running(release);
+        }
+
         // 先处理通知和真实退出，再判断候选窗口，RESTARTING期间不累计时间。
         if (release != NULL && release->trial && child->state == SUPERVISOR_STATE_RUNNING)
         {
@@ -794,7 +814,7 @@ static int _supervisor_process_run(char *const child_arguments[], const char *lo
                 break;
             }
 
-            ret = _supervisor_spawn(&child, paths == NULL ? child_arguments : managed_arguments);
+            ret = _supervisor_spawn(&child, paths == NULL ? child_arguments : managed_arguments, paths != NULL);
             if (ret == 0)
             {
                 ret = _supervisor_monitor(&child, &failures, paths == NULL ? NULL : &release);

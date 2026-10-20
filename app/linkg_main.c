@@ -31,6 +31,7 @@
 #include "linkg_scheduler.h"
 #include "linkg_switch.h"
 #include "linkg_supervisor_client.h"
+#include "linkg_upgrade.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
 #include "linkg_transport.h"
@@ -70,6 +71,8 @@ typedef struct
     bool                probe_initialized;           // Path Probe模块是否已经初始化
     bool                udhcp_initialized;           // UDHCP模块是否已经初始化
     bool                uart_initialized;            // UART Manager是否已经初始化
+    bool                upgrade_initialized;        // Upgrade模块是否已经初始化
+    bool                upgrade_started;            // Upgrade线程是否已经启动
     bool                web_initialized;             // Web模块是否已经初始化
     bool                gpio_started;                // GPIO Manager是否进入过start生命周期
     bool                network_started;             // Network Service是否进入过start生命周期
@@ -111,6 +114,7 @@ static bool _linkg_app_has_initialized_modules(void)
            g_app.probe_initialized ||
            g_app.udhcp_initialized ||
            g_app.uart_initialized ||
+           g_app.upgrade_initialized ||
            g_app.web_initialized;
 }
 
@@ -129,6 +133,7 @@ static bool _linkg_app_has_started_modules(void)
            g_app.probe_started ||
            g_app.udhcp_started ||
            g_app.uart_started ||
+           g_app.upgrade_started ||
            g_app.web_started;
 }
 
@@ -355,6 +360,13 @@ static int _linkg_app_init(void)
 
     g_app.uart_initialized = true;
 
+    ret = linkg_upgrade_init();
+    if (ret != 0)
+    {
+        return ret;
+    }
+    g_app.upgrade_initialized = true;
+
     ret = linkg_web_init();
     if (ret != 0)
     {
@@ -397,6 +409,7 @@ static int _linkg_app_start(void)
         !g_app.probe_initialized ||
         !g_app.udhcp_initialized ||
         !g_app.uart_initialized ||
+        !g_app.upgrade_initialized ||
         !g_app.web_initialized)
     {
         return -ENODEV;
@@ -539,6 +552,12 @@ static int _linkg_app_start(void)
      * Web最后启动。
      * 此时所有业务模块已经进入运行态，Web请求可以安全查询和修改运行状态。
      */
+    ret = linkg_upgrade_start();
+    if (ret != 0)
+    {
+        return ret;
+    }
+    g_app.upgrade_started = true;
     g_app.web_started = true;
 
     ret = linkg_web_start();
@@ -578,6 +597,16 @@ static int _linkg_app_stop(void)
         }
 
         g_app.web_started = false;
+    }
+
+    if (g_app.upgrade_started)
+    {
+        ret = linkg_upgrade_stop();
+        if (ret != 0)
+        {
+            return ret;
+        }
+        g_app.upgrade_started = false;
     }
 
     // UART必须在GPIO之前停止，保证串口线程退出时仍能安全控制SBUS和接收门控。
@@ -762,6 +791,16 @@ static int _linkg_app_deinit(void)
         }
 
         g_app.web_initialized = false;
+    }
+
+    if (g_app.upgrade_initialized)
+    {
+        ret = linkg_upgrade_deinit();
+        if (ret != 0)
+        {
+            return ret;
+        }
+        g_app.upgrade_initialized = false;
     }
 
     if (g_app.uart_initialized)

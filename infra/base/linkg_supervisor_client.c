@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "linkg_supervisor_protocol.h"
 
@@ -38,6 +39,7 @@ typedef struct
     pthread_cond_t  changed;     // 单调时钟条件变量，用于唤醒或停止线程
     pthread_t       worker;      // 整个进程生命周期仅创建一次
     int             pipe_fd;     // 客户端持有写端，deinit负责关闭
+    pid_t           manager_pid; // 初始化时已验证支持状态格式的父Supervisor
     bool            initialized; // 初始化成功，允许状态通知
     bool            running;     // 仅READY成功后允许周期心跳
     bool            stopping;    // 通知心跳线程退出
@@ -246,6 +248,22 @@ int linkg_supervisor_client_init(void)
     }
 
     g_supervisor_client.pipe_fd = (int)descriptor;
+    g_supervisor_client.manager_pid = 0;
+    value = getenv("LINKG_SUPERVISOR_STATE_SCHEMA");
+    if (value != NULL && strcmp(value, "1") == 0)
+    {
+        value = getenv("LINKG_SUPERVISOR_PID");
+        if (value != NULL)
+        {
+            errno = 0;
+            descriptor = strtol(value, &end, 10);
+            if (errno == 0 && end != value && *end == '\0' && descriptor > 1 && descriptor == (long)getppid())
+            {
+                g_supervisor_client.manager_pid = getppid();
+            }
+        }
+    }
+    descriptor = g_supervisor_client.pipe_fd;
     if (fcntl((int)descriptor, F_SETFD, FD_CLOEXEC) != 0 || fcntl((int)descriptor, F_SETFL, flags | O_NONBLOCK) != 0)
     {
         ret = -errno;
@@ -313,11 +331,28 @@ void linkg_supervisor_client_deinit(void)
     close(g_supervisor_client.pipe_fd);
     pthread_cond_destroy(&g_supervisor_client.changed);
 
+    pthread_mutex_lock(&g_supervisor_client.lock);
     g_supervisor_client.pipe_fd     = -1;
     g_supervisor_client.initialized = false;
+    g_supervisor_client.manager_pid = 0;
+    pthread_mutex_unlock(&g_supervisor_client.lock);
 }
 
 /****************************** 状态通知 ******************************/
+
+/**
+ * @brief 从已接管的真实通知通道检查父管理进程能力，不依赖已移除的FD环境变量。
+ */
+bool linkg_supervisor_client_can_upgrade(void)
+{
+    bool supported;
+
+    pthread_mutex_lock(&g_supervisor_client.lock);
+    supported = g_supervisor_client.initialized && g_supervisor_client.running && g_supervisor_client.pipe_fd >= 0 &&
+                g_supervisor_client.manager_pid > 1 && g_supervisor_client.manager_pid == getppid();
+    pthread_mutex_unlock(&g_supervisor_client.lock);
+    return supported;
+}
 
 /**
  * @brief 原子发送READY并允许周期心跳。

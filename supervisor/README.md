@@ -1,8 +1,8 @@
-# LinkG Supervisor V0.2
+# LinkG Supervisor 与 OTA 状态衔接
 
 Supervisor 独立常驻，负责选择 v1/v2、启动唯一的 LinkG、监控 READY/HEARTBEAT/RESTARTING/STOPPING、确认候选版本及失败回滚。保留 V0.1 的匿名 Pipe 单字节协议、waitpid 回收、TERM/KILL 和稳定版本退避恢复。
 
-本版不安装 OTA 包、不校验或刷写 Kernel、不提供 Web/LinkG 升级请求接口，不改 U-Boot、设备树、分区表或开机脚本。
+Supervisor不安装 OTA 包或刷写 Kernel；这些由 LinkG Upgrade Worker 负责。Web 1021 接受安装请求，1022 读取同一份持久化状态。Supervisor仍独立负责候选确认、回滚和启动恢复，不改 U-Boot、设备树或分区表。
 
 ## 文件与启动
 
@@ -17,13 +17,14 @@ Supervisor 独立常驻，负责选择 v1/v2、启动唯一的 LinkG、监控 RE
 /var/run/linkg-supervisor.lock
 ~~~
 
-版本 JSON 只有以下结构，空对象表示未安装，不能启动：
+版本 JSON 只有以下结构，空对象表示未安装，不能启动；兼容旧版缺少 upgrade_state 时按 idle 读取：
 
 ~~~json
 {
   "schema_version": 1,
   "release_partition": "v1",
   "stable_release_partition": "v1",
+  "upgrade_state": "idle",
   "releases": {
     "v1": {"kernel_slot": "boot_a"},
     "v2": {}
@@ -33,7 +34,7 @@ Supervisor 独立常驻，负责选择 v1/v2、启动唯一的 LinkG、监控 RE
 
 schema_version 只能为 1，Release 只能为 v1/v2，Kernel 只能为 boot_a/boot_b。拒绝未知字段、重复键、损坏 JSON、内嵌零字符和未安装的稳定 Release。不增加事务字段或专用事务日志。
 
-Supervisor 是状态 JSON 的唯一持久化写入者。当前可在 Supervisor 停止时预置候选 JSON 测试；正式运行时不得由 LinkG、Web 或维护脚本直接并发改写状态。未来安装模块通过专用请求由 Supervisor 提交候选，本版不实现该请求接口。
+LinkG与Supervisor共用严格解析器及原子保存。运行期通过 version_state.json.lock 比较完整旧快照后更新；LinkG安装期间全程持有 version_state.json.ota.lock，Supervisor启动恢复遵守同一租约。不得手工删除锁文件来解锁，也不能由维护脚本绕过锁覆盖状态。
 
 默认启动 /usr/sbin/linkg-supervisor。可配置状态与安装路径：
 
@@ -75,7 +76,7 @@ RESTARTING 不累计候选稳定时间，重新 READY 后重新计满 60 秒。R
 
 | 事务 | 第一步 | 第二步 | 后续 |
 |---|---|---|---|
-| PREPARE（未来安装请求） | JSON 设目标候选、保留旧 stable | ENV 设候选 Kernel 及旧稳定 Kernel，开启试启动保护 | reboot |
+| PREPARE（LinkG安装完成） | JSON 设目标候选、保留旧 stable及rebooting | ENV 设候选 Kernel 及旧稳定 Kernel，开启试启动保护 | reboot |
 | ROLLBACK（本版实现） | JSON 目标恢复旧 stable | ENV 恢复稳定 Kernel，bootcount=0、upgrade_available=0 | Kernel 不同才 reboot |
 | CONFIRM（本版实现） | ENV 完整确认新稳定 Kernel | JSON stable 更新为候选 | 继续守护当前进程 |
 
@@ -108,7 +109,7 @@ ENV 工具按 READ/WRITE 区分生命周期。读取保留 1000ms 硬超时，�
 
 写工具不设置父进程死亡信号，并忽略 SIGINT/SIGTERM/SIGQUIT/SIGPIPE；标准输入输出及错误重定向到 `/dev/null`，避免父进程输出管道关闭间接中断写入。因此不保留写工具文本诊断，Supervisor 记录 PID、退出状态、耗时及后续读回错误。读取工具保留 PDEATHSIG(SIGKILL)。正常 SIGTERM/SIGINT 会取消确认，但先等当前写入结束再回收 LinkG 并退出；ENV 等待期间继续检查 Pipe、心跳和子进程状态。
 
-该锁只协调遵守此约定的 Supervisor/辅助工具，不自动约束外部手工运行的 fw_setenv、U-Boot 或其它 Flash 写入者。遗留工具若关闭继承描述符、主动解除锁或自行 fork 脱离执行，也需单独核实；当前调用的 fw_setenv 是前台执行工具。本版没有新增事务日志或版本状态字段，锁文件只是运行期互斥载体。
+该锁只协调遵守此约定的 Supervisor/辅助工具，不自动约束外部手工运行的 fw_setenv、U-Boot 或其它 Flash 写入者。遗留工具若关闭继承描述符、主动解除锁或自行 fork 脱离执行，也需单独核实；当前调用的 fw_setenv 是前台执行工具。本版仅新增upgrade_state，没有新增事务日志，锁文件只是运行期互斥载体。
 
 使用设备实际的 /usr/sbin/fw_printenv、/usr/sbin/fw_setenv，通过 argv 执行，不拼接 Shell 命令。读取并校验 boot_partition、stable_boot_partition、bootcount、upgrade_available、bootlimit 及现有启动命令。四项更新通过 fw_setenv -s 批量提交，检查返回结果，再重新读取验证。即使失败时可能已写入，也不会把失败当作成功。
 
@@ -155,9 +156,9 @@ cmake --build /tmp/linkg-supervisor-v02-arm -j4
 
 ## 实板验证清单
 
-本轮不覆盖正式程序、不修改启动服务、不调整 bootlimit、不写真实 ENV 或 Kernel、不重启正式板。
+本轮不覆盖开发板上的正式程序、不修改启动服务、不调整 bootlimit、不写真实 ENV 或 Kernel、不重启正式板。
 
-当前 192.168.1.1 和 192.168.3.1 的只读结果均为单 boot 分区、无 kernel_slot、缺少 A/B ENV，不能直接用作本版 A/B 验收。具备正确 A/B 固件后仍需验证：
+此前只读调查曾观察到单boot分区、无kernel_slot及缺少A/B ENV；这属于历史快照，本轮未刷新开发板状态。实板必须具备正确A/B固件后再验证：
 
 1. 实际 cmdline 槽位与每次 U-Boot 启动一致。
 2. ENV 批处理写入、读回及重启后的选择一致，确认工具 flags 兼容性和执行时间。
@@ -168,3 +169,24 @@ cmake --build /tmp/linkg-supervisor-v02-arm -j4
 7. 新 LinkG 实际正常退出及强杀后的板级资源恢复。
 
 这些项目不能由 x86 Mock、ARM 编译或源码检查替代。源码职责见 [docs/MODULES.md](docs/MODULES.md)。
+
+
+## OTA阶段、兼容迁移与新增测试
+
+唯一JSON仅新增 upgrade_state：idle、verifying、installing、flashing、rebooting 由LinkG安装流程记录，testing、completed、rolling_back、rolled_back 由Supervisor在实际状态满足后记录，failed由安装器或启动恢复记录。completed、rolled_back、failed不会在普通重启时清零。安装中断且没有候选时，稳定App进入RUNNING后修正failed；跨Kernel回滚必须实际运行稳定Kernel且稳定App已READY后才记录rolled_back。状态显示写入失败不能跳过必要启动恢复。
+
+共享解析与ENV工具位于 infra/base/linkg_release_state.c、linkg_atomic_file.c、linkg_boot_env.c，Supervisor版本与启动模块保留原接口并调用共享实现。ENV锁与安全写入生命周期不变，仍保留读取1000ms超时、写入1000ms告警/不强杀、30秒持续等待告警，以及写工具继承flock。
+
+首次迁移必须先部署兼容Supervisor并让它实际启动，再使用新版LinkG发起OTA。新Supervisor向受管理子进程提供能力标记；LinkG接管真实Pipe时保存已验证父PID，升级前再次核对。旧运行版本不提供能力，1021会拒绝，不消费上传包或扩展JSON。仅替换磁盘文件不会改变正在运行的管理进程。可通过 linkg-supervisor --ota-capabilities 检查二进制支持，但它不代替运行期父进程检查。
+
+后续管理进程更新采用包内 app/usr/sbin/linkg-supervisor 及system_install.json原子替换 /usr/sbin/linkg-supervisor，rc/procd在重启后加载新程序。共享Supervisor不随App/Web回滚，新版本必须兼容候选和上一版稳定LinkG。实际安装期间仍由旧程序运行。详见 upgrade/SUPERVISOR_UPDATE.md。
+
+新增隔离集成测试：
+
+```bash
+python3 test/upgrade/build_tests.py
+python3 test/upgrade/test_ota.py
+python3 test/upgrade/test_system_install.py
+```
+
+浏览器测试为 test/upgrade/test_web.cjs，使用Playwright和本地Chromium/Edge；可设置 LINKG_PLAYWRIGHT 与 LINKG_TEST_BROWSER 指定安装路径。所有请求均拦截为替身，测试不会操作开发板。

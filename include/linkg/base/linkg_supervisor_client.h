@@ -6,6 +6,8 @@
 #ifndef LINKG_SUPERVISOR_CLIENT_H
 #define LINKG_SUPERVISOR_CLIENT_H
 
+#include <stdbool.h>
+
 /****************************** 生命周期 ******************************/
 
 int  linkg_supervisor_client_init(void);
@@ -15,5 +17,6 @@ void linkg_supervisor_client_deinit(void);
 
 int linkg_supervisor_client_ready(void);
 int linkg_supervisor_client_restarting(void);
+bool linkg_supervisor_client_can_upgrade(void);
 
 #endif

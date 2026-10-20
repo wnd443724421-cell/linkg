@@ -1,11 +1,11 @@
-# Supervisor V0.2 代码地图
+# Supervisor与OTA代码地图
 
 | 文件 | 职责 |
 |---|---|
 | src/supervisor_main.c | 入口参数、默认路径，选择版本管理或显式 V0.1 进程模式 |
 | src/supervisor_process.c | 单实例锁、fork/exec、Pipe 状态机、waitpid、TERM/KILL、退避；健康窗口通过后调用确认，旧进程回收后调用回滚 |
-| src/supervisor_version.c | 固定 JSON 严格校验和保存、Release 与 Kernel 映射、App/Web 安装检查 |
-| src/supervisor_boot.c | 从真实 cmdline 识别 Kernel；核对 Tina ENV；批量写入、检查结果及读回；请求 reboot |
+| src/supervisor_version.c | 共用JSON接口适配、Release与Kernel映射及App/Web安装检查 |
+| src/supervisor_boot.c | 共用ENV/实际Kernel接口适配，安全工具执行在infra/base/linkg_boot_env.c |
 | src/supervisor_release.c | 组合版本、启动和链接模块，执行开机恢复、CONFIRM 和 ROLLBACK 顺序 |
 | src/supervisor_links.c | 两条 current 的临时软链接、rename、失败协调恢复，不操作 Release 内容 |
 | src/supervisor_storage.c | 有界文本读取、同目录临时文件、fsync、rename 和目录同步 |
@@ -49,8 +49,18 @@ flowchart TD
 3. supervisor_release_rollback：JSON 在前、ENV 在后；实际 Kernel 不匹配时禁止启动并请求 reboot。
 4. _supervisor_monitor：READY 不立即确认版本，RESTARTING 后重新计完整窗口；版本确认与 V0.1 故障清零分别处理。
 5. _supervisor_process_run：候选回滚与稳定版本无限守护分支分开；回收不成功时不切换、不启动第二个实例。
-6. _supervisor_boot_read / _supervisor_boot_write：校验启动规则，批量提交四项 ENV 并读回；不写 bootlimit。
+6. _linkg_boot_read / _linkg_boot_write：校验启动规则，批量提交四项 ENV 并读回；不写 bootlimit。
 7. supervisor_links_select：先保存两条旧链接，任一步失败均尝试协调恢复，全部完成后才允许启动。
 8. supervisor_storage_write：rename 后目录同步失败属于“可能已生效”，上层通过比较完整 JSON 幂等重试。
 
-本轮无专用事务日志、额外 JSON 字段、Supervisor 自有启动次数计数、Kernel 刷写或 OTA 安装逻辑。ENV 自身写入时掉电风险按用户明确边界保留。
+本轮仅新增upgrade_state；没有专用事务日志或Supervisor自有启动计数。Kernel刷写和OTA安装仍由LinkG负责。ENV 自身写入时掉电风险按用户明确边界保留。
+
+
+## 共用基础接口
+
+- infra/base/linkg_release_state.c：严格兼容四/五字段JSON，阶段白名单、安装租约及完整快照CAS。
+- infra/base/linkg_atomic_file.c：共用有界读取、文件fsync、rename与父目录fsync。
+- infra/base/linkg_boot_env.c：原有ENV安全进程执行抽为共用接口，保留锁继承、非强杀写入、读回和健康检查。
+- core/upgrade/upgrade_commit.c：LinkG安装租约、阶段更新、PREPARE及失败补偿。
+- supervisor_release_running：稳定App进入RUNNING后记录rolled_back或中断安装failed，历史终态保留。
+- test/upgrade：真实Worker、CGI、Web处理器、Flash/ENV/重启替身及浏览器交互测试。

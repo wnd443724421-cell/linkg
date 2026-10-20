@@ -1,0 +1,25 @@
+<div class="page upgrade-page" id="systemUpgrade">
+    <div class="page-header">
+        <div><h2 class="page-title">固件升级</h2><p class="page-description">上传升级包，安装到备用版本，并在重启后检查运行状态。</p></div>
+    </div>
+    <section class="page-card upgrade-card">
+        <h3>版本与升级状态</h3>
+        <dl class="upgrade-facts">
+            <div><dt>当前软件版本</dt><dd id="upgradeVersion">正在读取…</dd></div>
+            <div><dt>升级状态</dt><dd id="upgradePhase" aria-live="polite">正在读取…</dd></div>
+            <div><dt>目标 / 稳定槽位</dt><dd id="upgradeSlots">—</dd></div>
+        </dl>
+        <p class="upgrade-notice" id="upgradeStatus" role="status">正在连接设备…</p>
+    </section>
+    <section class="page-card upgrade-card">
+        <h3>上传与安装</h3>
+        <p>选择 LinkG 的 .tar.gz 升级包，最大 64 MiB。上传完成后，还需确认开始升级。</p>
+        <label class="upgrade-file-label" for="upgradeFile">升级包</label>
+        <input type="file" id="upgradeFile" accept=".tar.gz,application/gzip">
+        <p id="upgradeFileInfo" class="upgrade-file-info">尚未选择文件</p>
+        <button type="button" class="btn" id="upgradeUpload" disabled>上传升级包</button>
+        <p id="upgradeUploadStatus" aria-live="polite">上传成功只表示文件已保存。</p>
+        <label class="upgrade-confirm"><input type="checkbox" id="upgradeConfirm" disabled>我已确认开始安装；安装后设备将重启，连接会暂时中断。</label>
+        <button type="button" class="btn btn-primary" id="upgradeStart" disabled>开始升级</button>
+    </section>
+</div>

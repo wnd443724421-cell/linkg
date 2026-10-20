@@ -25,6 +25,12 @@ int main(int argc, char **argv)
     const char               **destination;
     int                        index;
 
+    if (argc == 2 && strcmp(argv[1], "--ota-capabilities") == 0)
+    {
+        puts("LINKG_OTA_STATE_V1");
+        return EXIT_SUCCESS;
+    }
+
     lock_path = SUPERVISOR_DEFAULT_LOCK_FILE;
     index     = 1;
     paths.state_path = SUPERVISOR_DEFAULT_STATE_FILE;

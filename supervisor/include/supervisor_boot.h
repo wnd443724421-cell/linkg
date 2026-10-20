@@ -7,10 +7,11 @@
 #define SUPERVISOR_BOOT_H
 
 #include "supervisor_version.h"
+#include "linkg_boot_env.h"
 
 /****************************** 类型定义 ******************************/
 
-typedef int (*supervisor_boot_progress_t)(void *context); // 单线程辅助命令等待期间的进程健康检查
+typedef linkg_boot_progress_t supervisor_boot_progress_t; // 单线程辅助命令等待期间的进程健康检查
 
 /****************************** 启动状态 ******************************/
 

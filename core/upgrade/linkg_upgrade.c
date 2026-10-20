@@ -6,7 +6,9 @@
  * @date 2026-10-20
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "linkg_upgrade.h"
 
@@ -26,7 +28,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "linkg_release_state.h"
 #include "linkg_thread.h"
 
 #include "upgrade_archive.h"
@@ -34,18 +36,17 @@
 #include "upgrade_install.h"
 #include "upgrade_kernel.h"
 #include "upgrade_system.h"
+#include "upgrade_commit.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_UPGRADE_THREAD_NAME         "linkg_upgrade"                    // 升级工作线程名称
-#define LINKG_UPGRADE_UPLOAD_PATH         "/tmp/upgrade.tar.gz"              // CGI已上传完整的压缩包
-#define LINKG_UPGRADE_UPLOAD_LOCK_PATH    "/tmp/.linkg-upload.lock"          // CGI上传和接管共用的文件锁
-#define LINKG_UPGRADE_TASK_TEMPLATE       "/tmp/.linkg-upgrade-task.XXXXXX"  // 升级任务独占的压缩包路径
-#define LINKG_UPGRADE_EXTRACT_ROOT        "/tmp"                             // 归档解压目标的父目录
-#define LINKG_UPGRADE_EXTRACT_PATH        "/tmp/upgrade"                     // 本次升级包解压目录
-#define LINKG_UPGRADE_VERSION_STATE_PATH  "/app/version_state.json"          // Supervisor版本状态只读路径
-#define LINKG_UPGRADE_VERSION_JSON_BYTES  4096U                              // 版本状态文件长度上限
-#define LINKG_UPGRADE_MAX_PACKAGE_BYTES   (64U * 1024U * 1024U)              // 压缩包最大大小，单位字节
+#define LINKG_UPGRADE_THREAD_NAME       "linkg_upgrade"                                                                       // 升级工作线程名称
+#define LINKG_UPGRADE_UPLOAD_PATH       linkg_release_path("LINKG_OTA_TEST_UPLOAD", "/tmp/upgrade.tar.gz")                    // CGI已上传完整的压缩包
+#define LINKG_UPGRADE_UPLOAD_LOCK_PATH  linkg_release_path("LINKG_OTA_TEST_UPLOAD_LOCK", "/tmp/.linkg-upload.lock")           // CGI上传和接管共用的文件锁
+#define LINKG_UPGRADE_TASK_TEMPLATE     linkg_release_path("LINKG_OTA_TEST_TASK_TEMPLATE", "/tmp/.linkg-upgrade-task.XXXXXX") // 升级任务独占的压缩包路径
+#define LINKG_UPGRADE_EXTRACT_ROOT      linkg_release_path("LINKG_OTA_TEST_EXTRACT_ROOT", "/tmp")                             // 归档解压目标的父目录
+#define LINKG_UPGRADE_EXTRACT_PATH      linkg_release_path("LINKG_OTA_TEST_EXTRACT_PATH", "/tmp/upgrade")                     // 本次升级包解压目录
+#define LINKG_UPGRADE_MAX_PACKAGE_BYTES (64U * 1024U * 1024U)                                                                 // 压缩包最大大小，单位字节
 
 /****************************** 内部类型 ******************************/
 
@@ -54,6 +55,7 @@ typedef struct
     pthread_mutex_t        lifecycle_lock;         // 串行化初始化、启动、停止和反初始化
     pthread_mutex_t        lock;                   // 保护任务状态和待处理升级包路径
     linkg_thread_t         worker;                 // 升级专用线程，空闲时阻塞在eventfd
+    upgrade_commit_t       transaction;            // 安装全程持有的跨进程事务租约
     linkg_upgrade_status_t status;                 // 最近一次升级任务状态快照
     char                   package_path[PATH_MAX]; // 已接管升级包的私有路径
     bool                   initialized;            // 模块已经初始化
@@ -66,6 +68,7 @@ typedef struct
 
 static linkg_upgrade_context_t g_upgrade =
 {
+    .transaction    = {.lease_fd = -1},          // 未持有安装租约
     .lifecycle_lock = PTHREAD_MUTEX_INITIALIZER, // 生命周期独立互斥锁
     .lock           = PTHREAD_MUTEX_INITIALIZER, // 运行状态互斥锁
     .initialized    = false,                     // 尚未初始化
@@ -104,138 +107,11 @@ static void _linkg_upgrade_set_progress(linkg_upgrade_state_t state, linkg_upgra
 }
 
 /**
- * @brief 只读稳定版本的Kernel映射，同时确认系统未处于候选试运行。
- *
- * 版本选择与实际App/Web目录检查仍由upgrade_install_release执行。
+ * @brief 仅在即将实际擦写备用Kernel时持久化flashing。
  */
-static int _linkg_upgrade_read_stable_kernel(char *target_release, size_t release_size, char *stable_kernel, size_t kernel_size)
+static int _linkg_upgrade_before_flash(void *context)
 {
-    char         data[LINKG_UPGRADE_VERSION_JSON_BYTES + 1U];
-    struct stat  information;
-    cJSON       *root;
-    const cJSON *schema;
-    const cJSON *current;
-    const cJSON *stable;
-    const cJSON *releases;
-    const cJSON *entry;
-    const cJSON *kernel;
-    ssize_t      length;
-    size_t       used;
-    const char  *slot;
-    int          descriptor;
-    int          ret;
-
-    if (target_release == NULL || release_size < 3U || stable_kernel == NULL || kernel_size < 7U)
-    {
-        return -EINVAL;
-    }
-
-    target_release[0] = '\0';
-    stable_kernel[0]  = '\0';
-    descriptor = open(LINKG_UPGRADE_VERSION_STATE_PATH, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (descriptor < 0)
-    {
-        return -errno;
-    }
-
-    if (fstat(descriptor, &information) != 0)
-    {
-        ret = -errno;
-        close(descriptor);
-        return ret;
-    }
-
-    if (!S_ISREG(information.st_mode) || information.st_size <= 0 || information.st_size > LINKG_UPGRADE_VERSION_JSON_BYTES)
-    {
-        close(descriptor);
-        return -EINVAL;
-    }
-
-    used = 0U;
-    while (used < (size_t)information.st_size)
-    {
-        length = read(descriptor, data + used, (size_t)information.st_size - used);
-        if (length < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        if (length <= 0)
-        {
-            ret = length == 0 ? -EIO : -errno;
-            close(descriptor);
-            return ret;
-        }
-        used += (size_t)length;
-    }
-
-    close(descriptor);
-    if (memchr(data, '\0', used) != NULL)
-    {
-        return -EINVAL;
-    }
-
-    data[used] = '\0';
-    root = cJSON_ParseWithOpts(data, NULL, 1);
-    ret  = -EINVAL;
-    if (!cJSON_IsObject(root))
-    {
-        goto finish;
-    }
-
-    schema   = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
-    current  = cJSON_GetObjectItemCaseSensitive(root, "release_partition");
-    stable   = cJSON_GetObjectItemCaseSensitive(root, "stable_release_partition");
-    releases = cJSON_GetObjectItemCaseSensitive(root, "releases");
-
-    if (!cJSON_IsNumber(schema) || schema->valuedouble != 1.0 ||
-        !cJSON_IsString(current) || !cJSON_IsString(stable) || !cJSON_IsObject(releases))
-    {
-        goto finish;
-    }
-
-    if (strcmp(current->valuestring, stable->valuestring) != 0)
-    {
-        ret = -EBUSY;
-        goto finish;
-    }
-
-    if (strcmp(stable->valuestring, "v1") == 0)
-    {
-        (void)snprintf(target_release, release_size, "%s", "v2");
-    }
-    else if (strcmp(stable->valuestring, "v2") == 0)
-    {
-        (void)snprintf(target_release, release_size, "%s", "v1");
-    }
-    else
-    {
-        goto finish;
-    }
-
-    entry  = cJSON_GetObjectItemCaseSensitive(releases, stable->valuestring);
-    kernel = cJSON_GetObjectItemCaseSensitive(entry, "kernel_slot");
-    if (!cJSON_IsString(kernel))
-    {
-        goto finish;
-    }
-
-    slot = kernel->valuestring;
-    if (strcmp(slot, "boot_a") != 0 && strcmp(slot, "boot_b") != 0)
-    {
-        goto finish;
-    }
-
-    (void)snprintf(stable_kernel, kernel_size, "%s", slot);
-    ret = 0;
-
-finish:
-    cJSON_Delete(root);
-    if (ret != 0)
-    {
-        target_release[0] = '\0';
-        stable_kernel[0]  = '\0';
-    }
-    return ret;
+    return upgrade_commit_stage(context, LINKG_UPGRADE_PHASE_FLASHING);
 }
 
 /**
@@ -400,24 +276,26 @@ failed:
 /**
  * @brief 执行升级包校验、App/Web安装、Kernel处理与可选系统文件安装。
  *
- * 所有安装步骤成功后停在事务提交阶段；JSON、ENV及重启另行接入。
+ * 安装完成后按JSON、ENV、重启顺序提交，任何失败都不宣称升级成功。
  * 原始压缩包和工作目录均位于/tmp，不复制Kernel镜像到/app。
  */
 static void _linkg_upgrade_process_package(const char *task_path)
 {
     char                  expected_release[3];
     char                  installed_release[3];
-    char                  stable_kernel[7];
+    const char           *stable_kernel;
     char                  target_kernel[7];
     struct stat           information;
     linkg_upgrade_stage_t failure_stage;
     bool                  workspace_owned;
     int                   cleanup_error;
     int                   result;
+    bool                  committed;
     int                   ret;
 
     failure_stage   = LINKG_UPGRADE_STAGE_ARCHIVE_VERIFY;
     workspace_owned = false;
+    committed       = false;
     ret             = 0;
 
     // 已存在的/tmp/upgrade不是本次任务所有，不能擅自清除。
@@ -449,7 +327,9 @@ static void _linkg_upgrade_process_package(const char *task_path)
 
     failure_stage = LINKG_UPGRADE_STAGE_TARGET_PREPARE;
     _linkg_upgrade_set_progress(LINKG_UPGRADE_STATE_INSTALLING, failure_stage, 30U, "正在确认稳定Release和Kernel槽位");
-    ret = _linkg_upgrade_read_stable_kernel(expected_release, sizeof(expected_release), stable_kernel, sizeof(stable_kernel));
+    stable_kernel = linkg_release_kernel_name(g_upgrade.transaction.state.kernel[g_upgrade.transaction.state.stable]);
+    (void)snprintf(expected_release, sizeof(expected_release), "%s", linkg_release_name(1U - g_upgrade.transaction.state.stable));
+    ret = upgrade_commit_stage(&g_upgrade.transaction, LINKG_UPGRADE_PHASE_INSTALLING);
     if (ret != 0)
     {
         goto finish;
@@ -470,7 +350,7 @@ static void _linkg_upgrade_process_package(const char *task_path)
 
     failure_stage = LINKG_UPGRADE_STAGE_KERNEL_COMPARE;
     _linkg_upgrade_set_progress(LINKG_UPGRADE_STATE_INSTALLING, failure_stage, 65U, "正在比较Kernel并按需刷写备用分区");
-    ret = upgrade_kernel_prepare(LINKG_UPGRADE_EXTRACT_PATH, stable_kernel, target_kernel, sizeof(target_kernel));
+    ret = upgrade_kernel_prepare_ex(LINKG_UPGRADE_EXTRACT_PATH, stable_kernel, target_kernel, sizeof(target_kernel), _linkg_upgrade_before_flash, &g_upgrade.transaction);
     if (ret != 0)
     {
         goto finish;
@@ -478,16 +358,20 @@ static void _linkg_upgrade_process_package(const char *task_path)
 
     failure_stage = LINKG_UPGRADE_STAGE_SYSTEM_INSTALL;
     _linkg_upgrade_set_progress(LINKG_UPGRADE_STATE_INSTALLING, failure_stage, 85U, "正在处理可选的系统文件替换");
-    ret = upgrade_system_install(LINKG_UPGRADE_EXTRACT_PATH);
+    ret = upgrade_commit_stage(&g_upgrade.transaction, LINKG_UPGRADE_PHASE_INSTALLING);
+    if (ret == 0)
+    {
+        ret = upgrade_system_install(LINKG_UPGRADE_EXTRACT_PATH);
+    }
     if (ret != 0)
     {
         goto finish;
     }
 
-    // 后续提交阶段在此使用installed_release与target_kernel更新JSON和ENV。
     failure_stage = LINKG_UPGRADE_STAGE_SUPERVISOR_PREPARE;
-    _linkg_upgrade_set_progress(LINKG_UPGRADE_STATE_PREPARING, failure_stage, 95U, "安装完成，等待JSON与ENV提交功能接入");
-    ret = -ENOSYS;
+    _linkg_upgrade_set_progress(LINKG_UPGRADE_STATE_PREPARING, failure_stage, 95U, "正在提交候选JSON和ENV");
+    ret = upgrade_commit_candidate(&g_upgrade.transaction, strcmp(target_kernel, "boot_a") == 0 ? LINKG_KERNEL_A : LINKG_KERNEL_B);
+    committed = ret == 0;
 
 finish:
     cleanup_error = _linkg_upgrade_cleanup_workspace(workspace_owned);
@@ -496,16 +380,30 @@ finish:
     {
         cleanup_error = result;
     }
-    if (cleanup_error != 0 && (ret == 0 || ret == -ENOSYS))
+    if (cleanup_error != 0 && ret == 0)
     {
         ret = cleanup_error;
     }
 
+    if (ret == 0 && committed)
+    {
+        _linkg_upgrade_set_progress(LINKG_UPGRADE_STATE_REBOOT_PENDING, failure_stage, 100U, "候选已提交，正在重启，等待Supervisor验证");
+        ret = upgrade_commit_reboot();
+    }
+    if (ret != 0)
+    {
+        result = upgrade_commit_fail(&g_upgrade.transaction);
+        if (result != 0)
+        {
+            fprintf(stderr, "UPGRADE: failure recovery pending error=%d original=%d\n", result, ret);
+        }
+    }
+    upgrade_commit_end(&g_upgrade.transaction);
+
     pthread_mutex_lock(&g_upgrade.lock);
     if (ret != 0)
     {
-        const char *message = ret == -ENOSYS ? "安装完成，升级事务提交尚未实现" : "升级安装阶段执行失败";
-        _linkg_upgrade_set_failed_locked(failure_stage, ret, message);
+        _linkg_upgrade_set_failed_locked(failure_stage, ret, "升级安装或事务提交失败");
     }
 
     g_upgrade.package_path[0] = '\0';
@@ -773,9 +671,26 @@ int linkg_upgrade_request_install(void)
         return -EBUSY;
     }
 
-    ret = _linkg_upgrade_claim_upload(task_path, sizeof(task_path), &upload_lock_fd);
+    ret = upgrade_commit_begin(&g_upgrade.transaction);
     if (ret != 0)
     {
+        pthread_mutex_unlock(&g_upgrade.lock);
+        return ret;
+    }
+
+    ret = _linkg_upgrade_claim_upload(task_path, sizeof(task_path), &upload_lock_fd);
+    if (ret == 0)
+    {
+        ret = upgrade_commit_stage(&g_upgrade.transaction, LINKG_UPGRADE_PHASE_VERIFYING);
+        if (ret != 0)
+        {
+            (void)rename(task_path, LINKG_UPGRADE_UPLOAD_PATH);
+            close(upload_lock_fd);
+        }
+    }
+    if (ret != 0)
+    {
+        upgrade_commit_end(&g_upgrade.transaction);
         pthread_mutex_unlock(&g_upgrade.lock);
         return ret;
     }
@@ -807,6 +722,8 @@ int linkg_upgrade_request_install(void)
         {
             _linkg_upgrade_set_failed_locked(LINKG_UPGRADE_STAGE_NONE, restore_error, "唤醒失败且无法恢复上传包");
         }
+        (void)upgrade_commit_fail(&g_upgrade.transaction);
+        upgrade_commit_end(&g_upgrade.transaction);
         close(upload_lock_fd);
         pthread_mutex_unlock(&g_upgrade.lock);
         return restore_error != 0 ? restore_error : ret;

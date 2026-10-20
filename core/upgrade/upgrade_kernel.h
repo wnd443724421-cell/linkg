@@ -14,6 +14,9 @@ extern "C" {
 
 /****************************** 安装接口 ******************************/
 
+typedef int (*upgrade_kernel_before_write_t)(void *context);
+int upgrade_kernel_prepare_ex(const char *upgrade_dir, const char *stable_kernel_slot, char *target_kernel_slot, size_t slot_size, upgrade_kernel_before_write_t before_write, void *context);
+
 int upgrade_kernel_prepare(const char *upgrade_dir, const char *stable_kernel_slot, char *target_kernel_slot, size_t slot_size);
 
 #ifdef __cplusplus

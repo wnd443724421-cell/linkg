@@ -29,9 +29,9 @@
 /****************************** 模块常量 ******************************/
 
 #define UPGRADE_SYSTEM_JSON_NAME          "system_install.json"// 可选的系统文件替换声明
-#define UPGRADE_SYSTEM_JSON_MAX_BYTES     (64U * 1024U)        // JSON最大长度
-#define UPGRADE_SYSTEM_MAX_FILES          64U                  // 单次最多替换的系统文件数
-#define UPGRADE_SYSTEM_COPY_BUFFER_BYTES  16384U               // 分块复制缓冲区大小
+#define UPGRADE_SYSTEM_JSON_MAX_BYTES    (64U * 1024U) // JSON最大长度
+#define UPGRADE_SYSTEM_MAX_FILES         64U           // 单次最多替换的系统文件数
+#define UPGRADE_SYSTEM_COPY_BUFFER_BYTES 16384U        // 分块复制缓冲区大小
 
 /****************************** 内部辅助 ******************************/
 

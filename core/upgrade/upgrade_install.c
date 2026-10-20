@@ -6,7 +6,9 @@
  * @date 2026-10-20
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "upgrade_install.h"
 
@@ -23,15 +25,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "linkg_release_state.h"
 
 /****************************** 模块常量 ******************************/
 
-#define UPGRADE_INSTALL_STATE_PATH          "/app/version_state.json" // Supervisor版本状态，只读
-#define UPGRADE_INSTALL_APP_ROOT            "/app"                    // App安装根目录
-#define UPGRADE_INSTALL_WEB_ROOT            "/www"                    // Web安装根目录
-#define UPGRADE_INSTALL_COPY_PROGRAM        "/bin/cp"                // BusyBox cp可执行路径
-#define UPGRADE_INSTALL_STATE_MAX_BYTES     4096U                    // 状态JSON最大读取大小
+#define UPGRADE_INSTALL_STATE_PATH      linkg_release_path("LINKG_OTA_TEST_STATE", "/app/version_state.json") // Supervisor版本状态，只读
+#define UPGRADE_INSTALL_APP_ROOT        linkg_release_path("LINKG_OTA_TEST_APP_ROOT", "/app")                 // App安装根目录
+#define UPGRADE_INSTALL_WEB_ROOT        linkg_release_path("LINKG_OTA_TEST_WEB_ROOT", "/www")                 // Web安装根目录
+#define UPGRADE_INSTALL_COPY_PROGRAM    "/bin/cp"                                                             // BusyBox cp可执行路径
+#define UPGRADE_INSTALL_STATE_MAX_BYTES 4096U                                                                 // 状态JSON最大读取大小
 
 /****************************** 内部辅助 ******************************/
 
@@ -40,102 +42,19 @@
  */
 static int _upgrade_install_select_target(const char **stable, const char **target)
 {
-    char         buffer[UPGRADE_INSTALL_STATE_MAX_BYTES + 1U];
-    struct stat  information;
-    cJSON       *root;
-    const cJSON *current;
-    const cJSON *confirmed;
-    const cJSON *schema;
-    const cJSON *releases;
-    const cJSON *entry;
-    const cJSON *kernel;
-    const char  *name;
-    ssize_t      count;
-    size_t       used;
-    int          descriptor;
-    int          ret;
+    linkg_release_state_t state;
+    int                   ret;
 
-    descriptor = open(UPGRADE_INSTALL_STATE_PATH, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (descriptor < 0)
+    ret = linkg_release_load(UPGRADE_INSTALL_STATE_PATH, &state);
+    if (ret == 0 && state.target != state.stable)
     {
-        return -errno;
+        ret = -EBUSY;
     }
-
-    ret = fstat(descriptor, &information);
-    if (ret != 0 || !S_ISREG(information.st_mode) || information.st_size <= 0 ||
-        information.st_size > (off_t)UPGRADE_INSTALL_STATE_MAX_BYTES)
+    if (ret == 0)
     {
-        ret = ret != 0 ? -errno : -EINVAL;
-        close(descriptor);
-        return ret;
+        *stable = linkg_release_name(state.stable);
+        *target = linkg_release_name(1U - state.stable);
     }
-
-    used = 0U;
-    while (used < (size_t)information.st_size)
-    {
-        count = read(descriptor, buffer + used, (size_t)information.st_size - used);
-        if (count < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        if (count <= 0)
-        {
-            ret = count == 0 ? -EIO : -errno;
-            close(descriptor);
-            return ret;
-        }
-        used += (size_t)count;
-    }
-
-    close(descriptor);
-    if (memchr(buffer, '\0', used) != NULL)
-    {
-        return -EINVAL;
-    }
-    buffer[used] = '\0';
-
-    root = cJSON_ParseWithOpts(buffer, NULL, 1);
-    if (!cJSON_IsObject(root))
-    {
-        cJSON_Delete(root);
-        return -EINVAL;
-    }
-
-    current   = cJSON_GetObjectItemCaseSensitive(root, "release_partition");
-    confirmed = cJSON_GetObjectItemCaseSensitive(root, "stable_release_partition");
-    schema    = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
-    releases  = cJSON_GetObjectItemCaseSensitive(root, "releases");
-    ret       = -EINVAL;
-
-    if (cJSON_IsNumber(schema) && schema->valuedouble == 1.0 &&
-        cJSON_IsObject(releases) && cJSON_IsString(current) && cJSON_IsString(confirmed) &&
-        current->valuestring != NULL && confirmed->valuestring != NULL &&
-        strcmp(current->valuestring, confirmed->valuestring) == 0)
-    {
-        name   = confirmed->valuestring;
-        entry  = cJSON_GetObjectItemCaseSensitive(releases, name);
-        kernel = cJSON_GetObjectItemCaseSensitive(entry, "kernel_slot");
-
-        // 已确认稳定的Release必须包含有效Kernel映射。
-        if (cJSON_IsString(kernel) && kernel->valuestring != NULL &&
-            (strcmp(kernel->valuestring, "boot_a") == 0 || strcmp(kernel->valuestring, "boot_b") == 0))
-        {
-            if (strcmp(name, "v1") == 0)
-            {
-                *stable = "v1";
-                *target = "v2";
-                ret     = 0;
-            }
-            else if (strcmp(name, "v2") == 0)
-            {
-                *stable = "v2";
-                *target = "v1";
-                ret     = 0;
-            }
-        }
-    }
-
-    cJSON_Delete(root);
     return ret;
 }
 

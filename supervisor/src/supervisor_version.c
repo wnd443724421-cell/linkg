@@ -1,9 +1,9 @@
 /**
  * @file supervisor_version.c
- * @brief 固定版本JSON校验、原子保存及Release安装检查
+ * @brief Supervisor版本接口及Release目录验证
  * @author Dawn
- * @version 0.2.0
- * @date 2026-10-19
+ * @version 0.3.0
+ * @date 2026-10-20
  */
 
 #include "supervisor_version.h"
@@ -11,243 +11,60 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include "cJSON.h"
-
-#include "supervisor_storage.h"
-
-/****************************** 模块常量 ******************************/
-
-#define SUPERVISOR_VERSION_JSON_SIZE 4096U // 固定结构状态文件读取上限
-
-/****************************** 内部辅助 ******************************/
-
-/**
- * @brief 检查对象键集合，拒绝未知键及重复键。
- */
-static bool _supervisor_version_keys(const cJSON *object, const char *const keys[], size_t count)
-{
-    const cJSON *member;
-    size_t       index;
-    size_t       matches;
-
-    if (!cJSON_IsObject(object) || cJSON_GetArraySize(object) != (int)count)
-    {
-        return false;
-    }
-
-    for (index = 0U; index < count; index++)
-    {
-        matches = 0U;
-        cJSON_ArrayForEach(member, object)
-        {
-            if (member->string != NULL && strcmp(member->string, keys[index]) == 0)
-            {
-                matches++;
-            }
-        }
-
-        if (matches != 1U)
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/**
- * @brief 将固定Release名称解析为数组索引。
- */
-static int _supervisor_version_release(const cJSON *value, unsigned int *release)
-{
-    if (!cJSON_IsString(value))
-    {
-        return -EINVAL;
-    }
-
-    if (strcmp(value->valuestring, "v1") == 0 || strcmp(value->valuestring, "v2") == 0)
-    {
-        *release = (unsigned int)(value->valuestring[1] - '1');
-        return 0;
-    }
-
-    return -EINVAL;
-}
-
-/**
- * @brief 校验内存状态，稳定Release必须已经安装。
- */
-static bool _supervisor_version_valid(const supervisor_version_t *version)
-{
-    return version != NULL && version->target < 2U && version->stable < 2U &&
-           version->kernel[0] >= SUPERVISOR_KERNEL_NONE && version->kernel[0] <= SUPERVISOR_KERNEL_B &&
-           version->kernel[1] >= SUPERVISOR_KERNEL_NONE && version->kernel[1] <= SUPERVISOR_KERNEL_B &&
-           version->kernel[version->stable] != SUPERVISOR_KERNEL_NONE;
-}
 
 /****************************** 状态文件 ******************************/
 
 /**
- * @brief 读取严格四字段JSON，保留未安装候选供选择阶段回滚。
+ * @brief 使用共用严格解析器读取四字段或五字段版本状态。
  */
 int supervisor_version_load(const char *path, supervisor_version_t *version)
 {
-    const char *const root_keys[]    = {"schema_version", "release_partition", "stable_release_partition", "releases"};
-    const char *const release_keys[] = {"v1", "v2"};
-    const char *const kernel_keys[]  = {"kernel_slot"};
-    char              text[SUPERVISOR_VERSION_JSON_SIZE];
-    cJSON            *root;
-    const cJSON      *releases;
-    const cJSON      *entry;
-    const cJSON      *value;
-    unsigned int      index;
-    int               ret;
-
-    memset(version, 0, sizeof(*version));
-    ret = supervisor_storage_read(path, text, sizeof(text));
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    // cJSON字符串不保存原始长度，显式拒绝可能隐藏尾部内容的零字符转义。
-    if (strstr(text, "\\u0000") != NULL)
-    {
-        return -EINVAL;
-    }
-
-    root = cJSON_ParseWithOpts(text, NULL, 1);
-    if (!_supervisor_version_keys(root, root_keys, 4U))
-    {
-        cJSON_Delete(root);
-        return -EINVAL;
-    }
-
-    ret   = -EINVAL;
-    value = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
-    if (!cJSON_IsNumber(value) || value->valuedouble != 1.0 ||
-        _supervisor_version_release(cJSON_GetObjectItemCaseSensitive(root, "release_partition"), &version->target) != 0 ||
-        _supervisor_version_release(cJSON_GetObjectItemCaseSensitive(root, "stable_release_partition"), &version->stable) != 0)
-    {
-        goto finish;
-    }
-
-    releases = cJSON_GetObjectItemCaseSensitive(root, "releases");
-    if (!_supervisor_version_keys(releases, release_keys, 2U))
-    {
-        goto finish;
-    }
-
-    for (index = 0U; index < 2U; index++)
-    {
-        entry = cJSON_GetObjectItemCaseSensitive(releases, release_keys[index]);
-        if (cJSON_IsObject(entry) && cJSON_GetArraySize(entry) == 0)
-        {
-            continue;
-        }
-
-        if (!_supervisor_version_keys(entry, kernel_keys, 1U))
-        {
-            goto finish;
-        }
-
-        value = cJSON_GetObjectItemCaseSensitive(entry, "kernel_slot");
-        if (!cJSON_IsString(value))
-        {
-            goto finish;
-        }
-
-        if (strcmp(value->valuestring, "boot_a") == 0)
-        {
-            version->kernel[index] = SUPERVISOR_KERNEL_A;
-        }
-        else if (strcmp(value->valuestring, "boot_b") == 0)
-        {
-            version->kernel[index] = SUPERVISOR_KERNEL_B;
-        }
-        else
-        {
-            goto finish;
-        }
-    }
-
-    ret = _supervisor_version_valid(version) ? 0 : -EINVAL;
-
-finish:
-    cJSON_Delete(root);
-    return ret;
+    return linkg_release_load(path, version);
 }
 
 /**
- * @brief 将完整固定结构写入同目录临时文件并同步原子替换。
+ * @brief 原子保存完整状态，仅供已串行化的初始化操作使用。
  */
 int supervisor_version_save(const char *path, const supervisor_version_t *version)
 {
-    char text[512];
-    char releases[2][64];
-    int  length;
-    int  index;
-
-    if (!_supervisor_version_valid(version))
-    {
-        return -EINVAL;
-    }
-
-    for (index = 0; index < 2; index++)
-    {
-        if (version->kernel[index] == SUPERVISOR_KERNEL_NONE)
-        {
-            strcpy(releases[index], "{}");
-        }
-        else
-        {
-            snprintf(releases[index], sizeof(releases[index]), "{\"kernel_slot\":\"%s\"}", supervisor_version_kernel_name(version->kernel[index]));
-        }
-    }
-
-    length = snprintf(text, sizeof(text),
-                      "{\n  \"schema_version\":1,\n  \"release_partition\":\"%s\",\n  \"stable_release_partition\":\"%s\",\n"
-                      "  \"releases\":{\"v1\":%s,\"v2\":%s}\n}\n",
-                      supervisor_version_name(version->target), supervisor_version_name(version->stable), releases[0], releases[1]);
-    if (length < 0 || (size_t)length >= sizeof(text))
-    {
-        return -EOVERFLOW;
-    }
-
-    return supervisor_storage_write(path, text, (size_t)length);
+    return linkg_release_save(path, version);
 }
 
 /**
- * @brief 比较全部业务字段，避免结构体填充影响一致性判断。
+ * @brief 共享锁下比较并提交状态，避免覆盖LinkG刚写入的字段。
+ */
+int supervisor_version_replace(const char *path, const supervisor_version_t *expected, const supervisor_version_t *desired)
+{
+    return linkg_release_replace(path, expected, desired);
+}
+
+/**
+ * @brief 比较映射、目标、稳定版本及升级状态。
  */
 bool supervisor_version_equal(const supervisor_version_t *left, const supervisor_version_t *right)
 {
-    return left->target == right->target && left->stable == right->stable &&
-           left->kernel[0] == right->kernel[0] && left->kernel[1] == right->kernel[1];
+    return linkg_release_equal(left, right);
 }
-
-/****************************** 版本选择 ******************************/
 
 /**
  * @brief 获取固定Release名称。
  */
 const char *supervisor_version_name(unsigned int release)
 {
-    return release < 2U ? (release == 0U ? "v1" : "v2") : NULL;
+    return linkg_release_name(release);
 }
 
 /**
- * @brief 获取固定Kernel分区名称。
+ * @brief 获取固定Kernel名称。
  */
 const char *supervisor_version_kernel_name(supervisor_kernel_t kernel)
 {
-    return kernel == SUPERVISOR_KERNEL_A ? "boot_a" : kernel == SUPERVISOR_KERNEL_B ? "boot_b" : NULL;
+    return linkg_release_kernel_name(kernel);
 }
+
+/****************************** 版本选择 ******************************/
 
 /**
  * @brief 验证App和Web安装目录以及LinkG可执行文件。

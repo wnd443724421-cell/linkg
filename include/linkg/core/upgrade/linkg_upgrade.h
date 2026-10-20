@@ -25,7 +25,7 @@ typedef enum
     LINKG_UPGRADE_STATE_PENDING,            // 已接受任务，等待后台执行
     LINKG_UPGRADE_STATE_VERIFYING,          // 正在校验升级包
     LINKG_UPGRADE_STATE_INSTALLING,         // 正在安装升级文件
-    LINKG_UPGRADE_STATE_PREPARING,          // 正在请求Supervisor提交候选Release
+    LINKG_UPGRADE_STATE_PREPARING,          // 正在提交候选JSON与ENV
     LINKG_UPGRADE_STATE_REBOOT_PENDING,     // 候选已提交，等待重启，不代表最终升级成功
     LINKG_UPGRADE_STATE_FAILED              // 本次升级安装失败
 } linkg_upgrade_state_t;
@@ -44,7 +44,7 @@ typedef enum
     LINKG_UPGRADE_STAGE_KERNEL_WRITE,           // 写入非稳定Kernel槽位
     LINKG_UPGRADE_STAGE_KERNEL_VERIFY,          // 读回校验Kernel镜像
     LINKG_UPGRADE_STAGE_SYSTEM_INSTALL,         // 根据可选声明替换系统文件
-    LINKG_UPGRADE_STAGE_SUPERVISOR_PREPARE      // 请求Supervisor提交候选Release
+    LINKG_UPGRADE_STAGE_SUPERVISOR_PREPARE      // 提交候选JSON与ENV
 } linkg_upgrade_stage_t;
 
 /****************************** 状态快照 ******************************/

@@ -25,6 +25,7 @@ typedef struct
     supervisor_release_paths_t paths;             // 持久化和安装路径配置
     supervisor_version_t       version;           // 最近读取或持久化完成的版本状态
     char                       program[PATH_MAX]; // 唯一current可执行文件路径
+    bool                       status_warned;     // 阶段持久化失败仅首次报警，后续安全重试
     bool                       trial;             // 稳定JSON持久化完成前始终视为候选
 } supervisor_release_t;
 
@@ -34,5 +35,6 @@ int supervisor_release_init(supervisor_release_t *release, const supervisor_rele
 int supervisor_release_prepare(supervisor_release_t *release);
 int supervisor_release_confirm(supervisor_release_t *release);
 int supervisor_release_rollback(supervisor_release_t *release);
+void supervisor_release_running(supervisor_release_t *release);
 
 #endif
