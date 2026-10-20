@@ -228,8 +228,8 @@ static int _linkg_switch_policy_wifi_migrate_load(const linkg_switch_policy_inpu
 /**
  * @brief 判断当前Wi-Fi双向业务速率是否不超过配置的蜂窝负载上限。
  *
- * 只控制Load迁移准入，不影响Wire Loss质量判断。
- * 速率采样无效或配置读取失败时，不执行Load迁移。
+ * 作为Wi-Fi软件质量判决的统一前置门槛。
+ * 速率采样无效或配置读取失败时，跳过本轮Loss及Load判决。
  */
 static bool _linkg_switch_policy_wifi_load_within_cellular_limit(const linkg_switch_policy_input_t *input)
 {
@@ -274,6 +274,12 @@ static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_in
     linkg_switch_policy_load_state_t load_state;
     int                              ret;
 
+    // Wi-Fi双向总业务速率超过5G配置上限时，跳过全部软件质量判决。
+    if (!_linkg_switch_policy_wifi_load_within_cellular_limit(input))
+    {
+        return 0;
+    }
+
     ret = linkg_switch_policy_loss_process(input, now_us, &loss_state);
     if (ret != 0)
     {
@@ -291,8 +297,7 @@ static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_in
         return ret;
     }
 
-    if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD &&
-        _linkg_switch_policy_wifi_load_within_cellular_limit(input))
+    if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD)
     {
         return _linkg_switch_policy_wifi_migrate_load(input, now_us);
     }
