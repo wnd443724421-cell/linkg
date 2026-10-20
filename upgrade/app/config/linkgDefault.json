@@ -62,7 +62,8 @@
             "enabled": false,
             "network_mode": "auto",
             "apn": "",
-            "pin": ""
+            "pin": "",
+            "max_load_mbps": 15
         }
     },
     "paths": {

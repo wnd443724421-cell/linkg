@@ -66,6 +66,7 @@ static bool _linkg_web_cellular_config_equal(const linkg_config_t *left, const l
 
     return left_cellular->enabled == right_cellular->enabled &&
            left_cellular->network_mode == right_cellular->network_mode &&
+           left_cellular->max_load_mbps == right_cellular->max_load_mbps &&
            strcmp(left_cellular->apn, right_cellular->apn) == 0 &&
            strcmp(left_cellular->pin, right_cellular->pin) == 0;
 }
