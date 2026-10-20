@@ -20,10 +20,13 @@
 #define LINKG_SWITCH_WIRE_HEADER_LENGTH_OFFSET                  2U                                    // 公共头长度偏移
 #define LINKG_SWITCH_WIRE_HEADER_MESSAGE_ID_OFFSET              4U                                    // 公共头消息编号偏移
 
+#define LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE                     8U                                    // 单项丢包统计Wire长度
 #define LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_OFFSET            LINKG_SWITCH_WIRE_HEADER_SIZE         // 质量Wi-Fi上行偏移
 #define LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_LOAD_OFFSET     (LINKG_SWITCH_WIRE_HEADER_SIZE + 8U)  // 质量Wi-Fi下行负载偏移
 #define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_OFFSET        (LINKG_SWITCH_WIRE_HEADER_SIZE + 16U) // 质量Cellular上行偏移
 #define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET (LINKG_SWITCH_WIRE_HEADER_SIZE + 24U) // 质量Cellular下行负载偏移
+#define LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_CLASSES_OFFSET    (LINKG_SWITCH_WIRE_HEADER_SIZE + 32U) // Wi-Fi上行三业务Wire偏移
+#define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET (LINKG_SWITCH_WIRE_HEADER_SIZE + 56U) // Cellular上行三业务Wire偏移
 
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET                 LINKG_SWITCH_WIRE_HEADER_SIZE         // 计划同步模式偏移
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET              (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)  // 计划同步主用接入偏移
@@ -41,6 +44,15 @@
 #define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED0_OFFSET      (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)  // 维护确认保留字段0偏移
 #define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED1_OFFSET      (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)  // 维护确认保留字段1偏移
 #define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_RESERVED2_OFFSET      (LINKG_SWITCH_WIRE_HEADER_SIZE + 3U)  // 维护确认保留字段2偏移
+
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET ==
+               LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_CLASSES_OFFSET +
+               LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE * LINKG_TRANSPORT_CLASS_COUNT,
+               "invalid Switch quality report class offsets");
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE ==
+               LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET +
+               LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE * LINKG_TRANSPORT_CLASS_COUNT,
+               "invalid Switch quality report wire length");
 
 /****************************** 基础编解码 ******************************/
 
@@ -362,11 +374,41 @@ static void _linkg_switch_wire_decode_loss(const uint8_t *buffer, linkg_switch_w
 }
 
 /**
+ * @brief 校验整链路指标及三业务独立Wire丢包指标。
+ */
+static bool _linkg_switch_wire_quality_valid(const linkg_switch_wire_quality_report_t *report)
+{
+    uint32_t class_index;
+
+    if (report == NULL ||
+        !_linkg_switch_wire_loss_valid(&report->wifi_uplink) ||
+        !_linkg_switch_wire_loss_valid(&report->wifi_downlink_load) ||
+        !_linkg_switch_wire_loss_valid(&report->cellular_uplink) ||
+        !_linkg_switch_wire_loss_valid(&report->cellular_downlink_load))
+    {
+        return false;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        if (!_linkg_switch_wire_loss_valid(&report->wifi_uplink_classes[class_index]) ||
+            !_linkg_switch_wire_loss_valid(&report->cellular_uplink_classes[class_index]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
  * @brief 编码AP到STA的Wi-Fi与Cellular质量上报消息。
  */
 int linkg_switch_wire_encode_quality_report(uint32_t message_id, const linkg_switch_wire_quality_report_t *report, uint8_t *buffer, size_t capacity, size_t *length)
 {
-    int ret;
+    uint32_t class_index;
+    uint32_t offset;
+    int      ret;
 
     if (length == NULL)
     {
@@ -380,10 +422,7 @@ int linkg_switch_wire_encode_quality_report(uint32_t message_id, const linkg_swi
         return -EINVAL;
     }
 
-    if (!_linkg_switch_wire_loss_valid(&report->wifi_uplink) ||
-        !_linkg_switch_wire_loss_valid(&report->wifi_downlink_load) ||
-        !_linkg_switch_wire_loss_valid(&report->cellular_uplink) ||
-        !_linkg_switch_wire_loss_valid(&report->cellular_downlink_load))
+    if (!_linkg_switch_wire_quality_valid(report))
     {
         return -EINVAL;
     }
@@ -406,6 +445,16 @@ int linkg_switch_wire_encode_quality_report(uint32_t message_id, const linkg_swi
                                    &report->cellular_uplink);
     _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET],
                                    &report->cellular_downlink_load);
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        offset = class_index * LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE;
+
+        _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_CLASSES_OFFSET + offset],
+                                       &report->wifi_uplink_classes[class_index]);
+        _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET + offset],
+                                       &report->cellular_uplink_classes[class_index]);
+    }
 
     *length = LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE;
 
@@ -655,10 +704,17 @@ int linkg_switch_wire_decode(const uint8_t *buffer, size_t length, linkg_switch_
             _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_DOWNLINK_LOAD_OFFSET],
                                            &report->cellular_downlink_load);
 
-            if (!_linkg_switch_wire_loss_valid(&report->wifi_uplink) ||
-                !_linkg_switch_wire_loss_valid(&report->wifi_downlink_load) ||
-                !_linkg_switch_wire_loss_valid(&report->cellular_uplink) ||
-                !_linkg_switch_wire_loss_valid(&report->cellular_downlink_load))
+            for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+            {
+                offset = class_index * LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE;
+
+                _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_CLASSES_OFFSET + offset],
+                                               &report->wifi_uplink_classes[class_index]);
+                _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET + offset],
+                                               &report->cellular_uplink_classes[class_index]);
+            }
+
+            if (!_linkg_switch_wire_quality_valid(report))
             {
                 return -EINVAL;
             }

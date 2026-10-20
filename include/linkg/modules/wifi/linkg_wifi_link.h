@@ -33,17 +33,32 @@ typedef struct
 /****************************** 链路接收统计 ******************************/
 
 /**
- * @brief 指定对端Wi-Fi链路累计接收统计。
+ * @brief 单个业务类别的Wi-Fi Wire累计接收统计。
  *
- * REALTIME、VIDEO和DATA在Wi-Fi RX内部使用独立Sequence窗口统计，
- * received_packets为三业务首次成功接收唯一Wi-Fi Wire Packet数量之和；
- * confirmed_lost_packets为三业务64包滑动窗口确认丢包数量之和。
- * 两个字段均为进程生命周期内累计值，loss rate、时间窗口和Report ID由上层统计模块计算。
+ * lost_packets为64包Sequence窗口确认丢失的Packet数量。
+ * sample_packets为成功接收和确认丢失的Packet数量之和。
+ * 两个字段均为累计值，不在底层计算丢包率。
  */
 typedef struct
 {
-    uint64_t received_packets;
-    uint64_t confirmed_lost_packets;
+    uint64_t lost_packets;   // 当前业务累计确认丢失Packet数
+    uint64_t sample_packets; // 当前业务累计接收与丢失Packet总数
+} linkg_wifi_rx_class_counters_t;
+
+
+/**
+ * @brief 指定对端Wi-Fi链路累计接收统计。
+ *
+ * REALTIME、VIDEO、DATA分别使用独立Sequence窗口。
+ * classes按LINKG_LINK_TX_CLASS_*索引保存独立业务统计。
+ * 保留原有汇总字段，兼容尚未改造的Switch观测接口。
+ */
+typedef struct
+{
+    uint64_t received_packets;       // 三类业务累计成功接收Packet总数
+    uint64_t confirmed_lost_packets; // 三类业务累计确认丢失Packet总数
+
+    linkg_wifi_rx_class_counters_t classes[LINKG_LINK_TX_CLASS_COUNT]; // 三类业务独立Wire接收统计
 } linkg_wifi_rx_stats_t;
 
 /****************************** 生命周期 ******************************/

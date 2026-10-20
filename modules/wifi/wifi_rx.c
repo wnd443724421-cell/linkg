@@ -57,6 +57,10 @@
 #define LINKG_WIFI_RX_MAC_LOG_INTERVAL_US       1000000ULL                                                                           // 非法来源日志间隔
 
 _Static_assert(LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE == 64U, "Wi-Fi RX sequence window must be 64");
+_Static_assert(LINKG_WIFI_TRAFFIC_COUNT == LINKG_LINK_TX_CLASS_COUNT, "Wi-Fi RX traffic class count mismatch");
+_Static_assert((int)LINKG_WIFI_TRAFFIC_REALTIME == (int)LINKG_LINK_TX_CLASS_REALTIME, "Wi-Fi RX realtime class mismatch");
+_Static_assert((int)LINKG_WIFI_TRAFFIC_VIDEO == (int)LINKG_LINK_TX_CLASS_VIDEO, "Wi-Fi RX video class mismatch");
+_Static_assert((int)LINKG_WIFI_TRAFFIC_DATA == (int)LINKG_LINK_TX_CLASS_DATA, "Wi-Fi RX data class mismatch");
 
 /****************************** 内部类型 ******************************/
 
@@ -1515,6 +1519,7 @@ retry:
     return 0;
 }
 
+
 /****************************** 链路统计 ******************************/
 
 /**
@@ -1522,6 +1527,8 @@ retry:
  *
  * @note peer_node_id必须为1~254。当前Wi-Fi RX生命周期内尚未收到该节点任何
  *       Wi-Fi Wire Packet时返回-ENOENT。
+ *       分别返回REALTIME、VIDEO、DATA的累计丢包及样本数量，
+ *       同时保留整条Wi-Fi链路的接收与丢包累计统计。
  */
 int linkg_wifi_rx_get_peer_stats(linkg_wifi_rx_t *rx, uint8_t peer_node_id, linkg_wifi_rx_stats_t *stats)
 {
@@ -1560,6 +1567,11 @@ int linkg_wifi_rx_get_peer_stats(linkg_wifi_rx_t *rx, uint8_t peer_node_id, link
     {
         class_stats = &peer_stats->classes[class_index];
 
+        // 当前业务独立统计。
+        stats->classes[class_index].lost_packets   = class_stats->confirmed_lost_packets;
+        stats->classes[class_index].sample_packets = class_stats->received_packets + class_stats->confirmed_lost_packets;
+
+        // 保留整条Wi-Fi链路累计统计。
         stats->received_packets       += class_stats->received_packets;
         stats->confirmed_lost_packets += class_stats->confirmed_lost_packets;
     }

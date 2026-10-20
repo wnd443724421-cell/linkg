@@ -128,13 +128,13 @@ with tempfile.TemporaryDirectory(prefix="linkg-upgrade-build-") as temp_dir:
                 or type(declaration["schema_version"]) is not int
                 or declaration["schema_version"] != 1
                 or not isinstance(declaration["files"], list)
-                or not declaration["files"]):
+                or not 1 <= len(declaration["files"]) <= 64):
             raise SystemExit("system_install.json 必须包含 schema_version=1 和非空 files 数组")
 
         def valid_components(value, absolute):
             if not isinstance(value, str) or not value or "\x00" in value:
                 return False
-            if any(char in value for char in "\n\r\t"):
+            if any(ord(char) < 32 or ord(char) == 127 for char in value):
                 return False
             if value.startswith("/") != absolute:
                 return False
@@ -147,16 +147,21 @@ with tempfile.TemporaryDirectory(prefix="linkg-upgrade-build-") as temp_dir:
                 raise SystemExit(f"system_install.json files[{index}] 必须只包含 source 和 destination")
             source = item["source"]
             destination = item["destination"]
-            if not valid_components(source, False) or not source.startswith("app/"):
-                raise SystemExit(f"system_install.json files[{index}].source 必须是 app/ 开头的安全相对路径")
+            if not valid_components(source, False):
+                raise SystemExit(f"system_install.json files[{index}].source 必须是相对 app/ 的安全路径")
             if not valid_components(destination, True):
                 raise SystemExit(f"system_install.json files[{index}].destination 必须是安全绝对路径")
+            if (destination != "/usr/sbin/linkg-supervisor"
+                    and not destination.startswith(("/vendor/firmware/", "/lib/firmware/"))):
+                raise SystemExit("system_install.json 不允许覆盖该系统路径: " + destination)
             if destination in targets:
                 raise SystemExit("system_install.json 重复目标路径: " + destination)
             targets.add(destination)
-            source_file = staging / source
+            source_file = staging / source if source.startswith("app/") else staging / "app" / source
             if source_file.is_symlink() or not source_file.is_file():
                 raise SystemExit("system_install.json 指定的源文件不存在或不是普通文件: " + source)
+            if destination == "/usr/sbin/linkg-supervisor" and not os.access(source_file, os.X_OK):
+                raise SystemExit("system_install.json 中 Supervisor 源文件没有执行权限: " + source)
         shutil.copy2(system_install_path, staging / "system_install.json")
 
     for relative in required:

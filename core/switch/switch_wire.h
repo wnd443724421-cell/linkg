@@ -20,7 +20,7 @@
 #define LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID           0U                                                                               // 无效消息编号
 
 #define LINKG_SWITCH_WIRE_HEADER_SIZE                  8U                                                                               // Switch公共头Wire长度
-#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE  32U                                                                              // Wi-Fi与Cellular质量上报Payload长度
+#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE  80U                                                                              // Wi-Fi与Cellular质量上报Payload长度
 #define LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE              4U                                                                               // 单业务发送计划Wire长度
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_PAYLOAD_SIZE       (LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE * LINKG_TRANSPORT_CLASS_COUNT)                // 完整Peer发送计划同步Payload长度
 #define LINKG_SWITCH_WIRE_PLAN_ACK_PAYLOAD_SIZE        4U                                                                               // 发送计划确认Payload长度
@@ -113,21 +113,24 @@ typedef struct
 /**
  * @brief AP向指定STA上报Wi-Fi和Cellular质量。
  *
- * Wire丢包由AP接收端根据Sequence统计。
- * Load丢包由AP发送端根据Path累计统计计算。
+ * Wire由AP接收端根据各业务独立Sequence窗口统计。
+ * 保留整链路Wire统计，同时增加三业务独立统计。
  *
- * Wi-Fi Load：TX Queue Overflow。
- * Cellular Load：TX Queue Overflow + TX Shaped。
+ * Load由AP发送端根据Path累计统计计算。
+ * Wi-Fi和Cellular统一采用整链路TX Queue Overflow。
  *
- * STA负责自行采集另外四项本地观测。
+ * STA负责自行采集另外四组本地方向的Wire和Load观测。
  */
 typedef struct
 {
-    linkg_switch_wire_loss_t wifi_uplink;        // STA到AP Wi-Fi Wire丢包
-    linkg_switch_wire_loss_t wifi_downlink_load; // AP到STA Wi-Fi Load丢包
+    linkg_switch_wire_loss_t wifi_uplink;          // STA到AP Wi-Fi整链路Wire丢包
+    linkg_switch_wire_loss_t wifi_downlink_load;   // AP到STA Wi-Fi整链路Load丢包
 
-    linkg_switch_wire_loss_t cellular_uplink;        // STA到AP Cellular Wire丢包
-    linkg_switch_wire_loss_t cellular_downlink_load; // AP到STA Cellular Load丢包
+    linkg_switch_wire_loss_t cellular_uplink;        // STA到AP Cellular整链路Wire丢包
+    linkg_switch_wire_loss_t cellular_downlink_load; // AP到STA Cellular整链路Load丢包
+
+    linkg_switch_wire_loss_t wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];     // STA到AP Wi-Fi三业务独立Wire丢包
+    linkg_switch_wire_loss_t cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // STA到AP Cellular三业务独立Wire丢包
 } linkg_switch_wire_quality_report_t;
 
 /****************************** 发送计划同步 ******************************/

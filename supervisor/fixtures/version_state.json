@@ -2,12 +2,11 @@
   "schema_version": 1,
   "release_partition": "v1",
   "stable_release_partition": "v1",
+  "upgrade_state": "idle",
   "releases": {
     "v1": {
       "kernel_slot": "boot_a"
     },
-    "v2": {
-
-    }
+    "v2": {}
   }
 }

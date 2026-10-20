@@ -1305,18 +1305,23 @@ retry:
     return 0;
 }
 
+
 /****************************** 链路统计 ******************************/
 
 /**
- * @brief 获取指定IPv6发送源的三业务独立接收累计统计。
+ * @brief 获取指定IPv6发送源的Cellular链路接收累计统计。
  *
  * @note 尚未收到该来源任何Cellular Wire报文时返回-ENOENT。
+ *       分别返回REALTIME、VIDEO、DATA的累计丢包及样本数量，
+ *       同时保留整条Cellular链路的接收与丢包累计统计。
  */
 int linkg_cellular_rx_get_source_stats(linkg_cellular_rx_t *rx, const struct in6_addr *address, linkg_cellular_rx_stats_t *stats)
 {
-    uint32_t index;
-    uint32_t class_index;
-    int      ret;
+    const linkg_cellular_rx_class_stats_t  *class_stats;
+    const linkg_cellular_rx_source_stats_t *source_stats;
+    uint32_t                                class_index;
+    uint32_t                                index;
+    int                                     ret;
 
     if (rx == NULL || address == NULL || stats == NULL)
     {
@@ -1333,16 +1338,25 @@ int linkg_cellular_rx_get_source_stats(linkg_cellular_rx_t *rx, const struct in6
 
     for (index = 0U; index < LINKG_CELLULAR_RX_SOURCE_SLOTS; index++)
     {
-        if (!rx->source_stats[index].used ||
-            memcmp(&rx->source_stats[index].address, address, sizeof(*address)) != 0)
+        source_stats = &rx->source_stats[index];
+
+        if (!source_stats->used ||
+            memcmp(&source_stats->address, address, sizeof(*address)) != 0)
         {
             continue;
         }
 
         for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
         {
-            stats->received_packets += rx->source_stats[index].classes[class_index].received_packets;
-            stats->confirmed_lost_packets += rx->source_stats[index].classes[class_index].confirmed_lost_packets;
+            class_stats = &source_stats->classes[class_index];
+
+            // 当前业务独立统计。
+            stats->classes[class_index].lost_packets   = class_stats->confirmed_lost_packets;
+            stats->classes[class_index].sample_packets = class_stats->received_packets + class_stats->confirmed_lost_packets;
+
+            // 保留整条Cellular链路累计统计。
+            stats->received_packets       += class_stats->received_packets;
+            stats->confirmed_lost_packets += class_stats->confirmed_lost_packets;
         }
 
         pthread_mutex_unlock(&rx->stats_lock);

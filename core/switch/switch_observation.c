@@ -580,13 +580,18 @@ static void _linkg_switch_observation_update_traffic_locked(linkg_switch_sta_pee
  *
  * 调用方已经持有Switch锁。
  */
-static void _linkg_switch_observation_update_wire_locked(linkg_switch_loss_sampler_t *sampler, uint32_t link_id, bool stats_valid, uint64_t received, uint64_t lost, uint64_t now_us, linkg_switch_loss_observation_t *observation)
+static void _linkg_switch_observation_update_wire_locked(linkg_switch_loss_sampler_t *sampler, uint32_t link_id, bool stats_valid, uint64_t received, uint64_t lost, const linkg_switch_loss_class_sampler_t classes[LINKG_TRANSPORT_CLASS_COUNT], uint64_t now_us, linkg_switch_loss_observation_t *observation, linkg_switch_loss_observation_t class_observations[LINKG_TRANSPORT_CLASS_COUNT])
 {
     uint64_t received_delta;
     uint64_t lost_delta;
     uint64_t total_delta;
+    uint64_t sample_delta;
+    uint64_t class_lost_delta;
+    uint32_t class_index;
+    bool     rebase;
 
     memset(observation, 0, sizeof(*observation));
+    memset(class_observations, 0, LINKG_TRANSPORT_CLASS_COUNT * sizeof(class_observations[0]));
 
     if (!stats_valid)
     {
@@ -594,32 +599,59 @@ static void _linkg_switch_observation_update_wire_locked(linkg_switch_loss_sampl
         return;
     }
 
-    if (!sampler->initialized ||
-        sampler->link_id != link_id ||
-        received < sampler->received_packets ||
-        lost < sampler->lost_packets)
+    rebase = !sampler->initialized ||
+             sampler->link_id != link_id ||
+             received < sampler->received_packets ||
+             lost < sampler->lost_packets;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
-        sampler->initialized      = true;
-        sampler->link_id          = link_id;
-        sampler->received_packets = received;
-        sampler->lost_packets     = lost;
-        return;
+        if (classes[class_index].lost_packets > classes[class_index].sample_packets ||
+            classes[class_index].lost_packets < sampler->classes[class_index].lost_packets ||
+            classes[class_index].sample_packets < sampler->classes[class_index].sample_packets)
+        {
+            rebase = true;
+        }
     }
 
-    received_delta = received - sampler->received_packets;
-    lost_delta     = lost - sampler->lost_packets;
-    total_delta    = _linkg_switch_observation_u64_add(received_delta, lost_delta);
-
-    if (total_delta != 0U)
+    if (!rebase)
     {
-        observation->valid          = true;
-        observation->lost_packets   = _linkg_switch_observation_u32_saturate(lost_delta);
-        observation->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
-        observation->updated_us     = now_us;
+        received_delta = received - sampler->received_packets;
+        lost_delta     = lost - sampler->lost_packets;
+        total_delta    = _linkg_switch_observation_u64_add(received_delta, lost_delta);
+
+        if (total_delta != 0U)
+        {
+            observation->valid          = true;
+            observation->lost_packets   = _linkg_switch_observation_u32_saturate(lost_delta);
+            observation->sample_packets = _linkg_switch_observation_u32_saturate(total_delta);
+            observation->updated_us     = now_us;
+        }
+
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            class_lost_delta = classes[class_index].lost_packets - sampler->classes[class_index].lost_packets;
+            sample_delta     = classes[class_index].sample_packets - sampler->classes[class_index].sample_packets;
+
+            if (sample_delta != 0U)
+            {
+                class_observations[class_index].valid          = true;
+                class_observations[class_index].lost_packets   = _linkg_switch_observation_u32_saturate(class_lost_delta);
+                class_observations[class_index].sample_packets = _linkg_switch_observation_u32_saturate(sample_delta);
+                class_observations[class_index].updated_us     = now_us;
+            }
+        }
     }
 
+    sampler->initialized      = true;
+    sampler->link_id          = link_id;
     sampler->received_packets = received;
     sampler->lost_packets     = lost;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        sampler->classes[class_index] = classes[class_index];
+    }
 }
 
 /**
@@ -698,11 +730,22 @@ static void _linkg_switch_observation_copy_remote_locked(const linkg_switch_loss
  */
 static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer_generation, const linkg_switch_observation_raw_t *raw, uint64_t now_us)
 {
-    linkg_switch_sta_peer_runtime_t *runtime;
-    linkg_switch_peer_runtime_t     *peer;
-    linkg_switch_observation_t       observation;
+    linkg_switch_sta_peer_runtime_t  *runtime;
+    linkg_switch_peer_runtime_t      *peer;
+    linkg_switch_observation_t        observation;
+    linkg_switch_loss_class_sampler_t wifi_classes[LINKG_TRANSPORT_CLASS_COUNT];
+    linkg_switch_loss_class_sampler_t cellular_classes[LINKG_TRANSPORT_CLASS_COUNT];
+    uint32_t                          class_index;
 
     memset(&observation, 0, sizeof(observation));
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        wifi_classes[class_index].lost_packets     = raw->wifi_rx_stats.classes[class_index].lost_packets;
+        wifi_classes[class_index].sample_packets   = raw->wifi_rx_stats.classes[class_index].sample_packets;
+        cellular_classes[class_index].lost_packets   = raw->cellular_rx_stats.classes[class_index].lost_packets;
+        cellular_classes[class_index].sample_packets = raw->cellular_rx_stats.classes[class_index].sample_packets;
+    }
 
     observation.valid               = true;
     observation.peer_node_id        = peer_node_id;
@@ -755,16 +798,20 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
                                                    raw->wifi_path_available && raw->wifi_rx_stats_valid,
                                                    raw->wifi_rx_stats.received_packets,
                                                    raw->wifi_rx_stats.confirmed_lost_packets,
+                                                   wifi_classes,
                                                    now_us,
-                                                   &observation.wifi.loss.downlink);
+                                                   &observation.wifi.loss.downlink,
+                                                   observation.wifi.loss.downlink_classes);
 
     _linkg_switch_observation_update_wire_locked(&runtime->cellular_downlink_loss_sampler,
                                                    raw->cellular_link_id,
                                                    raw->cellular_path_available && raw->cellular_rx_stats_valid,
                                                    raw->cellular_rx_stats.received_packets,
                                                    raw->cellular_rx_stats.confirmed_lost_packets,
+                                                   cellular_classes,
                                                    now_us,
-                                                   &observation.cellular.loss.downlink);
+                                                   &observation.cellular.loss.downlink,
+                                                   observation.cellular.loss.downlink_classes);
 
     // STA本机发送端：STA -> AP，两条链路各自独立Queue Overflow窗口。
     _linkg_switch_observation_update_load_locked(&runtime->wifi_uplink_load_sampler,
@@ -789,6 +836,17 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
     _linkg_switch_observation_copy_remote_locked(&runtime->remote_cellular_uplink_loss,
                                                    now_us,
                                                    &observation.cellular.loss.uplink);
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        _linkg_switch_observation_copy_remote_locked(&runtime->remote_wifi_uplink_classes[class_index],
+                                                       now_us,
+                                                       &observation.wifi.loss.uplink_classes[class_index]);
+
+        _linkg_switch_observation_copy_remote_locked(&runtime->remote_cellular_uplink_classes[class_index],
+                                                       now_us,
+                                                       &observation.cellular.loss.uplink_classes[class_index]);
+    }
 
     // AP远端发送端：AP -> STA，两条链路各自Queue Overflow质量。
     _linkg_switch_observation_copy_remote_locked(&runtime->remote_wifi_downlink_load,
@@ -967,8 +1025,10 @@ void linkg_switch_observation_reset_locked(uint8_t peer_node_id)
     memset(&runtime->cellular_uplink_load_sampler, 0, sizeof(runtime->cellular_uplink_load_sampler));
 
     memset(&runtime->remote_wifi_uplink_loss, 0, sizeof(runtime->remote_wifi_uplink_loss));
+    memset(&runtime->remote_wifi_uplink_classes, 0, sizeof(runtime->remote_wifi_uplink_classes));
     memset(&runtime->remote_wifi_downlink_load, 0, sizeof(runtime->remote_wifi_downlink_load));
     memset(&runtime->remote_cellular_uplink_loss, 0, sizeof(runtime->remote_cellular_uplink_loss));
+    memset(&runtime->remote_cellular_uplink_classes, 0, sizeof(runtime->remote_cellular_uplink_classes));
     memset(&runtime->remote_cellular_downlink_load, 0, sizeof(runtime->remote_cellular_downlink_load));
     memset(&runtime->wifi_loss_policy, 0, sizeof(runtime->wifi_loss_policy));
     memset(&runtime->wifi_load_policy, 0, sizeof(runtime->wifi_load_policy));

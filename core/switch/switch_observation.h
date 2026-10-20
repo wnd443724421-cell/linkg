@@ -56,24 +56,27 @@ typedef struct
 } linkg_switch_loss_observation_t;
 
 /**
- * @brief 指定Peer的双向Wire传输丢包及本地负载丢包观测。
+ * @brief 指定Peer的双向Wire丢包及整链路负载丢包观测。
  *
- * Wire由接收端根据链路独立Sequence统计，反映Socket成功提交
- * 之后到对端接收之间的报文损失，不等同于纯无线空口丢包。
+ * Wire由接收端根据独立Sequence窗口统计。
+ * uplink和downlink保留三类业务汇总统计。
+ * uplink_classes和downlink_classes分别保存三类业务统计。
  *
- * Load由发送端根据Path累计统计计算：
- * Wi-Fi和Cellular统一使用tx_queue_overflow_packets。
+ * Load由发送端根据Path累计统计计算。
+ * Wi-Fi和Cellular统一使用整条Path的Queue Overflow。
+ * Load不区分业务类别，反映整条链路的队列负载压力。
  *
- * 综合交付丢包率不在此处缓存，由Switch Policy根据Wire和
- * Load的有效样本计算。
+ * 具体丢包率由Switch Policy根据有效样本计算。
  */
 typedef struct
 {
-    linkg_switch_loss_observation_t uplink;        // STA到AP Wire丢包，由AP接收端统计
-    linkg_switch_loss_observation_t uplink_load;   // STA到AP Load丢包，由STA发送端统计
+    linkg_switch_loss_observation_t uplink;                                        // STA到AP Wire整链路丢包
+    linkg_switch_loss_observation_t uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];   // STA到AP各业务Wire丢包
+    linkg_switch_loss_observation_t uplink_load;                                   // STA到AP整链路Load丢包
 
-    linkg_switch_loss_observation_t downlink;      // AP到STA Wire丢包，由STA接收端统计
-    linkg_switch_loss_observation_t downlink_load; // AP到STA Load丢包，由AP发送端统计
+    linkg_switch_loss_observation_t downlink;                                      // AP到STA Wire整链路丢包
+    linkg_switch_loss_observation_t downlink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // AP到STA各业务Wire丢包
+    linkg_switch_loss_observation_t downlink_load;                                 // AP到STA整链路Load丢包
 } linkg_switch_path_loss_observation_t;
 
 /****************************** Wi-Fi无线观测 ******************************/
@@ -154,17 +157,32 @@ typedef struct
 } linkg_switch_traffic_sampler_t;
 
 /**
- * @brief Wire接收丢包差分采样基线。
+ * @brief 单个业务类别的Wire累计丢包采样基线。
  *
- * 接收端维护，不包含发送端尚未提交Socket的
- * 队列溢出和限速主动丢包。
+ * sample_packets为累计成功接收与确认丢失帧数之和。
+ * lost_packets为累计确认丢失帧数。
  */
 typedef struct
 {
-    bool     initialized;      // 是否已经取得上一轮累计统计
-    uint32_t link_id;          // 当前采样对应的Link实例
-    uint64_t received_packets; // 上一轮累计唯一接收帧数
-    uint64_t lost_packets;     // 上一轮累计确认丢失帧数
+    uint64_t lost_packets;   // 上一轮累计确认丢失帧数
+    uint64_t sample_packets; // 上一轮累计接收与丢失帧总数
+} linkg_switch_loss_class_sampler_t;
+
+/**
+ * @brief Wire接收丢包差分采样基线。
+ *
+ * 保留整链路累计统计，用于现有Loss触发判定。
+ * classes分别维护三类业务独立累计统计，用于冗余质量比较。
+ *
+ * 接收端维护，不包含发送端的队列溢出。
+ */
+typedef struct
+{
+    bool                              initialized;      // 是否已经取得上一轮累计统计
+    uint32_t                          link_id;          // 当前采样对应的Link实例
+    uint64_t                          received_packets; // 上一轮整链路累计接收帧数
+    uint64_t                          lost_packets;     // 上一轮整链路累计确认丢失帧数
+    linkg_switch_loss_class_sampler_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务独立采样基线
 } linkg_switch_loss_sampler_t;
 
 /**
