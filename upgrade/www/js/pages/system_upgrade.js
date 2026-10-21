@@ -169,7 +169,7 @@
     }
 
     window.LinkGPages = window.LinkGPages || {};
-    window.LinkGPages["#/system/upgrade"] = {
+    window.LinkGPages["system/upgrade"] = {
         mount: function (container)
         {
             root = container || document.getElementById("systemUpgrade");

@@ -19,3 +19,7 @@ SHA-256：`f4b73040a989123deca07a6256df57341f83c2bdd231bb89244a0ac9663110e2`
 首次实板迁移必须先部署并实际运行支持扩展状态的Supervisor，再让新版LinkG发起OTA；新Supervisor需要兼容旧稳定LinkG。仅替换磁盘文件不改变旧运行进程。本轮未修改开发板ENV、未刷写真实MTD、未重启开发板；T113上的实际升级、重启、看门狗及U-Boot回退仍需单独验收。
 
 ENV自身擦写掉电的风险按用户确认的边界保留，不添加ENV事务日志或冗余实现。实际rc/procd启动入口仍应指向 `/usr/sbin/linkg-supervisor`。
+
+## 2026-10-21 实板补充
+
+已完成真实 Web 上传、损坏 LinkG、损坏 Kernel 头、内核 Panic 自动回退、双向 Kernel 升级和普通重启验证。发现并修复路由注册和 MTD fsync 两项问题；详细通过结果、人工复位边界和保留问题见 [BOARD_RESULTS_20261021.md](BOARD_RESULTS_20261021.md)。

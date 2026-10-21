@@ -439,7 +439,8 @@ static int _upgrade_kernel_flash(int source_fd, int target_fd, uint64_t length, 
         offset += (uint64_t)count;
     }
 
-    return fsync(target_fd) == 0 ? 0 : -errno;
+    // NOR写入同步完成；mtdchar不支持fsync，调用方关闭设备触发mtd_sync后重新读回校验。
+    return 0;
 }
 
 /****************************** Kernel处理 ******************************/
@@ -571,7 +572,10 @@ int upgrade_kernel_prepare_ex(const char *upgrade_dir, const char *stable_kernel
         }
     }
     close(image_fd);
-    close(target_fd);
+    if (close(target_fd) != 0 && ret == 0)
+    {
+        ret = -errno;
+    }
     if (ret != 0)
     {
         return ret;

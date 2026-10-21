@@ -35,6 +35,7 @@ static volatile sig_atomic_t g_stop; // 测试退出请求
 
 int __real_open(const char *path, int flags, ...);
 int __real_fstat(int descriptor, struct stat *information);
+int __real_fsync(int descriptor);
 int __real_ioctl(int descriptor, unsigned long request, ...);
 
 /**
@@ -74,6 +75,19 @@ static bool _ota_driver_mtd(int descriptor)
     }
     path[length] = '\0';
     return strncmp(path, root, strlen(root)) == 0 && strncmp(path + strlen(root), "/mtd", 4U) == 0;
+}
+
+/**
+ * @brief 与Linux 5.4 mtdchar一致，字符设备不提供fsync文件操作。
+ */
+int __wrap_fsync(int descriptor)
+{
+    if (_ota_driver_mtd(descriptor))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    return __real_fsync(descriptor);
 }
 
 /**

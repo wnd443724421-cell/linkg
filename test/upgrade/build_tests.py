@@ -14,6 +14,6 @@ sources = list((r / "core/upgrade").glob("*.c")) + [r / n for n in [
     "infra/base/linkg_boot_env.c", "infra/base/linkg_thread.c", "infra/base/linkg_supervisor_client.c",
     "infra/base/linkg_json.c", "third_party/cjson/cJSON.c", "service/web/web_response.c", "service/web/handlers/web_handler_upgrade.c",
 ]]
-subprocess.run(command + [str(s) for s in sources] + ["-pthread", "-lm", "-Wl,--wrap=open,--wrap=fstat,--wrap=ioctl", "-o", str(b / "ota-driver")], check=True)
+subprocess.run(command + [str(s) for s in sources] + ["-pthread", "-lm", "-Wl,--wrap=open,--wrap=fstat,--wrap=fsync,--wrap=ioctl", "-o", str(b / "ota-driver")], check=True)
 print(b / "ota-driver")
 subprocess.run(["gcc", "-std=gnu17", "-O2", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-DLINKG_OTA_TEST_IO", str(r / "Tools/upgrade/upgrade.c"), "-o", str(b / "upgrade-cgi")], check=True)

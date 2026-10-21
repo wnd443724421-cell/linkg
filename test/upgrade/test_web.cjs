@@ -59,7 +59,7 @@ async function main()
     try
     {
         await page.goto("http://linkg.test/upgrade");
-        await page.evaluate(() => window.LinkGPages["#/system/upgrade"].mount());
+        await page.evaluate(() => window.LinkGPages["system/upgrade"].mount());
         await page.getByText("V1.2.3", {exact:true}).waitFor();
         assert.equal(await page.locator("#upgradePhase").textContent(), "升级成功");
         assert.equal(await page.locator("#upgradeStart").isDisabled(), true);
@@ -91,12 +91,12 @@ async function main()
         errorState = true;
         await page.getByText("版本状态文件读取或校验失败", {exact:true}).waitFor();
         assert.notEqual(await page.locator("#upgradePhase").textContent(), "尚未升级");
-        await page.evaluate(() => window.LinkGPages["#/system/upgrade"].unmount());
+        await page.evaluate(() => window.LinkGPages["system/upgrade"].unmount());
         const afterUnmount = polls;
         await page.waitForTimeout(2250);
         assert.equal(polls, afterUnmount);
         errorState = false; state = "rolled_back";
-        await page.evaluate(() => window.LinkGPages["#/system/upgrade"].mount());
+        await page.evaluate(() => window.LinkGPages["system/upgrade"].mount());
         await page.getByText("已恢复稳定版本", {exact:true}).waitFor();
         const before = polls;
         await page.waitForTimeout(2300);
