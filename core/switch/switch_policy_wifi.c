@@ -14,6 +14,7 @@
 
 #include "linkg_config.h"
 #include "linkg_link.h"
+#include "switch_internal.h"
 
 #include "switch_plan.h"
 
@@ -153,45 +154,12 @@ static int _linkg_switch_policy_wifi_hard_failover(const linkg_switch_policy_inp
 /****************************** Wi-Fi单发退化 ******************************/
 
 /**
- * @brief 对具备Cellular备份的Wi-Fi单发业务开启冗余验证。
+ * @brief 根据Wi-Fi丢包或队列溢出原因进入冗余发送。
  *
- * 只修改满足条件的业务类别，完整Plan仍一次性原子提交。
- * 当前仅提供整体进入冗余的框架；分级启用时序留给后续策略设计。
+ * LOSS一次性将所有符合条件的Wi-Fi单发业务进入冗余。
+ * LOAD按DATA、VIDEO、REALTIME优先级仅选择一类业务进入冗余。
  */
-static int _linkg_switch_policy_wifi_enter_dual_verify(const linkg_switch_policy_input_t *input, uint64_t now_us)
-{
-    linkg_send_plan_t        plan;
-    linkg_class_send_plan_t *current;
-    uint32_t                 class_index;
-    bool                     changed;
-
-    plan    = input->plan;
-    changed = false;
-
-    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
-    {
-        current = &plan.classes[class_index];
-
-        if (current->mode != LINKG_SEND_MODE_SINGLE ||
-            !_linkg_switch_policy_wifi_has_cellular_backup(input, current))
-        {
-            continue;
-        }
-
-        current->mode = LINKG_SEND_MODE_REDUNDANT;
-        changed       = true;
-    }
-
-    return changed ? _linkg_switch_policy_wifi_commit(input, &plan, now_us) : 0;
-}
-
-/**
- * @brief 按DATA、VIDEO、REALTIME优先级依次迁移Wi-Fi业务。
- *
- * 每次只迁移一类业务，迁移后使用Cellular单发，
- * 保留Wi-Fi备用候选，后续由恢复策略决定何时迁回。
- */
-static int _linkg_switch_policy_wifi_migrate_load(const linkg_switch_policy_input_t *input, uint64_t now_us)
+static int _linkg_switch_policy_wifi_enter_dual(const linkg_switch_policy_input_t *input, linkg_switch_dual_reason_t reason, uint64_t now_us)
 {
     static const linkg_transport_class_t order[] =
     {
@@ -203,26 +171,53 @@ static int _linkg_switch_policy_wifi_migrate_load(const linkg_switch_policy_inpu
     linkg_send_plan_t        plan;
     linkg_class_send_plan_t *current;
     uint32_t                 index;
+    bool                     changed;
 
-    plan = input->plan;
+    if (input == NULL || now_us == 0U)
+    {
+        return -EINVAL;
+    }
+
+    if (reason != LINKG_SWITCH_DUAL_REASON_LOSS &&
+        reason != LINKG_SWITCH_DUAL_REASON_LOAD)
+    {
+        return -EINVAL;
+    }
+
+    plan    = input->plan;
+    changed = false;
 
     for (index = 0U; index < sizeof(order) / sizeof(order[0]); index++)
     {
         current = &plan.classes[order[index]];
 
-        if (!_linkg_switch_policy_wifi_has_cellular_backup(input, current))
+        if (current->mode != LINKG_SEND_MODE_SINGLE ||
+            !_linkg_switch_policy_wifi_has_cellular_backup(input, current))
         {
             continue;
         }
 
-        current->mode              = LINKG_SEND_MODE_SINGLE;
-        current->primary_link_id   = input->observation.cellular.link_id;
-        current->secondary_link_id = input->observation.wifi.link_id;
+        current->mode = LINKG_SEND_MODE_REDUNDANT;
+        changed       = true;
 
-        return _linkg_switch_policy_wifi_commit(input, &plan, now_us);
+        // LOAD只让一类业务进入冗余，LOSS继续处理所有符合条件的业务。
+        if (reason == LINKG_SWITCH_DUAL_REASON_LOAD)
+        {
+            break;
+        }
     }
 
-    return 0;
+    if (!changed)
+    {
+        return 0;
+    }
+
+    return linkg_switch_plan_enter_dual_if_current(input->peer_node_id,
+                                                   input->peer_generation,
+                                                   &input->plan,
+                                                   &plan,
+                                                   reason,
+                                                   now_us);
 }
 
 /**
@@ -287,7 +282,7 @@ static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_in
 
     if (loss_state == LINKG_SWITCH_POLICY_LOSS_BAD)
     {
-        return _linkg_switch_policy_wifi_enter_dual_verify(input, now_us);
+        return _linkg_switch_policy_wifi_enter_dual(input, LINKG_SWITCH_DUAL_REASON_LOSS, now_us);
     }
 
     ret = linkg_switch_policy_load_process(input, now_us, &load_state);
@@ -298,9 +293,9 @@ static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_in
 
     if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD)
     {
-        return _linkg_switch_policy_wifi_migrate_load(input, now_us);
+        return _linkg_switch_policy_wifi_enter_dual(input, LINKG_SWITCH_DUAL_REASON_LOAD, now_us);
     }
-
+    
     return 0;
 }
 

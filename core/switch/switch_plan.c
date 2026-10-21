@@ -912,19 +912,100 @@ static int _linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_ge
 }
 
 /**
+ * @brief 校验Wi-Fi策略冗余进入，并输出本次新增冗余业务掩码。
+ *
+ * 只允许已有Cellular备用的Wi-Fi单发业务进入REDUNDANT，
+ * 其它业务发送计划必须保持不变。调用方持有Switch锁。
+ */
+static int _linkg_switch_plan_validate_dual_enter_locked(const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, linkg_switch_dual_reason_t reason, uint32_t *enter_mask)
+{
+    const linkg_class_send_plan_t *before;
+    const linkg_class_send_plan_t *after;
+    uint32_t                       wifi_link_id;
+    uint32_t                       cellular_link_id;
+    uint32_t                       class_index;
+
+    if (previous == NULL || plan == NULL || enter_mask == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (reason != LINKG_SWITCH_DUAL_REASON_LOSS &&
+        reason != LINKG_SWITCH_DUAL_REASON_LOAD)
+    {
+        return -EINVAL;
+    }
+
+    *enter_mask = 0U;
+
+    wifi_link_id     = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
+    cellular_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
+
+    if (wifi_link_id == LINKG_LINK_ID_INVALID || cellular_link_id == LINKG_LINK_ID_INVALID)
+    {
+        return -ENOENT;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        before = &previous->classes[class_index];
+        after  = &plan->classes[class_index];
+
+        // 未发生变化的业务保持原计划和冗余事务。
+        if (before->mode == after->mode &&
+            before->primary_link_id == after->primary_link_id &&
+            before->secondary_link_id == after->secondary_link_id)
+        {
+            continue;
+        }
+
+        // 本接口只允许Wi-Fi单发转换为原两条Link的冗余发送。
+        if (before->mode != LINKG_SEND_MODE_SINGLE ||
+            after->mode != LINKG_SEND_MODE_REDUNDANT ||
+            before->primary_link_id != wifi_link_id ||
+            before->secondary_link_id != cellular_link_id ||
+            after->primary_link_id != before->primary_link_id ||
+            after->secondary_link_id != before->secondary_link_id)
+        {
+            return -EINVAL;
+        }
+
+        *enter_mask |= LINKG_SWITCH_DUAL_CLASS_BIT(class_index);
+    }
+
+    if (*enter_mask == 0U)
+    {
+        return -EINVAL;
+    }
+
+    // LOAD每次只允许一类业务进入冗余，LOSS允许多类业务。
+    if (reason == LINKG_SWITCH_DUAL_REASON_LOAD &&
+        (*enter_mask & (*enter_mask - 1U)) != 0U)
+    {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+/**
  * @brief STA提交本地新发送计划并启动对应AP远端同步事务。
  *
  * 本地Plan在发送PLAN_SYNC前立即生效；发送失败不会回滚本地Plan，
  * 当前同步事务保留并由Switch Worker按截止时间继续重试。
+ * 指定冗余原因时，同时记录本次新进入冗余的业务状态。
  */
-static int _linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, uint64_t now_us)
+static int _linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, linkg_switch_dual_reason_t dual_reason, uint64_t now_us)
 {
-    linkg_switch_plan_sync_runtime_t *sync;
-    linkg_switch_peer_runtime_t      *peer;
-    linkg_switch_wire_plan_sync_t     wire_plan;
-    linkg_packet_pool_t              *packet_pool;
-    uint32_t                          message_id;
-    int                               ret;
+    linkg_switch_plan_sync_runtime_t   *sync;
+    linkg_switch_peer_runtime_t        *peer;
+    linkg_switch_dual_class_runtime_t  *dual;
+    linkg_switch_wire_plan_sync_t       wire_plan;
+    linkg_packet_pool_t                *packet_pool;
+    uint32_t                            message_id;
+    uint32_t                            dual_mask;
+    uint32_t                            class_index;
+    int                                 ret;
 
     if (!_linkg_switch_plan_peer_id_valid(peer_node_id) || peer_generation == LINKG_SWITCH_PEER_GENERATION_INVALID ||
         !_linkg_switch_plan_valid(plan) || now_us == 0U)
@@ -944,6 +1025,8 @@ static int _linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_g
     {
         return ret;
     }
+
+    dual_mask = 0U;
 
     pthread_mutex_lock(&g_switch.lock);
 
@@ -984,6 +1067,16 @@ static int _linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_g
         return -EBUSY;
     }
 
+    if (dual_reason != LINKG_SWITCH_DUAL_REASON_NONE)
+    {
+        ret = _linkg_switch_plan_validate_dual_enter_locked(previous, plan, dual_reason, &dual_mask);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&g_switch.lock);
+            return ret;
+        }
+    }
+
     if (g_switch.packet_pool == NULL)
     {
         pthread_mutex_unlock(&g_switch.lock);
@@ -992,7 +1085,24 @@ static int _linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_g
 
     sync                 = &peer->role.sta.plan_sync;
     sync->recovery_count = 0U;
-    peer->plan           = *plan;
+
+    // Plan和冗余事务状态在同一把Switch锁内更新。
+    peer->plan = *plan;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        if ((dual_mask & LINKG_SWITCH_DUAL_CLASS_BIT(class_index)) == 0U)
+        {
+            continue;
+        }
+
+        dual = &peer->role.sta.wifi_dual.classes[class_index];
+
+        dual->reason      = dual_reason;
+        dual->started_us  = 0U;
+        dual->deadline_us = 0U;
+    }
+
     _linkg_switch_plan_start_sync_locked(peer, &wire_plan, now_us);
     message_id = sync->message_id;
 
@@ -1026,7 +1136,7 @@ int linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_generation
  */
 int linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *plan, uint64_t now_us)
 {
-    return _linkg_switch_plan_commit_local(peer_node_id, peer_generation, NULL, plan, now_us);
+    return _linkg_switch_plan_commit_local(peer_node_id, peer_generation, NULL, plan, LINKG_SWITCH_DUAL_REASON_NONE, now_us);
 }
 
 /**
@@ -1039,10 +1149,27 @@ int linkg_switch_plan_update_if_current(uint8_t peer_node_id, uint32_t peer_gene
         return -EINVAL;
     }
 
-    return synchronize ? _linkg_switch_plan_commit_local(peer_node_id, peer_generation, previous, plan, now_us) :
-                         _linkg_switch_plan_apply_local(peer_node_id, peer_generation, previous, plan);
+    return synchronize ? _linkg_switch_plan_commit_local(peer_node_id, peer_generation, previous, plan, LINKG_SWITCH_DUAL_REASON_NONE, now_us) : _linkg_switch_plan_apply_local(peer_node_id, peer_generation, previous, plan);
 }
 
+/**
+ * @brief 条件提交Wi-Fi冗余发送计划，并记录本次冗余触发原因。
+ */
+int linkg_switch_plan_enter_dual_if_current(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, linkg_switch_dual_reason_t reason, uint64_t now_us)
+{
+    if (previous == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (reason != LINKG_SWITCH_DUAL_REASON_LOSS &&
+        reason != LINKG_SWITCH_DUAL_REASON_LOAD)
+    {
+        return -EINVAL;
+    }
+
+    return _linkg_switch_plan_commit_local(peer_node_id, peer_generation, previous, plan, reason, now_us);
+}
 
 /****************************** AP接收完整计划 ******************************/
 
@@ -1231,12 +1358,19 @@ static int _linkg_switch_plan_process_sync_event(const linkg_switch_event_t *eve
 
 /**
  * @brief 处理STA收到的一条AP发送计划同步确认事件。
+ *
+ * 成功确认后启动当前Wi-Fi策略冗余事务。
+ * LOSS进入链路质量验证，LOAD进入1秒定时迁移阶段。
  */
 static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *event, uint64_t now_us)
 {
-    linkg_switch_plan_sync_runtime_t *sync;
-    linkg_switch_peer_runtime_t      *peer;
-    bool                              late_success;
+    const linkg_switch_wire_class_send_plan_t *wire_class;
+    const linkg_class_send_plan_t             *current;
+    linkg_switch_dual_class_runtime_t         *dual;
+    linkg_switch_plan_sync_runtime_t          *sync;
+    linkg_switch_peer_runtime_t               *peer;
+    uint32_t                                   class_index;
+    bool                                       late_success;
 
     pthread_mutex_lock(&g_switch.lock);
 
@@ -1266,8 +1400,10 @@ static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *even
     }
 
     sync = &peer->role.sta.plan_sync;
+
     late_success = event->payload.plan_ack.status == 0 &&
                    (sync->recovery_pending || (!sync->remote_rejected && sync->last_status == -ETIMEDOUT));
+
     if (sync->message_id != event->message_id || (!sync->active && !late_success))
     {
         pthread_mutex_unlock(&g_switch.lock);
@@ -1283,6 +1419,37 @@ static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *even
         sync->last_status      = 0;
         sync->next_retry_us    = 0U;
         sync->deadline_us      = 0U;
+
+        // ACK确认当前完整发送计划，启动尚未开始的Wi-Fi冗余事务。
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            dual       = &peer->role.sta.wifi_dual.classes[class_index];
+            current    = &peer->plan.classes[class_index];
+            wire_class = &sync->wire_plan.classes[class_index];
+
+            if (dual->reason == LINKG_SWITCH_DUAL_REASON_NONE || dual->started_us != 0U)
+            {
+                continue;
+            }
+
+            // 当前业务必须仍然采用Wi-Fi主链路与Cellular备用链路冗余。
+            if (current->mode != LINKG_SEND_MODE_REDUNDANT ||
+                wire_class->mode != LINKG_SWITCH_WIRE_MODE_REDUNDANT ||
+                wire_class->primary_access != LINKG_SWITCH_WIRE_ACCESS_WIFI ||
+                wire_class->secondary_access != LINKG_SWITCH_WIRE_ACCESS_CELLULAR)
+            {
+                continue;
+            }
+
+            dual->started_us  = now_us;
+            dual->deadline_us = 0U;
+
+            if (dual->reason == LINKG_SWITCH_DUAL_REASON_LOAD)
+            {
+                // LOAD冗余持续1秒，之后由Policy执行单类业务迁移。
+                dual->deadline_us = now_us + 1000000ULL;
+            }
+        }
     }
     else
     {
@@ -1299,6 +1466,7 @@ static int _linkg_switch_plan_process_ack_event(const linkg_switch_event_t *even
     {
         LINKG_LOG_WARN("SWITCH-PLAN: remote sync rejected, peer=%u message=%u status=%d", (unsigned int)event->peer_node_id, (unsigned int)event->message_id, event->payload.plan_ack.status);
     }
+
     return 0;
 }
 
