@@ -100,7 +100,8 @@ typedef struct
 typedef struct
 {
     linkg_switch_policy_operation_t operations[LINKG_SWITCH_POLICY_OPERATION_MAX]; // 三类业务各自的事务槽位
-    uint32_t                        next_operation_id;                              // 下一事务编号分配基线
+    uint32_t                        next_operation_id;                             // 下一事务编号分配基线
+    uint32_t                        plan_sync_id;                                  // 当前Operation等待的完整Plan逻辑同步编号
 } linkg_switch_policy_runtime_t;
 
 #endif

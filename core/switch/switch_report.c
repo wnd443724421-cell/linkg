@@ -448,9 +448,6 @@ static void _linkg_switch_report_build_locked(linkg_switch_ap_peer_runtime_t *ru
     runtime->path_updated_us         = now_us;
 
     _linkg_switch_report_publish_loss_locked(&runtime->wifi_uplink_loss, &report->wifi_uplink, now_us);
-    _linkg_switch_report_publish_loss_locked(&runtime->wifi_downlink_load, &report->wifi_downlink_load, now_us);
-    _linkg_switch_report_publish_loss_locked(&runtime->cellular_uplink_loss, &report->cellular_uplink, now_us);
-    _linkg_switch_report_publish_loss_locked(&runtime->cellular_downlink_load, &report->cellular_downlink_load, now_us);
 }
 
 /**

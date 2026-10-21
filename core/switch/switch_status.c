@@ -202,8 +202,8 @@ static void _linkg_switch_status_build_sta_locked(linkg_switch_sta_status_t *sta
         status->observation_valid      = runtime->observation.valid;
         status->peer_node_id           = peer->peer_node_id;
         status->plan                   = peer->plan;
-        status->plan_sync.active       = runtime->plan_sync.active;
-        status->plan_sync.confirmed    = runtime->plan_sync.confirmed;
+        status->plan_sync.active       = runtime->plan_sync.state == LINKG_SWITCH_PLAN_SYNC_WAIT_ACK || runtime->plan_sync.state == LINKG_SWITCH_PLAN_SYNC_RETRY_WAIT;
+        status->plan_sync.confirmed    = runtime->plan_sync.state == LINKG_SWITCH_PLAN_SYNC_CONFIRMED;
         status->plan_sync.message_id   = runtime->plan_sync.message_id;
         status->plan_sync.last_status  = runtime->plan_sync.last_status;
         status->observation_updated_us = runtime->observation.collected_us;

@@ -23,6 +23,9 @@
 #include "switch_maintenance.h"
 #include "switch_observation.h"
 #include "switch_plan.h"
+#include "switch_policy_load.h"
+#include "switch_policy_loss.h"
+#include "switch_policy_state.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -31,60 +34,6 @@
 #define LINKG_SWITCH_PEER_GENERATION_INVALID    0U                             // 无效Peer运行代际
 #define LINKG_SWITCH_OBSERVATION_INTERVAL_US    250000ULL                      // STA观测快照刷新周期
 #define LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US 500000ULL                      // AP/STA发送计划校准周期
-
-#define LINKG_SWITCH_DUAL_CLASS_BIT(traffic_class) (1U << (uint32_t)(traffic_class))
-
-/****************************** Wi-Fi Loss Policy运行状态 ******************************/
-
-typedef struct
-{
-    uint64_t last_uplink_updated_us;   // 最近处理的上行观测时间
-    uint64_t last_downlink_updated_us; // 最近处理的下行观测时间
-    uint64_t last_valid_us;            // 最近一次有效样本判断时间
-    uint32_t wifi_link_id;             // 当前积分归属的Wi-Fi Link
-    uint8_t  score;                    // 上下行融合后的异常积分
-    bool     initialized;              // 积分状态是否已经初始化
-} linkg_switch_loss_policy_runtime_t;
-
-/****************************** Load积分状态 ******************************/
-
-typedef struct
-{
-    linkg_send_plan_t plan;                     // 上一次判决使用的完整发送计划
-    uint64_t          last_uplink_updated_us;   // 上行最近消费的窗口时间戳
-    uint64_t          last_downlink_updated_us; // 下行最近消费的窗口时间戳
-    uint64_t          last_valid_us;            // 最近有效观测时间
-    uint32_t          wifi_link_id;             // 当前积分对应的Wi-Fi Link
-    uint8_t           score;                    // 当前共享积分，0~3
-    bool              initialized;              // 检测器是否初始化
-    bool              waiting_sync;             // 是否处于Plan同步过渡期
-} linkg_switch_load_policy_runtime_t;
-
-/****************************** Wi-Fi冗余事务 ******************************/
-
-typedef enum
-{
-    LINKG_SWITCH_DUAL_REASON_NONE = 0, // 当前无策略冗余事务
-    LINKG_SWITCH_DUAL_REASON_LOSS,     // Wi-Fi丢包触发的质量比较
-    LINKG_SWITCH_DUAL_REASON_LOAD      // 队列溢出触发的定时迁移
-} linkg_switch_dual_reason_t;
-
-/****************************** Wi-Fi业务冗余状态 ******************************/
-
-typedef struct
-{
-    linkg_switch_dual_reason_t reason;      // 当前业务进入冗余的类型
-    uint64_t                   started_us;  // 当前业务确认进入冗余的时间
-    uint64_t                   deadline_us; // 当前业务冗余事务截止时间
-} linkg_switch_dual_class_runtime_t;
-
-/****************************** Wi-Fi冗余事务 ******************************/
-
-typedef struct
-{
-    linkg_switch_dual_class_runtime_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三类业务独立冗余状态
-} linkg_switch_dual_runtime_t;
-
 
 /****************************** STA侧Peer运行状态 ******************************/
 
@@ -124,8 +73,8 @@ typedef struct
     linkg_switch_loss_policy_runtime_t  wifi_loss_policy;                                             // Wi-Fi双向丢包共享异常积分
     linkg_switch_load_policy_runtime_t  wifi_load_policy;                                             // Wi-Fi队列溢出检测器
 
-    // Wi-Fi冗余事务
-    linkg_switch_dual_runtime_t         wifi_dual;                                                    // 当前Wi-Fi策略冗余事务
+    // 三类业务切换事务
+    linkg_switch_policy_runtime_t       policy;                                                       // 三类业务独立切换事务及运行状态
 } linkg_switch_sta_peer_runtime_t;
 
 
@@ -214,7 +163,8 @@ typedef struct
     uint32_t                                 next_peer_generation;         // 进程内Peer代际分配基线，Peer重建不回退
     uint32_t                                 next_plan_message_id;         // 进程内STA PLAN_SYNC编号分配基线，Peer重建不回退
     uint32_t                                 next_maintenance_message_id;  // 进程内本机Maintenance事务编号分配基线
-
+    uint32_t                                 next_plan_sync_id;            // 进程内逻辑Plan同步编号分配基线，Peer重建不回退
+    
     // Worker周期调度
     uint64_t                                 next_observation_us;          // STA下一轮观测快照刷新时间
     uint64_t                                 next_reconcile_us;            // AP/STA下一轮发送计划校准时间
@@ -245,9 +195,5 @@ void linkg_switch_worker(linkg_thread_t *thread, void *user_data);
 
 bool linkg_switch_enter_receive(void *user_data, linkg_device_role_t *role, uint8_t *local_node_id);
 void linkg_switch_leave_receive(void);
-
-/****************************** 冗余计划提交 ******************************/
-
-int linkg_switch_plan_enter_dual_if_current(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, linkg_switch_dual_reason_t reason, uint64_t now_us);
 
 #endif
