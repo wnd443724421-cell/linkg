@@ -35,7 +35,7 @@
 typedef struct
 {
     linkg_path_stats_t                 tx_stats;       // 当前Peer Path累计发送统计
-    linkg_switch_loss_class_sampler_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三类业务Wire累计计数
+    linkg_switch_loss_class_sampler_t  classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三类业务Wire累计计数
     uint64_t                           received;       // 当前Peer Wire累计唯一接收帧数
     uint64_t                           lost;           // 当前Peer Wire累计确认丢失帧数
     bool                               available;      // 对应Link运行且Peer Path存在
