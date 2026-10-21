@@ -33,12 +33,14 @@ typedef enum
 
 typedef struct
 {
-    uint8_t                    peer_node_id;     // 当前直接AP节点编号
-    uint32_t                   peer_generation;  // 当前Peer运行代际
-    linkg_send_plan_t          plan;             // 当前全部业务生效发送计划
-    linkg_switch_observation_t observation;      // 当前最新观测快照
-    bool                       wifi_blocked;     // 当前Wi-Fi是否被Maintenance禁止使用
-    bool                       cellular_blocked; // 当前Cellular是否被Maintenance禁止使用
+    uint8_t                          peer_node_id;     // 当前直接AP节点编号
+    uint32_t                         peer_generation;  // 当前Peer运行代际
+    linkg_send_plan_t                plan;             // 当前全部业务生效发送计划
+    linkg_switch_observation_t       observation;      // 当前最新观测快照
+    linkg_switch_plan_sync_runtime_t plan_sync;        // 当前完整Plan同步事务
+    linkg_switch_dual_runtime_t      wifi_dual;        // Wi-Fi策略冗余事务
+    bool                             wifi_blocked;     // 当前Wi-Fi是否被Maintenance禁止使用
+    bool                             cellular_blocked; // 当前Cellular是否被Maintenance禁止使用
 } linkg_switch_policy_input_t;
 
 /****************************** 质量判断 ******************************/

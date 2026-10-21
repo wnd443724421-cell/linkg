@@ -295,7 +295,7 @@ static int _linkg_switch_policy_wifi_process_single(const linkg_switch_policy_in
     {
         return _linkg_switch_policy_wifi_enter_dual(input, LINKG_SWITCH_DUAL_REASON_LOAD, now_us);
     }
-    
+
     return 0;
 }
 
@@ -369,11 +369,7 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
 
     if (has_redundant)
     {
-        ret = _linkg_switch_policy_wifi_process_dual_verify(input, now_us);
-        if (ret != 0)
-        {
-            return ret;
-        }
+        return _linkg_switch_policy_wifi_process_dual_verify(input, now_us);
     }
 
     if (has_single)
