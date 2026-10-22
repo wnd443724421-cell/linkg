@@ -49,68 +49,7 @@ static bool _linkg_switch_load_plan_equal(const linkg_send_plan_t *left, const l
  *
  * 无效窗口只更新时间戳，不作为结束同步过渡期的依据。
  * 调用方已持有Switch锁。
- */
-static bool _linkg_switch_load_consume_current(const linkg_switch_path_loss_observation_t *loss, uint64_t now_us,
-                                               linkg_switch_load_policy_runtime_t *detector)
-{
-    const linkg_switch_loss_observation_t *sample;
-    bool                                   consumed_valid;
-
-    consumed_valid = false;
-
-    sample = &loss->uplink_load;
-    if (sample->updated_us != 0U &&
-        sample->updated_us <= now_us &&
-        sample->updated_us > detector->last_uplink_updated_us)
-    {
-        detector->last_uplink_updated_us = sample->updated_us;
-        consumed_valid = consumed_valid ||
-                         (sample->valid && sample->sample_packets != 0U && sample->lost_packets <= sample->sample_packets);
-    }
-
-    sample = &loss->downlink_load;
-    if (sample->updated_us != 0U &&
-        sample->updated_us <= now_us &&
-        sample->updated_us > detector->last_downlink_updated_us)
-    {
-        detector->last_downlink_updated_us = sample->updated_us;
-        consumed_valid = consumed_valid ||
-                         (sample->valid && sample->sample_packets != 0U && sample->lost_packets <= sample->sample_packets);
-    }
-
-    return consumed_valid;
-}
-
-/**
- * @brief 消费一个方向的新Queue Overflow观测。
- *
- * 返回true表示存在新的、有效的统计窗口；overflow返回是否发生队列溢出。
- * 无样本、无效样本和重复时间戳都不作为零溢出窗口。
- */
-static bool _linkg_switch_load_evaluate_direction(const linkg_switch_loss_observation_t *sample, uint64_t now_us,
-                                                  uint64_t *last_updated_us, bool *overflow)
-{
-    *overflow = false;
-
-    if (!sample->valid || sample->updated_us == 0U ||
-        sample->updated_us > now_us || sample->updated_us <= *last_updated_us)
-    {
-        return false;
-    }
-
-    // 新窗口先标记为已消费；非法样本不能在后续周期重复参与判断。
-    *last_updated_us = sample->updated_us;
-
-    if (sample->sample_packets == 0U || sample->lost_packets > sample->sample_packets)
-    {
-        return false;
-    }
-
-    *overflow = sample->lost_packets != 0U;
-
-    return true;
-}
-
+c
 /****************************** 队列溢出质量判断 ******************************/
 
 /**
@@ -180,7 +119,7 @@ int linkg_switch_policy_load_process(const linkg_switch_policy_input_t *input, u
     if (!input->observation.valid ||
         input->observation.peer_node_id != input->peer_node_id ||
         input->wifi_blocked ||
-        !input->observation.wifi.available ||
+        input->observation.wifi.state != LINKG_SWITCH_OBSERVATION_USABLE ||
         input->observation.wifi.link_id == LINKG_LINK_ID_INVALID)
     {
         memset(detector, 0, sizeof(*detector));
@@ -209,15 +148,19 @@ int linkg_switch_policy_load_process(const linkg_switch_policy_input_t *input, u
         return 0;
     }
 
-    // 同步失败且未确认时停止推进；本地Plan变更主动取消的旧事务除外。
-    if (sync->active || sync->recovery_pending ||
-        (sync->message_id != LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID &&
-         !sync->confirmed && sync->last_status != -ECANCELED))
+    // Plan同步尚未确认时暂停Load积分，避免连续迁移覆盖未完成事务。
+    if (sync->state == LINKG_SWITCH_PLAN_SYNC_WAIT_ACK ||
+        sync->state == LINKG_SWITCH_PLAN_SYNC_RETRY_WAIT ||
+        sync->state == LINKG_SWITCH_PLAN_SYNC_REJECTED ||
+        sync->state == LINKG_SWITCH_PLAN_SYNC_UNCERTAIN)
     {
         detector->score         = 0U;
         detector->last_valid_us = 0U;
         detector->waiting_sync  = true;
-        _linkg_switch_load_consume_current(loss, now_us, detector);
+
+        _linkg_switch_load_consume_current(
+            loss, input->observation.collected_us, detector);
+
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
     }

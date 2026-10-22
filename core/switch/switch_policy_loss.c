@@ -156,15 +156,15 @@ int linkg_switch_policy_loss_process(const linkg_switch_policy_input_t *input, u
     detector = &peer->role.sta.wifi_loss_policy;
 
     if (!input->observation.valid ||
-        input->observation.peer_node_id != input->peer_node_id ||
-        !input->observation.wifi.available ||
-        input->observation.wifi.link_id == LINKG_LINK_ID_INVALID)
+    input->observation.peer_node_id != input->peer_node_id ||
+    input->observation.wifi.state != LINKG_SWITCH_OBSERVATION_USABLE ||
+    input->observation.wifi.link_id == LINKG_LINK_ID_INVALID)
     {
         memset(detector, 0, sizeof(*detector));
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
     }
-
+    
     if (!detector->initialized ||
         detector->wifi_link_id != input->observation.wifi.link_id ||
         (detector->last_valid_us != 0U &&
