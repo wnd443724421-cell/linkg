@@ -131,7 +131,7 @@ static void _linkg_switch_status_copy_sta_wifi(linkg_switch_sta_wifi_status_t *d
 {
     uint32_t index;
 
-    destination->available             = source->available;
+    destination->available             = source->state == LINKG_SWITCH_OBSERVATION_USABLE;
     destination->radio_valid           = source->radio.valid;
     destination->connected             = source->radio.connected;
     destination->statistics_valid      = source->radio.statistics_valid;
@@ -166,7 +166,7 @@ static void _linkg_switch_status_copy_sta_wifi(linkg_switch_sta_wifi_status_t *d
  */
 static void _linkg_switch_status_copy_sta_cellular(linkg_switch_sta_cellular_status_t *destination, const linkg_switch_cellular_observation_t *source)
 {
-    destination->available  = source->available;
+    destination->available  = source->state == LINKG_SWITCH_OBSERVATION_USABLE;
     destination->updated_us = source->updated_us;
 }
 

@@ -77,6 +77,12 @@ int linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_generatio
 int linkg_switch_plan_update_if_current(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, bool synchronize, uint64_t now_us);
 
 /**
+ * @brief Reconcile本地条件更新；非必要候选调整可原子避让进行中的PlanSync。
+ * @note defer_if_sync_busy=true且当前STA同步尚未完成时返回-EAGAIN，不修改Plan。
+ */
+int linkg_switch_plan_apply_reconcile_if_current(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, bool defer_if_sync_busy);
+
+/**
  * @brief 条件提交完整Plan并获取稳定sync_id。
  * @note 返回0表示本地计划和协议重试事务已成功建立，不代表远端ACK。
  */

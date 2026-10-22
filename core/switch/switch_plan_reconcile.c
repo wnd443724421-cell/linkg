@@ -27,11 +27,11 @@
 
 typedef struct
 {
-    linkg_send_plan_t   plan;             // 本轮采集的完整Peer发送计划
-    uint32_t            generation;       // Peer运行代际，防止旧快照作用到新Peer
-    uint8_t             node_id;          // 直接Peer节点编号
-    bool                wifi_blocked;     // 本机或对端Maintenance禁止使用Wi-Fi
-    bool                cellular_blocked; // 本机或对端Maintenance禁止使用Cellular
+    linkg_send_plan_t plan;             // 本轮采集的完整Peer发送计划
+    uint32_t          generation;       // Peer运行代际，防止旧快照作用到新Peer
+    uint8_t           node_id;          // 直接Peer节点编号
+    bool              wifi_blocked;     // 本机或对端Maintenance禁止使用Wi-Fi
+    bool              cellular_blocked; // 本机或对端Maintenance禁止使用Cellular
 } linkg_switch_reconcile_peer_t;
 
 typedef struct
@@ -44,7 +44,6 @@ typedef struct
 
 /**
  * @brief 在Switch锁内读取指定槽位的Peer和Maintenance快照。
- *
  * @return 1表示有效Peer，0表示空槽位，负值表示错误。
  */
 static int _linkg_switch_reconcile_snapshot_peer(uint32_t index, linkg_switch_reconcile_peer_t *snapshot)
@@ -290,24 +289,60 @@ static bool _linkg_switch_reconcile_plan_equal(const linkg_send_plan_t *left, co
     return true;
 }
 
+/**
+ * @brief 判断本轮修改是否只影响SINGLE模式下不实际发送的Secondary候选。
+ *
+ * 三业务必须全部保持原发送模式和Primary；REDUNDANT的Secondary
+ * 参与真实双发，不能视为可延后的候选修改。
+ * 调用方在完整Plan不同时才调用此函数。
+ */
+static bool _linkg_switch_reconcile_secondary_only(const linkg_send_plan_t *current, const linkg_send_plan_t *expected)
+{
+    const linkg_class_send_plan_t *old_class;
+    const linkg_class_send_plan_t *new_class;
+    uint32_t                       class_index;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        old_class = &current->classes[class_index];
+        new_class = &expected->classes[class_index];
+
+        if (old_class->mode != new_class->mode ||
+            old_class->primary_link_id != new_class->primary_link_id)
+        {
+            return false;
+        }
+
+        if (old_class->mode != LINKG_SEND_MODE_SINGLE &&
+            old_class->secondary_link_id != new_class->secondary_link_id)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /****************************** 计划提交 ******************************/
 
 /**
- * @brief 将资源修复后的完整Plan条件更新到本机，不发起远端同步。
+ * @brief 原子提交本地资源修复，必要时避让尚未完成的STA PlanSync。
  *
- * AP和STA各自按本机真实Link/Path修复发送计划；质量切换和PLAN_SYNC
- * 不属于本模块职责。Plan模块在同一Switch锁内比较previous并写入，
- * 避免本轮过期快照覆盖Policy或Maintenance刚提交的新计划。
- * 写入时仍须遵守本机及对端Maintenance约束。
+ * 仅Secondary候选变化时，可在WAIT_ACK/RETRY_WAIT期间延后；
+ * 当前实际发送的Path失效导致模式或Primary改变时必须继续修复。
+ * 是否跳过本次提交由Plan模块在同一把Switch锁内判断，避免竞态。
  */
-static int _linkg_switch_reconcile_commit(const linkg_switch_reconcile_peer_t *snapshot, const linkg_send_plan_t *expected, uint64_t now_us)
+static int _linkg_switch_reconcile_commit(const linkg_switch_reconcile_peer_t *snapshot, const linkg_send_plan_t *expected)
 {
-    return linkg_switch_plan_update_if_current(snapshot->node_id,
-                                                snapshot->generation,
-                                                &snapshot->plan,
-                                                expected,
-                                                false,
-                                                now_us);
+    bool defer_if_sync_busy;
+
+    defer_if_sync_busy = _linkg_switch_reconcile_secondary_only(&snapshot->plan, expected);
+
+    return linkg_switch_plan_apply_reconcile_if_current(snapshot->node_id,
+                                                       snapshot->generation,
+                                                       &snapshot->plan,
+                                                       expected,
+                                                       defer_if_sync_busy);
 }
 
 /****************************** 周期资源校准 ******************************/
@@ -364,11 +399,11 @@ int linkg_switch_plan_reconcile_process(uint64_t now_us)
             continue;
         }
 
-        ret = _linkg_switch_reconcile_commit(&peer, &expected, now_us);
+        ret = _linkg_switch_reconcile_commit(&peer, &expected);
         if (ret == -EAGAIN || ret == -ESTALE || ret == -EBUSY ||
             ret == -ENOENT || ret == -ENODEV || ret == -ENETDOWN)
         {
-            // 本轮采集后资源或Maintenance发生变化，下一轮重新核对。
+            // 本轮资源变化、事务进行中或Maintenance发生变化，下一轮重新核对。
             continue;
         }
 

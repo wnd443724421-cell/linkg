@@ -926,7 +926,7 @@ int linkg_switch_plan_remove(uint8_t peer_node_id)
  * 其它模块通过sync_id检测已被替换的旧事务。
  * 不创建PLAN_SYNC事务，也不发送任何Switch控制消息。
  */
-static int _linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan)
+static int _linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, bool defer_if_sync_busy)
 {
     linkg_switch_peer_runtime_t *peer;
 
@@ -957,6 +957,16 @@ static int _linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_ge
     }
 
     if (previous != NULL && !_linkg_switch_plan_equal(&peer->plan, previous))
+    {
+        pthread_mutex_unlock(&g_switch.lock);
+        return -EAGAIN;
+    }
+
+    // 只有Reconcile声明为非必要的候选更新才暂缓；实际发送链路失效仍允许修复。
+    // 与上面的previous比较以及后面的Plan写入使用同一把锁，避免新事务插入。
+    if (defer_if_sync_busy &&
+        g_switch.role == LINKG_DEVICE_ROLE_STA &&
+        _linkg_switch_plan_sync_busy(&peer->role.sta.plan_sync))
     {
         pthread_mutex_unlock(&g_switch.lock);
         return -EAGAIN;
@@ -1094,7 +1104,7 @@ static int _linkg_switch_plan_commit_local(uint8_t peer_node_id, uint32_t peer_g
  */
 int linkg_switch_plan_apply_local(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *plan)
 {
-    return _linkg_switch_plan_apply_local(peer_node_id, peer_generation, NULL, plan);
+    return _linkg_switch_plan_apply_local(peer_node_id, peer_generation, NULL, plan, false);
 }
 
 /**
@@ -1117,7 +1127,24 @@ int linkg_switch_plan_update_if_current(uint8_t peer_node_id, uint32_t peer_gene
 
     return synchronize ?
            _linkg_switch_plan_commit_local(peer_node_id, peer_generation, previous, plan, now_us, NULL) :
-           _linkg_switch_plan_apply_local(peer_node_id, peer_generation, previous, plan);
+           _linkg_switch_plan_apply_local(peer_node_id, peer_generation, previous, plan, false);
+}
+
+/**
+ * @brief Reconcile专用的本地条件更新，可原子避让活动PlanSync。
+ *
+ * defer_if_sync_busy为true时，仅当当前STA PlanSync处于WAIT_ACK或RETRY_WAIT才
+ * 返回-EAGAIN且不修改Plan；false则保持必要资源修复的既有提交行为。
+ * previous、同步状态检查与实际写入在同一把Switch锁内完成。
+ */
+int linkg_switch_plan_apply_reconcile_if_current(uint8_t peer_node_id, uint32_t peer_generation, const linkg_send_plan_t *previous, const linkg_send_plan_t *plan, bool defer_if_sync_busy)
+{
+    if (previous == NULL)
+    {
+        return -EINVAL;
+    }
+
+    return _linkg_switch_plan_apply_local(peer_node_id, peer_generation, previous, plan, defer_if_sync_busy);
 }
 
 /**
