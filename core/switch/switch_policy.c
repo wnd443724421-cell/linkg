@@ -3,7 +3,7 @@
  * @brief LinkG链路切换策略调度实现
  * @author Dawn
  * @version 1.0.0
- * @date 2026-09-24
+ * @date 2026-10-22
  */
 
 #include "switch_policy.h"
@@ -24,8 +24,8 @@
 /**
  * @brief 获取当前STA唯一直接Peer的完整策略输入快照。
  *
- * 同一把Switch锁内复制三类业务Plan、Observation与Maintenance约束；
- * 后续计划提交使用Generation和previous条件比较，防止旧快照覆盖新计划。
+ * 在同一把Switch锁内复制Plan、Observation和Maintenance约束。
+ * Operation后续仍须以Peer Generation和当前Plan复核事务身份。
  */
 static int _linkg_switch_policy_get_input(linkg_switch_policy_input_t *input)
 {
@@ -96,14 +96,12 @@ static int _linkg_switch_policy_get_input(linkg_switch_policy_input_t *input)
 }
 
 /**
- * @brief 判断本轮策略快照是否包含有效的Peer、观测及活动业务计划。
- *
- * 某一业务为NONE不阻止其它业务参与切换策略。
+ * @brief 判断当前快照是否具备可供策略处理的活动发送计划。
  */
 static bool _linkg_switch_policy_input_valid(const linkg_switch_policy_input_t *input)
 {
     const linkg_class_send_plan_t *current;
-    uint32_t                       class_index;
+    uint32_t                       index;
 
     if (input == NULL || input->peer_generation == LINKG_SWITCH_PEER_GENERATION_INVALID)
     {
@@ -115,9 +113,9 @@ static bool _linkg_switch_policy_input_valid(const linkg_switch_policy_input_t *
         return false;
     }
 
-    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
-        current = &input->plan.classes[class_index];
+        current = &input->plan.classes[index];
 
         if ((current->mode == LINKG_SEND_MODE_SINGLE || current->mode == LINKG_SEND_MODE_REDUNDANT) &&
             current->primary_link_id != LINKG_LINK_ID_INVALID)
@@ -129,26 +127,21 @@ static bool _linkg_switch_policy_input_valid(const linkg_switch_policy_input_t *
     return false;
 }
 
-/****************************** 业务分类 ******************************/
+/****************************** 发送计划分类 ******************************/
 
 /**
- * @brief 判断两份完整Plan是否逐业务一致，不比较结构体填充字节。
+ * @brief 比较完整三业务Plan，避免旧策略快照覆盖新事务。
  */
 static bool _linkg_switch_policy_plan_equal(const linkg_send_plan_t *left, const linkg_send_plan_t *right)
 {
     const linkg_class_send_plan_t *a;
     const linkg_class_send_plan_t *b;
-    uint32_t                       class_index;
+    uint32_t                       index;
 
-    if (left == NULL || right == NULL)
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
-        return false;
-    }
-
-    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
-    {
-        a = &left->classes[class_index];
-        b = &right->classes[class_index];
+        a = &left->classes[index];
+        b = &right->classes[index];
 
         if (a->mode != b->mode ||
             a->primary_link_id != b->primary_link_id ||
@@ -162,59 +155,49 @@ static bool _linkg_switch_policy_plan_equal(const linkg_send_plan_t *left, const
 }
 
 /**
- * @brief 识别本轮三类业务中是否分别存在Wi-Fi和Cellular主链路。
- *
- * 只按Primary所属Link分类，REDUNDANT的Secondary不代表另一类主链路。
- * 这里不评估信号质量，也不补建备用Path；这些职责属于其它模块。
+ * @brief 判断当前计划是否仍有Cellular作为主链路的业务。
  */
-static void _linkg_switch_policy_get_primary_flags(const linkg_switch_policy_input_t *input, bool *wifi_primary, bool *cellular_primary)
+static bool _linkg_switch_policy_has_cellular_primary(const linkg_switch_policy_input_t *input)
 {
     const linkg_class_send_plan_t *current;
-    uint32_t                       class_index;
+    uint32_t                       index;
+    uint32_t                       cellular_link_id;
 
-    *wifi_primary     = false;
-    *cellular_primary = false;
-
-    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    cellular_link_id = input->observation.cellular.link_id;
+    if (cellular_link_id == LINKG_LINK_ID_INVALID)
     {
-        current = &input->plan.classes[class_index];
-        if (current->mode == LINKG_SEND_MODE_NONE)
-        {
-            continue;
-        }
+        return false;
+    }
 
-        if (input->observation.wifi.link_id != LINKG_LINK_ID_INVALID &&
-            current->primary_link_id == input->observation.wifi.link_id)
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+    {
+        current = &input->plan.classes[index];
+        if (current->mode != LINKG_SEND_MODE_NONE &&
+            current->primary_link_id == cellular_link_id)
         {
-            *wifi_primary = true;
-        }
-        else if (input->observation.cellular.link_id != LINKG_LINK_ID_INVALID &&
-                 current->primary_link_id == input->observation.cellular.link_id)
-        {
-            *cellular_primary = true;
+            return true;
         }
     }
+
+    return false;
 }
 
 /****************************** 策略调度 ******************************/
 
 /**
- * @brief 执行STA当前一轮链路切换策略。
+ * @brief 调度STA本轮Wi-Fi异常检测及Cellular恢复候选检测。
  *
- * Reconcile负责补充/剔除本地Path，Policy仅处理质量驱动的方向切换。
- * 三类业务可以具有不同Primary，因此同轮可能涉及Wi-Fi和Cellular策略。
+ * Wi-Fi优先检查明确硬故障，不依赖Observation的当前Wi-Fi Link ID
+ * 能否匹配旧Plan；Quality检测及事务提交由各子模块处理。
  *
- * Wi-Fi方向优先。若Wi-Fi策略修改了完整Plan，本轮不再调用Cellular策略，
- * 避免第二次提交立即取消第一次PLAN_SYNC；未修改时才允许Cellular策略处理。
- *
- * 调用前由Switch Runtime完成Observation刷新，本模块不负责周期调度。
+ * Wi-Fi子模块可能同步调用Operation提交完整Plan，因此随后必须重新
+ * 取得Peer及Plan快照，防止同轮Cellular恢复事件覆盖新PlanSync。
+ * 事务计时及PlanSync结果消费由Switch Runtime独立调度。
  */
 int linkg_switch_policy_process(uint64_t now_us)
 {
     linkg_switch_policy_input_t input;
     linkg_switch_policy_input_t refreshed;
-    bool                        wifi_primary;
-    bool                        cellular_primary;
     int                         ret;
 
     if (now_us == 0U)
@@ -233,50 +216,32 @@ int linkg_switch_policy_process(uint64_t now_us)
         return 0;
     }
 
-    _linkg_switch_policy_get_primary_flags(&input, &wifi_primary, &cellular_primary);
-
-    if (wifi_primary)
+    // 无条件检查Wi-Fi硬故障；子模块自行判断本轮是否存在可迁移业务。
+    ret = linkg_switch_policy_wifi_process(&input, now_us);
+    if (ret != 0)
     {
-        ret = linkg_switch_policy_wifi_process(&input, now_us);
-        if (ret != 0)
-        {
-            return ret;
-        }
+        return ret;
     }
 
-    if (!cellular_primary)
+    // Wi-Fi事件可能已由Operation修改Plan，需要重新读取整个Peer快照。
+    ret = _linkg_switch_policy_get_input(&refreshed);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (refreshed.peer_node_id != input.peer_node_id ||
+        refreshed.peer_generation != input.peer_generation ||
+        !_linkg_switch_policy_plan_equal(&refreshed.plan, &input.plan))
     {
         return 0;
     }
 
-    if (wifi_primary)
+    if (!_linkg_switch_policy_input_valid(&refreshed) ||
+        !_linkg_switch_policy_has_cellular_primary(&refreshed))
     {
-        // 混合主链路：重新取快照，避免同轮两次提交相互取消PLAN_SYNC。
-        ret = _linkg_switch_policy_get_input(&refreshed);
-        if (ret != 0)
-        {
-            return ret;
-        }
-
-        if (refreshed.peer_node_id != input.peer_node_id ||
-            refreshed.peer_generation != input.peer_generation ||
-            !_linkg_switch_policy_plan_equal(&refreshed.plan, &input.plan))
-        {
-            return 0;
-        }
-
-        if (!_linkg_switch_policy_input_valid(&refreshed))
-        {
-            return 0;
-        }
-
-        input = refreshed;
-        _linkg_switch_policy_get_primary_flags(&input, &wifi_primary, &cellular_primary);
-        if (!cellular_primary)
-        {
-            return 0;
-        }
+        return 0;
     }
 
-    return linkg_switch_policy_cellular_process(&input, now_us);
+    return linkg_switch_policy_cellular_process(&refreshed, now_us);
 }
