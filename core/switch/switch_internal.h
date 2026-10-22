@@ -83,29 +83,25 @@ typedef struct
 typedef struct
 {
     // Wi-Fi质量上报采样
-    linkg_switch_loss_sampler_t     wifi_uplink_loss_sampler;      // STA到AP Wi-Fi Wire丢包采样基线
-    linkg_switch_load_sampler_t     wifi_downlink_load_sampler;    // AP到STA Wi-Fi Load丢包采样基线
+    linkg_switch_loss_sampler_t     wifi_uplink_loss_sampler;
+    linkg_switch_load_sampler_t     wifi_downlink_load_sampler;
 
     // Cellular质量上报采样
-    linkg_switch_loss_sampler_t     cellular_uplink_loss_sampler;  // STA到AP Cellular Wire丢包采样基线
-    linkg_switch_load_sampler_t     cellular_downlink_load_sampler;// AP到STA Cellular Load丢包采样基线
+    linkg_switch_loss_sampler_t     cellular_uplink_loss_sampler;
+    linkg_switch_load_sampler_t     cellular_downlink_load_sampler;
 
     // Path状态快照
-    bool                            wifi_path_available;           // 最近采集的Wi-Fi Peer Path可用状态
-    bool                            cellular_path_available;       // 最近采集的Cellular Peer Path可用状态
-    uint64_t                        path_updated_us;               // 最近一次Path状态采集时间
+    bool                            wifi_path_available;
+    bool                            cellular_path_available;
+    uint64_t                        path_updated_us;
 
     // 本机状态查询
-    linkg_switch_loss_observation_t wifi_uplink_loss;              // 最近一次STA到AP Wi-Fi Wire丢包
-
-    // Quality Report发送状态
-    uint32_t                        report_message_id;             // 当前Peer的Quality Report消息编号
+    linkg_switch_loss_observation_t wifi_uplink_loss;
 
     // Plan同步接收状态
-    uint32_t                        remote_plan_message_id;        // 最近处理的STA PLAN_SYNC消息编号
-    int32_t                         remote_plan_status;            // 最近PLAN_SYNC执行结果，供重复消息重发ACK
+    uint32_t                        remote_plan_message_id;
+    int32_t                         remote_plan_status;
 } linkg_switch_ap_peer_runtime_t;
-
 
 /****************************** Peer公共运行状态 ******************************/
 
@@ -163,6 +159,7 @@ typedef struct
     uint32_t                                 next_peer_generation;         // 进程内Peer代际分配基线，Peer重建不回退
     uint32_t                                 next_plan_sync_id;            // 进程内逻辑Plan同步编号分配基线，Peer重建不回退
     uint32_t                                 next_plan_message_id;         // 进程内STA PLAN_SYNC编号分配基线，Peer重建不回退
+    uint32_t                                 next_report_message_id;       // 进程内AP Quality Report编号分配基线，Peer重建不回退
     uint32_t                                 next_maintenance_message_id;  // 进程内本机Maintenance事务编号分配基线
 
     // Worker周期调度

@@ -155,16 +155,22 @@ static bool _linkg_switch_report_message_id_newer(uint32_t message_id, uint32_t 
 }
 
 /**
- * @brief 为指定AP Peer分配非零质量报告编号，调用方持有Switch锁。
+ * @brief 分配非零Quality Report消息编号。
+ *
+ * 编号由Switch全局上下文维护，不依赖AP Peer Runtime生命周期。
+ * Peer删除重建或Switch重新启动后继续使用当前进程内的编号。
+ *
+ * 调用方必须持有g_switch.lock。
  */
-static uint32_t _linkg_switch_report_allocate_message_id_locked(linkg_switch_ap_peer_runtime_t *runtime)
+static uint32_t _linkg_switch_report_allocate_message_id_locked(void)
 {
     uint32_t message_id;
 
-    message_id = ++runtime->report_message_id;
+    message_id = ++g_switch.next_report_message_id;
+
     if (message_id == LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID)
     {
-        message_id = ++runtime->report_message_id;
+        message_id = ++g_switch.next_report_message_id;
     }
 
     return message_id;
@@ -505,7 +511,7 @@ static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t peer
         return collect_error;
     }
 
-    message_id = _linkg_switch_report_allocate_message_id_locked(runtime);
+    message_id = _linkg_switch_report_allocate_message_id_locked();
 
     pthread_mutex_unlock(&g_switch.lock);
 
