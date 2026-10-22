@@ -1,7 +1,6 @@
-
 /**
  * @file switch_observation.h
- * @brief LinkG链路切换观测快照内部接口
+ * @brief LinkG Switch统一指标样本及观测接口
  */
 
 #ifndef SWITCH_OBSERVATION_H
@@ -10,202 +9,167 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "linkg_switch.h"
 #include "linkg_transport_types.h"
 #include "linkg_wifi_config.h"
+
+/****************************** 可用性状态 ******************************/
+
+typedef enum
+{
+    LINKG_SWITCH_OBSERVATION_UNKNOWN  = 0, // 证据缺失、过期或采集失败，不能判定可用性
+    LINKG_SWITCH_OBSERVATION_USABLE   = 1, // 已确认当前路径具备基本使用条件
+    LINKG_SWITCH_OBSERVATION_UNUSABLE = 2  // 已确认当前路径不具备基本使用条件
+} linkg_switch_observation_state_t;
 
 /****************************** Probe观测 ******************************/
 
 typedef struct
 {
-    bool     valid;      // 最近一次周期Probe是否形成有效网络结果
-    bool     reachable;  // 最近一次周期Probe是否可达
-    uint32_t rtt_us;     // 最近一次成功Probe往返时延
-    uint64_t updated_us; // 最近一次Probe结果更新时间
+    bool     valid;      // 最近结果是否有效：超时为有效的不可达结果，提交失败为无效结果
+    bool     reachable;  // 有效结果是否在截止时间前收到匹配响应
+    uint32_t rtt_us;     // 最近成功响应RTT，仅valid且reachable时使用
+    uint64_t updated_us; // 结果源更新时间，CLOCK_MONOTONIC微秒；过期不刷新
 } linkg_switch_probe_observation_t;
 
 /****************************** 流量观测 ******************************/
 
 typedef struct
 {
-    bool     valid;      // 是否已经形成有效速率采样
+    bool     valid;      // 本轮是否完成有效差分；无新样本或计数回退时为false
     uint32_t tx_pps;     // 当前发送包速率
     uint32_t rx_pps;     // 当前接收包速率
     uint64_t tx_bps;     // 当前发送比特率
     uint64_t rx_bps;     // 当前接收比特率
-    uint64_t updated_us; // 最近一次速率计算时间
+    uint64_t updated_us; // 本次有效速率计算时间
 } linkg_switch_traffic_observation_t;
 
 /****************************** 丢包观测 ******************************/
 
 /**
- * @brief 指定Peer、方向、统计窗口的精确丢包观测。
+ * @brief 当前统计窗口丢包样本；无样本为未知，不等于0丢包。
  *
- * lost_packets为当前窗口实际确认的丢失报文数量。
- * sample_packets为当前窗口成功接收与确认丢失的报文总数。
- * 不跨窗口累计丢包样本。
- *
- * 没有有效样本时valid必须为false，不能解释为0丢包。
+ * 此结构仅提供计数，不定义质量阈值；Policy负责计算与判决。
  */
 typedef struct
 {
-    bool     valid;          // 当前窗口是否存在有效丢包样本
-    uint32_t lost_packets;   // 当前窗口实际确认丢失的报文数
-    uint32_t sample_packets; // 当前窗口参与统计的总报文数
-    uint64_t updated_us;     // 当前丢包统计更新时间
+    bool     valid;          // 有效统计窗口是否存在
+    uint32_t lost_packets;   // 本窗口确认丢包数量
+    uint32_t sample_packets; // 本窗口总样本数量，包含成功与确认丢失
+    uint64_t updated_us;     // 本窗口生成时间；重复复制不改变
 } linkg_switch_loss_observation_t;
 
-/**
- * @brief 指定Peer的双向Wire丢包及整链路负载丢包观测。
- *
- * Wire由接收端根据独立Sequence窗口统计。
- * uplink和downlink保留三类业务汇总统计。
- * uplink_classes和downlink_classes分别保存三类业务统计。
- *
- * Load由发送端根据Path累计统计计算。
- * Wi-Fi和Cellular统一使用整条Path的Queue Overflow。
- * Load不区分业务类别，反映整条链路的队列负载压力。
- *
- * 具体丢包率由Switch Policy根据有效样本计算。
- */
 typedef struct
 {
-    linkg_switch_loss_observation_t uplink;                                        // STA到AP Wire整链路丢包
-    linkg_switch_loss_observation_t uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];   // STA到AP各业务Wire丢包
-    linkg_switch_loss_observation_t uplink_load;                                   // STA到AP整链路Load丢包
-
-    linkg_switch_loss_observation_t downlink;                                      // AP到STA Wire整链路丢包
-    linkg_switch_loss_observation_t downlink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // AP到STA各业务Wire丢包
-    linkg_switch_loss_observation_t downlink_load;                                 // AP到STA整链路Load丢包
+    linkg_switch_loss_observation_t uplink;                                        // STA到AP Wire整链路丢包，由AP上报
+    linkg_switch_loss_observation_t uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];   // STA到AP Wire三业务丢包
+    linkg_switch_loss_observation_t uplink_load;                                   // STA到AP TX队列溢出，由STA采集
+    linkg_switch_loss_observation_t downlink;                                      // AP到STA Wire整链路丢包，由STA采集
+    linkg_switch_loss_observation_t downlink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // AP到STA Wire三业务丢包
+    linkg_switch_loss_observation_t downlink_load;                                 // AP到STA TX队列溢出，由AP上报
 } linkg_switch_path_loss_observation_t;
 
 /****************************** Wi-Fi无线观测 ******************************/
 
 typedef struct
 {
-    bool                     valid;                  // 当前Wi-Fi基础状态是否有效
-    bool                     connected;              // 当前是否已经关联AP
-    bool                     statistics_valid;       // 当前Peer无线统计是否有效
-    int32_t                  rssi_dbm;               // 当前接收信号强度
-    uint32_t                 tx_phy_kbps;            // 当前发送PHY速率
-    uint32_t                 rx_phy_kbps;            // 当前接收PHY速率
-    uint32_t                 inactive_ms;            // 当前对端最近无线活动间隔
-    bool                     noise_valid;            // 当前信道噪声是否有效
-    int32_t                  noise_dbm;              // 当前信道噪声
-    linkg_wifi_work_mode_t   work_mode;              // 当前宽带或窄带工作模式
-    uint16_t                 bandwidth_mhz;          // 当前实际工作带宽
-    linkg_wifi_narrow_mode_t narrow_mode;            // 当前窄带速率控制模式
-    bool                     rate_level_valid;       // 当前实际窄带速率档位是否有效
-    uint16_t                 rate_level;             // 当前窄带速率档位
-    bool                     temperature_valid;      // 当前Wi-Fi芯片温度是否有效
-    int32_t                  temperature_c;          // 当前Wi-Fi芯片温度
-    uint64_t                 status_updated_us;      // Wi-Fi基础状态更新时间
-    uint64_t                 statistics_updated_us;  // Peer无线统计更新时间
+    bool                     valid;                 // 无线基础状态存在，且更新时间未过期
+    bool                     connected;             // 有效基础状态下，是否明确关联指定AP
+    bool                     statistics_valid;      // 指定AP无线统计存在且未过期
+    int32_t                  rssi_dbm;              // 当前接收信号强度，statistics_valid时有效
+    uint32_t                 tx_phy_kbps;           // 当前发送PHY速率，statistics_valid时有效
+    uint32_t                 rx_phy_kbps;           // 当前接收PHY速率，statistics_valid时有效
+    uint32_t                 inactive_ms;           // 最近一次与Peer无线活动间隔
+    bool                     noise_valid;           // 当前信道噪声数据有效
+    int32_t                  noise_dbm;             // 当前信道噪声，noise_valid时有效
+    linkg_wifi_work_mode_t   work_mode;             // 当前宽带/窄带工作模式
+    uint16_t                 bandwidth_mhz;         // 当前工作带宽
+    linkg_wifi_narrow_mode_t narrow_mode;           // 当前窄带速率控制模式
+    bool                     rate_level_valid;      // 当前窄带速率档位有效
+    uint16_t                 rate_level;            // 当前窄带速率档位
+    bool                     temperature_valid;     // 当前Wi-Fi芯片温度有效
+    int32_t                  temperature_c;         // 当前Wi-Fi芯片温度
+    uint64_t                 status_updated_us;     // 最近无线基础状态源更新时间
+    uint64_t                 statistics_updated_us; // 最近Peer无线统计源更新时间
 } linkg_switch_wifi_radio_observation_t;
 
 /****************************** Wi-Fi路径观测 ******************************/
 
 typedef struct
 {
-    bool                                 available; // 当前Wi-Fi业务Path是否具备基本使用条件
-    uint32_t                             link_id;   // 当前Wi-Fi Link实例
-    linkg_switch_probe_observation_t     probe[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务类别周期Probe结果
-    linkg_switch_traffic_observation_t   traffic;   // Wi-Fi业务流量，仅供运行监控和诊断
-    linkg_switch_path_loss_observation_t loss;      // Wi-Fi双向Wire和Load丢包观测
-    linkg_switch_wifi_radio_observation_t radio;    // Wi-Fi无线层状态
+    linkg_switch_observation_state_t      state;                              // 该Peer Wi-Fi路径可用性：可用/不可用/未知
+    uint32_t                              link_id;                            // 当前Wi-Fi Link运行实例，无效值表示未获取到
+    linkg_switch_probe_observation_t      probe[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务周期Probe结果
+    linkg_switch_traffic_observation_t    traffic;                            // 当前Wi-Fi Path收发速率样本
+    linkg_switch_path_loss_observation_t  loss;                               // 双向Wire及队列溢出样本
+    linkg_switch_wifi_radio_observation_t radio;                              // Wi-Fi无线层指标
 } linkg_switch_wifi_observation_t;
 
 /****************************** Cellular路径观测 ******************************/
 
 typedef struct
 {
-    bool                                 available;   // 公网可用且当前Peer存在Cellular Path
-    uint32_t                             link_id;     // 当前Cellular Link实例
-    linkg_switch_probe_observation_t     probe[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务类别周期Probe结果
-    linkg_switch_path_loss_observation_t loss;        // Cellular双向Wire和Load丢包观测
-    uint64_t                             updated_us;  // 本次Cellular观测更新时间
+    linkg_switch_observation_state_t     state;                              // 该Peer Cellular路径可用性：可用/不可用/未知
+    uint32_t                             link_id;                            // 当前Cellular Link运行实例
+    linkg_switch_probe_observation_t     probe[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务周期Probe结果
+    linkg_switch_path_loss_observation_t loss;                               // 双向Wire及队列溢出样本
+    uint64_t                             updated_us;                         // 当前Cellular可用性评估完成时间
 } linkg_switch_cellular_observation_t;
 
 /****************************** 切换观测快照 ******************************/
 
 typedef struct
 {
-    bool                                valid;        // 本轮是否形成有效观测快照
-    uint8_t                             peer_node_id; // 当前直接Peer节点编号
-    linkg_switch_wifi_observation_t     wifi;         // 当前Wi-Fi路径观测
-    linkg_switch_cellular_observation_t cellular;     // 当前Cellular路径观测
-    uint64_t                            collected_us; // 本轮观测采集完成时间
+    bool                                valid;            // 当前Peer观测快照已完成发布，不代表所有字段有效
+    uint8_t                             peer_node_id;     // 当前直接AP Peer节点编号
+    linkg_switch_wifi_observation_t     wifi;             // Wi-Fi指标与三态可用性
+    linkg_switch_cellular_observation_t cellular;         // Cellular指标与三态可用性
+    uint64_t                            collected_us;     // 本轮采集完成时间，CLOCK_MONOTONIC微秒
+    int32_t                             collection_error; // 本轮首个非预期采集错误；0表示未遇到此类错误
 } linkg_switch_observation_t;
 
-/****************************** 采样状态 ******************************/
+/****************************** 差分采样基线 ******************************/
 
-/**
- * @brief 业务流量差分采样基线。
- *
- * 保留供运行监控和性能诊断使用，不作为正常切换的
- * 带宽准入条件。
- */
 typedef struct
 {
-    bool     initialized; // 是否已经取得上一轮累计统计
-    uint32_t link_id;     // 当前采样对应的Link实例
-    uint64_t sampled_us;  // 上一轮累计统计采样时间
+    bool     initialized; // 已取得上一轮累计值
+    uint32_t link_id;     // 基线所属Link实例
+    uint64_t sampled_us;  // 上一轮采样时间
     uint64_t tx_bytes;    // 上一轮累计发送字节数
     uint64_t rx_bytes;    // 上一轮累计接收字节数
-    uint64_t tx_packets;  // 上一轮累计发送帧数量
-    uint64_t rx_packets;  // 上一轮累计接收帧数量
+    uint64_t tx_packets;  // 上一轮累计发送帧数
+    uint64_t rx_packets;  // 上一轮累计接收帧数
 } linkg_switch_traffic_sampler_t;
 
-/**
- * @brief 单个业务类别的Wire累计丢包采样基线。
- *
- * sample_packets为累计成功接收与确认丢失帧数之和。
- * lost_packets为累计确认丢失帧数。
- */
 typedef struct
 {
-    uint64_t lost_packets;   // 上一轮累计确认丢失帧数
-    uint64_t sample_packets; // 上一轮累计接收与丢失帧总数
+    uint64_t lost_packets;   // 上一轮累计确认丢包数
+    uint64_t sample_packets; // 上一轮累计样本数
 } linkg_switch_loss_class_sampler_t;
 
-/**
- * @brief Wire接收丢包差分采样基线。
- *
- * 保留整链路累计统计，用于现有Loss触发判定。
- * classes分别维护三类业务独立累计统计，用于冗余质量比较。
- *
- * 接收端维护，不包含发送端的队列溢出。
- */
 typedef struct
 {
-    bool                              initialized;      // 是否已经取得上一轮累计统计
-    uint32_t                          link_id;          // 当前采样对应的Link实例
-    uint64_t                          received_packets; // 上一轮整链路累计接收帧数
-    uint64_t                          lost_packets;     // 上一轮整链路累计确认丢失帧数
-    linkg_switch_loss_class_sampler_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务独立采样基线
+    bool                              initialized;                          // 已取得上一轮累计值
+    uint32_t                          link_id;                              // 基线所属Link实例
+    uint64_t                          received_packets;                     // 上一轮累计接收帧数
+    uint64_t                          lost_packets;                         // 上一轮累计确认丢失帧数
+    linkg_switch_loss_class_sampler_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务独立累计基线
 } linkg_switch_loss_sampler_t;
 
-/**
- * @brief TX本地负载丢包差分采样基线。
- *
- * Wi-Fi使用queue_overflow。
- * Cellular使用queue_overflow和shaped。
- *
- * sent_packets为Path成功提交底层发送接口的帧数量。
- * 所有累计值必须归属于同一个Peer的同一条Path。
- */
 typedef struct
 {
-    bool     initialized;            // 是否已经取得上一轮累计统计
-    uint32_t link_id;                // 当前采样对应的Link实例
-    uint64_t sent_packets;           // 上一轮累计成功提交底层的帧数
+    bool     initialized;            // 已取得上一轮累计值
+    uint32_t link_id;                // 基线所属Link实例
+    uint64_t sent_packets;           // 上一轮累计成功提交帧数
     uint64_t queue_overflow_packets; // 上一轮累计TX队列溢出丢弃帧数
 } linkg_switch_load_sampler_t;
 
 /****************************** 观测操作 ******************************/
 
 int  linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generation, uint64_t now_us);
-int linkg_switch_observation_update_remote_uplink_loss(uint8_t peer_node_id, uint32_t lost_packets, uint32_t sample_packets);
 void linkg_switch_observation_reset_locked(uint8_t peer_node_id);
+
+/****************************** Probe状态转换 ******************************/
+
+linkg_switch_observation_state_t linkg_switch_observation_probe_state(const linkg_switch_probe_observation_t *probe);
 
 #endif

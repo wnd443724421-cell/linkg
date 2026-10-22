@@ -2,7 +2,7 @@
  * @file switch_wire.h
  * @brief LinkG链路切换Wire协议定义
  * @author Dawn
- * @version 3.0.0
+ * @version 1.0.0
  * @date 2026-10-16
  */
 
@@ -41,18 +41,22 @@ _Static_assert(LINKG_TRANSPORT_CLASS_VIDEO == 1, "invalid video class index");
 _Static_assert(LINKG_TRANSPORT_CLASS_DATA == 2, "invalid data class index");
 _Static_assert(LINKG_TRANSPORT_CLASS_COUNT == 3, "invalid transport class count");
 _Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_PLAN_SYNC_SIZE, "invalid switch wire max size");
+_Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_PLAN_SYNC_SIZE, "invalid plan sync max size");
+_Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_PLAN_ACK_SIZE, "invalid plan ack max size");
+_Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_MAINTENANCE_SIZE, "invalid maintenance max size");
+_Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_MAINTENANCE_ACK_SIZE, "invalid maintenance ack max size");
 
 /****************************** 消息类型 ******************************/
 
 typedef enum
 {
-    LINKG_SWITCH_WIRE_TYPE_NONE = 0,        // 无效消息
-    LINKG_SWITCH_WIRE_TYPE_QUALITY_REPORT,  // AP向STA上报Wi-Fi和Cellular质量
-    LINKG_SWITCH_WIRE_TYPE_PLAN_SYNC,       // STA发送计划同步
-    LINKG_SWITCH_WIRE_TYPE_PLAN_ACK,        // AP发送计划同步确认
-    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE,     // 接入维护开始或结束通知
-    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE_ACK, // 接入维护结束确认
-    LINKG_SWITCH_WIRE_TYPE_COUNT            // 消息类型数量
+    LINKG_SWITCH_WIRE_TYPE_NONE            = 0, // 无效消息
+    LINKG_SWITCH_WIRE_TYPE_QUALITY_REPORT  = 1, // AP向STA上报链路质量
+    LINKG_SWITCH_WIRE_TYPE_PLAN_SYNC       = 2, // STA向AP同步完整Plan
+    LINKG_SWITCH_WIRE_TYPE_PLAN_ACK        = 3, // AP确认Plan同步
+    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE     = 4, // 接入维护开始或结束
+    LINKG_SWITCH_WIRE_TYPE_MAINTENANCE_ACK = 5, // 接入维护结束确认
+    LINKG_SWITCH_WIRE_TYPE_COUNT           = 6  // 消息类型数量
 } linkg_switch_wire_type_t;
 
 /****************************** 接入类型 ******************************/
