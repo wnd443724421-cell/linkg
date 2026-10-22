@@ -49,10 +49,10 @@ typedef struct
 
 typedef struct
 {
-    linkg_switch_event_t items[LINKG_SWITCH_EVENT_QUEUE_CAPACITY];// 待Worker处理的控制事件
-    uint32_t             head;                                    // 当前出队位置
-    uint32_t             tail;                                    // 当前入队位置
-    uint32_t             count;                                   // 当前待处理事件数量
+    linkg_switch_event_t items[LINKG_SWITCH_EVENT_QUEUE_CAPACITY]; // 待Worker处理的控制事件
+    uint32_t             head;                                     // 当前出队位置
+    uint32_t             tail;                                     // 当前入队位置
+    uint32_t             count;                                    // 当前待处理事件数量
 } linkg_switch_event_queue_t;
 
 /****************************** 事件操作 ******************************/

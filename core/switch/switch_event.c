@@ -82,10 +82,10 @@ static uint32_t _linkg_switch_event_next_index(uint32_t index)
  */
 int linkg_switch_event_post(const linkg_switch_event_t *event)
 {
-    linkg_switch_event_queue_t *queue;
+    linkg_switch_event_queue_t  *queue;
     linkg_switch_peer_runtime_t *peer;
-    uint32_t                    slot;
-    int                         ret;
+    uint32_t                     slot;
+    int                          ret;
 
     if (!_linkg_switch_event_valid(event))
     {
