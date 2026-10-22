@@ -107,7 +107,6 @@ static void _linkg_switch_reset_runtime_locked(void)
     g_switch.next_observation_us = 0U;
     g_switch.next_reconcile_us   = 0U;
     g_switch.next_report_us      = 0U;
-    g_switch.next_policy_us      = 0U;
     g_switch.reconcile_pending   = false;
 }
 

@@ -161,15 +161,14 @@ typedef struct
 
     // 全局编号分配
     uint32_t                                 next_peer_generation;         // 进程内Peer代际分配基线，Peer重建不回退
+    uint32_t                                 next_plan_sync_id;            // 进程内逻辑Plan同步编号分配基线，Peer重建不回退
     uint32_t                                 next_plan_message_id;         // 进程内STA PLAN_SYNC编号分配基线，Peer重建不回退
     uint32_t                                 next_maintenance_message_id;  // 进程内本机Maintenance事务编号分配基线
-    uint32_t                                 next_plan_sync_id;            // 进程内逻辑Plan同步编号分配基线，Peer重建不回退
-    
+
     // Worker周期调度
     uint64_t                                 next_observation_us;          // STA下一轮观测快照刷新时间
     uint64_t                                 next_reconcile_us;            // AP/STA下一轮发送计划校准时间
     uint64_t                                 next_report_us;               // AP下一轮质量上报时间
-    uint64_t                                 next_policy_us;               // STA下一轮切换策略处理时间
     bool                                     reconcile_pending;            // AP/STA是否存在待处理的立即发送计划校准请求
 
     // Switch生命周期
