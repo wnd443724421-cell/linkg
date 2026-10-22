@@ -251,12 +251,12 @@ static bool _linkg_switch_maintenance_peer_access_available_locked(const linkg_s
 
         if (access == LINKG_LINK_ACCESS_WIFI)
         {
-            return peer->role.sta.observation.wifi.available;
+            return peer->role.sta.observation.wifi.state == LINKG_SWITCH_OBSERVATION_USABLE;
         }
 
         if (access == LINKG_LINK_ACCESS_CELLULAR)
         {
-            return peer->role.sta.observation.cellular.available;
+            return peer->role.sta.observation.cellular.state == LINKG_SWITCH_OBSERVATION_USABLE;
         }
 
         return false;
