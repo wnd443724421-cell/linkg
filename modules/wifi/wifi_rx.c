@@ -57,7 +57,7 @@
 #define LINKG_WIFI_RX_MAC_LOG_INTERVAL_US       1000000ULL                                                                           // 非法来源日志间隔
 
 _Static_assert(LINKG_WIFI_RX_SEQUENCE_WINDOW_SIZE == 64U, "Wi-Fi RX sequence window must be 64");
-_Static_assert(LINKG_WIFI_TRAFFIC_COUNT == LINKG_LINK_TX_CLASS_COUNT, "Wi-Fi RX traffic class count mismatch");
+_Static_assert((int)LINKG_WIFI_TRAFFIC_COUNT == (int)LINKG_LINK_TX_CLASS_COUNT, "Wi-Fi RX traffic class count mismatch");
 _Static_assert((int)LINKG_WIFI_TRAFFIC_REALTIME == (int)LINKG_LINK_TX_CLASS_REALTIME, "Wi-Fi RX realtime class mismatch");
 _Static_assert((int)LINKG_WIFI_TRAFFIC_VIDEO == (int)LINKG_LINK_TX_CLASS_VIDEO, "Wi-Fi RX video class mismatch");
 _Static_assert((int)LINKG_WIFI_TRAFFIC_DATA == (int)LINKG_LINK_TX_CLASS_DATA, "Wi-Fi RX data class mismatch");

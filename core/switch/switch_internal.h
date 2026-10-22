@@ -26,6 +26,7 @@
 #include "switch_policy_load.h"
 #include "switch_policy_loss.h"
 #include "switch_policy_state.h"
+#include "switch_policy_verify.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -75,6 +76,9 @@ typedef struct
 
     // 三类业务切换事务
     linkg_switch_policy_runtime_t       policy;                                                       // 三类业务独立切换事务及运行状态
+
+    // 组级冗余质量验证
+    linkg_switch_policy_verify_runtime_t verify;                                                      // 当前Peer唯一的LOSS/RECOVERY验证会话
 } linkg_switch_sta_peer_runtime_t;
 
 
