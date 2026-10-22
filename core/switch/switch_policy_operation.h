@@ -1,3 +1,11 @@
+/**
+ * @file switch_policy_operation.h
+ * @brief LinkG三业务切换事务及验证结果处理接口
+ */
+
+#ifndef SWITCH_POLICY_OPERATION_H
+#define SWITCH_POLICY_OPERATION_H
+
 #include <stdint.h>
 
 #include "switch_plan.h"
@@ -19,3 +27,5 @@ uint64_t linkg_switch_policy_operation_next_deadline_locked(void);
 /****************************** 生命周期 ******************************/
 
 void linkg_switch_policy_operation_reset_locked(uint8_t peer_node_id, uint32_t peer_generation);
+
+#endif
