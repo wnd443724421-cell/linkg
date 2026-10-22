@@ -23,6 +23,7 @@
 #include "switch_observation.h"
 #include "switch_plan.h"
 #include "switch_policy.h"
+#include "switch_policy_operation.h"
 #include "switch_report.h"
 #include "switch_plan_reconcile.h"
 
@@ -252,6 +253,34 @@ static void _linkg_switch_runtime_process_plan(uint64_t now_us)
 }
 
 /**
+ * @brief 先消费PlanSync终态，再推进Verification、LOAD计时与后台同步修复。
+ *
+ * 与Observation刷新独立；采样失败不能使已确认的事务停止推进。
+ */
+static void _linkg_switch_runtime_process_operation(uint64_t now_us)
+{
+    linkg_switch_plan_sync_result_t result;
+    uint32_t                        budget;
+    int                             ret;
+
+    for (budget = 0U; budget < LINKG_SWITCH_PEER_MAX; budget++)
+    {
+        ret = linkg_switch_plan_take_result(&result);
+        if (ret <= 0)
+        {
+            _linkg_switch_runtime_log_error("plan result", ret);
+            break;
+        }
+
+        ret = linkg_switch_policy_operation_on_plan_result(&result);
+        _linkg_switch_runtime_log_error("policy plan result", ret);
+    }
+
+    ret = linkg_switch_policy_operation_process(now_us);
+    _linkg_switch_runtime_log_error("policy operation", ret);
+}
+
+/**
  * @brief 执行当前到期的Maintenance重试和保护超时处理。
  */
 static void _linkg_switch_runtime_process_maintenance(uint64_t now_us)
@@ -333,10 +362,12 @@ static void _linkg_switch_runtime_process_reconcile(uint64_t now_us)
  */
 static void _linkg_switch_runtime_process_due(uint64_t now_us)
 {
-    _linkg_switch_runtime_process_reconcile(now_us);
-    _linkg_switch_runtime_process_sta(now_us);
-    _linkg_switch_runtime_process_report(now_us);
+    // 质量策略先于Reconcile处理，以免Wi-Fi断线时仅修改本地Plan而漏发AP同步。
     _linkg_switch_runtime_process_plan(now_us);
+    _linkg_switch_runtime_process_sta(now_us);
+    _linkg_switch_runtime_process_operation(now_us);
+    _linkg_switch_runtime_process_reconcile(now_us);
+    _linkg_switch_runtime_process_report(now_us);
     _linkg_switch_runtime_process_maintenance(now_us);
 }
 
@@ -373,6 +404,12 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
         }
 
         candidate_us = linkg_switch_plan_next_deadline_locked();
+        if (candidate_us < deadline_us)
+        {
+            deadline_us = candidate_us;
+        }
+
+        candidate_us = linkg_switch_policy_operation_next_deadline_locked();
         if (candidate_us < deadline_us)
         {
             deadline_us = candidate_us;

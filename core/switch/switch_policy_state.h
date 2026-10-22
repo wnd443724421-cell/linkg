@@ -87,6 +87,7 @@ typedef struct
     uint32_t                               operation_id;     // 当前业务事务编号，0表示空闲
     linkg_switch_policy_reason_t           reason;           // 当前事务触发原因
     linkg_switch_policy_target_t           exit_target;      // 当前业务的最终单发目标
+    bool                                   migrated_from_wifi; // 本次事务开始前主链路是否为Wi-Fi
     linkg_switch_policy_migration_reason_t migration_reason; // 最近一次完成迁出Wi-Fi的原因
 
     uint64_t                               phase_entered_us; // 当前阶段开始时间
@@ -129,6 +130,10 @@ typedef struct
     uint32_t                        last_wifi_link_id;                              // 最近一次有效Wi-Fi Link实例
     uint32_t                        observed_primary_link_ids[LINKG_TRANSPORT_CLASS_COUNT]; // 上轮各业务主链路，用于识别外部迁移
     bool                            observed_plan_valid;                           // 是否已经记录首次Plan基线
+
+    bool                            sync_repair_pending;                           // 快速重同步耗尽后待修复的本地完整Plan
+    uint32_t                        sync_repair_id;                                // 当前后台修复的PlanSync逻辑ID
+    uint64_t                        sync_repair_after_us;                          // 下一次低频修复截止时间
 } linkg_switch_policy_runtime_t;
 
 #endif // SWITCH_POLICY_STATE_H

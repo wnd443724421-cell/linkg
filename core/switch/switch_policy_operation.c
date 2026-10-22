@@ -27,6 +27,7 @@
 #define LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US       15000000ULL  // 恢复失败后延迟15秒重试
 #define LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US       2000000ULL  // 协议终态失败后重同步间隔
 #define LINKG_SWITCH_OPERATION_RESYNC_MAX                     2U    // 整组事务追加重同步次数
+#define LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US      10000000ULL  // 重试耗尽后每10秒修复完整Plan
 
 /****************************** 基础辅助 ******************************/
 
@@ -113,6 +114,7 @@ static void _linkg_switch_operation_clear_group_locked(linkg_switch_peer_runtime
         operation->operation_id     = 0U;
         operation->reason           = LINKG_SWITCH_POLICY_REASON_NONE;
         operation->exit_target      = LINKG_SWITCH_POLICY_TARGET_NONE;
+        operation->migrated_from_wifi = false;
         operation->phase_entered_us = 0U;
         operation->started_us       = 0U;
         operation->deadline_us      = 0U;
@@ -250,7 +252,8 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
             // Wi-Fi明确失效时，连Cellular为主的REDUNDANT也必须退出冗余。
             if (item->mode == LINKG_SEND_MODE_REDUNDANT &&
                 item->primary_link_id == observation->cellular.link_id &&
-                item->secondary_link_id == observation->wifi.link_id)
+                item->secondary_link_id != LINKG_LINK_ID_INVALID &&
+                item->secondary_link_id != observation->cellular.link_id)
             {
                 item->mode              = LINKG_SEND_MODE_SINGLE;
                 item->secondary_link_id = LINKG_LINK_ID_INVALID;
@@ -258,8 +261,9 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
                 continue;
             }
 
+            // Wi-Fi断开后最新Link ID可能无效；旧Plan中的Primary仍是旧Wi-Fi实例。
             if (item->mode == LINKG_SEND_MODE_NONE ||
-                item->primary_link_id != observation->wifi.link_id ||
+                item->primary_link_id == observation->cellular.link_id ||
                 item->secondary_link_id != observation->cellular.link_id)
             {
                 continue;
@@ -293,7 +297,7 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
  * @brief 记录创建成功的组级事务；调用方持有Switch锁。
  */
 static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *peer, const linkg_switch_policy_event_t *event,
-                                                  uint32_t mask, uint32_t sync_id, uint64_t now_us)
+                                                  const linkg_send_plan_t *previous, uint32_t mask, uint32_t sync_id, uint64_t now_us)
 {
     linkg_switch_policy_runtime_t   *policy;
     linkg_switch_policy_operation_t *operation;
@@ -310,7 +314,8 @@ static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *pe
                            LINKG_SWITCH_POLICY_TARGET_CELLULAR : LINKG_SWITCH_POLICY_TARGET_NONE;
     policy->recovery_count       = 0U;
     policy->next_action_us       = 0U;
-    policy->group_wifi_link_id   = peer->role.sta.observation.wifi.link_id;
+    policy->group_wifi_link_id   = peer->role.sta.observation.wifi.link_id != LINKG_LINK_ID_INVALID ?
+                                   peer->role.sta.observation.wifi.link_id : policy->last_wifi_link_id;
     policy->group_cellular_link_id = peer->role.sta.observation.cellular.link_id;
     policy->group_rssi_valid = peer->role.sta.observation.wifi.radio.statistics_valid || policy->last_wifi_rssi_valid;
     policy->group_rssi_dbm = peer->role.sta.observation.wifi.radio.statistics_valid ?
@@ -329,6 +334,9 @@ static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *pe
         operation->operation_id = _linkg_switch_operation_allocate_id_locked(policy);
         operation->reason       = policy->group_reason;
         operation->exit_target  = policy->group_target;
+        operation->migrated_from_wifi = policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+                                        previous->classes[index].primary_link_id != policy->group_cellular_link_id &&
+                                        previous->classes[index].secondary_link_id == policy->group_cellular_link_id;
     }
 
     _linkg_switch_operation_set_phase_locked(peer,
@@ -393,7 +401,7 @@ static int _linkg_switch_operation_start(const linkg_switch_policy_event_t *even
     {
         // 硬故障抢占此前验证；旧Plan同步被Plan层取消。
         _linkg_switch_operation_clear_group_locked(peer);
-        _linkg_switch_operation_start_locked(peer, event, mask, sync_id, now_us);
+        _linkg_switch_operation_start_locked(peer, event, &previous, mask, sync_id, now_us);
     }
     pthread_mutex_unlock(&g_switch.lock);
 
@@ -599,7 +607,7 @@ static void _linkg_switch_operation_finish_locked(linkg_switch_peer_runtime_t *p
         operation = &policy->operations[index];
         if (policy->group_target == LINKG_SWITCH_POLICY_TARGET_CELLULAR)
         {
-            if (policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY)
+            if (policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY && operation->migrated_from_wifi)
             {
                 operation->migration_reason =
                     policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD ? LINKG_SWITCH_POLICY_MIGRATION_LOAD :
@@ -623,6 +631,49 @@ static void _linkg_switch_operation_finish_locked(linkg_switch_peer_runtime_t *p
     }
 
     _linkg_switch_operation_clear_group_locked(peer);
+}
+
+/**
+ * @brief 快速重同步耗尽后保留未知状态，并释放本组事务供后续策略继续使用。
+ *
+ * AP是否应用了当前本地Plan仍未知，只记录UNKNOWN迁移历史，
+ * 通过独立的低频修复任务重新确认完整Plan。
+ */
+static void _linkg_switch_operation_abandon_uncertain_locked(linkg_switch_peer_runtime_t *peer, uint64_t now_us)
+{
+    linkg_switch_policy_runtime_t   *policy;
+    linkg_switch_policy_operation_t *operation;
+    uint32_t                         index;
+
+    policy = &peer->role.sta.policy;
+
+    if (policy->group_target == LINKG_SWITCH_POLICY_TARGET_CELLULAR)
+    {
+        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        {
+            if ((policy->group_mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
+            {
+                continue;
+            }
+
+            operation = &policy->operations[index];
+            if (!operation->migrated_from_wifi)
+            {
+                continue;
+            }
+
+            operation->migration_reason            = LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
+            operation->recovery.rssi_valid        = policy->group_rssi_valid;
+            operation->recovery.rssi_dbm          = policy->group_rssi_dbm;
+            operation->recovery.migrated_us       = now_us;
+            operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US);
+        }
+    }
+
+    _linkg_switch_operation_clear_group_locked(peer);
+    policy->sync_repair_pending  = true;
+    policy->sync_repair_id       = 0U;
+    policy->sync_repair_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US);
 }
 
 /**
@@ -665,7 +716,28 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
     }
 
     policy = &peer->role.sta.policy;
-    if (policy->group_mask == 0U || policy->plan_sync_id != result->sync_id)
+    if (policy->group_mask == 0U)
+    {
+        if (policy->sync_repair_pending && policy->sync_repair_id != 0U &&
+            policy->sync_repair_id == result->sync_id)
+        {
+            if (result->state == LINKG_SWITCH_PLAN_SYNC_CONFIRMED &&
+                peer->role.sta.plan_sync.sync_id == result->sync_id)
+            {
+                policy->sync_repair_pending  = false;
+                policy->sync_repair_after_us = 0U;
+            }
+            else
+            {
+                policy->sync_repair_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US);
+            }
+            policy->sync_repair_id = 0U;
+        }
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
+    }
+
+    if (policy->plan_sync_id != result->sync_id)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
@@ -707,9 +779,13 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
             _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY, now_us);
             fallback = true;
         }
+        else if (policy->recovery_count >= LINKG_SWITCH_OPERATION_RESYNC_MAX)
+        {
+            _linkg_switch_operation_abandon_uncertain_locked(peer, now_us);
+        }
         else
         {
-            // 本地单发已经生效，远端未知；有限重试同一完整Plan。
+            // 本地单发已经生效，远端未知；先进行有限快速重同步。
             _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_UNCERTAIN, now_us);
             policy->next_action_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US);
         }
@@ -725,6 +801,9 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
             pthread_mutex_unlock(&g_switch.lock);
             return 0;
         }
+        policy->sync_repair_pending  = false;
+        policy->sync_repair_id       = 0U;
+        policy->sync_repair_after_us = 0U;
         _linkg_switch_operation_finish_locked(peer, now_us);
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
@@ -742,6 +821,10 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
     }
+
+    policy->sync_repair_pending  = false;
+    policy->sync_repair_id       = 0U;
+    policy->sync_repair_after_us = 0U;
 
     mask = policy->group_mask;
     if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD)
@@ -782,6 +865,78 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
         }
         // 若ACK时观测尚未准备好，周期处理按INCONCLUSIVE安全回退。
         (void)ret;
+    }
+    pthread_mutex_unlock(&g_switch.lock);
+    return 0;
+}
+
+/****************************** 后台同步修复 ******************************/
+
+/**
+ * @brief 快速重试耗尽后低频重同步当前完整Plan，不占用业务切换组。
+ */
+static int _linkg_switch_operation_process_repair(uint64_t now_us)
+{
+    linkg_switch_peer_runtime_t   *peer;
+    linkg_switch_policy_runtime_t *policy;
+    linkg_send_plan_t              previous;
+    uint32_t                       generation;
+    uint32_t                       sync_id;
+    uint32_t                       index;
+    uint8_t                        node_id;
+    bool                           due;
+    int                            ret;
+
+    due        = false;
+    node_id    = 0U;
+    generation = 0U;
+
+    pthread_mutex_lock(&g_switch.lock);
+    if (g_switch.initialized && g_switch.running && g_switch.role == LINKG_DEVICE_ROLE_STA)
+    {
+        for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
+        {
+            peer = &g_switch.peers[index];
+            if (!peer->used)
+            {
+                continue;
+            }
+
+            policy = &peer->role.sta.policy;
+            if (policy->group_mask == 0U && policy->sync_repair_pending &&
+                policy->sync_repair_after_us != 0U && now_us >= policy->sync_repair_after_us &&
+                peer->role.sta.plan_sync.state != LINKG_SWITCH_PLAN_SYNC_WAIT_ACK &&
+                peer->role.sta.plan_sync.state != LINKG_SWITCH_PLAN_SYNC_RETRY_WAIT)
+            {
+                due       = true;
+                node_id   = peer->peer_node_id;
+                generation = peer->generation;
+                previous  = peer->plan;
+                policy->sync_repair_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US);
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_switch.lock);
+
+    if (!due)
+    {
+        return 0;
+    }
+
+    sync_id = 0U;
+    ret = linkg_switch_plan_submit_if_current(node_id, generation, &previous, &previous, now_us, &sync_id);
+    if (ret != 0)
+    {
+        return ret == -EAGAIN || ret == -EBUSY || ret == -ESTALE ? 0 : ret;
+    }
+
+    pthread_mutex_lock(&g_switch.lock);
+    peer = linkg_switch_find_peer_generation_locked(node_id, generation);
+    if (peer != NULL && peer->role.sta.policy.group_mask == 0U &&
+        peer->role.sta.policy.sync_repair_pending && peer->role.sta.plan_sync.sync_id == sync_id)
+    {
+        peer->role.sta.policy.sync_repair_id = sync_id;
     }
     pthread_mutex_unlock(&g_switch.lock);
     return 0;
@@ -874,6 +1029,12 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
     if (now_us == 0U)
     {
         return -EINVAL;
+    }
+
+    ret = _linkg_switch_operation_process_repair(now_us);
+    if (ret != 0)
+    {
+        return ret;
     }
 
     memset(&event, 0, sizeof(event));
@@ -1053,6 +1214,13 @@ uint64_t linkg_switch_policy_operation_next_deadline_locked(void)
         policy = &peer->role.sta.policy;
         if (policy->group_mask == 0U)
         {
+            if (policy->sync_repair_pending && policy->sync_repair_after_us != 0U &&
+                peer->role.sta.plan_sync.state != LINKG_SWITCH_PLAN_SYNC_WAIT_ACK &&
+                peer->role.sta.plan_sync.state != LINKG_SWITCH_PLAN_SYNC_RETRY_WAIT &&
+                policy->sync_repair_after_us < deadline)
+            {
+                deadline = policy->sync_repair_after_us;
+            }
             continue;
         }
 
