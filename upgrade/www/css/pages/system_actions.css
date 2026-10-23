@@ -1,0 +1,64 @@
+/* 系统管理：与基础配置页共享卡片、主题变量，限制在两个独立Route下。 */
+.system-action-page { max-width: 960px; padding-bottom: 8px; }
+.system-action-page [hidden] { display: none !important; }
+.system-action-card .page-card-body { padding: 20px; }
+.system-action-description { font-size: 13px; line-height: 1.8; color: var(--linkg-color-text-secondary); }
+.system-action-notice {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border-radius: var(--linkg-radius-medium);
+    background: var(--linkg-color-primary-soft);
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+.system-action-notice.is-error { color: #a63e21; background: #fff3ed; }
+.system-action-notice.is-success { color: var(--linkg-color-success); background: #eef8f3; }
+.system-action-notice.is-warning { color: #9a5b12; background: #fff6e9; }
+.system-action-warning {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border: 1px solid #f4d7aa;
+    border-radius: var(--linkg-radius-medium);
+    background: #fff9ed;
+    color: #98551e;
+    font-size: 13px;
+    line-height: 1.7;
+}
+.system-action-confirm {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 20px 0 0;
+    color: var(--linkg-color-text);
+    font-size: 13px;
+    line-height: 1.7;
+    cursor: pointer;
+}
+.system-action-confirm input { margin-top: 4px; accent-color: var(--linkg-color-primary); }
+.system-action-controls { display: flex; justify-content: flex-end; margin-top: 20px; }
+.system-action-footer { display: flex; justify-content: flex-end; margin-top: 16px; }
+.system-action-button {
+    min-width: 102px;
+    height: 36px;
+    padding: 0 16px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+    background: var(--linkg-color-surface);
+    color: var(--linkg-color-text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.system-action-button:hover:not(:disabled) { color: var(--linkg-color-primary); border-color: var(--linkg-color-primary); }
+.system-action-button-primary { border-color: var(--linkg-color-primary); background: var(--linkg-color-primary); color: #fff; }
+.system-action-button-primary:hover:not(:disabled) { background: var(--linkg-color-primary-hover); color: #fff; }
+.system-action-button-danger { border-color: var(--linkg-color-danger); background: var(--linkg-color-danger); color: #fff; }
+.system-action-button-danger:hover:not(:disabled) { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+.system-action-button:disabled { opacity: .52; cursor: not-allowed; }
+.system-action-button:focus-visible { outline: 2px solid var(--linkg-color-primary); outline-offset: 2px; }
+@media (max-width: 700px) {
+    .system-action-card .page-card-body { padding: 16px; }
+    .system-action-controls { justify-content: flex-start; }
+}

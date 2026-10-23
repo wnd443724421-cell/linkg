@@ -1,0 +1,29 @@
+<div class="page system-action-page" id="systemFactoryReset">
+    <div class="page-header">
+        <h1 class="page-title">恢复出厂设置</h1>
+        <p class="page-description">将 LinkG 用户配置恢复为当前软件版本的出厂默认值。</p>
+    </div>
+
+    <p id="systemFactoryStatus" class="system-action-notice" role="status" aria-live="polite">正在读取设备状态…</p>
+
+    <section class="page-card system-action-card" aria-labelledby="systemFactoryTitle">
+        <div class="page-card-header">
+            <h2 id="systemFactoryTitle" class="page-card-title">恢复默认配置</h2>
+        </div>
+        <div class="page-card-body">
+            <p class="system-action-description">恢复 Wi-Fi、蜂窝网络、设备角色、网络地址和其他用户配置为出厂默认值，并自动重启整机。</p>
+            <p class="system-action-warning">此操作将清除当前用户设置。恢复后 IP 地址、Wi-Fi 名称或密码可能变化，需要使用出厂默认配置重新连接设备。</p>
+            <label class="system-action-confirm" for="systemFactoryConfirm">
+                <input type="checkbox" id="systemFactoryConfirm" disabled>
+                <span>我已确认恢复出厂设置会覆盖当前用户配置并重启整机。</span>
+            </label>
+            <div class="system-action-controls">
+                <button id="systemFactoryStart" class="system-action-button system-action-button-danger" type="button" disabled>恢复出厂配置并重启</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="system-action-footer">
+        <button id="systemFactoryReload" class="system-action-button" type="button">刷新连接状态</button>
+    </div>
+</div>

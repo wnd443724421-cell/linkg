@@ -53,6 +53,8 @@ static const linkg_web_command_entry_t g_web_commands[] =
     {LINKG_WEB_CMD_DEVICE_RESTART,        _linkg_web_handler_device_restart},
     {LINKG_WEB_CMD_UPGRADE_START,         _linkg_web_handler_upgrade_start},
     {LINKG_WEB_CMD_UPGRADE_STATUS_GET,    _linkg_web_handler_upgrade_status_get},
+    {LINKG_WEB_CMD_SYSTEM_REBOOT,         _linkg_web_handler_system_reboot},
+    {LINKG_WEB_CMD_SYSTEM_FACTORY_RESET,  _linkg_web_handler_system_factory_reset},
     {LINKG_WEB_CMD_INVALID,               NULL}
 };
 
@@ -181,7 +183,8 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
         (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
          cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET || cmd == LINKG_WEB_CMD_UART_CONFIG_SET ||
          cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART ||
-         cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART))
+         cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART ||
+         cmd == LINKG_WEB_CMD_SYSTEM_REBOOT || cmd == LINKG_WEB_CMD_SYSTEM_FACTORY_RESET))
     {
         cJSON_Delete(root);
         ret = _linkg_web_response_error(cmd, "服务正在停止或重启，请稍后重新连接", response);
@@ -196,7 +199,8 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
     if (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
         cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET ||
         cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART ||
-        cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART)
+        cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART ||
+        cmd == LINKG_WEB_CMD_SYSTEM_REBOOT || cmd == LINKG_WEB_CMD_SYSTEM_FACTORY_RESET)
     {
         ret = linkg_config_transaction_begin();
         if (ret == 0)

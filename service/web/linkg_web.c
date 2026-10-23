@@ -32,6 +32,8 @@ int linkg_web_init(void)
         return ret;
     }
 
+    _linkg_web_system_init();
+
     ret = _linkg_web_server_init();
     if (ret != 0)
     {

@@ -43,7 +43,9 @@ typedef enum
     LINKG_WEB_CMD_DEVICE_ROLE_SET       = 1019, // 保存AP/STA角色
     LINKG_WEB_CMD_DEVICE_RESTART        = 1020, // 确认重启全部服务
     LINKG_WEB_CMD_UPGRADE_START         = 1021, // 启动升级包校验与安装
-    LINKG_WEB_CMD_UPGRADE_STATUS_GET    = 1022  // 获取升级安装状态
+    LINKG_WEB_CMD_UPGRADE_STATUS_GET    = 1022, // 获取升级安装状态
+    LINKG_WEB_CMD_SYSTEM_REBOOT         = 1023, // 手动重启LinkG服务或整机
+    LINKG_WEB_CMD_SYSTEM_FACTORY_RESET  = 1024  // 手动恢复出厂配置并整机重启
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -61,6 +63,8 @@ const char *_linkg_web_network_basic_instance(void);
 void _linkg_web_network_response_complete(bool sent);
 int  _linkg_web_device_init(void);
 void _linkg_web_device_response_complete(bool sent);
+void _linkg_web_system_init(void);
+void _linkg_web_system_response_complete(bool sent);
 
 /****************************** 请求分发 ******************************/
 
@@ -98,6 +102,9 @@ int  _linkg_web_handler_network_basic_restart(const cJSON *param, char **respons
 int _linkg_web_handler_device_info_get(const cJSON *param, char **response);
 int _linkg_web_handler_device_role_set(const cJSON *param, char **response);
 int _linkg_web_handler_device_restart(const cJSON *param, char **response);
+
+int _linkg_web_handler_system_reboot(const cJSON *param, char **response);
+int _linkg_web_handler_system_factory_reset(const cJSON *param, char **response);
 
 int _linkg_web_handler_upgrade_start(const cJSON *param, char **response);
 int _linkg_web_handler_upgrade_status_get(const cJSON *param, char **response);
