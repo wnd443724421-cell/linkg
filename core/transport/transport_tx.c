@@ -9,6 +9,7 @@
 #include "transport_internal.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include "linkg_packet_pool.h"
@@ -42,6 +43,7 @@ typedef struct
 {
     linkg_packet_t *packets[LINKG_TRANSPORT_TX_WIRE_BATCH_MAX];         // 已编码Transport Wire Frame
     uint32_t        payload_lengths[LINKG_TRANSPORT_TX_WIRE_BATCH_MAX]; // 各Wire Frame实际Transport载荷长度
+    bool            user_data[LINKG_TRANSPORT_TX_WIRE_BATCH_MAX];       // 对应帧是否属于真实用户业务
     uint32_t        count;                                              // 当前Wire Frame数量
 } linkg_transport_tx_frame_batch_t;
 
@@ -418,6 +420,7 @@ static int _linkg_transport_tx_encode_normal(const linkg_transport_tx_item_t *it
 
     batch->packets[batch->count]         = packet;
     batch->payload_lengths[batch->count] = state->original_data_length;
+    batch->user_data[batch->count]       = item->type == LINKG_TRANSPORT_TYPE_USER_DATA;
     batch->count++;
 
     return 0;
@@ -491,10 +494,12 @@ static int _linkg_transport_tx_encode_fragmented(const linkg_transport_tx_item_t
 
     batch->packets[batch->count]         = first_packet;
     batch->payload_lengths[batch->count] = LINKG_TRANSPORT_FRAGMENT_PAYLOAD_MAX_SIZE;
+    batch->user_data[batch->count]       = item->type == LINKG_TRANSPORT_TYPE_USER_DATA;
     batch->count++;
 
     batch->packets[batch->count]         = tail_packet;
     batch->payload_lengths[batch->count] = tail_length;
+    batch->user_data[batch->count]       = item->type == LINKG_TRANSPORT_TYPE_USER_DATA;
     batch->count++;
 
     return 0;
@@ -679,11 +684,18 @@ static void _linkg_transport_tx_record_stats(linkg_transport_peer_class_t *peer_
     uint64_t now_ms;
     uint32_t index;
     bool     accepted;
+    bool     user_activity;
 
-    accepted = false;
+    accepted      = false;
+    user_activity = false;
 
     for (index = 0U; index < batch->count; index++)
     {
+        if (batch->user_data[index])
+        {
+            user_activity = true;
+        }
+
         if (frame_results[index] == 0)
         {
             peer_class->stats.tx_packets++;
@@ -697,10 +709,17 @@ static void _linkg_transport_tx_record_stats(linkg_transport_peer_class_t *peer_
         }
     }
 
-    if (accepted)
+    if (accepted || user_activity)
     {
         now_ms = linkg_time_elapsed_ms();
-        peer_class->stats.last_tx_ms = now_ms;
+        if (accepted)
+        {
+            peer_class->stats.last_tx_ms = now_ms;
+        }
+        if (user_activity)
+        {
+            peer_class->stats.last_user_tx_ms = now_ms;
+        }
     }
 }
 
@@ -760,16 +779,23 @@ static int _linkg_transport_tx_acquire_forward_state(const linkg_transport_tx_co
 /**
  * @brief 记录当前Peer/Class中继发送统计。
  */
-static void _linkg_transport_tx_record_forward_stats(linkg_transport_peer_class_t *peer_class, const linkg_transport_forward_item_t *items, uint32_t count, const int *results)
+static void _linkg_transport_tx_record_forward_stats(linkg_transport_peer_class_t *peer_class, const linkg_transport_forward_item_t *items, const linkg_transport_type_t *types, uint32_t count, const int *results)
 {
     uint64_t now_ms;
     uint32_t index;
     bool     accepted;
+    bool     user_activity;
 
-    accepted = false;
+    accepted      = false;
+    user_activity = false;
 
     for (index = 0U; index < count; index++)
     {
+        if (types[index] == LINKG_TRANSPORT_TYPE_USER_DATA)
+        {
+            user_activity = true;
+        }
+
         if (results[index] == 0)
         {
             peer_class->stats.tx_packets++;
@@ -783,10 +809,17 @@ static void _linkg_transport_tx_record_forward_stats(linkg_transport_peer_class_
         }
     }
 
-    if (accepted)
+    if (accepted || user_activity)
     {
         now_ms = linkg_time_elapsed_ms();
-        peer_class->stats.last_tx_ms = now_ms;
+        if (accepted)
+        {
+            peer_class->stats.last_tx_ms = now_ms;
+        }
+        if (user_activity)
+        {
+            peer_class->stats.last_user_tx_ms = now_ms;
+        }
     }
 }
 
@@ -1076,7 +1109,7 @@ int linkg_transport_forward_batch(const linkg_transport_tx_context_t *context, c
         peer_class->tx_control_sequence = control_sequence_start;
     }
 
-    _linkg_transport_tx_record_forward_stats(peer_class, items, count, results);
+    _linkg_transport_tx_record_forward_stats(peer_class, items, types, count, results);
 
     pthread_mutex_unlock(&peer_class->tx_order_lock);
 

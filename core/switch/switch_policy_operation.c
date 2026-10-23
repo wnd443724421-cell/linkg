@@ -15,6 +15,7 @@
 
 #include "linkg_link.h"
 #include "linkg_time.h"
+#include "linkg_transport.h"
 
 #include "switch_internal.h"
 #include "switch_maintenance.h"
@@ -28,6 +29,7 @@
 #define LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US       2000000ULL  // 协议终态失败后重同步间隔
 #define LINKG_SWITCH_OPERATION_RESYNC_MAX                     2U    // 整组事务追加重同步次数
 #define LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US      10000000ULL  // 重试耗尽后每10秒修复完整Plan
+#define LINKG_SWITCH_OPERATION_LOAD_ACTIVE_MAX_AGE_MS       1500ULL  // LOAD仅迁移最近1.5秒有真实用户数据的业务
 
 /****************************** 基础辅助 ******************************/
 
@@ -207,6 +209,7 @@ static bool _linkg_switch_operation_group_plan_matches_locked(const linkg_switch
  */
 static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_peer_runtime_t *peer,
                                                            const linkg_switch_policy_event_t *event,
+                                                           const bool active_classes[LINKG_TRANSPORT_CLASS_COUNT],
                                                            linkg_send_plan_t *next)
 {
     const linkg_switch_observation_t *observation;
@@ -235,6 +238,13 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
                                LINKG_TRANSPORT_CLASS_COUNT - 1U - index : index;
         bit  = LINKG_SWITCH_POLICY_CLASS_BIT(class_index);
         item = &next->classes[class_index];
+
+        // LOAD只迁移真实活跃业务；Probe及Switch控制包不构成活跃证据。
+        // DATA空闲时继续考察VIDEO，而非浪费一次迁移事务。
+        if (event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD && !active_classes[class_index])
+        {
+            continue;
+        }
 
         if (event->type == LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY)
         {
@@ -347,20 +357,61 @@ static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *pe
 /****************************** 事件处理 ******************************/
 
 /**
+ * @brief 检查业务最近是否有真正的USER_DATA尝试发送或成功接收。
+ */
+static bool _linkg_switch_operation_load_active(const linkg_transport_class_stats_t *stats, uint64_t now_ms)
+{
+    if (stats->last_user_tx_ms != 0U && stats->last_user_tx_ms <= now_ms &&
+        now_ms - stats->last_user_tx_ms <= LINKG_SWITCH_OPERATION_LOAD_ACTIVE_MAX_AGE_MS)
+    {
+        return true;
+    }
+
+    return stats->last_user_rx_ms != 0U && stats->last_user_rx_ms <= now_ms &&
+           now_ms - stats->last_user_rx_ms <= LINKG_SWITCH_OPERATION_LOAD_ACTIVE_MAX_AGE_MS;
+}
+
+/**
  * @brief 提交Wi-Fi硬故障或软质量触发的完整Plan事务。
  */
 static int _linkg_switch_operation_start(const linkg_switch_policy_event_t *event, uint64_t now_us)
 {
     linkg_switch_peer_runtime_t   *peer;
     linkg_switch_policy_runtime_t *policy;
+    linkg_transport_peer_stats_t   stats;
     linkg_send_plan_t              previous;
     linkg_send_plan_t              next;
+    uint64_t                       now_ms;
     uint32_t                       mask;
     uint32_t                       sync_id;
+    uint32_t                       index;
+    bool                           active_classes[LINKG_TRANSPORT_CLASS_COUNT];
     bool                           hard_failure;
     int                            ret;
 
     hard_failure = event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN;
+    memset(active_classes, 0, sizeof(active_classes));
+
+    if (event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD)
+    {
+        // Transport统计在Switch锁外读取，避免嵌套锁和额外的250ms轮询。
+        ret = linkg_transport_get_peer_stats(event->peer_node_id, &stats);
+        if (ret == -ENOENT || ret == -ENODEV)
+        {
+            return 0;
+        }
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        now_ms = linkg_time_elapsed_ms();
+        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        {
+            active_classes[index] = _linkg_switch_operation_load_active(&stats.classes[index], now_ms);
+        }
+    }
+
     pthread_mutex_lock(&g_switch.lock);
     peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
     if (peer == NULL || !g_switch.running || g_switch.role != LINKG_DEVICE_ROLE_STA)
@@ -379,7 +430,7 @@ static int _linkg_switch_operation_start(const linkg_switch_policy_event_t *even
     }
 
     previous = peer->plan;
-    mask     = _linkg_switch_operation_build_enter_locked(peer, event, &next);
+    mask     = _linkg_switch_operation_build_enter_locked(peer, event, active_classes, &next);
     pthread_mutex_unlock(&g_switch.lock);
 
     if (mask == 0U || _linkg_switch_operation_plan_equal(&previous, &next))

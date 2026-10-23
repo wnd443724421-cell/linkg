@@ -32,6 +32,8 @@ typedef struct
 
     uint64_t last_tx_ms;              // 最近成功提交Transport帧时间
     uint64_t last_rx_ms;              // 最近收到有效Transport帧时间
+    uint64_t last_user_tx_ms;         // 最近尝试发送USER_DATA时间，包括发送失败
+    uint64_t last_user_rx_ms;         // 最近接收有效USER_DATA时间，不含Probe及Switch控制包
 } linkg_transport_class_stats_t;
 
 /****************************** Peer统计 ******************************/

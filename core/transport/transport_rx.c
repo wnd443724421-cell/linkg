@@ -853,6 +853,11 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
             peer_class->stats.rx_bytes += states[index].payload_length;
             peer_class->stats.last_rx_ms = now_ms;
 
+            if (states[index].header.type == LINKG_TRANSPORT_TYPE_USER_DATA)
+            {
+                peer_class->stats.last_user_rx_ms = now_ms;
+            }
+
             if (out_of_order)
             {
                 peer_class->stats.rx_out_of_order_packets++;
