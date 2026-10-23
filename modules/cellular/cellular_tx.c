@@ -778,7 +778,8 @@ static uint64_t _linkg_cellular_tx_expiry_locked(linkg_cellular_tx_t *tx, uint64
 /**
  * @brief 由Worker定时调用，集中完成所有LinkG蜂窝业务的优先级和排队决策。
  *
- * 回调最多提交四包，然后立即重新检查优先级；Worker自身不接触Packet。
+ * 此回调由Worker定时执行，也用于submit()入队后的即时小批次发送。
+ * 每轮最多提交四包，所有路径共用同一把锁和共享令牌桶。
  */
 static uint64_t _linkg_cellular_tx_process(void *context, uint64_t now_us)
 {
@@ -1116,14 +1117,17 @@ int linkg_cellular_tx_purge_path(linkg_cellular_tx_t *tx, linkg_path_t *path, ui
  * 最旧完整TX Group或普通Packet，为当前新批次腾出空间。成功入队即表示Cellular TX
  * 接受对应Packet的发送责任，立即通知独立QoS Worker。
  *
- * Worker按照REALTIME > VIDEO > DATA严格优先级消费，共享max_load_mbps令牌桶；
+ * submit先立即尝试小批次发送，Worker再负责积压队列的定时排空。
+ * 两条发送路径均按REALTIME > VIDEO > DATA优先级消费共享max_load_mbps令牌桶；
  * 各队列分别在100/250/500ms到期时丢弃，过期包不消耗令牌。
  * Web修改限速后最长约250ms同步到Worker，无需重启Cellular。
  */
 int linkg_cellular_tx_submit(linkg_cellular_tx_t *tx, linkg_path_t *path, linkg_link_tx_class_t tx_class, const linkg_path_endpoint_t *destination, linkg_packet_t *const *packets, uint32_t count, int *results)
 {
+    uint64_t wait_us;
     uint32_t index;
     int      accepted_count;
+    int      processed;
     int      ret;
 
     if (tx == NULL || path == NULL || destination == NULL || packets == NULL || results == NULL || count == 0U)
@@ -1190,6 +1194,17 @@ int linkg_cellular_tx_submit(linkg_cellular_tx_t *tx, linkg_path_t *path, linkg_
     }
 
     accepted_count = (int)count;
+
+    /*
+     * 即时发送快路径：仅尝试同一个QoS调度器的一个小批次。
+     * 减少Path Probe等低负载报文对Worker唤醒的依赖；
+     * 令牌不够、Socket背压或残余队列仍由Worker定时消费。
+     */
+    processed = _linkg_cellular_tx_dispatch_once_locked(tx, linkg_time_monotonic_us(), &wait_us);
+    if (processed < 0)
+    {
+        LINKG_LOG_WARN("Cellular TX immediate dispatch failed, error=%d", processed);
+    }
 
     pthread_mutex_unlock(&tx->lock);
     linkg_cellular_tx_worker_notify(tx->worker);

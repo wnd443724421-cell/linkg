@@ -30,6 +30,7 @@ struct linkg_cellular_tx_worker
     void                                *context;  // TX对象，由创建方保证生命周期
     int                                  event_fd; // 非阻塞事件通知
     _Atomic bool                         running;  // Worker循环结束条件
+    _Atomic bool                         degraded; // eventfd异常后的定时调度模式
     bool                                 started;  // 生命周期由Cellular Link串行化
 };
 
@@ -91,11 +92,22 @@ static void *_linkg_cellular_tx_worker_run(void *argument)
     uint64_t                   now_us;
     int                        timeout_ms;
     int                        ret;
+    bool                       degraded;
 
-    worker = argument;
+    worker   = argument;
+    degraded = false;
+
+    ret = pthread_setname_np(pthread_self(), "cellular_tx");
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("Cellular TX worker naming failed, error=%d", ret);
+    }
+
     descriptor.fd      = worker->event_fd;
     descriptor.events  = POLLIN;
     descriptor.revents = 0;
+
+    LINKG_LOG_INFO("Cellular TX worker started, event_fd=%d", worker->event_fd);
 
     while (atomic_load(&worker->running))
     {
@@ -109,24 +121,48 @@ static void *_linkg_cellular_tx_worker_run(void *argument)
 
         timeout_ms = _linkg_cellular_tx_worker_timeout_ms(deadline_us, linkg_time_monotonic_us());
 
+        /*
+         * eventfd失效时继续执行TX调度回调，不能在started仍为true的情况下
+         * 让唯一Worker消失。降级期间每5ms检查一次队列和令牌状态。
+         */
+        if (degraded)
+        {
+            if (timeout_ms < 0 || timeout_ms > 5)
+            {
+                timeout_ms = 5;
+            }
+
+            (void)poll(NULL, 0U, timeout_ms);
+            continue;
+        }
+
+        descriptor.revents = 0;
         do
         {
             ret = poll(&descriptor, 1U, timeout_ms);
         }
         while (ret < 0 && errno == EINTR && atomic_load(&worker->running));
 
+        if (!atomic_load(&worker->running))
+        {
+            break;
+        }
+
         if (ret > 0 && (descriptor.revents & POLLIN) != 0)
         {
             _linkg_cellular_tx_worker_drain(worker->event_fd);
         }
-        else if (ret < 0 || (ret > 0 && (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0))
+        else if (ret < 0 ||
+                 (ret > 0 && (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0))
         {
-            LINKG_LOG_ERROR("Cellular TX worker poll failed, errno=%d", ret < 0 ? errno : EIO);
-            // eventfd异常时停止本线程；上层关闭时仍会执行join。
-            break;
+            LINKG_LOG_ERROR("Cellular TX worker poll error=%d revents=0x%x, enable timed fallback",
+                            ret < 0 ? errno : EIO, (unsigned int)descriptor.revents);
+            degraded = true;
+            atomic_store(&worker->degraded, true);
         }
     }
 
+    LINKG_LOG_INFO("Cellular TX worker stopped");
     atomic_store(&worker->running, false);
     return NULL;
 }
@@ -158,6 +194,7 @@ linkg_cellular_tx_worker_t *linkg_cellular_tx_worker_create(linkg_cellular_tx_wo
     worker->process = process;
     worker->context = context;
     atomic_init(&worker->running, false);
+    atomic_init(&worker->degraded, false);
     return worker;
 }
 
@@ -175,6 +212,7 @@ int linkg_cellular_tx_worker_start(linkg_cellular_tx_worker_t *worker)
         return -EALREADY;
     }
 
+    atomic_store(&worker->degraded, false);
     atomic_store(&worker->running, true);
     ret = pthread_create(&worker->thread, NULL, _linkg_cellular_tx_worker_run, worker);
     if (ret != 0)
@@ -239,7 +277,7 @@ void linkg_cellular_tx_worker_notify(linkg_cellular_tx_worker_t *worker)
     uint64_t value;
     ssize_t  length;
 
-    if (worker == NULL)
+    if (worker == NULL || atomic_load(&worker->degraded))
     {
         return;
     }
