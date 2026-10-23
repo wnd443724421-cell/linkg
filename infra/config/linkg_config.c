@@ -13,7 +13,6 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -21,7 +20,6 @@
 #include "linkg_file.h"
 #include "linkg_json.h"
 #include "linkg_log.h"
-#include "linkg_release_state.h"
 
 #include "config_internal.h"
 
@@ -30,8 +28,6 @@
 #define LINKG_CONFIG_FILE_MAX  (64U * 1024U)   // 配置文件最大长度
 #define LINKG_CONFIG_FILE_MODE 0600            // 配置文件默认权限，包含Wi-Fi密码和SIM PIN
 #define LINKG_CONFIG_USER_DIR "/app/config"    // A/B升级不清理的共享配置目录
-#define LINKG_CONFIG_RELEASE_STATE "/app/version_state.json" // A/B稳定槽位
-#define LINKG_CONFIG_LEGACY_CURRENT "/app/current/config/linkgUser.json" // 旧版用户配置路径
 
 /****************************** 内部类型 ******************************/
 
@@ -376,120 +372,6 @@ static int _config_ensure_user_directory(void)
     return CONFIG_OK;
 }
 
-/**
- * @brief 首次启动新版本时迁移旧槽位的用户JSON，绝不覆盖已有共享文件。
- *
- * 优先选用Supervisor记录的稳定Release；若缺少A/B状态，则先查旧current。
- * 校验后原样原子写入共享目录，旧文件不删除，保证历史版本回滚可读。
- */
-static int _config_migrate_legacy_user(void)
-{
-    linkg_release_state_t state;
-    linkg_config_t        parsed;
-    struct stat           information;
-    char                  releases[2][128];
-    const char           *candidates[3];
-    const char           *first;
-    const char           *second;
-    char                 *content;
-    size_t                length;
-    uint32_t              index;
-    int                   ret;
-    int                   len;
-
-    if (lstat(LINKG_CONFIG_USER_PATH, &information) == 0)
-    {
-        return CONFIG_OK;
-    }
-    if (errno != ENOENT)
-    {
-        return CONFIG_ERR_FILE;
-    }
-
-    if (linkg_release_load(LINKG_CONFIG_RELEASE_STATE, &state) == 0)
-    {
-        first  = linkg_release_name(state.stable);
-        second = linkg_release_name(1U - state.stable);
-    }
-    else
-    {
-        first  = "v1";
-        second = "v2";
-    }
-
-    if (first == NULL || second == NULL)
-    {
-        return CONFIG_ERR_FILE;
-    }
-
-    len = snprintf(releases[0], sizeof(releases[0]),
-                   "/app/releases/%s/config/linkgUser.json", first);
-    if (len < 0 || (size_t)len >= sizeof(releases[0]))
-    {
-        return CONFIG_ERR_FILE;
-    }
-
-    len = snprintf(releases[1], sizeof(releases[1]),
-                   "/app/releases/%s/config/linkgUser.json", second);
-    if (len < 0 || (size_t)len >= sizeof(releases[1]))
-    {
-        return CONFIG_ERR_FILE;
-    }
-
-    if (linkg_release_load(LINKG_CONFIG_RELEASE_STATE, &state) == 0)
-    {
-        candidates[0] = releases[0];
-        candidates[1] = releases[1];
-        candidates[2] = LINKG_CONFIG_LEGACY_CURRENT;
-    }
-    else
-    {
-        candidates[0] = LINKG_CONFIG_LEGACY_CURRENT;
-        candidates[1] = releases[0];
-        candidates[2] = releases[1];
-    }
-
-    for (index = 0U; index < 3U; index++)
-    {
-        if (lstat(candidates[index], &information) != 0)
-        {
-            if (errno == ENOENT)
-            {
-                continue;
-            }
-            return CONFIG_ERR_FILE;
-        }
-        if (!S_ISREG(information.st_mode))
-        {
-            return CONFIG_ERR_FILE;
-        }
-
-        content = NULL;
-        length  = 0U;
-        ret = _config_read_validated_file(candidates[index], &parsed, &content, &length);
-        if (ret != CONFIG_OK)
-        {
-            LINKG_LOG_ERROR("CONFIG: legacy configuration incompatible, path=%s, error=%d",
-                            candidates[index], ret);
-            return ret;
-        }
-
-        ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH, content, length,
-                                          LINKG_CONFIG_FILE_MODE);
-        free(content);
-        if (ret != 0)
-        {
-            return _config_error_from_file(ret);
-        }
-
-        LINKG_LOG_INFO("CONFIG: migrated user configuration from %s to shared storage",
-                       candidates[index]);
-        return CONFIG_OK;
-    }
-
-    return CONFIG_OK;
-}
-
 /****************************** 出厂文件恢复 ******************************/
 
 /**
@@ -539,7 +421,9 @@ static int _config_restore_factory_file(linkg_config_t *restored)
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 加载用户配置，加载失败时自动恢复出厂配置。
+ * @brief 加载持久化用户配置；文件不存在时从当前Release默认模板初始化。
+ *
+ * 对已存在但无效的用户文件，不自动覆盖；仅显式恢复出厂可以替换。
  */
 int linkg_config_load(void)
 {
@@ -559,12 +443,6 @@ int linkg_config_load(void)
         return ret;
     }
 
-    ret = _config_migrate_legacy_user();
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
     ret = _config_read_validated_file(LINKG_CONFIG_USER_PATH, &config, &content, &length);
     free(content);
 
@@ -575,7 +453,7 @@ int linkg_config_load(void)
             return ret;
         }
 
-        // 只允许首次缺失文件时初始化默认值，不得用默认配置擦除损坏或旧版数据。
+        // 仅首次缺失文件时初始化；已经存在的无效用户文件不得自动覆盖。
         if (lstat(LINKG_CONFIG_USER_PATH, &information) == 0)
         {
             LINKG_LOG_ERROR("CONFIG: existing user file invalid, preserving original, error=%d", ret);
@@ -950,7 +828,7 @@ int linkg_config_save(const linkg_config_t *config)
  * @brief 将出厂默认配置恢复到用户配置文件。
  *
  * 不修改当前内存配置。恢复成功后禁止普通保存，调用方应请求系统重启。
- * 开机配置损坏的自动恢复不走本接口，因此不影响启动后的正常保存。
+ * 开机只在配置文件不存在时初始化默认配置；文件损坏时不会隐式恢复。
  */
 int linkg_config_restore_factory(void)
 {
