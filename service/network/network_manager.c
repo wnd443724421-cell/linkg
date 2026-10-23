@@ -18,6 +18,7 @@
 #include "network_internal.h"
 #include "network_wifi.h"
 #include "linkg_switch.h"
+#include "linkg_discovery.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -43,6 +44,28 @@ typedef struct
 static linkg_network_manager_context_t g_network_manager;
 
 /****************************** 内部辅助 ******************************/
+
+/**
+ * @brief 将Cellular Discovery同步到links.cellular.enabled目标状态。
+ *
+ * Discovery属于Cellular的从属控制通道，但其错误不得阻止
+ * Cellular Owner的启动、停止或重启。
+ *
+ * 本函数仅由Network Manager线程调用。
+ */
+static void _linkg_network_manager_sync_cellular_discovery(bool enabled)
+{
+    int ret;
+
+    ret = linkg_discovery_set_cellular_enabled(enabled);
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN(
+            "sync Cellular Discovery failed, enabled=%d error=%d",
+            enabled ? 1 : 0,
+            ret);
+    }
+}
 
 /**
  * @brief 尝试为指定Owner开始本地Maintenance。
@@ -670,6 +693,8 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
         {
             break;
         }
+
+        _linkg_network_manager_sync_cellular_discovery(cellular_enabled);
 
         ret = _linkg_network_manager_wait(thread);
         if (ret != 0)

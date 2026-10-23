@@ -28,6 +28,8 @@
 
 /****************************** 模块常量 ******************************/
 
+#define LINKG_WEB_LISTEN_RETRY_INTERVAL_US 100000U              // 100ms
+#define LINKG_WEB_LISTEN_RETRY_COUNT       50U                  // 最长约5秒
 #define LINKG_WEB_SERVER_THREAD_NAME      "web-server"          // Web服务线程名称
 #define LINKG_WEB_SERVER_BACKLOG          8                     // TCP监听等待队列长度
 #define LINKG_WEB_REQUEST_BUFFER_INIT     (4U * 1024U)          // 请求初始缓冲区大小
@@ -592,6 +594,7 @@ int _linkg_web_server_init(void)
  */
 int _linkg_web_server_start(void)
 {
+    uint32_t retry;
     int ret;
 
     if (!g_web_server.initialized)
@@ -604,10 +607,39 @@ int _linkg_web_server_start(void)
         return -EALREADY;
     }
 
-    ret = _linkg_web_server_open_listen_socket();
+    ret = 0;
+
+    for (retry = 0U; retry < LINKG_WEB_LISTEN_RETRY_COUNT; retry++)
+    {
+        ret = _linkg_web_server_open_listen_socket();
+        if (ret == 0)
+        {
+            break;
+        }
+
+        if (ret != -EADDRNOTAVAIL)
+        {
+            break;
+        }
+
+        if (retry == 0U)
+        {
+            LINKG_WEB_WARN(
+                "listen address not ready, retrying, "
+                "address=127.0.0.1 port=%u",
+                LINKG_RESOURCE_TCP_PORT_WEB_CONTROL);
+        }
+
+        usleep(LINKG_WEB_LISTEN_RETRY_INTERVAL_US);
+    }
+
     if (ret != 0)
     {
-        LINKG_WEB_ERROR("open listen socket failed, port=%u, error=%d", LINKG_RESOURCE_TCP_PORT_WEB_CONTROL, ret);
+        LINKG_WEB_ERROR(
+            "open listen socket failed, port=%u, error=%d",
+            LINKG_RESOURCE_TCP_PORT_WEB_CONTROL,
+            ret);
+
         return ret;
     }
 
@@ -618,11 +650,12 @@ int _linkg_web_server_start(void)
         return ret;
     }
 
-    LINKG_WEB_INFO("server started, address=127.0.0.1, port=%u", LINKG_RESOURCE_TCP_PORT_WEB_CONTROL);
+    LINKG_WEB_INFO(
+        "server started, address=127.0.0.1, port=%u",
+        LINKG_RESOURCE_TCP_PORT_WEB_CONTROL);
 
     return 0;
 }
-
 /**
  * @brief 停止Web本机控制服务器。
  */

@@ -13,12 +13,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <arpa/inet.h>
 
 #include "linkg_config.h"
 #include "linkg_ethernet.h"
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
 #include "linkg_system_resources.h"
+#include "linkg_time.h"
 
 #include "network_cellular.h"
 #include "network_internal.h"
@@ -29,7 +31,10 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_NETWORK_NODE_ADDRESS_PREFIX 32U // 本机节点IPv4地址固定前缀
+#define LINKG_NETWORK_NODE_ADDRESS_PREFIX     32U    // 本机节点IPv4地址固定前缀
+#define LINKG_NETWORK_SYSTEM_READY_TIMEOUT_MS 10000U // 最长等待系统基础网络10秒
+#define LINKG_NETWORK_SYSTEM_READY_POLL_MS    50U    // 每50ms检查一次
+#define LINKG_NETWORK_SYSTEM_READY_STABLE_MS  250U   // 连续稳定500ms才认为就绪
 
 /****************************** 全局上下文 ******************************/
 
@@ -75,6 +80,143 @@ static void _linkg_network_set_state(linkg_network_state_t state)
     g_network.state = state;
 
     pthread_mutex_unlock(&g_network.lock);
+}
+
+/****************************** 系统网络就绪 ******************************/
+
+/**
+ * @brief 检查系统基础Loopback是否已经就绪。
+ *
+ * 只有当lo已经UP并且拥有127.0.0.1时才返回ready=true。
+ * 本函数只检查系统基础地址，不创建或修改任何网络资源。
+ */
+static int _linkg_network_system_loopback_ready(bool *ready)
+{
+    struct in_addr loopback_address;
+    bool           address_present;
+    bool           interface_up;
+    int            ret;
+
+    if (ready == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *ready = false;
+
+    loopback_address.s_addr = htonl(INADDR_LOOPBACK);
+
+    ret = linkg_network_interface_is_up(
+        LINKG_RESOURCE_INTERFACE_LOOPBACK,
+        &interface_up);
+
+    /**
+     * 系统启动早期接口尚未创建时，属于“尚未就绪”，
+     * 不是LinkG内部致命错误。
+     */
+    if (ret == -ENODEV || ret == -ENXIO)
+    {
+        return 0;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!interface_up)
+    {
+        return 0;
+    }
+
+    ret = linkg_network_interface_has_ipv4(
+        LINKG_RESOURCE_INTERFACE_LOOPBACK,
+        &loopback_address,
+        &address_present);
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    *ready = address_present;
+
+    return 0;
+}
+
+/**
+ * @brief 等待系统基础网络完成Loopback配置。
+ *
+ * 必须在LinkG配置eth0或向lo添加172.28.<node>.1之前调用。
+ * 除了要求lo为UP且拥有127.0.0.1，还要求状态连续稳定一段时间，
+ * 避免与系统network/netifd初始化发生地址覆盖竞争。
+ */
+static int _linkg_network_wait_system_ready(void)
+{
+    uint32_t elapsed_ms;
+    uint32_t stable_ms;
+    bool     ready;
+    bool     waiting_logged;
+    int      ret;
+
+    elapsed_ms    = 0U;
+    stable_ms     = 0U;
+    waiting_logged = false;
+
+    while (elapsed_ms < LINKG_NETWORK_SYSTEM_READY_TIMEOUT_MS)
+    {
+        ready = false;
+
+        ret = _linkg_network_system_loopback_ready(&ready);
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        if (ready)
+        {
+            stable_ms += LINKG_NETWORK_SYSTEM_READY_POLL_MS;
+
+            if (stable_ms >=
+                LINKG_NETWORK_SYSTEM_READY_STABLE_MS)
+            {
+                LINKG_LOG_INFO(
+                    "system network ready, "
+                    "interface=%s, address=127.0.0.1, "
+                    "wait_ms=%u",
+                    LINKG_RESOURCE_INTERFACE_LOOPBACK,
+                    (unsigned int)elapsed_ms);
+
+                return 0;
+            }
+        }
+        else
+        {
+            stable_ms = 0U;
+
+            if (!waiting_logged)
+            {
+                LINKG_LOG_WARN(
+                    "system network not ready, waiting, "
+                    "interface=%s, address=127.0.0.1",
+                    LINKG_RESOURCE_INTERFACE_LOOPBACK);
+
+                waiting_logged = true;
+            }
+        }
+
+        ret = linkg_time_sleep_ms(
+            LINKG_NETWORK_SYSTEM_READY_POLL_MS);
+
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        elapsed_ms += LINKG_NETWORK_SYSTEM_READY_POLL_MS;
+    }
+
+    return -ETIMEDOUT;
 }
 
 /****************************** 本机节点地址 ******************************/
@@ -363,10 +505,22 @@ int linkg_network_start(void)
         goto fail;
     }
 
+    ret = _linkg_network_wait_system_ready();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR( "wait for system network failed, error=%d", ret);
+        _linkg_network_set_state(LINKG_NETWORK_STATE_STOPPED);
+
+        return ret;
+    }
+
     ret = linkg_ethernet_start();
     if (ret != 0)
     {
-        LINKG_LOG_ERROR("start Ethernet failed, error=%d", ret);
+        LINKG_LOG_ERROR(
+            "start Ethernet failed, error=%d",
+            ret);
+
         goto fail;
     }
 

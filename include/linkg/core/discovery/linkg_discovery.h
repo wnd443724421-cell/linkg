@@ -39,6 +39,10 @@ int linkg_discovery_get_topology_snapshot(linkg_discovery_topology_snapshot_t *s
 int linkg_discovery_node_online(uint8_t node_id, bool *online);
 int linkg_discovery_wifi_rx_get_authorized_mac(uint8_t node_id, uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH], bool *require_mac);
 
+/****************************** 动态配置 ******************************/
+
+int linkg_discovery_set_cellular_enabled(bool enabled);
+
 /****************************** 网络状态通知 ******************************/
 
 int linkg_discovery_notify_wifi_network_changed(void);

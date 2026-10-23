@@ -1136,6 +1136,66 @@ int linkg_network_interface_get_ipv4(const char *ifname, struct in_addr *address
 }
 
 /**
+ * @brief 判断网络接口是否拥有指定IPv4地址。
+ */
+int linkg_network_interface_has_ipv4(const char *ifname, const struct in_addr *address, bool *present)
+{
+    struct ifaddrs     *interfaces;
+    struct ifaddrs     *current;
+    struct sockaddr_in *socket_address;
+
+    if (!_network_interface_name_valid(ifname) ||
+        address == NULL ||
+        present == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *present   = false;
+    interfaces = NULL;
+
+    if (getifaddrs(&interfaces) != 0)
+    {
+        return -errno;
+    }
+
+    for (current = interfaces;
+         current != NULL;
+         current = current->ifa_next)
+    {
+        if (current->ifa_name == NULL ||
+            current->ifa_addr == NULL)
+        {
+            continue;
+        }
+
+        if (strcmp(current->ifa_name, ifname) != 0)
+        {
+            continue;
+        }
+
+        if (current->ifa_addr->sa_family != AF_INET)
+        {
+            continue;
+        }
+
+        socket_address =
+            (struct sockaddr_in *)current->ifa_addr;
+
+        if (socket_address->sin_addr.s_addr ==
+            address->s_addr)
+        {
+            *present = true;
+            break;
+        }
+    }
+
+    freeifaddrs(interfaces);
+
+    return 0;
+}
+
+/**
  * @brief 获取网络接口当前IPv4子网掩码。
  */
 int linkg_network_interface_get_ipv4_netmask(const char *ifname, struct in_addr *netmask)

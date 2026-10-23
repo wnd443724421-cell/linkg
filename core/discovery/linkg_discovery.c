@@ -481,13 +481,10 @@ int linkg_discovery_init(void)
         }
     }
 
-    if (links.cellular.enabled)
+    ret = linkg_discovery_cellular_init();
+    if (ret != 0)
     {
-        ret = linkg_discovery_cellular_init();
-        if (ret != 0)
-        {
-            goto fail_wifi;
-        }
+        goto fail_wifi;
     }
 
     return 0;
@@ -712,7 +709,6 @@ int linkg_discovery_stop(void)
  */
 int linkg_discovery_deinit(void)
 {
-    bool     cellular_enabled;
     bool     wifi_enabled;
     uint64_t now_us;
     int      first_error;
@@ -723,7 +719,7 @@ int linkg_discovery_deinit(void)
         return 0;
     }
 
-    _linkg_discovery_get_channel_enabled(&wifi_enabled, &cellular_enabled);
+    _linkg_discovery_get_channel_enabled(&wifi_enabled, NULL);
 
     pthread_mutex_lock(&g_discovery.lock);
 
@@ -746,13 +742,10 @@ int linkg_discovery_deinit(void)
 
     first_error = 0;
 
-    if (cellular_enabled)
+    ret = linkg_discovery_cellular_deinit();
+    if (ret != 0)
     {
-        ret = linkg_discovery_cellular_deinit();
-        if (ret != 0)
-        {
-            _linkg_discovery_record_first_error(&first_error, ret);
-        }
+        _linkg_discovery_record_first_error(&first_error, ret);
     }
 
     if (wifi_enabled)
@@ -1089,4 +1082,90 @@ int linkg_discovery_notify_wifi_network_changed(void)
 int linkg_discovery_notify_cellular_network_changed(void)
 {
     return linkg_discovery_cellular_notify_network_changed();
+}
+
+/**
+ * @brief 动态设置Cellular Discovery Channel是否启用。
+ *
+ * 该接口只控制Cellular Discovery Worker、Socket及Channel，
+ * 不启动或关闭5G业务模块，也不停止Discovery Core或Wi-Fi Channel。
+ */
+int linkg_discovery_set_cellular_enabled(bool enabled)
+{
+    bool current_enabled;
+    bool running;
+    int  ret;
+
+    if (!g_discovery.initialized)
+    {
+        return -ENODEV;
+    }
+
+    pthread_mutex_lock(&g_discovery.lock);
+
+    current_enabled = g_discovery.cellular_channel_enabled;
+    running         = g_discovery.running;
+
+    pthread_mutex_unlock(&g_discovery.lock);
+
+    /**
+     * 幂等：
+     * 已经是目标状态时，不重复start/stop。
+     */
+    if (current_enabled == enabled)
+    {
+        return 0;
+    }
+
+    /**
+     * Discovery Core尚未运行时，只更新下一次start使用的配置状态。
+     * 不允许Cellular Channel脱离Core单独启动。
+     */
+    if (!running)
+    {
+        pthread_mutex_lock(&g_discovery.lock);
+
+        if (!g_discovery.initialized)
+        {
+            pthread_mutex_unlock(&g_discovery.lock);
+            return -ENODEV;
+        }
+
+        g_discovery.cellular_channel_enabled = enabled;
+
+        pthread_mutex_unlock(&g_discovery.lock);
+        return 0;
+    }
+
+    /**
+     * Core正在运行时，执行真正的动态切换。
+     */
+    if (enabled)
+    {
+        ret = linkg_discovery_cellular_start();
+    }
+    else
+    {
+        ret = linkg_discovery_cellular_stop();
+    }
+
+    if (ret != 0)
+    {
+        /**
+         * 切换失败时保留原状态，使调用方后续能够重试。
+         */
+        return ret;
+    }
+
+    /**
+     * 只有实际切换成功后，才提交外层状态。
+     */
+    pthread_mutex_lock(&g_discovery.lock);
+    g_discovery.cellular_channel_enabled = enabled;
+    pthread_mutex_unlock(&g_discovery.lock);
+
+    LINKG_LOG_INFO("DISCOVERY: Cellular Channel %s",
+                   enabled ? "enabled" : "disabled");
+
+    return 0;
 }
