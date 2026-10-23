@@ -129,11 +129,11 @@ typedef struct
     bool                            last_wifi_rssi_valid;                           // 历史Wi-Fi RSSI是否有效
     uint32_t                        last_wifi_link_id;                              // 最近一次有效Wi-Fi Link实例
     uint32_t                        observed_primary_link_ids[LINKG_TRANSPORT_CLASS_COUNT]; // 上轮各业务主链路，用于识别外部迁移
-    bool                            observed_plan_valid;                           // 是否已经记录首次Plan基线
+    bool                            observed_plan_valid;                            // 是否已经记录首次Plan基线
 
-    bool                            sync_repair_pending;                           // 快速重同步耗尽后待修复的本地完整Plan
-    uint32_t                        sync_repair_id;                                // 当前后台修复的PlanSync逻辑ID
-    uint64_t                        sync_repair_after_us;                          // 下一次低频修复截止时间
+    bool                            sync_repair_pending;                            // 快速重同步耗尽后待修复的本地完整Plan
+    uint32_t                        sync_repair_id;                                 // 当前后台修复的PlanSync逻辑ID
+    uint64_t                        sync_repair_after_us;                           // 下一次低频修复截止时间
 } linkg_switch_policy_runtime_t;
 
 #endif // SWITCH_POLICY_STATE_H

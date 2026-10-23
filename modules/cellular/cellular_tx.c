@@ -24,77 +24,96 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 
-#include "linkg_cellular_config.h"
-#include "linkg_config.h"
-#include "linkg_log.h"
-#include "linkg_packet_pool.h"
-#include "linkg_time.h"
 #include "cellular_tx_queue.h"
 #include "cellular_tx_rate.h"
 #include "cellular_tx_worker.h"
 #include "cellular_wire.h"
 
+#include "linkg_cellular_config.h"
+#include "linkg_config.h"
+#include "linkg_log.h"
+#include "linkg_packet_pool.h"
+#include "linkg_time.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX                32U              // 单次允许的最大提交量
-#define LINKG_CELLULAR_TX_QUEUE_REALTIME_BATCH_COUNT    1U               // 实时队列保留32包
-#define LINKG_CELLULAR_TX_QUEUE_VIDEO_BATCH_COUNT       5U               // 视频队列保留160包
-#define LINKG_CELLULAR_TX_QUEUE_DATA_BATCH_COUNT        5U               // 普通队列保留160包
-#define LINKG_CELLULAR_TX_CONTROL_SIZE                  CMSG_SPACE(sizeof(struct in6_pktinfo))
-#define LINKG_CELLULAR_TX_PEER_SLOTS                    256U             // 最多256个IPv6对端序号槽
-#define LINKG_CELLULAR_TX_QOS_BATCH_MAX                 4U               // 每个小批后重新选优先级
-#define LINKG_CELLULAR_TX_IPV6_UDP_BYTES                48ULL            // IPv6(40)+UDP(8)头
-#define LINKG_CELLULAR_TX_CONFIG_PERIOD_US              250000ULL        // 用户配置检查周期
-#define LINKG_CELLULAR_TX_BACKPRESSURE_US               2000ULL          // Socket背压重试
-#define LINKG_CELLULAR_TX_REALTIME_TIMEOUT_US           100000ULL        // 实时排队最长100ms
-#define LINKG_CELLULAR_TX_VIDEO_TIMEOUT_US              250000ULL        // 视频排队最长250ms
-#define LINKG_CELLULAR_TX_DATA_TIMEOUT_US               500000ULL        // 普通排队最长500ms
+#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX                  32U              // 单次发送提交的最大Packet数量
+#define LINKG_CELLULAR_TX_QUEUE_REALTIME_BATCH_COUNT      1U               // REALTIME队列缓存批次数
+#define LINKG_CELLULAR_TX_QUEUE_VIDEO_BATCH_COUNT         5U               // VIDEO队列缓存批次数
+#define LINKG_CELLULAR_TX_QUEUE_DATA_BATCH_COUNT          5U               // DATA队列缓存批次数
+
+#define LINKG_CELLULAR_TX_PEER_SLOTS                      256U             // IPv6对端Sequence状态槽数量
+#define LINKG_CELLULAR_TX_QOS_BATCH_MAX                   4U               // 单次QoS发送最多提交的Packet数量
+#define LINKG_CELLULAR_TX_IPV6_UDP_BYTES                  48ULL            // IPv6头40字节与UDP头8字节
+
+#define LINKG_CELLULAR_TX_CONFIG_PERIOD_US                250000ULL        // 动态限速配置检查周期250ms
+#define LINKG_CELLULAR_TX_BACKPRESSURE_US                 2000ULL          // Socket发送背压重试间隔2ms
+
+#define LINKG_CELLULAR_TX_REALTIME_TIMEOUT_US             100000ULL        // REALTIME最大排队时间100ms
+#define LINKG_CELLULAR_TX_VIDEO_TIMEOUT_US                250000ULL        // VIDEO最大排队时间250ms
+#define LINKG_CELLULAR_TX_DATA_TIMEOUT_US                 500000ULL        // DATA最大排队时间500ms
+
+// 单个IPv6 UDP消息的IPV6_PKTINFO控制缓冲区大小。
+#define LINKG_CELLULAR_TX_CONTROL_SIZE                    CMSG_SPACE(sizeof(struct in6_pktinfo))
 
 /****************************** 内部类型 ******************************/
 
 /**
- * @brief 按目标IPv6地址维护三业务独立Sequence。
+ * @brief 单个IPv6对端的三业务独立发送序号状态。
+ *
+ * 每个对端分别维护REALTIME、VIDEO和DATA的Sequence。
+ * Sequence仅在对应Packet成功提交Socket后推进。
  */
 typedef struct
 {
-    struct in6_addr address;                             // 对端IPv6
-    uint32_t        sequence[LINKG_LINK_TX_CLASS_COUNT]; // 各业务独立序号
-    bool            used;                                // 是否占用槽位
+    struct in6_addr address;                                         // 对端IPv6地址
+    uint32_t        sequence[LINKG_LINK_TX_CLASS_COUNT];             // 三类业务独立发送序号
+    bool            used;                                            // 当前状态槽是否已分配
 } linkg_cellular_tx_peer_sequence_t;
 
 /**
- * @brief Socket发送批次复用的预分配缓冲区。
+ * @brief 单个业务类别的预分配Socket发送缓冲区。
+ *
+ * 复用批量发送所需的消息、地址、控制信息和Wire Header。
+ * 避免在高频发送路径中反复进行动态内存分配。
+ *
+ * items中的Packet和Path仅借用Queue当前持有的引用。
  */
 typedef struct
 {
-    linkg_cellular_tx_queue_item_t items[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
-    struct mmsghdr                 messages[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
-    struct iovec                   iovecs[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][2];
-    linkg_cellular_wire_header_t   headers[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
-    uint32_t                       peer_indices[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
-    struct sockaddr_in6            destinations[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
-    unsigned char                  controls[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][LINKG_CELLULAR_TX_CONTROL_SIZE];
+    linkg_cellular_tx_queue_item_t items[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                                      // 当前批次的队列元素快照
+    struct mmsghdr                 messages[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                                   // sendmmsg批量消息描述符
+    struct iovec                   iovecs[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][2];                                  // Wire Header与Transport数据段
+    linkg_cellular_wire_header_t   headers[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                                    // 各Packet的Cellular Wire Header
+    uint32_t                       peer_indices[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                               // 各Packet对应的Peer状态槽索引
+    struct sockaddr_in6            destinations[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                               // 各Packet的目标IPv6地址与端口
+    unsigned char                  controls[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][LINKG_CELLULAR_TX_CONTROL_SIZE];   // 各Packet的IPV6_PKTINFO控制信息
 } linkg_cellular_tx_scratch_t;
 
 /**
- * @brief 蜂窝TX状态：只拥有队列、发送、令牌桶实例与Worker句柄。
+ * @brief 蜂窝链路发送模块运行上下文。
+ *
+ * 所有Peer共用三类业务FIFO及一个令牌桶。
+ * Worker负责异步唤醒和定时调度，不直接管理Packet和Socket。
+ *
+ * lock负责串行化队列操作、发送序号、令牌桶及发送调度。
+ * Socket数组与接口名称由Cellular Link持有，TX仅借用。
  */
 struct linkg_cellular_tx
 {
-    pthread_mutex_t                   lock;                                         // 唯一TX状态锁
-    linkg_cellular_tx_peer_sequence_t peer_sequences[LINKG_CELLULAR_TX_PEER_SLOTS]; // 各对端Sequence
-    linkg_cellular_tx_scratch_t       scratch[LINKG_LINK_TX_CLASS_COUNT];           // 各业务Scratch
-    linkg_cellular_tx_queue_t        *queues[LINKG_LINK_TX_CLASS_COUNT];            // 三类FIFO
-    linkg_cellular_tx_worker_t       *worker;                                       // 线程调度器
-    linkg_cellular_tx_rate_t          rate;                                         // 共享令牌桶
-    int                              *socket_fds;                                  // Cellular Link持有
-    const uint16_t                   *service_ports;                               // Cellular Link持有
-    const char                       *interface_name;                              // Cellular Link持有
-    uint64_t                          next_config_us;                              // Web配置同步期限
-    uint32_t                          session_id;                                  // 随机Session ID
-    uint32_t                          capacity;                                    // 批量入队上限
-    _Atomic bool                      started;                                     // 模块启停状态
+    pthread_mutex_t                   lock;                                           // 队列、Sequence、令牌桶及发送调度保护锁
+    linkg_cellular_tx_peer_sequence_t peer_sequences[LINKG_CELLULAR_TX_PEER_SLOTS];   // 各IPv6对端的三业务发送序号
+    linkg_cellular_tx_scratch_t       scratch[LINKG_LINK_TX_CLASS_COUNT];             // 三类业务预分配发送缓冲区
+    linkg_cellular_tx_queue_t        *queues[LINKG_LINK_TX_CLASS_COUNT];              // REALTIME、VIDEO、DATA独立FIFO
+    linkg_cellular_tx_worker_t       *worker;                                         // 独立异步发送Worker
+    linkg_cellular_tx_rate_t          rate;                                           // 全部Peer共享的发送令牌桶
+    int                              *socket_fds;                                     // 借用Cellular Link的Socket数组
+    const uint16_t                   *service_ports;                                  // 借用Cellular Link的业务UDP端口数组
+    const char                       *interface_name;                                 // 借用蜂窝出口接口名称
+    uint64_t                          next_config_us;                                 // 下一次读取动态限速配置的时间
+    uint32_t                          session_id;                                     // 当前TX实例的随机会话标识
+    uint32_t                          capacity;                                       // 单次上层提交的最大Packet数量
+    _Atomic bool                      started;                                        // TX模块是否处于运行状态
 };
 
 /****************************** 内部辅助 ******************************/

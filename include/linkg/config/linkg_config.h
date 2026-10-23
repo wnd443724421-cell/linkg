@@ -19,7 +19,7 @@ extern "C" {
 /****************************** 配置路径 ******************************/
 
 #define LINKG_CONFIG_FACTORY_PATH "/app/current/config/linkgDefault.json" // 出厂默认配置文件
-#define LINKG_CONFIG_USER_PATH    "/app/config/linkgUser.json"    // 用户运行配置文件
+#define LINKG_CONFIG_USER_PATH    "/app/linkgUser.json"    // 用户运行配置文件
 
 /****************************** 类型定义 ******************************/
 

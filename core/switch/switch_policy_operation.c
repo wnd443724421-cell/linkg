@@ -439,8 +439,7 @@ static int _linkg_switch_operation_start(const linkg_switch_policy_event_t *even
     }
 
     sync_id = 0U;
-    ret = linkg_switch_plan_submit_if_current(event->peer_node_id, event->peer_generation,
-                                              &previous, &next, now_us, &sync_id);
+    ret = linkg_switch_plan_submit_if_current(event->peer_node_id, event->peer_generation, &previous, &next, now_us, &sync_id);
     if (ret != 0)
     {
         return ret == -EAGAIN || ret == -EBUSY || ret == -ESTALE ? 0 : ret;
