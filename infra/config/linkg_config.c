@@ -13,12 +13,15 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "linkg_file.h"
 #include "linkg_json.h"
 #include "linkg_log.h"
+#include "linkg_release_state.h"
 
 #include "config_internal.h"
 
@@ -26,6 +29,9 @@
 
 #define LINKG_CONFIG_FILE_MAX  (64U * 1024U)   // 配置文件最大长度
 #define LINKG_CONFIG_FILE_MODE 0600            // 配置文件默认权限，包含Wi-Fi密码和SIM PIN
+#define LINKG_CONFIG_USER_DIR "/app/config"    // A/B升级不清理的共享配置目录
+#define LINKG_CONFIG_RELEASE_STATE "/app/version_state.json" // A/B稳定槽位
+#define LINKG_CONFIG_LEGACY_CURRENT "/app/current/config/linkgUser.json" // 旧版用户配置路径
 
 /****************************** 内部类型 ******************************/
 
@@ -344,6 +350,146 @@ static int _config_read_validated_file(const char *path, linkg_config_t *config,
     return CONFIG_OK;
 }
 
+/****************************** 跨Release用户配置 ******************************/
+
+/**
+ * @brief 创建独立于A/B Release的持久化配置目录。
+ *
+ * 拒绝将符号链接当作配置目录，避免包含Wi-Fi密码和SIM PIN的文件越界写入。
+ */
+static int _config_ensure_user_directory(void)
+{
+    struct stat information;
+
+    if (mkdir(LINKG_CONFIG_USER_DIR, 0700) == 0)
+    {
+        return CONFIG_OK;
+    }
+
+    if (errno != EEXIST ||
+        lstat(LINKG_CONFIG_USER_DIR, &information) != 0 ||
+        !S_ISDIR(information.st_mode))
+    {
+        return CONFIG_ERR_FILE;
+    }
+
+    return CONFIG_OK;
+}
+
+/**
+ * @brief 首次启动新版本时迁移旧槽位的用户JSON，绝不覆盖已有共享文件。
+ *
+ * 优先选用Supervisor记录的稳定Release；若缺少A/B状态，则先查旧current。
+ * 校验后原样原子写入共享目录，旧文件不删除，保证历史版本回滚可读。
+ */
+static int _config_migrate_legacy_user(void)
+{
+    linkg_release_state_t state;
+    linkg_config_t        parsed;
+    struct stat           information;
+    char                  releases[2][128];
+    const char           *candidates[3];
+    const char           *first;
+    const char           *second;
+    char                 *content;
+    size_t                length;
+    uint32_t              index;
+    int                   ret;
+    int                   len;
+
+    if (lstat(LINKG_CONFIG_USER_PATH, &information) == 0)
+    {
+        return CONFIG_OK;
+    }
+    if (errno != ENOENT)
+    {
+        return CONFIG_ERR_FILE;
+    }
+
+    if (linkg_release_load(LINKG_CONFIG_RELEASE_STATE, &state) == 0)
+    {
+        first  = linkg_release_name(state.stable);
+        second = linkg_release_name(1U - state.stable);
+    }
+    else
+    {
+        first  = "v1";
+        second = "v2";
+    }
+
+    if (first == NULL || second == NULL)
+    {
+        return CONFIG_ERR_FILE;
+    }
+
+    len = snprintf(releases[0], sizeof(releases[0]),
+                   "/app/releases/%s/config/linkgUser.json", first);
+    if (len < 0 || (size_t)len >= sizeof(releases[0]))
+    {
+        return CONFIG_ERR_FILE;
+    }
+
+    len = snprintf(releases[1], sizeof(releases[1]),
+                   "/app/releases/%s/config/linkgUser.json", second);
+    if (len < 0 || (size_t)len >= sizeof(releases[1]))
+    {
+        return CONFIG_ERR_FILE;
+    }
+
+    if (linkg_release_load(LINKG_CONFIG_RELEASE_STATE, &state) == 0)
+    {
+        candidates[0] = releases[0];
+        candidates[1] = releases[1];
+        candidates[2] = LINKG_CONFIG_LEGACY_CURRENT;
+    }
+    else
+    {
+        candidates[0] = LINKG_CONFIG_LEGACY_CURRENT;
+        candidates[1] = releases[0];
+        candidates[2] = releases[1];
+    }
+
+    for (index = 0U; index < 3U; index++)
+    {
+        if (lstat(candidates[index], &information) != 0)
+        {
+            if (errno == ENOENT)
+            {
+                continue;
+            }
+            return CONFIG_ERR_FILE;
+        }
+        if (!S_ISREG(information.st_mode))
+        {
+            return CONFIG_ERR_FILE;
+        }
+
+        content = NULL;
+        length  = 0U;
+        ret = _config_read_validated_file(candidates[index], &parsed, &content, &length);
+        if (ret != CONFIG_OK)
+        {
+            LINKG_LOG_ERROR("CONFIG: legacy configuration incompatible, path=%s, error=%d",
+                            candidates[index], ret);
+            return ret;
+        }
+
+        ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH, content, length,
+                                          LINKG_CONFIG_FILE_MODE);
+        free(content);
+        if (ret != 0)
+        {
+            return _config_error_from_file(ret);
+        }
+
+        LINKG_LOG_INFO("CONFIG: migrated user configuration from %s to shared storage",
+                       candidates[index]);
+        return CONFIG_OK;
+    }
+
+    return CONFIG_OK;
+}
+
 /****************************** 出厂文件恢复 ******************************/
 
 /**
@@ -368,10 +514,12 @@ static int _config_restore_factory_file(linkg_config_t *restored)
         return ret;
     }
 
-    ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
-                                      content,
-                                      length,
-                                      LINKG_CONFIG_FILE_MODE);
+    ret = _config_ensure_user_directory();
+    if (ret == CONFIG_OK)
+    {
+        ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
+                                          content, length, LINKG_CONFIG_FILE_MODE);
+    }
 
     free(content);
 
@@ -396,15 +544,28 @@ static int _config_restore_factory_file(linkg_config_t *restored)
 int linkg_config_load(void)
 {
     linkg_config_t config;
-    char          *content;
-    size_t         length;
-    int            ret;
+    struct stat   information;
+    char         *content;
+    size_t        length;
+    int           ret;
 
     content = NULL;
     length  = 0U;
 
-    ret = _config_read_validated_file(LINKG_CONFIG_USER_PATH, &config, &content, &length);
+    ret = _config_ensure_user_directory();
+    if (ret != CONFIG_OK)
+    {
+        LINKG_LOG_ERROR("CONFIG: shared directory unavailable, error=%d", ret);
+        return ret;
+    }
 
+    ret = _config_migrate_legacy_user();
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    ret = _config_read_validated_file(LINKG_CONFIG_USER_PATH, &config, &content, &length);
     free(content);
 
     if (ret != CONFIG_OK)
@@ -414,16 +575,24 @@ int linkg_config_load(void)
             return ret;
         }
 
-        LINKG_LOG_WARN("CONFIG: user configuration invalid, error=%d, restoring factory defaults", ret);
+        // 只允许首次缺失文件时初始化默认值，不得用默认配置擦除损坏或旧版数据。
+        if (lstat(LINKG_CONFIG_USER_PATH, &information) == 0)
+        {
+            LINKG_LOG_ERROR("CONFIG: existing user file invalid, preserving original, error=%d", ret);
+            return ret;
+        }
+        if (errno != ENOENT)
+        {
+            return CONFIG_ERR_FILE;
+        }
 
+        LINKG_LOG_INFO("CONFIG: no saved user settings, initializing defaults");
         ret = _config_restore_factory_file(&config);
         if (ret != CONFIG_OK)
         {
-            LINKG_LOG_ERROR("CONFIG: factory configuration restore failed, error=%d", ret);
+            LINKG_LOG_ERROR("CONFIG: factory initialization failed, error=%d", ret);
             return ret;
         }
-
-        LINKG_LOG_WARN("CONFIG: factory configuration restored successfully");
     }
 
     return linkg_config_replace(&config);
@@ -757,10 +926,12 @@ int linkg_config_save(const linkg_config_t *config)
         return CONFIG_ERR_FILE;
     }
 
-    ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
-                                      content,
-                                      strlen(content),
-                                      LINKG_CONFIG_FILE_MODE);
+    ret = _config_ensure_user_directory();
+    if (ret == CONFIG_OK)
+    {
+        ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
+                                          content, strlen(content), LINKG_CONFIG_FILE_MODE);
+    }
 
     pthread_mutex_unlock(&g_config.file_lock);
     linkg_json_string_free(content);
