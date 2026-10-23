@@ -14,18 +14,15 @@
 #include <errno.h>
 #include <net/if.h>
 #include <netinet/in.h>
-#include <poll.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/eventfd.h>
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
-#include <unistd.h>
 
 #include "linkg_cellular_config.h"
 #include "linkg_config.h"
@@ -33,77 +30,71 @@
 #include "linkg_packet_pool.h"
 #include "linkg_time.h"
 #include "cellular_tx_queue.h"
+#include "cellular_tx_rate.h"
+#include "cellular_tx_worker.h"
 #include "cellular_wire.h"
 
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX                32U                                   // 单次发送调度最大Packet数量
-#define LINKG_CELLULAR_TX_QUEUE_REALTIME_BATCH_COUNT    1U                                    // REALTIME队列缓存1批，共32包
-#define LINKG_CELLULAR_TX_QUEUE_VIDEO_BATCH_COUNT       5U                                    // VIDEO队列缓存5批，共160包
-#define LINKG_CELLULAR_TX_QUEUE_DATA_BATCH_COUNT        5U                                    // DATA队列缓存5批，共160包
-#define LINKG_CELLULAR_TX_CONTROL_SIZE                  CMSG_SPACE(sizeof(struct in6_pktinfo))// 单个IPv6 PKTINFO控制区大小
-#define LINKG_CELLULAR_TX_PEER_SLOTS                    256U                                  // 最多256个IPv6对端Sequence状态
-#define LINKG_CELLULAR_TX_QOS_BATCH_MAX                 4U                                    // 小批次重选优先级
-#define LINKG_CELLULAR_TX_IPV6_UDP_BYTES                48ULL                                 // IPv6 + UDP头部
-#define LINKG_CELLULAR_TX_TOKEN_SCALE                   1000000ULL                            // 微字节令牌精度
-#define LINKG_CELLULAR_TX_MIN_BURST                      6400ULL                               // 至少容纳完整双分片
-#define LINKG_CELLULAR_TX_CONFIG_PERIOD_US               250000ULL                             // 动态配置检查周期
-#define LINKG_CELLULAR_TX_BACKPRESSURE_US                 2000ULL                               // Socket短时背压重试
-#define LINKG_CELLULAR_TX_REALTIME_TIMEOUT_US            100000ULL                             // 100ms
-#define LINKG_CELLULAR_TX_VIDEO_TIMEOUT_US               250000ULL                             // 250ms
-#define LINKG_CELLULAR_TX_DATA_TIMEOUT_US                500000ULL                             // 500ms
+#define LINKG_CELLULAR_TX_BATCH_SIZE_MAX                32U              // 单次允许的最大提交量
+#define LINKG_CELLULAR_TX_QUEUE_REALTIME_BATCH_COUNT    1U               // 实时队列保留32包
+#define LINKG_CELLULAR_TX_QUEUE_VIDEO_BATCH_COUNT       5U               // 视频队列保留160包
+#define LINKG_CELLULAR_TX_QUEUE_DATA_BATCH_COUNT        5U               // 普通队列保留160包
+#define LINKG_CELLULAR_TX_CONTROL_SIZE                  CMSG_SPACE(sizeof(struct in6_pktinfo))
+#define LINKG_CELLULAR_TX_PEER_SLOTS                    256U             // 最多256个IPv6对端序号槽
+#define LINKG_CELLULAR_TX_QOS_BATCH_MAX                 4U               // 每个小批后重新选优先级
+#define LINKG_CELLULAR_TX_IPV6_UDP_BYTES                48ULL            // IPv6(40)+UDP(8)头
+#define LINKG_CELLULAR_TX_CONFIG_PERIOD_US              250000ULL        // 用户配置检查周期
+#define LINKG_CELLULAR_TX_BACKPRESSURE_US               2000ULL          // Socket背压重试
+#define LINKG_CELLULAR_TX_REALTIME_TIMEOUT_US           100000ULL        // 实时排队最长100ms
+#define LINKG_CELLULAR_TX_VIDEO_TIMEOUT_US              250000ULL        // 视频排队最长250ms
+#define LINKG_CELLULAR_TX_DATA_TIMEOUT_US               500000ULL        // 普通排队最长500ms
 
 /****************************** 内部类型 ******************************/
 
 /**
- * @brief 每个目标IPv6地址的三业务独立发送序号。
+ * @brief 按目标IPv6地址维护三业务独立Sequence。
  */
 typedef struct
 {
-    struct in6_addr address;                              // 对端下一跳IPv6
-    uint32_t        sequence[LINKG_LINK_TX_CLASS_COUNT];  // 成功提交Socket的序号
-    bool            used;                                 // 状态槽是否已分配
+    struct in6_addr address;                             // 对端IPv6
+    uint32_t        sequence[LINKG_LINK_TX_CLASS_COUNT]; // 各业务独立序号
+    bool            used;                                // 是否占用槽位
 } linkg_cellular_tx_peer_sequence_t;
 
 /**
- * @brief 单个蜂窝业务类别的预分配发送Scratch。
+ * @brief Socket发送批次复用的预分配缓冲区。
  */
 typedef struct
 {
-    linkg_cellular_tx_queue_item_t items[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                                     // 当前发送Queue元素快照
-    struct mmsghdr                 messages[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                                  // sendmmsg消息数组
-    struct iovec                   iovecs[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][2];                                 // Wire头和Transport帧
-    linkg_cellular_wire_header_t   headers[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                                   // 当轮Wire头
-    uint32_t                       peer_indices[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                              // 当轮序号Peer槽索引
-    struct sockaddr_in6            destinations[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];                              // UDP目标IPv6地址数组
-    unsigned char                  controls[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][LINKG_CELLULAR_TX_CONTROL_SIZE];  // IPv6 PKTINFO控制区
+    linkg_cellular_tx_queue_item_t items[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
+    struct mmsghdr                 messages[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
+    struct iovec                   iovecs[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][2];
+    linkg_cellular_wire_header_t   headers[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
+    uint32_t                       peer_indices[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
+    struct sockaddr_in6            destinations[LINKG_CELLULAR_TX_BATCH_SIZE_MAX];
+    unsigned char                  controls[LINKG_CELLULAR_TX_BATCH_SIZE_MAX][LINKG_CELLULAR_TX_CONTROL_SIZE];
 } linkg_cellular_tx_scratch_t;
 
 /**
- * @brief 蜂窝发送模块运行上下文。
+ * @brief 蜂窝TX状态：只拥有队列、发送、令牌桶实例与Worker句柄。
  */
 struct linkg_cellular_tx
 {
-    pthread_mutex_t                   lock;                                          // 三业务队列和发送调度串行锁
-    uint32_t                          session_id;                                    // 当前TX对象随机Session ID
-    linkg_cellular_tx_peer_sequence_t peer_sequences[LINKG_CELLULAR_TX_PEER_SLOTS];  // Peer独立序号
-    linkg_cellular_tx_scratch_t       scratch[LINKG_LINK_TX_CLASS_COUNT];            // 三业务预分配Scratch
-    linkg_cellular_tx_queue_t         *queues[LINKG_LINK_TX_CLASS_COUNT];            // 三业务等待FIFO
-    int                               *socket_fds;                                   // 借用Cellular Link业务Socket数组
-    const uint16_t                    *service_ports;                                // 借用Cellular Link业务端口数组
-    const char                        *interface_name;                               // 借用蜂窝出口接口名称
-    uint32_t                          capacity;                                      // 单次发送调度最大提交Packet数量
-    pthread_t                         worker;                                        // 独立QoS发送线程
-    int                               event_fd;                                      // 非阻塞事件通知
-    bool                              worker_running;                                // 工作线程生命周期
-    uint32_t                          max_load_mbps;                                 // 当前生效限速
-    uint64_t                          rate_bytes_per_second;                         // 总发送字节额度
-    uint64_t                          tokens_scaled;                                 // 微字节令牌
-    uint64_t                          burst_scaled;                                  // 桶最大额度
-    uint64_t                          last_refill_us;                                // 最近补充时间
-    uint64_t                          next_config_us;                                // 动态配置检查时刻
-    _Atomic bool                      started;                                       // 发送模块运行状态
+    pthread_mutex_t                   lock;                                         // 唯一TX状态锁
+    linkg_cellular_tx_peer_sequence_t peer_sequences[LINKG_CELLULAR_TX_PEER_SLOTS]; // 各对端Sequence
+    linkg_cellular_tx_scratch_t       scratch[LINKG_LINK_TX_CLASS_COUNT];           // 各业务Scratch
+    linkg_cellular_tx_queue_t        *queues[LINKG_LINK_TX_CLASS_COUNT];            // 三类FIFO
+    linkg_cellular_tx_worker_t       *worker;                                       // 线程调度器
+    linkg_cellular_tx_rate_t          rate;                                         // 共享令牌桶
+    int                              *socket_fds;                                  // Cellular Link持有
+    const uint16_t                   *service_ports;                               // Cellular Link持有
+    const char                       *interface_name;                              // Cellular Link持有
+    uint64_t                          next_config_us;                              // Web配置同步期限
+    uint32_t                          session_id;                                  // 随机Session ID
+    uint32_t                          capacity;                                    // 批量入队上限
+    _Atomic bool                      started;                                     // 模块启停状态
 };
 
 /****************************** 内部辅助 ******************************/
@@ -558,80 +549,6 @@ static uint64_t _linkg_cellular_tx_wire_bytes(const linkg_cellular_tx_queue_item
            LINKG_CELLULAR_TX_IPV6_UDP_BYTES;
 }
 
-/** @brief 设置单实例全部Peer共享的令牌桶速率。锁由调用方持有。 */
-static void _linkg_cellular_tx_set_rate_locked(linkg_cellular_tx_t *tx, uint32_t mbps)
-{
-    uint64_t burst;
-
-    if (mbps < LINKG_CELLULAR_MAX_LOAD_MBPS_MIN || mbps > LINKG_CELLULAR_MAX_LOAD_MBPS_MAX ||
-        tx->max_load_mbps == mbps)
-    {
-        return;
-    }
-
-    tx->rate_bytes_per_second = (uint64_t)mbps * 125000ULL;
-    burst = tx->rate_bytes_per_second / 200U; // 约5ms突发
-    if (burst < LINKG_CELLULAR_TX_MIN_BURST)
-    {
-        burst = LINKG_CELLULAR_TX_MIN_BURST;
-    }
-
-    tx->burst_scaled = burst * LINKG_CELLULAR_TX_TOKEN_SCALE;
-    if (tx->max_load_mbps == 0U)
-    {
-        tx->tokens_scaled = tx->burst_scaled;
-    }
-    if (tx->tokens_scaled > tx->burst_scaled)
-    {
-        tx->tokens_scaled = tx->burst_scaled;
-    }
-    tx->max_load_mbps = mbps;
-    LINKG_LOG_INFO("Cellular TX QoS limit=%u Mbps burst=%llu bytes expiry=100/250/500ms",
-                   mbps, (unsigned long long)burst);
-}
-
-/** @brief 令牌用百万分之一字节计数，保留微秒更新的整数余数。 */
-static void _linkg_cellular_tx_refill_locked(linkg_cellular_tx_t *tx, uint64_t now_us)
-{
-    uint64_t delta;
-    uint64_t add;
-
-    if (now_us <= tx->last_refill_us)
-    {
-        return;
-    }
-
-    delta = now_us - tx->last_refill_us;
-    tx->last_refill_us = now_us;
-    if (delta > 1000000ULL)
-    {
-        delta = 1000000ULL;
-    }
-
-    add = delta * tx->rate_bytes_per_second;
-    if (add >= tx->burst_scaled - tx->tokens_scaled)
-    {
-        tx->tokens_scaled = tx->burst_scaled;
-    }
-    else
-    {
-        tx->tokens_scaled += add;
-    }
-}
-
-/** @brief 令牌不足时距离凑齐队首包（或双片组）还需多少微秒。 */
-static uint64_t _linkg_cellular_tx_wait_us(const linkg_cellular_tx_t *tx, uint64_t wire_bytes)
-{
-    uint64_t need = wire_bytes * LINKG_CELLULAR_TX_TOKEN_SCALE;
-    if (need <= tx->tokens_scaled)
-    {
-        return 0U;
-    }
-
-    need -= tx->tokens_scaled;
-    return (need + tx->rate_bytes_per_second - 1U) / tx->rate_bytes_per_second;
-}
-
 /** @brief 过期先于令牌检查，三个队列均清理，完整双片一并淘汰。 */
 static uint32_t _linkg_cellular_tx_expire_locked(linkg_cellular_tx_t *tx, uint64_t now_us)
 {
@@ -727,7 +644,7 @@ static int _linkg_cellular_tx_dispatch_once_locked(linkg_cellular_tx_t *tx, uint
     int                            sent;
 
     *wait_us = 0U;
-    _linkg_cellular_tx_refill_locked(tx, now_us);
+    linkg_cellular_tx_rate_refill(&tx->rate, now_us);
     done = (int)_linkg_cellular_tx_expire_locked(tx, now_us);
 
     for (order = 0U; order < LINKG_LINK_TX_CLASS_COUNT; order++)
@@ -769,11 +686,11 @@ static int _linkg_cellular_tx_dispatch_once_locked(linkg_cellular_tx_t *tx, uint
                 group_bytes += _linkg_cellular_tx_wire_bytes(&items[n + 1U]);
             }
 
-            if ((budget + group_bytes) * LINKG_CELLULAR_TX_TOKEN_SCALE > tx->tokens_scaled)
+            if (!linkg_cellular_tx_rate_can_send(&tx->rate, budget + group_bytes))
             {
                 if (n == 0U)
                 {
-                    *wait_us = _linkg_cellular_tx_wait_us(tx, group_bytes);
+                    *wait_us = linkg_cellular_tx_rate_wait_us(&tx->rate, group_bytes);
                 }
                 break;
             }
@@ -818,8 +735,10 @@ static int _linkg_cellular_tx_dispatch_once_locked(linkg_cellular_tx_t *tx, uint
 
         for (i = 0U; i < (uint32_t)sent; i++)
         {
-            tx->tokens_scaled -= _linkg_cellular_tx_wire_bytes(&items[i]) *
-                                 LINKG_CELLULAR_TX_TOKEN_SCALE;
+            if (!linkg_cellular_tx_rate_debit(&tx->rate, _linkg_cellular_tx_wire_bytes(&items[i])))
+            {
+                LINKG_LOG_ERROR("Cellular TX token accounting invariant violated");
+            }
             linkg_path_record_tx_success(items[i].path, items[i].packet->data_length, 1U);
         }
         (void)linkg_cellular_tx_queue_discard_batch(queue, (uint32_t)sent);
@@ -856,95 +775,62 @@ static uint64_t _linkg_cellular_tx_expiry_locked(linkg_cellular_tx_t *tx, uint64
     return deadline;
 }
 
-/** @brief 事件通知：eventfd满表明已有未消费事件，不需要重复写。 */
-static void _linkg_cellular_tx_wakeup(linkg_cellular_tx_t *tx)
-{
-    uint64_t value = 1U;
-    ssize_t  ret;
-
-    do
-    {
-        ret = write(tx->event_fd, &value, sizeof(value));
-    }
-    while (ret < 0 && errno == EINTR);
-}
-
 /**
- * @brief 唯一TX Worker：按令牌可用时间与最近超时期限休眠。
+ * @brief 由Worker定时调用，集中完成所有LinkG蜂窝业务的优先级和排队决策。
  *
- * 每250ms同步Web现有max_load_mbps，无需重启；stop必须先join再关闭socket。
+ * 回调最多提交四包，然后立即重新检查优先级；Worker自身不接触Packet。
  */
-static void *_linkg_cellular_tx_worker(void *argument)
+static uint64_t _linkg_cellular_tx_process(void *context, uint64_t now_us)
 {
-    linkg_cellular_tx_t    *tx = argument;
+    linkg_cellular_tx_t    *tx;
     linkg_cellular_config_t config;
-    struct pollfd           fd;
-    uint64_t                now;
-    uint64_t                deadline;
-    uint64_t                wait_us;
-    uint64_t                value;
-    int                     work;
-    int                     timeout_ms;
-    int                     ret;
+    uint64_t               deadline_us;
+    uint64_t               wait_us;
+    int                    processed;
 
-    fd.fd     = tx->event_fd;
-    fd.events = POLLIN;
+    tx = context;
 
-    for (;;)
+    pthread_mutex_lock(&tx->lock);
+
+    if (!atomic_load(&tx->started))
     {
-        pthread_mutex_lock(&tx->lock);
-        if (!atomic_load(&tx->started))
-        {
-            pthread_mutex_unlock(&tx->lock);
-            break;
-        }
-
-        now = linkg_time_monotonic_us();
-        if (now >= tx->next_config_us)
-        {
-            if (linkg_config_get_cellular(&config) == 0)
-            {
-                _linkg_cellular_tx_set_rate_locked(tx, config.max_load_mbps);
-            }
-            tx->next_config_us = now + LINKG_CELLULAR_TX_CONFIG_PERIOD_US;
-        }
-
-        work = _linkg_cellular_tx_dispatch_once_locked(tx, now, &wait_us);
-        now = linkg_time_monotonic_us();
-        deadline = _linkg_cellular_tx_expiry_locked(tx, tx->next_config_us);
-
-        if (wait_us > 0U && now + wait_us < deadline)
-        {
-            deadline = now + wait_us;
-        }
-        else if (wait_us == 0U && work > 0)
-        {
-            deadline = now;
-        }
-
-        timeout_ms = (int)((deadline > now ? deadline - now : 0U) + 999U) / 1000;
         pthread_mutex_unlock(&tx->lock);
-
-        do
-        {
-            ret = poll(&fd, 1U, timeout_ms);
-        }
-        while (ret < 0 && errno == EINTR && atomic_load(&tx->started));
-
-        if (ret > 0 && (fd.revents & POLLIN) != 0)
-        {
-            while (read(tx->event_fd, &value, sizeof(value)) == sizeof(value))
-            {
-            }
-        }
-        else if (ret < 0 || (ret > 0 && (fd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0))
-        {
-            // 异常FD/轮询错误时避免忙循环，最终由stop完成资源回收。
-            (void)poll(NULL, 0U, 5);
-        }
+        return UINT64_MAX;
     }
 
-    return NULL;
+    if (now_us >= tx->next_config_us)
+    {
+        if (linkg_config_get_cellular(&config) == 0 &&
+            config.max_load_mbps != tx->rate.max_load_mbps)
+        {
+            if (linkg_cellular_tx_rate_set(&tx->rate, config.max_load_mbps, now_us) == 0)
+            {
+                LINKG_LOG_INFO("Cellular TX QoS limit=%u Mbps", config.max_load_mbps);
+            }
+        }
+
+        tx->next_config_us = now_us + LINKG_CELLULAR_TX_CONFIG_PERIOD_US;
+    }
+
+    processed = _linkg_cellular_tx_dispatch_once_locked(tx, now_us, &wait_us);
+
+    now_us      = linkg_time_monotonic_us();
+    deadline_us = _linkg_cellular_tx_expiry_locked(tx, tx->next_config_us);
+
+    if (wait_us > 0U && wait_us != UINT64_MAX)
+    {
+        if (deadline_us > now_us && wait_us < deadline_us - now_us)
+        {
+            deadline_us = now_us + wait_us;
+        }
+    }
+    else if (wait_us == 0U && processed > 0)
+    {
+        deadline_us = now_us;
+    }
+
+    pthread_mutex_unlock(&tx->lock);
+    return deadline_us;
 }
 
 /****************************** 生命周期 ******************************/
@@ -982,7 +868,6 @@ linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds
     tx->service_ports  = service_ports;
     tx->interface_name = interface_name;
     tx->capacity       = capacity;
-    tx->event_fd       = -1;
 
     ret = _linkg_cellular_tx_generate_session(&tx->session_id);
     if (ret != 0)
@@ -999,14 +884,13 @@ linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds
         goto fail_tx;
     }
 
-    tx->event_fd = eventfd(0U, EFD_NONBLOCK | EFD_CLOEXEC);
-    if (tx->event_fd < 0)
+    ret = linkg_cellular_tx_rate_init(&tx->rate, LINKG_CELLULAR_MAX_LOAD_MBPS_DEFAULT,
+                                      linkg_time_monotonic_us());
+    if (ret != 0)
     {
         pthread_mutex_destroy(&tx->lock);
         goto fail_tx;
     }
-
-    _linkg_cellular_tx_set_rate_locked(tx, LINKG_CELLULAR_MAX_LOAD_MBPS_DEFAULT);
 
     for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
     {
@@ -1015,6 +899,13 @@ linkg_cellular_tx_t *linkg_cellular_tx_create(uint32_t capacity, int *socket_fds
         {
             goto fail_queues;
         }
+    }
+
+    tx->worker = linkg_cellular_tx_worker_create(_linkg_cellular_tx_process, tx);
+    if (tx->worker == NULL)
+    {
+        class_index = LINKG_LINK_TX_CLASS_COUNT;
+        goto fail_queues;
     }
 
     return tx;
@@ -1028,7 +919,6 @@ fail_queues:
         tx->queues[class_index] = NULL;
     }
 
-    close(tx->event_fd);
     pthread_mutex_destroy(&tx->lock);
 
 fail_tx:
@@ -1052,6 +942,8 @@ void linkg_cellular_tx_destroy(linkg_cellular_tx_t *tx)
     }
 
     linkg_cellular_tx_stop(tx);
+    linkg_cellular_tx_worker_destroy(tx->worker);
+    tx->worker = NULL;
 
     for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
     {
@@ -1059,7 +951,6 @@ void linkg_cellular_tx_destroy(linkg_cellular_tx_t *tx)
         tx->queues[class_index] = NULL;
     }
 
-    close(tx->event_fd);
     pthread_mutex_destroy(&tx->lock);
 
     free(tx);
@@ -1070,7 +961,7 @@ void linkg_cellular_tx_destroy(linkg_cellular_tx_t *tx)
  */
 int linkg_cellular_tx_start(linkg_cellular_tx_t *tx)
 {
-    uint32_t cls;
+    uint32_t class_index;
     int      ret;
 
     if (tx == NULL)
@@ -1090,63 +981,61 @@ int linkg_cellular_tx_start(linkg_cellular_tx_t *tx)
         return -EALREADY;
     }
 
-    for (cls = 0U; cls < LINKG_LINK_TX_CLASS_COUNT; cls++)
+    for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
     {
-        if (tx->socket_fds[cls] < 0)
+        if (tx->socket_fds[class_index] < 0)
         {
             pthread_mutex_unlock(&tx->lock);
             return -ENODEV;
         }
     }
 
-    tx->tokens_scaled  = tx->burst_scaled;
-    tx->last_refill_us = linkg_time_monotonic_us();
-    tx->next_config_us = 0U;
+    tx->rate.tokens_scaled  = tx->rate.burst_scaled;
+    tx->rate.last_refill_us = linkg_time_monotonic_us();
+    tx->next_config_us      = 0U;
     atomic_store(&tx->started, true);
+    pthread_mutex_unlock(&tx->lock);
 
-    ret = pthread_create(&tx->worker, NULL, _linkg_cellular_tx_worker, tx);
+    ret = linkg_cellular_tx_worker_start(tx->worker);
     if (ret != 0)
     {
         atomic_store(&tx->started, false);
-        pthread_mutex_unlock(&tx->lock);
-        return -ret;
+        return ret;
     }
 
-    tx->worker_running = true;
-    pthread_mutex_unlock(&tx->lock);
     return 0;
 }
 
-/** @brief 关闭TX Worker并清空积压；调用方随后才能关闭Socket。 */
+/**
+ * @brief 阻止新发送、等待Worker退出后清空队列。
+ *        必须先join再由Cellular Link关闭Socket，且join不能持有tx->lock。
+ */
 void linkg_cellular_tx_stop(linkg_cellular_tx_t *tx)
 {
-    uint32_t  cls;
-    pthread_t worker;
-    bool      join_worker;
+    uint32_t class_index;
+    int      ret;
 
     if (tx == NULL)
     {
         return;
     }
 
-    pthread_mutex_lock(&tx->lock);
     atomic_store(&tx->started, false);
-    worker = tx->worker;
-    join_worker = tx->worker_running;
-    tx->worker_running = false;
-    pthread_mutex_unlock(&tx->lock);
 
-    if (join_worker)
+    ret = linkg_cellular_tx_worker_stop(tx->worker);
+    if (ret != 0)
     {
-        _linkg_cellular_tx_wakeup(tx);
-        (void)pthread_join(worker, NULL);
+        LINKG_LOG_ERROR("Cellular TX worker stop failed, error=%d", ret);
+        return;
     }
 
     pthread_mutex_lock(&tx->lock);
-    for (cls = 0U; cls < LINKG_LINK_TX_CLASS_COUNT; cls++)
+
+    for (class_index = 0U; class_index < LINKG_LINK_TX_CLASS_COUNT; class_index++)
     {
-        linkg_cellular_tx_queue_clear(tx->queues[cls]);
+        linkg_cellular_tx_queue_clear(tx->queues[class_index]);
     }
+
     pthread_mutex_unlock(&tx->lock);
 }
 
@@ -1302,9 +1191,8 @@ int linkg_cellular_tx_submit(linkg_cellular_tx_t *tx, linkg_path_t *path, linkg_
 
     accepted_count = (int)count;
 
-    _linkg_cellular_tx_wakeup(tx);
-
     pthread_mutex_unlock(&tx->lock);
+    linkg_cellular_tx_worker_notify(tx->worker);
 
     return accepted_count;
 }
