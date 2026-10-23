@@ -15,7 +15,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #include "linkg_file.h"
 #include "linkg_json.h"
@@ -27,7 +26,6 @@
 
 #define LINKG_CONFIG_FILE_MAX  (64U * 1024U)   // 配置文件最大长度
 #define LINKG_CONFIG_FILE_MODE 0600            // 配置文件默认权限，包含Wi-Fi密码和SIM PIN
-#define LINKG_CONFIG_USER_DIR "/app/config"    // A/B升级不清理的共享配置目录
 
 /****************************** 内部类型 ******************************/
 
@@ -346,32 +344,6 @@ static int _config_read_validated_file(const char *path, linkg_config_t *config,
     return CONFIG_OK;
 }
 
-/****************************** 跨Release用户配置 ******************************/
-
-/**
- * @brief 创建独立于A/B Release的持久化配置目录。
- *
- * 拒绝将符号链接当作配置目录，避免包含Wi-Fi密码和SIM PIN的文件越界写入。
- */
-static int _config_ensure_user_directory(void)
-{
-    struct stat information;
-
-    if (mkdir(LINKG_CONFIG_USER_DIR, 0700) == 0)
-    {
-        return CONFIG_OK;
-    }
-
-    if (errno != EEXIST ||
-        lstat(LINKG_CONFIG_USER_DIR, &information) != 0 ||
-        !S_ISDIR(information.st_mode))
-    {
-        return CONFIG_ERR_FILE;
-    }
-
-    return CONFIG_OK;
-}
-
 /****************************** 出厂文件恢复 ******************************/
 
 /**
@@ -396,12 +368,10 @@ static int _config_restore_factory_file(linkg_config_t *restored)
         return ret;
     }
 
-    ret = _config_ensure_user_directory();
-    if (ret == CONFIG_OK)
-    {
-        ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
-                                          content, length, LINKG_CONFIG_FILE_MODE);
-    }
+    ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
+                                      content,
+                                      length,
+                                      LINKG_CONFIG_FILE_MODE);
 
     free(content);
 
@@ -421,29 +391,20 @@ static int _config_restore_factory_file(linkg_config_t *restored)
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 加载持久化用户配置；文件不存在时从当前Release默认模板初始化。
- *
- * 对已存在但无效的用户文件，不自动覆盖；仅显式恢复出厂可以替换。
+ * @brief 加载用户配置，加载失败时自动恢复出厂配置。
  */
 int linkg_config_load(void)
 {
     linkg_config_t config;
-    struct stat   information;
-    char         *content;
-    size_t        length;
-    int           ret;
+    char          *content;
+    size_t         length;
+    int            ret;
 
     content = NULL;
     length  = 0U;
 
-    ret = _config_ensure_user_directory();
-    if (ret != CONFIG_OK)
-    {
-        LINKG_LOG_ERROR("CONFIG: shared directory unavailable, error=%d", ret);
-        return ret;
-    }
-
     ret = _config_read_validated_file(LINKG_CONFIG_USER_PATH, &config, &content, &length);
+
     free(content);
 
     if (ret != CONFIG_OK)
@@ -453,24 +414,16 @@ int linkg_config_load(void)
             return ret;
         }
 
-        // 仅首次缺失文件时初始化；已经存在的无效用户文件不得自动覆盖。
-        if (lstat(LINKG_CONFIG_USER_PATH, &information) == 0)
-        {
-            LINKG_LOG_ERROR("CONFIG: existing user file invalid, preserving original, error=%d", ret);
-            return ret;
-        }
-        if (errno != ENOENT)
-        {
-            return CONFIG_ERR_FILE;
-        }
+        LINKG_LOG_WARN("CONFIG: user configuration invalid, error=%d, restoring factory defaults", ret);
 
-        LINKG_LOG_INFO("CONFIG: no saved user settings, initializing defaults");
         ret = _config_restore_factory_file(&config);
         if (ret != CONFIG_OK)
         {
-            LINKG_LOG_ERROR("CONFIG: factory initialization failed, error=%d", ret);
+            LINKG_LOG_ERROR("CONFIG: factory configuration restore failed, error=%d", ret);
             return ret;
         }
+
+        LINKG_LOG_WARN("CONFIG: factory configuration restored successfully");
     }
 
     return linkg_config_replace(&config);
@@ -804,12 +757,10 @@ int linkg_config_save(const linkg_config_t *config)
         return CONFIG_ERR_FILE;
     }
 
-    ret = _config_ensure_user_directory();
-    if (ret == CONFIG_OK)
-    {
-        ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
-                                          content, strlen(content), LINKG_CONFIG_FILE_MODE);
-    }
+    ret = linkg_file_write_all_atomic(LINKG_CONFIG_USER_PATH,
+                                      content,
+                                      strlen(content),
+                                      LINKG_CONFIG_FILE_MODE);
 
     pthread_mutex_unlock(&g_config.file_lock);
     linkg_json_string_free(content);
@@ -828,7 +779,7 @@ int linkg_config_save(const linkg_config_t *config)
  * @brief 将出厂默认配置恢复到用户配置文件。
  *
  * 不修改当前内存配置。恢复成功后禁止普通保存，调用方应请求系统重启。
- * 开机只在配置文件不存在时初始化默认配置；文件损坏时不会隐式恢复。
+ * 开机配置损坏的自动恢复不走本接口，因此不影响启动后的正常保存。
  */
 int linkg_config_restore_factory(void)
 {
