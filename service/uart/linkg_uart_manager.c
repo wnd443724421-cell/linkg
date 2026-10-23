@@ -80,15 +80,7 @@ static void _uart_manager_close_routes(void)
  */
 static int _uart_manager_disable_hardware(void)
 {
-    int ret;
-
-    ret = linkg_gpio_manager_set_uart_rx_enabled(false);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    return linkg_gpio_manager_set_sbus_enabled(false);
+	return linkg_gpio_manager_set_sbus_enabled(false);
 }
 
 /****************************** 生命周期 ******************************/
@@ -223,15 +215,6 @@ int uart_manager_start(bool strict)
         return 0;
     }
 
-    // UART RX使能是板级统一GPIO，只有实际启动串口服务时才开启。
-    ret = linkg_gpio_manager_set_uart_rx_enabled(false);
-    if (ret != 0)
-    {
-        g_uart_manager.state = LINKG_UART_LIFE_STOPPING;
-        pthread_mutex_unlock(&g_uart_manager.life_lock);
-        return ret;
-    }
-
     has_sbus = false;
     for (i = 0U; i < g_uart_manager.port_count; i++)
     {
@@ -277,12 +260,6 @@ int uart_manager_start(bool strict)
                 goto fail;
             }
         }
-    }
-
-    ret = linkg_gpio_manager_set_uart_rx_enabled(true);
-    if (ret != 0)
-    {
-        goto fail;
     }
 
     g_uart_manager.state = LINKG_UART_LIFE_RUNNING;

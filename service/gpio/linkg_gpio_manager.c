@@ -99,7 +99,6 @@ typedef struct
     linkg_gpio_manager_state_t state;                // 当前生命周期
     linkg_device_role_t        role;                 // AP/STA运行灯模式
     linux_gpio_t              *sbus;                 // PD16：MCU_MODEL（可选）
-    linux_gpio_t              *uart_rx;              // PD21：UART_EN#
     linux_gpio_t              *reset_key;            // PD8：KEY_1
     linux_gpio_t              *hwid1;                // PB8：硬件版本位1
     linux_gpio_t              *hwid2;                // PB9：硬件版本位2
@@ -161,7 +160,6 @@ static void _linkg_gpio_close_pin(linux_gpio_t **gpio)
 static void _linkg_gpio_release_locked(void)
 {
     _linkg_gpio_close_pin(&g_gpio.sbus);
-    _linkg_gpio_close_pin(&g_gpio.uart_rx);
     _linkg_gpio_close_pin(&g_gpio.reset_key);
     _linkg_gpio_close_pin(&g_gpio.hwid1);
     _linkg_gpio_close_pin(&g_gpio.hwid2);
@@ -293,7 +291,6 @@ static int _linkg_gpio_safe_outputs_locked(void)
         }
     }
 
-    ret = linux_gpio_write(g_gpio.uart_rx, true);
     if (ret != 0 && first_error == 0)
     {
         first_error = ret;
@@ -969,12 +966,6 @@ int linkg_gpio_manager_init(void)
         goto fail;
     }
 
-    ret = _linkg_gpio_open_pin(LINKG_RESOURCE_GPIO_UART_ENABLE, LINUX_GPIO_DIRECTION_OUTPUT, true, &g_gpio.uart_rx);
-    if (ret != 0)
-    {
-        goto fail;
-    }
-
     ret = _linkg_gpio_open_pin(LINKG_RESOURCE_GPIO_LED_RUN, LINUX_GPIO_DIRECTION_OUTPUT, true, &g_gpio.sys_run);
     if (ret != 0)
     {
@@ -1247,27 +1238,6 @@ int linkg_gpio_manager_set_sbus_enabled(bool enabled)
     }
 
     ret = linux_gpio_write(g_gpio.sbus, enabled);
-
-    pthread_mutex_unlock(&g_gpio.lock);
-    return ret;
-}
-
-/**
- * @brief 设置串口透传接收使能；UART_EN#低电平有效。
- */
-int linkg_gpio_manager_set_uart_rx_enabled(bool enabled)
-{
-    int ret;
-
-    pthread_mutex_lock(&g_gpio.lock);
-
-    if (g_gpio.state != LINKG_GPIO_STATE_INITIALIZED && g_gpio.state != LINKG_GPIO_STATE_RUNNING)
-    {
-        pthread_mutex_unlock(&g_gpio.lock);
-        return -ENODEV;
-    }
-
-    ret = linux_gpio_write(g_gpio.uart_rx, !enabled);
 
     pthread_mutex_unlock(&g_gpio.lock);
     return ret;

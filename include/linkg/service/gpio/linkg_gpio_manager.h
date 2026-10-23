@@ -29,7 +29,6 @@ int linkg_gpio_manager_set_role(linkg_device_role_t role);
 /****************************** 硬件控制 ******************************/
 
 int linkg_gpio_manager_set_sbus_enabled(bool enabled);
-int linkg_gpio_manager_set_uart_rx_enabled(bool enabled);
 
 /****************************** 硬件版本 ******************************/
 

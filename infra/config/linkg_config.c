@@ -414,7 +414,7 @@ int linkg_config_load(void)
             return ret;
         }
 
-        LINKG_LOG_WARN("CONFIG: user configuration invalid, error=%d, restoring factory defaults", ret);
+        LINKG_LOG_INFO("CONFIG: user configuration invalid, error=%d, restoring factory defaults", ret);
 
         ret = _config_restore_factory_file(&config);
         if (ret != CONFIG_OK)
@@ -423,7 +423,7 @@ int linkg_config_load(void)
             return ret;
         }
 
-        LINKG_LOG_WARN("CONFIG: factory configuration restored successfully");
+        LINKG_LOG_INFO("CONFIG: factory configuration restored successfully");
     }
 
     return linkg_config_replace(&config);

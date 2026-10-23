@@ -249,14 +249,6 @@ Wi-Fi 使用三个 GPIO 驱动一个 RGB 指示单元，颜色由 R/G/B 通道�
 
 初始化与停止时默认输出低电平，即请求关闭 SBUS 通路。该 GPIO 到实际 SBUS 开关之间存在 MCU/外围硬件控制链，最终线路动作须结合 MCU 固件确认。
 
-### 8.2 UART 接收使能（PD21 / UART_EN#）
-
-接口：`linkg_gpio_manager_set_uart_rx_enabled(bool enabled)`。
-
-| 调用参数 | PD21 输出 | 逻辑动作 |
-|---|---|---|
-| `true` | 低电平 | 启用串口接收 |
-| `false` | 高电平 | 关闭串口接收 |
 
 初始化及停止时输出高电平，默认关闭接收使能。此接口仅明确控制 `UART_EN#` 所代表的接收通路，不应扩展解释为关闭整个 UART 控制器。
 
@@ -328,7 +320,6 @@ UNINITIALIZED
 | `linkg_gpio_manager_deinit()` | 释放所有 GPIO 管理资源 |
 | `linkg_gpio_manager_set_role(role)` | 更改 AP/STA 运行灯角色 |
 | `linkg_gpio_manager_set_sbus_enabled(enabled)` | 设置 SBUS 通路逻辑使能 |
-| `linkg_gpio_manager_set_uart_rx_enabled(enabled)` | 设置 UART 接收使能 |
 | `linkg_gpio_manager_get_hardware_bits(...)` | 读取 HWID1、HWID2 原始位 |
 | `linkg_gpio_manager_get_hardware_id(...)` | 读取组合后的硬件版本编码 |
 

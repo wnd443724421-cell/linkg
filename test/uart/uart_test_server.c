@@ -229,19 +229,6 @@ int linkg_discovery_node_online(uint8_t node_id, bool *online)
     return 0;
 }
 
-/**
- * @brief 模拟串口接收门控，测试不操作VM或板卡GPIO。
- */
-int linkg_gpio_manager_set_uart_rx_enabled(bool enabled)
-{
-    if (_uart_test_fail(&g_test_fail_gpio_rx))
-    {
-        return -EIO;
-    }
-
-    atomic_store(&g_test_rx_enabled, enabled);
-    return 0;
-}
 
 /**
  * @brief 切换MCU模式时接收门控必须关闭。
