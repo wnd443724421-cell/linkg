@@ -380,7 +380,8 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
         /****************************** Wi-Fi恢复候选 ******************************/
 
         case LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY:
-            // 只处理恢复事件指定的Cellular单发业务。
+        case LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY:
+            // 两类恢复事件都只处理class_mask指定的Cellular单发业务。
             for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
             {
                 bit = LINKG_SWITCH_POLICY_CLASS_BIT(index);
@@ -392,7 +393,7 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
 
                 item = &next->classes[index];
 
-                // Cellular主发、Wi-Fi备用的业务才能进入恢复验证。
+                // 仅处理Cellular单发、Wi-Fi备用的业务。
                 if (item->mode != LINKG_SEND_MODE_SINGLE ||
                     item->primary_link_id != observation->cellular.link_id ||
                     item->secondary_link_id != observation->wifi.link_id)
@@ -400,7 +401,19 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
                     continue;
                 }
 
-                item->mode = LINKG_SEND_MODE_REDUNDANT;
+                if (event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY)
+                {
+                    // 直接恢复：保持单发，Wi-Fi升为Primary，Cellular保留为Secondary。
+                    item->mode              = LINKG_SEND_MODE_SINGLE;
+                    item->primary_link_id   = observation->wifi.link_id;
+                    item->secondary_link_id = observation->cellular.link_id;
+                }
+                else
+                {
+                    // 质量恢复：保留原有双发Verify流程。
+                    item->mode = LINKG_SEND_MODE_REDUNDANT;
+                }
+
                 mask |= bit;
             }
             break;
@@ -417,7 +430,7 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
  * @brief 记录已成功提交PlanSync的组级切换事务。
  *
  * 保存本次事务原因、目标链路、观测基线及业务Operation ID。
- * Wi-Fi硬故障直接等待最终单发ACK，其余事件等待进入冗余ACK。
+ * Wi-Fi硬故障和Wi-Fi直接恢复等待最终单发ACK，其余事件等待进入冗余ACK。
  * 调用方必须持有g_switch.lock。
  */
 static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *peer, const linkg_switch_policy_event_t *event, const linkg_send_plan_t *previous, uint32_t mask, uint32_t sync_id, uint64_t now_us)
@@ -448,6 +461,7 @@ static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *pe
             break;
 
         case LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY:
+        case LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY:
             policy->group_reason = LINKG_SWITCH_POLICY_REASON_RECOVERY;
             break;
 
@@ -459,14 +473,21 @@ static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *pe
 
     /****************************** 事务目标与初始阶段 ******************************/
 
-    // Wi-Fi硬故障直接迁移到Cellular，其余事件先进入冗余验证阶段。
-    if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_WIFI_DOWN)
+    // Wi-Fi硬故障直接迁移到Cellular，不进入冗余。
+    if (event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN)
     {
         policy->group_target = LINKG_SWITCH_POLICY_TARGET_CELLULAR;
         phase                = LINKG_SWITCH_POLICY_PHASE_WAIT_EXIT_ACK;
     }
+    // 非质量恢复直接返回Wi-Fi单发，仍等待最终PlanSync ACK。
+    else if (event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY)
+    {
+        policy->group_target = LINKG_SWITCH_POLICY_TARGET_WIFI;
+        phase                = LINKG_SWITCH_POLICY_PHASE_WAIT_EXIT_ACK;
+    }
     else
     {
+        // LOSS、LOAD及原RECOVERY_READY仍先进入冗余阶段。
         policy->group_target = LINKG_SWITCH_POLICY_TARGET_NONE;
         phase                = LINKG_SWITCH_POLICY_PHASE_WAIT_ENTER_ACK;
     }
@@ -932,6 +953,7 @@ int linkg_switch_policy_operation_process_event(const linkg_switch_policy_event_
         case LINKG_SWITCH_POLICY_EVENT_WIFI_LOSS_BAD:
         case LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD:
         case LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY:
+        case LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY:
             return _linkg_switch_operation_start(event, now_us);
 
         case LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE:
@@ -1034,8 +1056,11 @@ static void _linkg_switch_operation_abandon_uncertain_locked(linkg_switch_peer_r
                 continue;
             }
 
-            // AP是否应用最终Plan尚不确定，保存最近RSSI基线用于后续恢复。
-            operation->migration_reason            = LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
+            // AP计划是否一致仍未知；质量迁移必须保留原因，以继续执行RSSI滞回。
+            operation->migration_reason =
+                policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOSS ? LINKG_SWITCH_POLICY_MIGRATION_LOSS :
+                policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD ? LINKG_SWITCH_POLICY_MIGRATION_LOAD :
+                LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
             operation->recovery.rssi_valid        = policy->group_rssi_valid;
             operation->recovery.rssi_dbm          = policy->group_rssi_dbm;
             operation->recovery.migrated_us       = now_us;

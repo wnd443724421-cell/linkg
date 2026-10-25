@@ -97,6 +97,18 @@ typedef struct
     linkg_switch_policy_recovery_t         recovery;           // 按业务保存的迁移历史及恢复基线
 } linkg_switch_policy_operation_t;
 
+/****************************** Probe逻辑断链检测状态 ******************************/
+
+typedef struct
+{
+    uint32_t wifi_link_id;                                        // 当前Probe累计对应的Wi-Fi Link实例
+    uint64_t low_load_since_us;                                   // 本轮连续低负载起始时间
+    uint64_t last_probe_updated_us[LINKG_TRANSPORT_CLASS_COUNT];  // 各业务最后消费的Probe更新时间
+    uint8_t  timeout_count[LINKG_TRANSPORT_CLASS_COUNT];          // 各业务连续有效超时次数
+    bool     initialized;                                         // 当前Link的检测状态是否已初始化
+    bool     blackhole_latched;                                   // 曾被Probe证实黑洞，直接回切须校验Probe恢复
+} linkg_switch_policy_probe_runtime_t;
+
 /****************************** Peer级策略运行状态 ******************************/
 
 /**
@@ -109,31 +121,32 @@ typedef struct
  */
 typedef struct
 {
-    linkg_switch_policy_operation_t operations[LINKG_SWITCH_POLICY_OPERATION_MAX];  // 三类业务独立事务槽位
-    uint32_t                        next_operation_id;                              // 当前Peer的事务编号分配基线
-    uint32_t                        plan_sync_id;                                   // 活动组对应的完整PlanSync逻辑编号
+    linkg_switch_policy_operation_t     operations[LINKG_SWITCH_POLICY_OPERATION_MAX];  // 三类业务独立事务槽位
+    linkg_switch_policy_probe_runtime_t wifi_probe;                                     // Wi-Fi低负载三类Probe超时与逻辑黑洞恢复保护
+    uint32_t                            next_operation_id;                              // 当前Peer的事务编号分配基线
+    uint32_t                            plan_sync_id;                                   // 活动组对应的完整PlanSync逻辑编号
 
-    uint32_t                        group_mask;                                     // 当前事务组包含的业务集合，0表示无活动组
-    linkg_switch_policy_reason_t    group_reason;                                   // 当前组LOSS/LOAD/RECOVERY/WIFI_DOWN触发原因
-    linkg_switch_policy_phase_t     group_phase;                                    // 当前组统一的事务阶段
-    linkg_switch_policy_target_t    group_target;                                   // 退出冗余后的最终单发目标
-    uint64_t                        next_action_us;                                 // LOAD到期或同步恢复的下一动作时间
-    uint8_t                         recovery_count;                                 // 当前组的追加重同步次数
+    uint32_t                            group_mask;                                     // 当前事务组包含的业务集合，0表示无活动组
+    linkg_switch_policy_reason_t        group_reason;                                   // 当前组LOSS/LOAD/RECOVERY/WIFI_DOWN触发原因
+    linkg_switch_policy_phase_t         group_phase;                                    // 当前组统一的事务阶段
+    linkg_switch_policy_target_t        group_target;                                   // 退出冗余后的最终单发目标
+    uint64_t                            next_action_us;                                 // LOAD到期或同步恢复的下一动作时间
+    uint8_t                             recovery_count;                                 // 当前组的追加重同步次数
 
-    int32_t                         group_rssi_dbm;                                 // 事务建立时的Wi-Fi RSSI基线
-    bool                            group_rssi_valid;                               // 当前组RSSI基线是否有效
-    uint32_t                        group_wifi_link_id;                             // 创建事务组时的Wi-Fi Link实例
-    uint32_t                        group_cellular_link_id;                         // 创建事务组时的Cellular Link实例
+    int32_t                             group_rssi_dbm;                                 // 事务建立时的Wi-Fi RSSI基线
+    bool                                group_rssi_valid;                               // 当前组RSSI基线是否有效
+    uint32_t                            group_wifi_link_id;                             // 创建事务组时的Wi-Fi Link实例
+    uint32_t                            group_cellular_link_id;                         // 创建事务组时的Cellular Link实例
 
-    int32_t                         last_wifi_rssi_dbm;                             // 最近一次有效Wi-Fi RSSI，供物理断开后的恢复判断
-    bool                            last_wifi_rssi_valid;                           // 历史Wi-Fi RSSI是否有效
-    uint32_t                        last_wifi_link_id;                              // 最近一次有效Wi-Fi Link实例
-    uint32_t                        observed_primary_link_ids[LINKG_TRANSPORT_CLASS_COUNT]; // 上轮各业务主链路，用于识别外部迁移
-    bool                            observed_plan_valid;                            // 是否已经记录首次Plan基线
+    int32_t                             last_wifi_rssi_dbm;                             // 最近一次有效Wi-Fi RSSI，供物理断开后的恢复判断
+    bool                                last_wifi_rssi_valid;                           // 历史Wi-Fi RSSI是否有效
+    uint32_t                            last_wifi_link_id;                              // 最近一次有效Wi-Fi Link实例
+    uint32_t                            observed_primary_link_ids[LINKG_TRANSPORT_CLASS_COUNT]; // 上轮各业务主链路，用于识别外部迁移
+    bool                                observed_plan_valid;                            // 是否已经记录首次Plan基线
 
-    bool                            sync_repair_pending;                            // 快速重同步耗尽后待修复的本地完整Plan
-    uint32_t                        sync_repair_id;                                 // 当前后台修复的PlanSync逻辑ID
-    uint64_t                        sync_repair_after_us;                           // 下一次低频修复截止时间
+    bool                                sync_repair_pending;                            // 快速重同步耗尽后待修复的本地完整Plan
+    uint32_t                            sync_repair_id;                                 // 当前后台修复的PlanSync逻辑ID
+    uint64_t                            sync_repair_after_us;                           // 下一次低频修复截止时间
 } linkg_switch_policy_runtime_t;
 
 #endif // SWITCH_POLICY_STATE_H

@@ -28,19 +28,20 @@
  */
 typedef enum
 {
-    LINKG_SWITCH_POLICY_EVENT_NONE = 0,       // 无效事件
+    LINKG_SWITCH_POLICY_EVENT_NONE = 0,             // 无效事件
 
     // 初始事件：请求创建或抢占切换事务
-    LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN,      // Wi-Fi明确硬故障，处理受影响业务
-    LINKG_SWITCH_POLICY_EVENT_WIFI_LOSS_BAD,  // Wi-Fi无线丢包异常，申请冗余质量验证
-    LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD,  // Wi-Fi队列溢出，申请单类业务迁移
-    LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY, // 5G业务满足Wi-Fi恢复候选条件
+    LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN,            // Wi-Fi明确硬故障，处理受影响业务
+    LINKG_SWITCH_POLICY_EVENT_WIFI_LOSS_BAD,        // Wi-Fi无线丢包异常，申请冗余质量验证
+    LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD,        // Wi-Fi队列溢出，申请单类业务迁移
+    LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY,       // 5G业务满足Wi-Fi恢复候选条件
+    LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY, // 非质量迁移后直接恢复Wi-Fi单发
 
     // 后续事件：仅推进已存在的逻辑事务
-    LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT,   // LOAD冗余计时到期
-    LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE,    // LOSS/RECOVERY质量验证完成
+    LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT,         // LOAD冗余计时到期
+    LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE,          // LOSS/RECOVERY质量验证完成
 
-    LINKG_SWITCH_POLICY_EVENT_COUNT           // 策略事件类型数量
+    LINKG_SWITCH_POLICY_EVENT_COUNT                 // 策略事件类型数量
 } linkg_switch_policy_event_type_t;
 
 /****************************** 质量验证结果 ******************************/
