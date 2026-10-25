@@ -522,8 +522,7 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
 /**
  * @brief 消费新的Observation，截止时计算并重复交付同一VERIFY_DONE事件。
  */
-int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_observation_t *observation,
-                                       uint64_t now_us, linkg_switch_policy_event_t *event, bool *event_ready)
+int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_observation_t *observation, uint64_t now_us, linkg_switch_policy_event_t *event, bool *event_ready)
 {
     uint64_t fresh_lost[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];
     uint64_t fresh_samples[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];

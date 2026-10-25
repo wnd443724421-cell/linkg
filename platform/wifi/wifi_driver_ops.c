@@ -897,7 +897,7 @@ int wifi_driver_set_narrow_auto_rate(bool enable)
                               sizeof(command),
                               "%s autorate_cfg_set enable %u",
                               WIFI_PLATFORM_INTERFACE_NAME,
-                              enable ? 1U : 0U);
+                              enable ? WIFI_DRIVER_NARROW_AUTO_RATE_MASK : 0U);
     if (command_length < 0)
     {
         return -EIO;

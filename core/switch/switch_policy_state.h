@@ -83,18 +83,18 @@ typedef struct
  */
 typedef struct
 {
-    linkg_switch_policy_phase_t            phase;            // 当前业务的事务阶段
-    uint32_t                               operation_id;     // 当前业务事务编号，0表示空闲
-    linkg_switch_policy_reason_t           reason;           // 当前事务触发原因
-    linkg_switch_policy_target_t           exit_target;      // 当前业务的最终单发目标
+    linkg_switch_policy_phase_t            phase;              // 当前业务的事务阶段
+    uint32_t                               operation_id;       // 当前业务事务编号，0表示空闲
+    linkg_switch_policy_reason_t           reason;             // 当前事务触发原因
+    linkg_switch_policy_target_t           exit_target;        // 当前业务的最终单发目标
     bool                                   migrated_from_wifi; // 本次事务开始前主链路是否为Wi-Fi
-    linkg_switch_policy_migration_reason_t migration_reason; // 最近一次完成迁出Wi-Fi的原因
+    linkg_switch_policy_migration_reason_t migration_reason;   // 最近一次完成迁出Wi-Fi的原因
 
-    uint64_t                               phase_entered_us; // 当前阶段开始时间
-    uint64_t                               started_us;       // 冗余ACK确认后开始验证或计时的时间
-    uint64_t                               deadline_us;      // 当前阶段截止时间，0表示无截止
+    uint64_t                               phase_entered_us;   // 当前阶段开始时间
+    uint64_t                               started_us;         // 冗余ACK确认后开始验证或计时的时间
+    uint64_t                               deadline_us;        // 当前阶段截止时间，0表示无截止
 
-    linkg_switch_policy_recovery_t         recovery;         // 按业务保存的迁移历史及恢复基线
+    linkg_switch_policy_recovery_t         recovery;           // 按业务保存的迁移历史及恢复基线
 } linkg_switch_policy_operation_t;
 
 /****************************** Peer级策略运行状态 ******************************/

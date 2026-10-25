@@ -20,6 +20,8 @@
 #define WIFI_DRIVER_PLATFORM_MODULE_PATH       "/app/current/drivers/plat_1105.ko"                               // HI1105平台模块路径
 #define WIFI_DRIVER_WIFI_MODULE_NAME           "wifi_1105"                                                       // HI1105 Wi-Fi模块名称
 #define WIFI_DRIVER_WIFI_MODULE_PATH           "/app/current/drivers/wifi_1105.ko"                               // HI1105 Wi-Fi模块路径
+#define WIFI_DRIVER_NARROW_AUTO_RATE_MASK      3U                                                                // 窄带自适应角色掩码，bit0=AP，bit1=STA
+
 
 /****************************** 硬件版本 ******************************/
 
