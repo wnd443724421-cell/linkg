@@ -21,7 +21,7 @@
 
 #define LINKG_SWITCH_LOSS_MIN_SAMPLES        20U        // 单方向累计达到20包才判决一次
 #define LINKG_SWITCH_LOSS_BAD_SCORE          5U         // 进入冗余验证的共享积分门槛
-#define LINKG_SWITCH_LOSS_IDLE_RESET_US      2000000ULL // 连续2秒没有完成有效判决则清除积分
+#define LINKG_SWITCH_LOSS_IDLE_RESET_US      2000000ULL // 连续2秒没有合法非零新样本才清除积分
 #define LINKG_SWITCH_LOSS_ACCUMULATE_MAX_US  2000000ULL // 单批低样本累计最长保留2秒
 
 /****************************** 单方向质量门槛 ******************************/
@@ -80,13 +80,15 @@ static void _linkg_switch_loss_expire_accumulator(linkg_switch_loss_accumulator_
 /**
  * @brief 消费一个方向的新观测，累计至少20包后只输出一次评分增量。
  *
- * 小样本窗口按更新时刻去重并逐批累计；样本数达到20后立即判决、清空批次。
+ * 小样本窗口按更新时间去重并逐批累计；样本数达到20后立即判决、清空批次。
+ * 仅合法非零的新窗口刷新活跃时间，不以判决频率衡量业务是否空闲。
  * 样本无效、重复、数量为0或累计超时都不会被当作GOOD。
  * 质量评分规则保持BAD +1、GOOD -1、其它0不变。
  */
 static int _linkg_switch_loss_evaluate_direction(const linkg_switch_loss_observation_t *sample,
                                                  uint64_t now_us,
                                                  uint64_t *last_updated_us,
+                                                 uint64_t *last_sample_us,
                                                  uint64_t *last_valid_us,
                                                  linkg_switch_loss_accumulator_t *accumulator)
 {
@@ -117,6 +119,13 @@ static int _linkg_switch_loss_evaluate_direction(const linkg_switch_loss_observa
     if (sample->sample_packets == 0U)
     {
         return 0;
+    }
+
+    // 只有合法、非零、且本方向未消费过的新窗口，才能证明链路仍有业务样本。
+    // 两个方向共用活跃时间，因此只允许向前推进，不能被较旧的远端报告回退。
+    if (sample->updated_us > *last_sample_us)
+    {
+        *last_sample_us = sample->updated_us;
     }
 
     // 第一份有效新样本建立该方向的累计起点。
@@ -227,16 +236,25 @@ int linkg_switch_policy_loss_process(const linkg_switch_policy_input_t *input, u
         return 0;
     }
 
-    // Wi-Fi Link变化或两秒未完成有效判决时重建检测器。
+    // Wi-Fi实例变化、首次处理或单调时间回退时重建完整检测器。
     if (!detector->initialized ||
         detector->wifi_link_id != input->observation.wifi.link_id ||
-        (detector->last_valid_us != 0U &&
-         (now_us < detector->last_valid_us ||
-          now_us - detector->last_valid_us >= LINKG_SWITCH_LOSS_IDLE_RESET_US)))
+        (detector->last_sample_us != 0U && now_us < detector->last_sample_us))
     {
         memset(detector, 0, sizeof(*detector));
         detector->initialized  = true;
         detector->wifi_link_id = input->observation.wifi.link_id;
+    }
+    else if (detector->last_sample_us != 0U &&
+             now_us - detector->last_sample_us >= LINKG_SWITCH_LOSS_IDLE_RESET_US)
+    {
+        // 真正连续2秒无新业务样本，才清理积分和未完成的累计批次。
+        // 保留各方向最后消费的updated_us，避免重复快照被重置后再次计分。
+        detector->score          = 0U;
+        detector->last_sample_us = 0U;
+        detector->last_valid_us  = 0U;
+        memset(&detector->uplink_accumulator, 0, sizeof(detector->uplink_accumulator));
+        memset(&detector->downlink_accumulator, 0, sizeof(detector->downlink_accumulator));
     }
 
     /****************************** 分别累计上下行质量样本 ******************************/
@@ -244,12 +262,14 @@ int linkg_switch_policy_loss_process(const linkg_switch_policy_input_t *input, u
     ul_delta = _linkg_switch_loss_evaluate_direction(&input->observation.wifi.loss.uplink,
                                                      now_us,
                                                      &detector->last_uplink_updated_us,
+                                                     &detector->last_sample_us,
                                                      &detector->last_valid_us,
                                                      &detector->uplink_accumulator);
 
     dl_delta = _linkg_switch_loss_evaluate_direction(&input->observation.wifi.loss.downlink,
                                                      now_us,
                                                      &detector->last_downlink_updated_us,
+                                                     &detector->last_sample_us,
                                                      &detector->last_valid_us,
                                                      &detector->downlink_accumulator);
 

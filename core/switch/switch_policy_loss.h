@@ -1,3 +1,4 @@
+
 /**
  * @file switch_policy_loss.h
  * @brief LinkG Wi-Fi丢包异常检测器内部状态
@@ -22,14 +23,22 @@ typedef struct
 
 typedef struct
 {
+    // 上下行独立累计状态
     linkg_switch_loss_accumulator_t uplink_accumulator;       // 上行不足20包的累计样本
     linkg_switch_loss_accumulator_t downlink_accumulator;     // 下行不足20包的累计样本
+
+    // 观测窗口去重
     uint64_t                        last_uplink_updated_us;   // 最近处理的上行观测时间
     uint64_t                        last_downlink_updated_us; // 最近处理的下行观测时间
+
+    // 样本活动与质量判决时间
+    uint64_t                        last_sample_us;           // 最近一次收到有效非零新样本的时间
     uint64_t                        last_valid_us;            // 最近一次完成有效质量判决的时间
+
+    // Wi-Fi实例及共享积分
     uint32_t                        wifi_link_id;             // 当前积分归属的Wi-Fi Link
     uint8_t                         score;                    // 上下行融合后的异常积分
     bool                            initialized;              // 检测器是否已初始化
 } linkg_switch_loss_policy_runtime_t;
 
-#endif
+#endif // SWITCH_POLICY_LOSS_H
