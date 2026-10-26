@@ -13,12 +13,15 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "linkg_config.h"
 #include "linkg_link.h"
 
 #include "switch_internal.h"
 #include "switch_policy_event.h"
 #include "switch_policy_operation.h"
+
+/****************************** 容量保护参数 ******************************/
+
+#define LINKG_SWITCH_POLICY_CELLULAR_CAPACITY_MBPS 25U // 蜂窝迁移准入固定阈值25Mbps
 
 /****************************** 内部辅助 ******************************/
 
@@ -55,26 +58,25 @@ static bool _linkg_switch_policy_wifi_has_candidate(const linkg_switch_policy_in
 }
 
 /**
- * @brief 判断Wi-Fi双向业务总速率是否在Cellular配置容量范围内。
+ * @brief 判断Wi-Fi双向业务总速率是否在Cellular迁移容量阈值内。
  *
- * 流量样本或配置不可用时，禁止LOSS/LOAD软件质量迁移。
+ * 流量样本无效时，禁止LOSS/LOAD软件质量迁移。
  * 硬故障切换不受此限制。
  */
 static bool _linkg_switch_policy_wifi_within_cellular_capacity(const linkg_switch_policy_input_t *input)
 {
     const linkg_switch_traffic_observation_t *traffic;
-    linkg_cellular_config_t                   config;
     uint64_t                                  limit_bps;
 
     traffic = &input->observation.wifi.traffic;
 
-    // 必须具备有效流量样本及Cellular容量配置。
-    if (!traffic->valid || traffic->updated_us == 0U || linkg_config_get_cellular(&config) != 0)
+    // 必须具备有效流量样本。
+    if (!traffic->valid || traffic->updated_us == 0U)
     {
         return false;
     }
 
-    limit_bps = (uint64_t)config.max_load_mbps * 1000000ULL;
+    limit_bps = (uint64_t)LINKG_SWITCH_POLICY_CELLULAR_CAPACITY_MBPS * 1000000ULL;
 
     // 先检查发送速率，避免后续无符号减法下溢。
     if (traffic->tx_bps > limit_bps)
@@ -82,7 +84,7 @@ static bool _linkg_switch_policy_wifi_within_cellular_capacity(const linkg_switc
         return false;
     }
 
-    // 上下行总速率不得超过Cellular配置容量。
+    // 上下行总速率不得超过固定迁移容量阈值。
     return traffic->rx_bps <= limit_bps - traffic->tx_bps;
 }
 

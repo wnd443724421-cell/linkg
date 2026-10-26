@@ -66,7 +66,6 @@ static bool _linkg_web_cellular_config_equal(const linkg_config_t *left, const l
 
     return left_cellular->enabled == right_cellular->enabled &&
            left_cellular->network_mode == right_cellular->network_mode &&
-           left_cellular->max_load_mbps == right_cellular->max_load_mbps &&
            strcmp(left_cellular->apn, right_cellular->apn) == 0 &&
            strcmp(left_cellular->pin, right_cellular->pin) == 0;
 }
@@ -1006,12 +1005,6 @@ int _linkg_web_handler_cellular_status_get(const cJSON *param, char **response)
     }
 
     ret = linkg_json_add_bool(data, "path_enabled", config.paths.cellular.enabled);
-    if (ret != LINKG_JSON_OK)
-    {
-        goto error;
-    }
-
-    ret = linkg_json_add_uint32(data, "max_load_mbps", config.links.cellular.max_load_mbps);
     if (ret != LINKG_JSON_OK)
     {
         goto error;

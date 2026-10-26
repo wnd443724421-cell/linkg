@@ -24,10 +24,6 @@ extern "C" {
 #define LINKG_CELLULAR_PIN_MIN                4U   // SIM PIN最小长度
 #define LINKG_CELLULAR_PIN_MAX                8U   // SIM PIN最大长度
 
-#define LINKG_CELLULAR_MAX_LOAD_MBPS_DEFAULT 15U   // 默认最大业务负载15 Mbps
-#define LINKG_CELLULAR_MAX_LOAD_MBPS_MIN      1U   // 最小1 Mbps
-#define LINKG_CELLULAR_MAX_LOAD_MBPS_MAX    100U   // 最大100 Mbps
-
 /****************************** 类型定义 ******************************/
 
 typedef enum
@@ -44,7 +40,6 @@ typedef struct
     linkg_cellular_network_mode_t network_mode;                     // 蜂窝网络工作模式
     char                          apn[LINKG_CELLULAR_APN_MAX + 1U]; // APN，空字符串表示自动选择
     char                          pin[LINKG_CELLULAR_PIN_MAX + 1U]; // SIM PIN，空字符串表示未配置
-    uint32_t                      max_load_mbps;                    // 用户配置的5G最大业务负载，单位Mbps
 } linkg_cellular_config_t;
 
 /****************************** 配置处理 ******************************/

@@ -186,7 +186,6 @@ void linkg_cellular_config_set_default(linkg_cellular_config_t *out)
 
     out->enabled = false;
     out->network_mode = LINKG_CELLULAR_NETWORK_MODE_AUTO;
-    out->max_load_mbps = LINKG_CELLULAR_MAX_LOAD_MBPS_DEFAULT;
 }
 
 /**
@@ -212,13 +211,6 @@ int linkg_cellular_config_validate(const linkg_cellular_config_t *config)
     }
 
     if (!_cellular_pin_valid(config->pin))
-    {
-        return CONFIG_ERR_VALIDATE;
-    }
-
-    if (!config_uint32_range_valid(config->max_load_mbps,
-                               LINKG_CELLULAR_MAX_LOAD_MBPS_MIN,
-                               LINKG_CELLULAR_MAX_LOAD_MBPS_MAX))
     {
         return CONFIG_ERR_VALIDATE;
     }
@@ -284,14 +276,6 @@ int linkg_cellular_config_parse(const cJSON *node, linkg_cellular_config_t *out)
         return config_json_parse_error(ret);
     }
 
-    found = false;
-
-    ret = linkg_json_try_get_uint32(node, "max_load_mbps", &temp.max_load_mbps, &found);
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
     ret = linkg_cellular_config_validate(&temp);
     if (ret != CONFIG_OK)
     {
@@ -349,11 +333,6 @@ int linkg_cellular_config_to_json(cJSON *parent, const char *key, const linkg_ce
     if (ret == LINKG_JSON_OK)
     {
         ret = linkg_json_add_string(object, "pin", config->pin);
-    }
-
-    if (ret == LINKG_JSON_OK)
-    {
-        ret = linkg_json_add_uint32(object, "max_load_mbps", config->max_load_mbps);
     }
 
     if (ret != LINKG_JSON_OK)

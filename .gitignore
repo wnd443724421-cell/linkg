@@ -7,7 +7,6 @@ output/bin/
 *.o
 *.a
 *.so
-*.ko
 *.d
 
 # 临时文件

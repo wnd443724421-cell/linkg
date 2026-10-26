@@ -1,9 +1,14 @@
 /**
  * @file switch_policy_verify.c
- * @brief LinkG冗余阶段Wi-Fi恢复积分及双链路交付质量验证
+ * @brief LinkG冗余阶段Wi-Fi积分恢复及Cellular质量确认
  * @author Dawn
  * @version 1.0.0
- * @date 2026-10-22
+ * @date 2026-10-26
+ *
+ * 流程：ACK启动 → Wire/Load/Probe采集 → Wi-Fi共享积分 → 双链路比较
+ *       → 固化VERIFY_DONE → Operation决定最终单发Plan。
+ *
+ * 本模块只评估质量，不修改发送计划，也不执行PlanSync。
  */
 
 #include "switch_policy_verify.h"
@@ -13,10 +18,10 @@
 #include <stdint.h>
 #include <string.h>
 
-/****************************** 无线丢包积分判据 ******************************/
+/****************************** 一、Wi-Fi单方向丢包判据 ******************************/
 
 /**
- * @brief 判断单方向的新Wire窗口是否达到Wi-Fi丢包BAD门槛。
+ * @brief 满足BAD：至少20包、至少3丢，满足动态丢包门槛。
  */
 static bool _linkg_switch_verify_loss_bad(uint64_t samples, uint64_t lost)
 {
@@ -30,7 +35,7 @@ static bool _linkg_switch_verify_loss_bad(uint64_t samples, uint64_t lost)
 }
 
 /**
- * @brief 判断单方向的新Wire窗口是否达到Wi-Fi丢包GOOD门槛。
+ * @brief 满足GOOD：至少20包且丢包率低于动态GOOD门槛。
  */
 static bool _linkg_switch_verify_loss_good(uint64_t samples, uint64_t lost)
 {
@@ -47,10 +52,10 @@ static bool _linkg_switch_verify_loss_good(uint64_t samples, uint64_t lost)
     return 100ULL * lost <= samples && 16ULL * lost * lost <= samples;
 }
 
-/****************************** 统计样本累计 ******************************/
+/****************************** 二、Wire及队列样本采集 ******************************/
 
 /**
- * @brief 饱和累加64位计数，防止极端数据翻转成小值。
+ * @brief 64位饱和累加；统计始终不允许无符号回绕。
  */
 static void _linkg_switch_verify_accumulate(uint64_t *total, uint64_t amount)
 {
@@ -64,9 +69,28 @@ static void _linkg_switch_verify_accumulate(uint64_t *total, uint64_t amount)
 }
 
 /**
- * @brief 按业务和方向消费新的Wire窗口，首个ACK后窗口仅建立采样边界。
+ * @brief 检查Wire或Load窗口是否属于ACK后的未消费合法样本。
  *
- * fresh_lost和fresh_samples仅供Wi-Fi积分使用，Cellular调用时可传NULL。
+ * 只接受(started_us, min(deadline_us, now_us)]内的新窗口。
+ * 无效、零包、丢包数异常及重复窗口全部忽略。
+ */
+static bool _linkg_switch_verify_window_valid(const linkg_switch_loss_observation_t *sample,
+                                              uint64_t started_us,
+                                              uint64_t deadline_us,
+                                              uint64_t now_us,
+                                              uint64_t last_updated_us)
+{
+    return sample->valid &&
+           sample->sample_packets != 0U &&
+           sample->lost_packets <= sample->sample_packets &&
+           sample->updated_us > started_us &&
+           sample->updated_us <= deadline_us &&
+           sample->updated_us <= now_us &&
+           sample->updated_us > last_updated_us;
+}
+
+/**
+ * @brief 按业务/方向消费Wire窗口；首个ACK后窗口只建立边界。
  */
 static void _linkg_switch_verify_consume_wire(linkg_switch_policy_verify_path_t *path,
                                               const linkg_switch_path_loss_observation_t *loss,
@@ -94,11 +118,8 @@ static void _linkg_switch_verify_consume_wire(linkg_switch_policy_verify_path_t 
                          &loss->uplink_classes[class_index] :
                          &loss->downlink_classes[class_index];
 
-            if (!sample->valid || sample->sample_packets == 0U ||
-                sample->lost_packets > sample->sample_packets ||
-                sample->updated_us <= started_us ||
-                sample->updated_us > deadline_us || sample->updated_us > now_us ||
-                sample->updated_us <= path->last_loss_us[class_index][direction])
+            if (!_linkg_switch_verify_window_valid(sample, started_us, deadline_us, now_us,
+                                                    path->last_loss_us[class_index][direction]))
             {
                 continue;
             }
@@ -124,9 +145,7 @@ static void _linkg_switch_verify_consume_wire(linkg_switch_policy_verify_path_t 
 }
 
 /**
- * @brief 消费各方向的整链路队列统计，首个ACK后窗口仅建立采样边界。
- *
- * 队列丢弃可能已经体现在Wire确认丢包内，不重复相加。
+ * @brief 按方向消费Load窗口；发现过一次队列溢出即锁定。
  */
 static void _linkg_switch_verify_consume_load(linkg_switch_policy_verify_path_t *path,
                                               const linkg_switch_path_loss_observation_t *loss,
@@ -141,11 +160,8 @@ static void _linkg_switch_verify_consume_load(linkg_switch_policy_verify_path_t 
     {
         sample = direction == LINKG_SWITCH_POLICY_VERIFY_UPLINK ? &loss->uplink_load : &loss->downlink_load;
 
-        if (!sample->valid || sample->sample_packets == 0U ||
-            sample->lost_packets > sample->sample_packets ||
-            sample->updated_us <= started_us ||
-            sample->updated_us > deadline_us || sample->updated_us > now_us ||
-            sample->updated_us <= path->last_load_us[direction])
+        if (!_linkg_switch_verify_window_valid(sample, started_us, deadline_us, now_us,
+                                                path->last_load_us[direction]))
         {
             continue;
         }
@@ -165,10 +181,51 @@ static void _linkg_switch_verify_consume_load(linkg_switch_policy_verify_path_t 
     }
 }
 
+/****************************** 三、Wi-Fi质量恢复积分 ******************************/
+
 /**
- * @brief 累积Cellular各参与业务的新Probe及成功结果时间戳。
- *
- * 超时、不可达或RTT达到250ms将锁定本轮Cellular候选失败。
+ * @brief 沿用共享异常积分，起始5分；新窗口BAD+1、GOOD-1。
+ */
+static void _linkg_switch_verify_update_wifi_score(linkg_switch_policy_verify_runtime_t *runtime,
+                                                    const uint64_t fresh_lost[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT],
+                                                    const uint64_t fresh_samples[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT])
+{
+    uint32_t direction;
+    int32_t  delta;
+
+    // 上下行仍采用共享积分：BAD +1、GOOD -1、单轮总减分上限为1。
+    delta = 0;
+
+    for (direction = 0U; direction < LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT; direction++)
+    {
+        if (_linkg_switch_verify_loss_bad(fresh_samples[direction], fresh_lost[direction]))
+        {
+            delta++;
+        }
+        else if (_linkg_switch_verify_loss_good(fresh_samples[direction], fresh_lost[direction]))
+        {
+            delta--;
+        }
+    }
+
+    if (delta > 0)
+    {
+        uint32_t next;
+
+        next = (uint32_t)runtime->wifi_loss_score + (uint32_t)delta;
+        runtime->wifi_loss_score = next >= LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE ?
+                                      LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE : (uint8_t)next;
+    }
+    else if (delta < 0 && runtime->wifi_loss_score > 0U)
+    {
+        runtime->wifi_loss_score--;
+    }
+}
+
+/****************************** 四、Cellular主动可达检测 ******************************/
+
+/**
+ * @brief 读取本次3秒内新Cellular Probe；失败或RTT>=250ms即锁定。
  */
 static void _linkg_switch_verify_consume_probe(linkg_switch_policy_verify_runtime_t *runtime,
                                                const linkg_switch_probe_observation_t probe[LINKG_TRANSPORT_CLASS_COUNT],
@@ -198,6 +255,7 @@ static void _linkg_switch_verify_consume_probe(linkg_switch_policy_verify_runtim
         if (!sample->reachable || sample->rtt_us == 0U ||
             sample->rtt_us >= LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US)
         {
+            // 本次会话内任一有效Probe失败即锁定候选失败，后续成功不撤销。
             runtime->cellular_probe_failed = true;
             continue;
         }
@@ -212,54 +270,44 @@ static void _linkg_switch_verify_consume_probe(linkg_switch_policy_verify_runtim
     }
 }
 
-/****************************** Wi-Fi恢复积分 ******************************/
-
 /**
- * @brief 根据各方向新窗口更新Wi-Fi恢复积分，双GOOD单轮最多减1分。
+ * @brief 参与业务均需新鲜成功Probe且全程没有有效失败。
  */
-static void _linkg_switch_verify_update_wifi_score(linkg_switch_policy_verify_runtime_t *runtime,
-                                                    const uint64_t fresh_lost[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT],
-                                                    const uint64_t fresh_samples[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT])
+static bool _linkg_switch_verify_cellular_probe_ready(const linkg_switch_policy_verify_runtime_t *runtime)
 {
-    uint32_t direction;
-    int32_t  delta;
+    uint64_t last_good_us;
+    uint32_t class_index;
 
-    delta = 0;
-
-    for (direction = 0U; direction < LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT; direction++)
+    if (runtime->cellular_probe_failed ||
+        (runtime->cellular_probe_seen_mask & runtime->class_mask) != runtime->class_mask)
     {
-        if (_linkg_switch_verify_loss_bad(fresh_samples[direction], fresh_lost[direction]))
+        return false;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        if ((runtime->class_mask & (1U << class_index)) == 0U)
         {
-            delta++;
+            continue;
         }
-        else if (_linkg_switch_verify_loss_good(fresh_samples[direction], fresh_lost[direction]))
+
+        last_good_us = runtime->cellular_last_good_probe_us[class_index];
+
+        if (last_good_us <= runtime->started_us ||
+            last_good_us > runtime->deadline_us ||
+            runtime->deadline_us - last_good_us > LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US)
         {
-            delta--;
+            return false;
         }
     }
 
-    if (delta > 0)
-    {
-        uint32_t next;
-
-        next = (uint32_t)runtime->wifi_loss_score + (uint32_t)delta;
-        runtime->wifi_loss_score = next >= LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE ?
-                                      LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE : (uint8_t)next;
-    }
-    else if (delta < 0 && runtime->wifi_loss_score > 0U)
-    {
-        runtime->wifi_loss_score--;
-    }
+    return true;
 }
 
-/****************************** 双链路交付质量比较 ******************************/
+/****************************** 五、相同业务和方向的Wire质量比较 ******************************/
 
 /**
- * @brief 比较相同业务及相同方向下Cellular与Wi-Fi的Wire交付率。
- *
- * 逐业务及方向配对，仅以双链路共同观察到的样本数加权，
- * 避免不同业务流量占比产生不公平的总体交付率比较。
- * 缺少任一对应样本或配对样本数不足均不能证明Cellular更优。
+ * @brief 对相同业务/方向用min(Nwifi,Ncell)加权；需至少100配对样本。
  */
 static bool _linkg_switch_verify_cellular_wire_better(const linkg_switch_policy_verify_runtime_t *runtime)
 {
@@ -304,6 +352,8 @@ static bool _linkg_switch_verify_cellular_wire_better(const linkg_switch_policy_
                 return false;
             }
 
+            // 每个(业务,方向)取双链路较小样本数作为比较权重；
+            // 这不是包级序号一一配对，而是窗口统计的归一化比较。
             paired_n = wifi_n < cellular_n ? wifi_n : cellular_n;
 
             _linkg_switch_verify_accumulate(&wifi_samples, wifi_n);
@@ -324,47 +374,14 @@ static bool _linkg_switch_verify_cellular_wire_better(const linkg_switch_policy_
         return false;
     }
 
+    // 严格更低才确认Cellular更优；相等或证据不足均不触发质量迁移。
     return cellular_lost_equivalent < wifi_lost_equivalent;
 }
 
-/**
- * @brief 判断参与业务的Cellular成功Probe在3秒截止时是否仍然新鲜。
- */
-static bool _linkg_switch_verify_cellular_probe_ready(const linkg_switch_policy_verify_runtime_t *runtime)
-{
-    uint64_t last_good_us;
-    uint32_t class_index;
-
-    if (runtime->cellular_probe_failed ||
-        (runtime->cellular_probe_seen_mask & runtime->class_mask) != runtime->class_mask)
-    {
-        return false;
-    }
-
-    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
-    {
-        if ((runtime->class_mask & (1U << class_index)) == 0U)
-        {
-            continue;
-        }
-
-        last_good_us = runtime->cellular_last_good_probe_us[class_index];
-
-        if (last_good_us <= runtime->started_us ||
-            last_good_us > runtime->deadline_us ||
-            runtime->deadline_us - last_good_us > LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US)
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/****************************** 验证结果 ******************************/
+/****************************** 六、验证终态与事件交付 ******************************/
 
 /**
- * @brief 按积分、配对Wire样本及Cellular Probe综合确定最终目标。
+ * @brief 按Path、Wi-Fi积分、原因和Cellular质量确认结果。
  */
 static linkg_switch_policy_verify_result_t _linkg_switch_verify_result(const linkg_switch_policy_verify_runtime_t *runtime,
                                                                        const linkg_switch_observation_t *observation,
@@ -381,17 +398,26 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_result(const lin
         return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
     }
 
+    /****************************** Wi-Fi质量已恢复 ******************************/
+
+    // 必须严格低于恢复门槛；积分等于3时不视为已恢复。
     if (runtime->wifi_loss_score < LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE)
     {
         return LINKG_SWITCH_POLICY_VERIFY_WIFI;
     }
 
+    /****************************** 恢复事务保持Cellular ******************************/
+
+    // 恢复尝试期间Wi-Fi没有达到恢复门槛，继续使用原Cellular主链路。
     if (runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
     {
         return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
     }
 
-    // 只在Wi-Fi积分严格大于3时，允许交付率比较得出迁往Cellular的结论。
+    /****************************** LOSS迁移确认 ******************************/
+
+    // Wi-Fi异常积分必须大于3，且Cellular具备Probe、Wire证据并无队列溢出。
+    // 任何条件不足均返回INCONCLUSIVE，交给Operation执行保守回退。
     if (runtime->wifi_loss_score <= LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE ||
         runtime->cellular.queue_overflow ||
         !_linkg_switch_verify_cellular_probe_ready(runtime) ||
@@ -404,7 +430,7 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_result(const lin
 }
 
 /**
- * @brief 将已经确定的验证结果构造成可重复交付的VERIFY_DONE事件。
+ * @brief 将已固定结果封装为VERIFY_DONE；允许重复交付。
  */
 static void _linkg_switch_verify_fill_event(const linkg_switch_policy_verify_runtime_t *runtime,
                                              linkg_switch_policy_event_t *event)
@@ -419,10 +445,10 @@ static void _linkg_switch_verify_fill_event(const linkg_switch_policy_verify_run
     event->payload.verify_done.result       = runtime->result;
 }
 
-/****************************** 验证生命周期 ******************************/
+/****************************** 七、验证会话生命周期 ******************************/
 
 /**
- * @brief 清除本Peer的验证状态；完成消费或取消后由Operation显式调用。
+ * @brief 由Operation取消/消费结束后释放当前验证会话。
  */
 void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runtime)
 {
@@ -433,11 +459,16 @@ void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runt
 }
 
 /**
- * @brief 固化参与业务事务身份并于冗余ACK时刻启动三秒验证。
+ * @brief 冗余ACK后固定事务身份和三秒截止时刻。
  */
-int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime, uint8_t peer_node_id, uint32_t peer_generation,
-                                     const uint32_t operation_ids[LINKG_TRANSPORT_CLASS_COUNT], uint32_t class_mask,
-                                     linkg_switch_policy_reason_t reason, const linkg_switch_observation_t *observation, uint64_t now_us)
+int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime,
+                                     uint8_t peer_node_id,
+                                     uint32_t peer_generation,
+                                     const uint32_t operation_ids[LINKG_TRANSPORT_CLASS_COUNT],
+                                     uint32_t class_mask,
+                                     linkg_switch_policy_reason_t reason,
+                                     const linkg_switch_observation_t *observation,
+                                     uint64_t now_us)
 {
     uint32_t operation_id;
     uint32_t class_index;
@@ -520,9 +551,13 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
 }
 
 /**
- * @brief 消费新的Observation，截止时计算并重复交付同一VERIFY_DONE事件。
+ * @brief 消费观测并在3秒后一次性结算，失败投递可重交付。
  */
-int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_observation_t *observation, uint64_t now_us, linkg_switch_policy_event_t *event, bool *event_ready)
+int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime,
+                                       const linkg_switch_observation_t *observation,
+                                       uint64_t now_us,
+                                       linkg_switch_policy_event_t *event,
+                                       bool *event_ready)
 {
     uint64_t fresh_lost[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];
     uint64_t fresh_samples[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];
@@ -546,12 +581,15 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
         return -ESTALE;
     }
 
+    // 已形成结果时重复投递同一事件，不重新采样、比较或改变最终结果。
     if (runtime->result_pending)
     {
         _linkg_switch_verify_fill_event(runtime, event);
         *event_ready = true;
         return 0;
     }
+
+    /****************************** 观测有效性及链路连续性 ******************************/
 
     observation_fresh = observation->valid &&
                         observation->collected_us > runtime->started_us &&
@@ -570,6 +608,8 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     paths_usable = observation_fresh && !runtime->path_interrupted &&
                    observation->wifi.state == LINKG_SWITCH_OBSERVATION_USABLE &&
                    observation->cellular.state == LINKG_SWITCH_OBSERVATION_USABLE;
+
+    /****************************** 双链路新窗口采集 ******************************/
 
     if (paths_usable)
     {
@@ -593,6 +633,8 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
 
         _linkg_switch_verify_consume_probe(runtime, observation->cellular.probe, now_us);
     }
+
+    /****************************** 三秒截止形成固定结果 ******************************/
 
     if (now_us < runtime->deadline_us)
     {
