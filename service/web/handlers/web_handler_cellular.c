@@ -73,7 +73,7 @@ static bool _linkg_web_cellular_config_equal(const linkg_config_t *left, const l
 /**
  * @brief 判断蜂窝配置修改是否需要重启网络。
  *
- * 仅修改负载上限时不重启蜂窝模块，切换策略直接读取最新全局配置。
+ * 模块、Path、网络模式、APN或PIN配置变化时需要重启蜂窝网络。
  */
 static bool _linkg_web_cellular_requires_restart(const linkg_config_t *left, const linkg_config_t *right)
 {

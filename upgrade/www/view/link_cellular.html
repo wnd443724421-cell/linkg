@@ -49,7 +49,6 @@
                         <div><dt>网络模式</dt><dd id="cellularNetworkMode">--</dd></div>
                         <div><dt>频段</dt><dd id="cellularBand">--</dd></div>
                         <div><dt>PDP / APN</dt><dd id="cellularPdpApn" class="is-apn">--</dd></div>
-                        <div><dt>负载上限（配置）</dt><dd id="cellularMaxLoadStatus">--</dd></div>
                     </dl>
                 </div>
                 <div class="cellular-status-block">
@@ -87,7 +86,7 @@
     <section class="page-card cellular-section">
         <div class="page-card-header">
             <h2 class="page-card-title">5G 配置</h2>
-            <span class="cellular-config-note">网络参数变更需要重连，负载上限修改即时生效</span>
+            <span class="cellular-config-note">网络参数变更后需要重新连接</span>
         </div>
         <form id="cellularConfigForm" class="cellular-config-form" novalidate>
             <div class="cellular-toggle-grid">
@@ -149,16 +148,6 @@
                         </div>
                         <small>可留空；非空时必须为 4–8 位数字</small>
                     </div>
-                    <label class="cellular-field">
-                        <span>5G负载上限</span>
-                        <div class="cellular-number-wrap">
-                            <input id="cellularMaxLoadMbps" type="number" min="1" max="100" step="1"
-                                inputmode="numeric" placeholder="15" disabled>
-                            <span class="cellular-number-unit">Mbps</span>
-                        </div>
-                        <small>用于切换迁移准入；实际5G发送限速后续接入</small>
-                    </label>
-                    
                 </div>
             </div>
 

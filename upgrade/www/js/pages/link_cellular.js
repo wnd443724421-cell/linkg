@@ -5,8 +5,6 @@
     const CELLULAR_NETWORK_MODES = ["auto", "4g", "5g"];
     const CELLULAR_APN_PATTERN = /^[A-Za-z0-9.-]{0,100}$/;
     const CELLULAR_PIN_PATTERN = /^(?:[0-9]{4,8})?$/;
-    const CELLULAR_MAX_LOAD_MBPS_MIN = 1;
-    const CELLULAR_MAX_LOAD_MBPS_MAX = 100;
 
     let mounted = false;
     let sessionSerial = 0;
@@ -473,8 +471,6 @@
         setText("cellularNetworkMode", formatNetworkMode(local.network_mode));
         setText("cellularBand", formatBand(network.band, network.network_type));
         setText("cellularPdpApn", pdpApn);
-        setText("cellularMaxLoadStatus", Number.isInteger(data.max_load_mbps) ?
-                data.max_load_mbps + " Mbps" : "--");
         setText("cellularRsrp", formatRsrp(network.rsrp_dbm));
         setText("cellularRsrq",
                 Number.isFinite(network.rsrq_db) ? network.rsrq_db + " dB" : "--");
@@ -560,7 +556,6 @@
         field("cellularApn").disabled = locked || !enabled;
         field("cellularPin").disabled = locked || !enabled;
         field("cellularPinToggle").disabled = locked || !enabled;
-        field("cellularMaxLoadMbps").disabled = locked || !enabled;
     }
 
     function validateConfigResponse(data)
@@ -572,9 +567,6 @@
             !CELLULAR_NETWORK_MODES.includes(cellular.network_mode) ||
             typeof cellular.apn !== "string" ||
             typeof cellular.pin !== "string" ||
-            !Number.isInteger(cellular.max_load_mbps) ||
-            cellular.max_load_mbps < CELLULAR_MAX_LOAD_MBPS_MIN ||
-            cellular.max_load_mbps > CELLULAR_MAX_LOAD_MBPS_MAX ||
             !CELLULAR_APN_PATTERN.test(cellular.apn) ||
             !CELLULAR_PIN_PATTERN.test(cellular.pin) ||
             (data.path_enabled && !cellular.enabled))
@@ -592,7 +584,6 @@
         field("cellularNetworkModeInput").value = cellular.network_mode;
         field("cellularApn").value = cellular.apn;
         field("cellularPin").value = cellular.pin;
-        field("cellularMaxLoadMbps").value = String(cellular.max_load_mbps);
 
         setPinVisibility(false);
         updateModuleFields();
@@ -606,8 +597,6 @@
         const networkMode = field("cellularNetworkModeInput").value;
         const apn = field("cellularApn").value;
         const pin = field("cellularPin").value;
-        const maxLoadText = field("cellularMaxLoadMbps").value.trim();
-        const maxLoadMbps = Number(maxLoadText);
 
         if (!CELLULAR_NETWORK_MODES.includes(networkMode))
         {
@@ -624,14 +613,6 @@
             throw new Error("SIM PIN 必须留空或填写 4–8 位数字");
         }
 
-        if (!/^[1-9][0-9]*$/.test(maxLoadText) ||
-            !Number.isSafeInteger(maxLoadMbps) ||
-            maxLoadMbps < CELLULAR_MAX_LOAD_MBPS_MIN ||
-            maxLoadMbps > CELLULAR_MAX_LOAD_MBPS_MAX)
-        {
-            throw new Error("5G负载上限必须为1–100 Mbps的整数");
-        }
-
         if (pathEnabled && !enabled)
         {
             throw new Error("启用 LinkG 5G Path 前必须先启用 5G 模块");
@@ -643,8 +624,7 @@
                 enabled: enabled,
                 network_mode: networkMode,
                 apn: apn,
-                pin: pin,
-                max_load_mbps: maxLoadMbps
+                pin: pin
             }
         };
     }
@@ -746,7 +726,7 @@
                 response.data.apply === "restart" ?
                 "配置已应用，5G 正在重新连接" :
                 response.data.apply === "dynamic" ?
-                "5G负载上限已更新，无需重新连接" : "当前配置无需变更",
+                "配置已更新，无需重新连接" : "当前配置无需变更",
                 "is-success"
             );
             handleRefreshClick();
