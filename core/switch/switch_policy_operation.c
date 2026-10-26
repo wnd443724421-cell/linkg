@@ -1091,15 +1091,16 @@ static void _linkg_switch_operation_abandon_uncertain_locked(linkg_switch_peer_r
  */
 int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_result_t *result)
 {
-    linkg_switch_peer_runtime_t   *peer;
-    linkg_switch_policy_runtime_t *policy;
-    linkg_switch_policy_event_t    event;
-    uint32_t                       operation_ids[LINKG_TRANSPORT_CLASS_COUNT];
-    uint32_t                       index;
-    uint32_t                       mask;
-    uint64_t                       now_us;
-    bool                           fallback;
-    int                            ret;
+    linkg_switch_policy_migration_reason_t recovery_reason;
+    linkg_switch_peer_runtime_t           *peer;
+    linkg_switch_policy_runtime_t         *policy;
+    linkg_switch_policy_event_t            event;
+    uint32_t                               operation_ids[LINKG_TRANSPORT_CLASS_COUNT];
+    uint32_t                               index;
+    uint32_t                               mask;
+    uint64_t                               now_us;
+    bool                                   fallback;
+    int                                    ret;
 
     if (result == NULL || result->updated_us == 0U)
     {
@@ -1118,7 +1119,8 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
     memset(&event, 0, sizeof(event));
     memset(operation_ids, 0, sizeof(operation_ids));
 
-    fallback = false;
+    recovery_reason = LINKG_SWITCH_POLICY_MIGRATION_NONE;
+    fallback        = false;
 
     /****************************** 获取当前Peer ******************************/
 
@@ -1312,16 +1314,37 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
     else if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOSS ||
              policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
     {
-        // 固化本组各业务Operation ID，未参与业务使用0。
+        /****************************** 固化参与业务及原始迁出原因 ******************************/
+
         for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
         {
-            operation_ids[index] = (mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) != 0U ?
-                                   policy->operations[index].operation_id : 0U;
+            if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
+            {
+                continue;
+            }
+
+            operation_ids[index] = policy->operations[index].operation_id;
+
+            if (policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY)
+            {
+                continue;
+            }
+
+            // Cellular已按原因生成独立候选组；这里以第一个参与业务为本组基线。
+            if (recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_NONE)
+            {
+                recovery_reason = policy->operations[index].migration_reason;
+            }
+            else if (recovery_reason != policy->operations[index].migration_reason)
+            {
+                // 外部原因发生变化时不允许混合判决，Verify安全失败后回到Cellular。
+                recovery_reason = LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
+            }
         }
 
-        // 冗余ACK确认后启动3秒质量验证。
+        // 冗余ACK确认后启动3秒验证；LOAD恢复使用队列溢出，LOSS沿用积分。
         ret = linkg_switch_policy_verify_begin(&peer->role.sta.verify, peer->peer_node_id, peer->generation,
-                                               operation_ids, mask, policy->group_reason,
+                                               operation_ids, mask, policy->group_reason, recovery_reason,
                                                &peer->role.sta.observation, now_us);
 
         // 无论Verify是否启动成功，都进入固定3秒验证窗口。

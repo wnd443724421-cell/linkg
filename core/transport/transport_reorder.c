@@ -649,10 +649,12 @@ int linkg_transport_reorder_reset_peer(uint8_t peer_node_id)
 
 /****************************** 数据接收 ******************************/
 
+
 /**
- * @brief SINGLE模式仅同步序号基线并清理上一轮冗余缓存，不接管Packet。
+ * @brief 同步SINGLE模式序号基线并清理上一轮冗余缓存。
  *
- * @note 若Worker正在交付同一Peer的数据，则等待交付结束后切换到同步接收路径。
+ * @note SINGLE Packet继续走普通RX路径，不进入Reorder缓存。
+ *       若Worker正在交付同一Peer的数据，等待交付结束后再切换。
  */
 int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t peer_epoch, uint8_t peer_node_id, linkg_transport_class_t traffic_class, uint32_t sequence)
 {
@@ -678,6 +680,7 @@ int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t p
         return -ret;
     }
 
+    // 确认Reorder运行状态及Peer会话有效性。
     if (!g_reorder.initialized || !g_reorder.running)
     {
         pthread_mutex_unlock(&g_reorder.lock);
@@ -690,6 +693,7 @@ int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t p
         return -ESTALE;
     }
 
+    // 等待当前Peer的Worker交付结束，避免旧冗余Packet晚于SINGLE交付。
     if (g_reorder.processing_peer_node_id == peer_node_id &&
         pthread_equal(pthread_self(), g_reorder.thread.tid))
     {
@@ -707,12 +711,14 @@ int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t p
         }
     }
 
+    // 等待期间锁会释放，重新确认运行状态及会话有效性。
     if (!g_reorder.running || !linkg_transport_peer_epoch_matches(peer, peer_epoch))
     {
         pthread_mutex_unlock(&g_reorder.lock);
         return -ESTALE;
     }
 
+    // 获取Peer/Class状态，会话变化时清理旧状态。
     current = &g_reorder.classes[peer_index][traffic_class];
 
     if (current->peer_epoch != peer_epoch || current->peer_node_id != peer_node_id)
@@ -722,6 +728,7 @@ int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t p
         current->peer_node_id = peer_node_id;
     }
 
+    // 以当前接收序号为起点，避免SINGLE序号基线回退。
     last_sequence = sequence;
 
     if (current->single_initialized &&
@@ -730,6 +737,7 @@ int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t p
         last_sequence = current->last_single_sequence;
     }
 
+    // 退出冗余时衔接已处理序号，并清理尚未交付的冗余Packet。
     if (current->redundant)
     {
         if (current->expected_initialized &&
@@ -744,12 +752,12 @@ int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t p
             last_sequence = current->realtime_highest;
         }
 
-        // 丢弃上一轮冗余未交付的帧，避免其晚于SINGLE直通数据交付。
         _linkg_transport_reorder_clear_class(current);
         current->peer_epoch   = peer_epoch;
         current->peer_node_id = peer_node_id;
     }
 
+    // 提交SINGLE模式序号基线。
     current->last_single_sequence = last_sequence;
     current->single_initialized   = true;
     current->redundant            = false;
@@ -766,12 +774,16 @@ int linkg_transport_reorder_note_single(linkg_transport_peer_t *peer, uint32_t p
 }
 
 /**
- * @brief 只有冗余模式的本机USER_DATA允许提交Reorder。
+ * @brief 将冗余USER_DATA提交到对应Peer/Class的Reorder队列。
+ *
+ * @note REALTIME进入直通队列，VIDEO和DATA进入序号重排窗口。
+ *       提交成功后Reorder持有独立Packet引用。
  */
 int linkg_transport_reorder_submit(const linkg_transport_reorder_frame_t *frame)
 {
     linkg_transport_reorder_class_t *current;
     linkg_transport_reorder_frame_t *slot;
+    uint32_t                        sequence;
     uint32_t                        distance;
     uint32_t                        index;
     int                             peer_index;
@@ -795,6 +807,7 @@ int linkg_transport_reorder_submit(const linkg_transport_reorder_frame_t *frame)
         return -ret;
     }
 
+    // 确认Reorder运行状态及Peer会话有效性。
     if (!g_reorder.initialized || !g_reorder.running)
     {
         pthread_mutex_unlock(&g_reorder.lock);
@@ -807,6 +820,7 @@ int linkg_transport_reorder_submit(const linkg_transport_reorder_frame_t *frame)
         return -ESTALE;
     }
 
+    // 获取Peer/Class状态，会话变化时清理旧数据。
     current = &g_reorder.classes[peer_index][frame->traffic_class];
 
     if (current->peer_epoch != frame->peer_epoch || current->peer_node_id != frame->peer_node_id)
@@ -816,6 +830,9 @@ int linkg_transport_reorder_submit(const linkg_transport_reorder_frame_t *frame)
         current->peer_node_id = frame->peer_node_id;
     }
 
+    sequence = frame->header.sequence;
+
+    // REALTIME不等待乱序重排，直接进入交付队列。
     if (frame->traffic_class == LINKG_TRANSPORT_CLASS_REALTIME)
     {
         current->redundant = true;
@@ -827,47 +844,53 @@ int linkg_transport_reorder_submit(const linkg_transport_reorder_frame_t *frame)
         }
 
         index = (current->direct_head + current->direct_count) % LINKG_TRANSPORT_REORDER_DIRECT_QUEUE_SIZE;
+
         current->direct[index] = *frame;
         linkg_packet_retain(frame->packet);
         current->direct_count++;
     }
     else
     {
+        // VIDEO/DATA首次进入冗余模式时初始化重排状态。
         if (!current->redundant)
         {
-            current->redundant           = true;
-            current->wait_start_us       = 0U;
+            current->redundant            = true;
+            current->wait_start_us        = 0U;
             current->expected_initialized = false;
         }
 
         if (!current->expected_initialized)
         {
+            // 优先衔接SINGLE模式的最后一个接收序号。
             if (current->single_initialized)
             {
                 current->expected_sequence = current->last_single_sequence + 1U;
             }
             else
             {
-                // 每个新Peer/Class的USER发送序号从1开始；不能把首个乱序到达帧当作起点。
+                // 新Peer/Class的发送序号从1开始。
                 current->expected_sequence = 1U;
             }
 
             current->expected_initialized = true;
         }
 
-        if (_linkg_transport_reorder_before(frame->header.sequence, current->expected_sequence))
+        // 丢弃已经落后于期望序号的数据。
+        if (_linkg_transport_reorder_before(sequence, current->expected_sequence))
         {
             pthread_mutex_unlock(&g_reorder.lock);
             return -ERANGE;
         }
 
-        distance = frame->header.sequence - current->expected_sequence;
+        // 超出窗口范围时向前推进重排窗口。
+        distance = sequence - current->expected_sequence;
         if (distance >= LINKG_TRANSPORT_REORDER_WINDOW_SIZE)
         {
-            _linkg_transport_reorder_advance_window(current, frame->header.sequence);
+            _linkg_transport_reorder_advance_window(current, sequence);
         }
 
-        index = frame->header.sequence & (LINKG_TRANSPORT_REORDER_WINDOW_SIZE - 1U);
+        // 根据序号定位缓存槽，拒绝已经占用的槽位。
+        index = sequence & (LINKG_TRANSPORT_REORDER_WINDOW_SIZE - 1U);
         slot  = &current->slots[index];
 
         if (slot->packet != NULL)
@@ -876,6 +899,7 @@ int linkg_transport_reorder_submit(const linkg_transport_reorder_frame_t *frame)
             return -EALREADY;
         }
 
+        // Reorder持有独立Packet引用，等待Worker处理。
         *slot = *frame;
         linkg_packet_retain(frame->packet);
         current->slot_count++;

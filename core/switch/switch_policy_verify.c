@@ -1,11 +1,11 @@
 /**
  * @file switch_policy_verify.c
- * @brief LinkG冗余阶段Wi-Fi积分恢复及Cellular质量确认
+ * @brief LinkG冗余阶段LOSS无线质量与LOAD队列承载验证
  * @author Dawn
  * @version 1.0.0
  * @date 2026-10-26
  *
- * 流程：ACK启动 → Wire/Load/Probe采集 → Wi-Fi共享积分 → 双链路比较
+ * 流程：ACK启动 → 三秒采集 → LOSS按无线积分、LOAD按队列溢出判决
  *       → 固化VERIFY_DONE → Operation决定最终单发Plan。
  *
  * 本模块只评估质量，不修改发送计划，也不执行PlanSync。
@@ -145,13 +145,14 @@ static void _linkg_switch_verify_consume_wire(linkg_switch_policy_verify_path_t 
 }
 
 /**
- * @brief 按方向消费Load窗口；发现过一次队列溢出即锁定。
+ * @brief 按方向消费Load窗口；LOAD恢复连首个新窗口也参与判决。
  */
 static void _linkg_switch_verify_consume_load(linkg_switch_policy_verify_path_t *path,
                                               const linkg_switch_path_loss_observation_t *loss,
                                               uint64_t started_us,
                                               uint64_t deadline_us,
-                                              uint64_t now_us)
+                                              uint64_t now_us,
+                                              bool load_recovery)
 {
     const linkg_switch_loss_observation_t *sample;
     uint32_t                               direction;
@@ -171,8 +172,15 @@ static void _linkg_switch_verify_consume_load(linkg_switch_policy_verify_path_t 
         if (!path->load_primed[direction])
         {
             path->load_primed[direction] = true;
-            continue;
+
+            // LOAD恢复不能漏掉冗余启动后第一个有溢出的窗口。
+            if (!load_recovery)
+            {
+                continue;
+            }
         }
+
+        path->load_observed[direction] = true;
 
         if (sample->lost_packets != 0U)
         {
@@ -398,7 +406,38 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_result(const lin
         return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
     }
 
-    /****************************** Wi-Fi质量已恢复 ******************************/
+    /****************************** LOAD队列恢复验证 ******************************/
+
+    if (runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+        runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    {
+        // 冗余期间发现任何一个方向的Wi-Fi队列溢出，继续使用Cellular。
+        if (runtime->wifi.queue_overflow)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+        }
+
+        // 至少持续采集到ACK后的有效Wi-Fi Path流量窗口；空闲的零速率窗口同样有效。
+        if (!runtime->wifi_traffic_seen ||
+            !observation->wifi.traffic.valid ||
+            observation->wifi.traffic.updated_us <= runtime->started_us ||
+            observation->wifi.traffic.updated_us > now_us ||
+            now_us - observation->wifi.traffic.updated_us > LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+        }
+
+        // 实际有发送或接收时，需要对应方向的新队列样本，不能把缺失统计视为零溢出。
+        if ((runtime->wifi_tx_active && !runtime->wifi.load_observed[LINKG_SWITCH_POLICY_VERIFY_UPLINK]) ||
+            (runtime->wifi_rx_active && !runtime->wifi.load_observed[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK]))
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+        }
+
+        return LINKG_SWITCH_POLICY_VERIFY_WIFI;
+    }
+
+    /****************************** LOSS无线质量恢复 ******************************/
 
     // 必须严格低于恢复门槛；积分等于3时不视为已恢复。
     if (runtime->wifi_loss_score < LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE)
@@ -467,6 +506,7 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
                                      const uint32_t operation_ids[LINKG_TRANSPORT_CLASS_COUNT],
                                      uint32_t class_mask,
                                      linkg_switch_policy_reason_t reason,
+                                     linkg_switch_policy_migration_reason_t recovery_reason,
                                      const linkg_switch_observation_t *observation,
                                      uint64_t now_us)
 {
@@ -479,6 +519,10 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
         peer_generation == 0U || class_mask == 0U ||
         (class_mask & ~LINKG_SWITCH_POLICY_CLASS_MASK_ALL) != 0U ||
         (reason != LINKG_SWITCH_POLICY_REASON_LOSS && reason != LINKG_SWITCH_POLICY_REASON_RECOVERY) ||
+        (reason == LINKG_SWITCH_POLICY_REASON_LOSS && recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_NONE) ||
+        (reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+         recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_LOSS &&
+         recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_LOAD) ||
         now_us == 0U || now_us > UINT64_MAX - LINKG_SWITCH_POLICY_VERIFY_DURATION_US)
     {
         return -EINVAL;
@@ -541,6 +585,7 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
     memcpy(runtime->operation_ids, operation_ids, sizeof(runtime->operation_ids));
     runtime->class_mask       = class_mask;
     runtime->reason           = reason;
+    runtime->recovery_reason  = recovery_reason;
     runtime->wifi_link_id     = observation->wifi.link_id;
     runtime->cellular_link_id = observation->cellular.link_id;
     runtime->started_us       = now_us;
@@ -563,6 +608,7 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     uint64_t fresh_samples[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];
     bool     observation_fresh;
     bool     paths_usable;
+    bool     load_recovery;
 
     if (runtime == NULL || observation == NULL || event == NULL || event_ready == NULL || now_us == 0U)
     {
@@ -611,6 +657,9 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
 
     /****************************** 双链路新窗口采集 ******************************/
 
+    load_recovery = runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+                    runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD;
+
     if (paths_usable)
     {
         memset(fresh_lost, 0, sizeof(fresh_lost));
@@ -624,14 +673,30 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
                                           runtime->class_mask, runtime->started_us, runtime->deadline_us, now_us,
                                           NULL, NULL);
 
-        _linkg_switch_verify_update_wifi_score(runtime, fresh_lost, fresh_samples);
+        if (!load_recovery)
+        {
+            _linkg_switch_verify_update_wifi_score(runtime, fresh_lost, fresh_samples);
+        }
 
         _linkg_switch_verify_consume_load(&runtime->wifi, &observation->wifi.loss,
-                                          runtime->started_us, runtime->deadline_us, now_us);
+                                          runtime->started_us, runtime->deadline_us, now_us, load_recovery);
         _linkg_switch_verify_consume_load(&runtime->cellular, &observation->cellular.loss,
-                                          runtime->started_us, runtime->deadline_us, now_us);
+                                          runtime->started_us, runtime->deadline_us, now_us, false);
 
-        _linkg_switch_verify_consume_probe(runtime, observation->cellular.probe, now_us);
+        if (load_recovery && observation->wifi.traffic.valid &&
+            observation->wifi.traffic.updated_us > runtime->started_us &&
+            observation->wifi.traffic.updated_us <= runtime->deadline_us &&
+            observation->wifi.traffic.updated_us <= now_us)
+        {
+            runtime->wifi_traffic_seen = true;
+            runtime->wifi_tx_active |= observation->wifi.traffic.tx_pps != 0U;
+            runtime->wifi_rx_active |= observation->wifi.traffic.rx_pps != 0U;
+        }
+
+        if (!load_recovery)
+        {
+            _linkg_switch_verify_consume_probe(runtime, observation->cellular.probe, now_us);
+        }
     }
 
     /****************************** 三秒截止形成固定结果 ******************************/

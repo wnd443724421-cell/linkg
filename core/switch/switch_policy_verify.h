@@ -39,7 +39,7 @@ typedef enum
  * @brief 按业务和方向分别累计Wire样本，避免不同业务及方向错配。
  *
  * Queue Overflow是整链路统计，不能直接加入各业务Wire丢包数量。
- * 首个ACK后的新差分窗口用于重新建立采样边界，不参与累计。
+ * LOSS验证首个新窗口用于建立采样边界，LOAD恢复记录首个有效Load窗口。
  */
 typedef struct
 {
@@ -50,58 +50,57 @@ typedef struct
     uint64_t last_load_us[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];                                 // 各方向整链路Load窗口时间戳
 
     bool     loss_primed[LINKG_TRANSPORT_CLASS_COUNT][LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];     // 各业务及方向是否跳过首个新窗口
-    bool     load_primed[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];                                  // 各方向Load是否跳过首个新窗口
+    bool     load_primed[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];                                  // 各方向Load是否建立采样边界
+    bool     load_observed[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];                                // 各方向是否得到过可用于LOAD验证的新窗口
     bool     queue_overflow;                                                                           // 窗口内是否出现TX队列溢出
 } linkg_switch_policy_verify_path_t;
 
 /****************************** Peer级验证会话 ******************************/
 
 /**
- * @brief 一个Peer同时至多进行一组LOSS或RECOVERY质量验证。
+ * @brief 一个Peer同时至多进行一组LOSS或RECOVERY验证。
  *
- * Operation负责创建和维护各业务事务，并在冗余PlanSync ACK后启动验证。
+ * RECOVERY的原始迁移原因由Operation传入，LOAD和LOSS使用独立的恢复判据。
  * operation_ids按业务固定保存本组事务身份，非参与业务必须为0。
- * operation_id取参与业务中下标最小的事务ID，用于单个VERIFY_DONE事件。
- *
- * result_pending表示结果已计算完成，但尚未被Operation确认消费。
- * 在调用方明确完成或取消会话前，process会重复提供同一事件，
- * 不重新计算结果；Operation必须按Generation、ID和Phase幂等处理。
- *
- * 结构体由Switch Worker独占，或由调用方在Switch锁下操作。
+ * result_pending固定已计算结果，交付失败时重复提供同一事件。
  */
 typedef struct
 {
-    uint8_t                             peer_node_id;                                              // 验证所属Peer
-    uint32_t                            peer_generation;                                           // Peer运行代际
-    uint32_t                            operation_id;                                              // VERIFY_DONE代表事务ID
-    uint32_t                            operation_ids[LINKG_TRANSPORT_CLASS_COUNT];                // 本组各业务原始事务ID
-    uint32_t                            class_mask;                                                // 本次参与验证的业务集合
-    linkg_switch_policy_reason_t        reason;                                                    // LOSS或RECOVERY
-    uint32_t                            wifi_link_id;                                              // 启动时Wi-Fi Link实例
-    uint32_t                            cellular_link_id;                                          // 启动时Cellular Link实例
-    uint64_t                            started_us;                                                // 冗余PlanSync ACK时刻
-    uint64_t                            deadline_us;                                               // 固定3秒截止时刻
-    uint64_t                            finished_us;                                               // 结果形成的时间
+    uint8_t                                 peer_node_id;                                              // 验证所属Peer
+    uint32_t                                peer_generation;                                           // Peer运行代际
+    uint32_t                                operation_id;                                              // VERIFY_DONE代表事务ID
+    uint32_t                                operation_ids[LINKG_TRANSPORT_CLASS_COUNT];                // 本组各业务原始事务ID
+    uint32_t                                class_mask;                                                // 本次参与验证的业务集合
+    linkg_switch_policy_reason_t            reason;                                                    // LOSS或RECOVERY
+    linkg_switch_policy_migration_reason_t  recovery_reason;                                           // RECOVERY对应的原始迁移原因
+    uint32_t                                wifi_link_id;                                              // 启动时Wi-Fi Link实例
+    uint32_t                                cellular_link_id;                                          // 启动时Cellular Link实例
+    uint64_t                                started_us;                                                // 冗余PlanSync ACK时刻
+    uint64_t                                deadline_us;                                               // 固定3秒截止时刻
+    uint64_t                                finished_us;                                               // 结果形成的时间
 
-    uint64_t                            cellular_last_probe_us[LINKG_TRANSPORT_CLASS_COUNT];       // 最近已消费的Cellular Probe时间
-    uint64_t                            cellular_last_good_probe_us[LINKG_TRANSPORT_CLASS_COUNT];  // 最近成功的Cellular Probe时间
-    uint32_t                            cellular_probe_seen_mask;                                  // 验证期内有效Cellular Probe集合
-    uint32_t                            cellular_max_rtt_us;                                       // 验证期内最大有效Cellular RTT
-    uint8_t                             wifi_loss_score;                                           // Wi-Fi恢复积分，初始5分
-    bool                                cellular_probe_failed;                                     // 验证期内Cellular Probe失败或RTT超限
-    bool                                path_interrupted;                                          // 物理Path失效或Link实例变化
-    bool                                active;                                                    // 验证会话已建立
-    bool                                result_pending;                                            // 最终结果等待Operation消费
-    linkg_switch_policy_verify_result_t result;                                                    // 固定截止时计算的结果
+    uint64_t                                cellular_last_probe_us[LINKG_TRANSPORT_CLASS_COUNT];       // 最近已消费的Cellular Probe时间
+    uint64_t                                cellular_last_good_probe_us[LINKG_TRANSPORT_CLASS_COUNT];  // 最近成功的Cellular Probe时间
+    uint32_t                                cellular_probe_seen_mask;                                  // 验证期内有效Cellular Probe集合
+    uint32_t                                cellular_max_rtt_us;                                       // 验证期内最大有效Cellular RTT
+    uint8_t                                 wifi_loss_score;                                           // LOSS Wi-Fi恢复积分，初始5分
+    bool                                    cellular_probe_failed;                                     // 验证期内Cellular Probe失败或RTT超限
+    bool                                    path_interrupted;                                          // 物理Path失效或Link实例变化
+    bool                                    wifi_traffic_seen;                                         // LOAD验证期间曾采到Wi-Fi实际Path速率
+    bool                                    wifi_tx_active;                                            // LOAD验证期间STA Wi-Fi实际发送过帧
+    bool                                    wifi_rx_active;                                            // LOAD验证期间STA Wi-Fi实际收到过帧
+    bool                                    active;                                                    // 验证会话已建立
+    bool                                    result_pending;                                            // 最终结果等待Operation消费
+    linkg_switch_policy_verify_result_t     result;                                                    // 固定截止时计算的结果
 
-    linkg_switch_policy_verify_path_t   wifi;                                                      // Wi-Fi参与业务Wire统计
-    linkg_switch_policy_verify_path_t   cellular;                                                  // Cellular参与业务Wire统计
+    linkg_switch_policy_verify_path_t       wifi;                                                      // Wi-Fi参与业务Wire统计
+    linkg_switch_policy_verify_path_t       cellular;                                                  // Cellular参与业务Wire统计
 } linkg_switch_policy_verify_runtime_t;
 
 /****************************** 验证生命周期 ******************************/
 
 void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runtime);
-int  linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime, uint8_t peer_node_id, uint32_t peer_generation, const uint32_t operation_ids[LINKG_TRANSPORT_CLASS_COUNT], uint32_t class_mask, linkg_switch_policy_reason_t reason, const linkg_switch_observation_t *observation, uint64_t now_us);
+int  linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime, uint8_t peer_node_id, uint32_t peer_generation, const uint32_t operation_ids[LINKG_TRANSPORT_CLASS_COUNT], uint32_t class_mask, linkg_switch_policy_reason_t reason, linkg_switch_policy_migration_reason_t recovery_reason, const linkg_switch_observation_t *observation, uint64_t now_us);
 int  linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_observation_t *observation, uint64_t now_us, linkg_switch_policy_event_t *event, bool *event_ready);
 
 #endif // SWITCH_POLICY_VERIFY_H

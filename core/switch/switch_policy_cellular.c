@@ -21,7 +21,7 @@
 
 /****************************** 恢复参数 ******************************/
 
-#define LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB  4     // 质量迁移后，RSSI比迁出时提高至少4dB
+#define LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB  3    // LOSS恢复要求RSSI较迁出时提高至少3dB
 #define LINKG_SWITCH_POLICY_DIRECT_RECOVERY_RSSI_DBM  (-60)   // 非质量迁移后，Wi-Fi RSSI达到-60dBm即可直接恢复
 
 /****************************** Cellular主链路策略 ******************************/
@@ -29,9 +29,10 @@
 /**
  * @brief 检测Cellular单发业务的Wi-Fi恢复候选。
  *
- * LOSS/LOAD维持既有的RSSI滞回及冗余Verify；
- * WIFI_DOWN/UNKNOWN/NONE在Wi-Fi Path可用且RSSI足够强时直接恢复单发。
- * 两类候选分开提交，避免混合业务错误跳过Verify。
+ * LOSS恢复沿用RSSI+4dB和Wire积分验证；LOAD恢复要求RSSI不低于迁出基线，
+ * 进入冗余3秒确认Wi-Fi队列不再溢出，不要求额外负载统计或RSSI提升。
+ * WIFI_DOWN/UNKNOWN/NONE保持原有强RSSI直接恢复。
+ * 恢复候选按原始迁出原因分组，避免在同一Verify中混用判决算法。
  * 本函数只生成策略事件；PlanSync及ACK由Operation负责。
  */
 int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *input, uint64_t now_us)
@@ -40,7 +41,8 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
     linkg_switch_peer_runtime_t          *peer;
     const linkg_switch_policy_operation_t *operation;
     const linkg_class_send_plan_t         *current;
-    uint32_t                               verify_mask;
+    uint32_t                               loss_mask;
+    uint32_t                               load_mask;
     uint32_t                               direct_mask;
     uint32_t                               class_mask;
     uint32_t                               index;
@@ -66,7 +68,8 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
 
     /****************************** 获取当前Peer ******************************/
 
-    verify_mask = 0U;
+    loss_mask   = 0U;
+    load_mask   = 0U;
     direct_mask = 0U;
 
     pthread_mutex_lock(&g_switch.lock);
@@ -110,12 +113,10 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
             continue;
         }
 
-        /****************************** 第一类：质量迁移恢复 ******************************/
+        /****************************** LOSS无线质量恢复 ******************************/
 
-        if (operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS ||
-            operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+        if (operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS)
         {
-            // 保留既有算法：必须具有迁出Wi-Fi时的有效RSSI基线。
             if (!operation->recovery.rssi_valid)
             {
                 continue;
@@ -126,13 +127,31 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
             if ((int64_t)input->observation.wifi.radio.rssi_dbm - baseline >=
                 LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB)
             {
-                verify_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
+                loss_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
             }
 
             continue;
         }
 
-        /****************************** 第二类：非质量迁移直接恢复 ******************************/
+        /****************************** LOAD队列溢出恢复 ******************************/
+
+        if (operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+        {
+            if (!operation->recovery.rssi_valid)
+            {
+                continue;
+            }
+
+            // 不要求RSSI提高，但必须不低于迁出时的原始RSSI。
+            if (input->observation.wifi.radio.rssi_dbm >= operation->recovery.rssi_dbm)
+            {
+                load_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
+            }
+
+            continue;
+        }
+
+        /****************************** 非质量迁移直接恢复 ******************************/
 
         // 只有已知的非质量迁移原因才允许使用强RSSI直接恢复。
         if (operation->migration_reason != LINKG_SWITCH_POLICY_MIGRATION_WIFI_DOWN &&
@@ -182,10 +201,14 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
 
     /****************************** 选择本轮恢复事件 ******************************/
 
-    // 优先保留原质量恢复路径；若两类同时满足，下一轮再处理直接恢复类。
-    if (verify_mask != 0U)
+    // 不同原始迁移原因不得进入同一Verify；每轮只提交一组。
+    if (loss_mask != 0U)
     {
-        class_mask = verify_mask;
+        class_mask = loss_mask;
+    }
+    else if (load_mask != 0U)
+    {
+        class_mask = load_mask;
     }
     else if (direct_mask != 0U)
     {
@@ -201,7 +224,7 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
     // 仅生成初始事件，不在Policy中直接修改发送计划。
     memset(&event, 0, sizeof(event));
 
-    event.type                              = verify_mask != 0U ?
+    event.type                              = loss_mask != 0U || load_mask != 0U ?
                                               LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY :
                                               LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY;
     event.peer_node_id                      = input->peer_node_id;

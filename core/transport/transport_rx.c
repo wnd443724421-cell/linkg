@@ -1187,16 +1187,18 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
     _linkg_transport_rx_record_batch_stats(&stats);
 }
 
+
 /**
- * @brief 仅将目标为本机且发送计划为冗余的USER_DATA转交Reorder。
+ * @brief 根据发送计划处理本机USER_DATA的乱序接收。
  *
- * @note SINGLE模式仅更新切换序号基线，Packet走原有同步接收路径。
- *       控制数据及非本机数据也保持原有路径。
+ * @note 非冗余模式仅同步Reorder序号基线，Packet继续走普通RX路径。
+ *       冗余模式将Packet提交Reorder，并禁止普通RX路径重复交付。
  */
 static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count)
 {
     bool                            loaded[LINKG_RESOURCE_NETWORK_STA_MAX][LINKG_TRANSPORT_CLASS_COUNT];
     bool                            redundant[LINKG_RESOURCE_NETWORK_STA_MAX][LINKG_TRANSPORT_CLASS_COUNT];
+    linkg_transport_rx_state_t      *state;
     linkg_transport_reorder_frame_t frame;
     linkg_class_send_plan_t         plan;
     uint32_t                        group_index;
@@ -1208,55 +1210,58 @@ static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_
 
     for (index = 0U; index < count; index++)
     {
-        if (states[index].window_result != LINKG_TRANSPORT_WINDOW_ACCEPT ||
-            states[index].header.type != LINKG_TRANSPORT_TYPE_USER_DATA ||
-            states[index].header.destination_node_id != g_transport.local_node_id)
+        state = &states[index];
+
+        // 仅处理窗口接受且目标为本机的USER_DATA。
+        if (state->window_result != LINKG_TRANSPORT_WINDOW_ACCEPT ||
+            state->header.type != LINKG_TRANSPORT_TYPE_USER_DATA ||
+            state->header.destination_node_id != g_transport.local_node_id)
         {
             continue;
         }
 
-        group_index = states[index].source_group_index;
+        // 同一批次内每个Peer/Class只查询一次发送计划。
+        group_index = state->source_group_index;
 
-        if (!loaded[group_index][states[index].traffic_class])
+        if (!loaded[group_index][state->traffic_class])
         {
-            ret                                                 = linkg_switch_get_class_plan(states[index].peer_node_id, states[index].traffic_class, &plan);
-            redundant[group_index][states[index].traffic_class] = ret == 0 && plan.mode == LINKG_SEND_MODE_REDUNDANT;
-            loaded[group_index][states[index].traffic_class]    = true;
+            ret = linkg_switch_get_class_plan(state->peer_node_id, state->traffic_class, &plan);
+
+            redundant[group_index][state->traffic_class] = ret == 0 && plan.mode == LINKG_SEND_MODE_REDUNDANT;
+            loaded[group_index][state->traffic_class]    = true;
         }
 
-        if (!redundant[group_index][states[index].traffic_class])
+        // 非冗余模式仅同步序号基线，Packet继续走普通RX路径。
+        if (!redundant[group_index][state->traffic_class])
         {
-            // 只通知序号基线和模式切换，不将SINGLE Packet送入Reorder缓存。
-            ret = linkg_transport_reorder_note_single(states[index].peer, states[index].peer_epoch,
-                                                       states[index].peer_node_id, states[index].traffic_class,
-                                                       states[index].header.sequence);
+            ret = linkg_transport_reorder_note_single(state->peer, state->peer_epoch, state->peer_node_id, state->traffic_class, state->header.sequence);
             if (ret != 0 && ret != -ESTALE)
             {
                 LINKG_LOG_WARN("transport reorder single sync failed, peer=%u, class=%u, seq=%u, error=%d",
-                               states[index].peer_node_id, (unsigned int)states[index].traffic_class,
-                               states[index].header.sequence, ret);
+                               state->peer_node_id, (unsigned int)state->traffic_class, state->header.sequence, ret);
             }
 
             continue;
         }
 
+        // 冗余模式交由Reorder处理乱序和重复数据。
         memset(&frame, 0, sizeof(frame));
 
         frame.packet          = items[index].packet;
-        frame.peer            = states[index].peer;
-        frame.header          = states[index].header;
-        frame.fragment_header = states[index].fragment_header;
-        frame.traffic_class   = states[index].traffic_class;
+        frame.peer            = state->peer;
+        frame.header          = state->header;
+        frame.fragment_header = state->fragment_header;
+        frame.traffic_class   = state->traffic_class;
         frame.ingress_link_id = link_id;
-        frame.peer_epoch      = states[index].peer_epoch;
-        frame.peer_node_id    = states[index].peer_node_id;
-        frame.fragmented      = states[index].fragmented;
+        frame.peer_epoch      = state->peer_epoch;
+        frame.peer_node_id    = state->peer_node_id;
+        frame.fragmented      = state->fragmented;
         frame.redundant       = true;
 
         ret = linkg_transport_reorder_submit(&frame);
 
-        // 提交成功由Reorder持有独立引用，失败则丢弃，绝不再由普通RX路径重复交付。
-        states[index].window_result = LINKG_TRANSPORT_WINDOW_INVALID;
+        // Reorder成功时持有独立Packet引用，失败时也不再由普通RX路径交付。
+        state->window_result = LINKG_TRANSPORT_WINDOW_INVALID;
 
         if (ret != 0 && ret != -ERANGE && ret != -EALREADY && ret != -ESTALE)
         {
@@ -1265,6 +1270,7 @@ static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_
         }
     }
 }
+
 
 /****************************** 内部批次 ******************************/
 
