@@ -68,25 +68,28 @@ typedef struct
     linkg_switch_loss_observation_t downlink_load;                                 // AP到STA TX队列溢出，由AP上报
 } linkg_switch_path_loss_observation_t;
 
+/****************************** Wi-Fi HCC观测 ******************************/
+
 /**
  * @brief 本机HI1105 HCC发送队列及Device流控状态。
  *
- * VO、VI、BE对应三种Wi-Fi业务优先级队列。
- * FLOWCTRL_OFF属于HCC全局状态，并非各业务独立计数。
- * 只记录原始观测，不在Observation层执行拥塞判决。
+ * VO、VI、BE分别对应实时、视频、普通业务发送优先级。
+ * 队列深度为本机HCC TX瞬时积压，不代表指定Peer的独立统计。
+ * FLOWCTRL_OFF及tx_allowed属于HCC全局流控状态。
+ * 本结构只记录原始观测，不执行负载质量判决。
  */
 typedef struct
 {
-    bool     valid;              // 本次HCC状态读取是否成功
+    bool     valid;              // 本轮HCC状态是否成功读取
 
-    uint32_t vo_queue_length;    // 实时业务VO发送队列深度
-    uint32_t vi_queue_length;    // 视频业务VI发送队列深度
-    uint32_t be_queue_length;    // 普通业务BE发送队列深度
+    uint32_t vo_queue_length;    // VO实时业务发送队列当前长度
+    uint32_t vi_queue_length;    // VI视频业务发送队列当前长度
+    uint32_t be_queue_length;    // BE普通业务发送队列当前长度
 
     uint32_t flowctrl_off_count; // Device FLOWCTRL_OFF累计次数
-    bool     tx_allowed;         // HCC当前是否允许向Device发送
+    bool     tx_allowed;         // 当前HCC是否允许Host向Device发送
 
-    uint64_t updated_us;         // HCC状态采集时间，单调微秒
+    uint64_t updated_us;         // 本轮有效采集时间，CLOCK_MONOTONIC微秒
 } linkg_switch_wifi_hcc_observation_t;
 
 /****************************** Wi-Fi无线观测 ******************************/
@@ -123,7 +126,8 @@ typedef struct
     linkg_switch_traffic_observation_t    traffic;                            // 当前Wi-Fi Path收发速率样本
     linkg_switch_path_loss_observation_t  loss;                               // 双向Wire及队列溢出样本
     linkg_switch_wifi_radio_observation_t radio;                              // Wi-Fi无线层指标
-    linkg_switch_wifi_hcc_observation_t   hcc;
+    linkg_switch_wifi_hcc_observation_t   uplink_hcc;                         // STA本机Wi-Fi上行发送HCC
+    linkg_switch_wifi_hcc_observation_t   downlink_hcc;                       // AP远端Wi-Fi下行发送HCC
 } linkg_switch_wifi_observation_t;
 
 /****************************** Cellular路径观测 ******************************/

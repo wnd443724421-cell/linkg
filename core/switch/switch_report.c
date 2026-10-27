@@ -21,6 +21,7 @@
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
 #include "linkg_wifi_link.h"
+#include "wifi_driver_ops.h"
 
 #include "switch_internal.h"
 #include "switch_tx.h"
@@ -105,6 +106,29 @@ static bool _linkg_switch_report_loss_valid(const linkg_switch_wire_loss_t *loss
 }
 
 /**
+ * @brief 校验AP上报的HCC状态标志及无效样本。
+ */
+static bool _linkg_switch_report_hcc_valid(const linkg_switch_wire_hcc_t *hcc)
+{
+    if (hcc == NULL ||
+        (hcc->flags & ~LINKG_SWITCH_WIRE_HCC_FLAG_MASK) != 0U)
+    {
+        return false;
+    }
+
+    if ((hcc->flags & LINKG_SWITCH_WIRE_HCC_FLAG_VALID) != 0U)
+    {
+        return true;
+    }
+
+    return hcc->flags == 0U &&
+           hcc->vo_queue_length == 0U &&
+           hcc->vi_queue_length == 0U &&
+           hcc->be_queue_length == 0U &&
+           hcc->flowctrl_off_count == 0U;
+}
+
+/**
  * @brief 校验完整质量报告的四项整链路指标及六项分类Wire指标。
  */
 static bool _linkg_switch_report_quality_valid(const linkg_switch_wire_quality_report_t *report)
@@ -112,10 +136,11 @@ static bool _linkg_switch_report_quality_valid(const linkg_switch_wire_quality_r
     uint32_t class_index;
 
     if (report == NULL ||
-        !_linkg_switch_report_loss_valid(&report->wifi_uplink) ||
-        !_linkg_switch_report_loss_valid(&report->wifi_downlink_load) ||
-        !_linkg_switch_report_loss_valid(&report->cellular_uplink) ||
-        !_linkg_switch_report_loss_valid(&report->cellular_downlink_load))
+    !_linkg_switch_report_loss_valid(&report->wifi_uplink) ||
+    !_linkg_switch_report_loss_valid(&report->wifi_downlink_load) ||
+    !_linkg_switch_report_loss_valid(&report->cellular_uplink) ||
+    !_linkg_switch_report_loss_valid(&report->cellular_downlink_load) ||
+    !_linkg_switch_report_hcc_valid(&report->wifi_downlink_hcc))
     {
         return false;
     }
@@ -303,6 +328,55 @@ static int _linkg_switch_report_collect_sample(uint8_t peer_node_id, uint32_t wi
 }
 
 /**
+ * @brief 读取AP本机Wi-Fi发送侧HCC队列及Device全局流控状态。
+ *
+ * 每轮质量报告只采集一次，采样结果供全部直接STA复用。
+ * Wi-Fi Link不可用或驱动查询失败时保留全零无效状态，不影响其他质量指标上报。
+ * 不持有Switch锁调用驱动查询，也不读取或修改Wi-Fi TX控制器的OFF计数基线。
+ */
+static void _linkg_switch_report_collect_wifi_hcc(uint32_t wifi_link_id, linkg_switch_wire_hcc_t *hcc)
+{
+    wal_tx_flowctrl_status_stru status;
+    linkg_link_t                *link;
+    int                         ret;
+
+    if (hcc == NULL)
+    {
+        return;
+    }
+
+    memset(hcc, 0, sizeof(*hcc));
+
+    if (wifi_link_id == LINKG_LINK_ID_INVALID)
+    {
+        return;
+    }
+
+    link = linkg_link_manager_get(wifi_link_id);
+    if (link == NULL || !linkg_link_is_running(link))
+    {
+        return;
+    }
+
+    ret = wifi_driver_get_tx_flowctrl_status(&status);
+    if (ret != 0)
+    {
+        return;
+    }
+
+    hcc->vo_queue_length    = status.vo_queue_length;
+    hcc->vi_queue_length    = status.vi_queue_length;
+    hcc->be_queue_length    = status.be_queue_length;
+    hcc->flowctrl_off_count = status.flowctrl_off_count;
+    hcc->flags              = LINKG_SWITCH_WIRE_HCC_FLAG_VALID;
+
+    if (status.tx_allowed != 0U)
+    {
+        hcc->flags |= LINKG_SWITCH_WIRE_HCC_FLAG_TX_ALLOWED;
+    }
+}
+
+/**
  * @brief 将有效Wire累计统计转换成当前窗口精确丢包数量。
  *
  * 调用方已经持有Switch锁。
@@ -438,6 +512,30 @@ static void _linkg_switch_report_publish_loss_locked(linkg_switch_loss_observati
 }
 
 /**
+ * @brief 将AP上报的HCC原始数据转换为本地远端观测缓存。
+ *
+ * 调用方已经持有Switch锁。
+ * 无效样本清除全部状态，避免旧数据参与后续质量判决。
+ */
+static void _linkg_switch_report_publish_hcc_locked(linkg_switch_wifi_hcc_observation_t *observation, const linkg_switch_wire_hcc_t *hcc, uint64_t now_us)
+{
+    memset(observation, 0, sizeof(*observation));
+
+    if ((hcc->flags & LINKG_SWITCH_WIRE_HCC_FLAG_VALID) == 0U)
+    {
+        return;
+    }
+
+    observation->valid              = true;
+    observation->vo_queue_length    = hcc->vo_queue_length;
+    observation->vi_queue_length    = hcc->vi_queue_length;
+    observation->be_queue_length    = hcc->be_queue_length;
+    observation->flowctrl_off_count = hcc->flowctrl_off_count;
+    observation->tx_allowed         = (hcc->flags & LINKG_SWITCH_WIRE_HCC_FLAG_TX_ALLOWED) != 0U;
+    observation->updated_us         = now_us;
+}
+
+/**
  * @brief 根据整链路及三业务差分基线构建当前Peer质量报告，调用方持有Switch锁。
  */
 static void _linkg_switch_report_build_locked(linkg_switch_ap_peer_runtime_t *runtime, uint32_t wifi_link_id, uint32_t cellular_link_id, const linkg_switch_report_sample_t *sample, uint64_t now_us, linkg_switch_wire_quality_report_t *report)
@@ -459,7 +557,7 @@ static void _linkg_switch_report_build_locked(linkg_switch_ap_peer_runtime_t *ru
 /**
  * @brief 对指定直接STA执行一次完整的质量采集和上报。
  */
-static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t peer_generation, uint32_t wifi_link_id, uint32_t cellular_link_id, linkg_packet_pool_t *packet_pool, uint64_t now_us)
+static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t peer_generation, uint32_t wifi_link_id, uint32_t cellular_link_id, const linkg_switch_wire_hcc_t *wifi_hcc, linkg_packet_pool_t *packet_pool, uint64_t now_us)
 {
     linkg_switch_wire_quality_report_t report;
     linkg_switch_report_sample_t       sample;
@@ -505,6 +603,9 @@ static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t peer
 
     _linkg_switch_report_build_locked(runtime, wifi_link_id, cellular_link_id, &sample, now_us, &report);
 
+    // HCC属于AP设备级状态，直接复用本轮采集快照，不按Peer重复读取驱动。
+    report.wifi_downlink_hcc = *wifi_hcc;
+
     if (!sample.wifi.available && !sample.cellular.available)
     {
         pthread_mutex_unlock(&g_switch.lock);
@@ -536,15 +637,16 @@ static int _linkg_switch_report_process_peer(uint8_t peer_node_id, uint32_t peer
  */
 int linkg_switch_report_process(uint64_t now_us)
 {
-    linkg_packet_pool_t *packet_pool;
-    uint8_t              peer_node_ids[LINKG_SWITCH_PEER_MAX];
-    uint32_t             peer_generations[LINKG_SWITCH_PEER_MAX];
-    uint32_t             cellular_link_id;
-    uint32_t             wifi_link_id;
-    uint32_t             peer_count;
-    uint32_t             index;
-    int                  first_error;
-    int                  ret;
+    linkg_switch_wire_hcc_t  wifi_hcc;
+    linkg_packet_pool_t     *packet_pool;
+    uint8_t                  peer_node_ids[LINKG_SWITCH_PEER_MAX];
+    uint32_t                 peer_generations[LINKG_SWITCH_PEER_MAX];
+    uint32_t                 cellular_link_id;
+    uint32_t                 wifi_link_id;
+    uint32_t                 peer_count;
+    uint32_t                 index;
+    int                      first_error;
+    int                      ret;
 
     if (now_us == 0U)
     {
@@ -605,12 +707,24 @@ int linkg_switch_report_process(uint64_t now_us)
     wifi_link_id     = linkg_link_manager_get_id(LINKG_LINK_ACCESS_WIFI);
     cellular_link_id = linkg_link_manager_get_id(LINKG_LINK_ACCESS_CELLULAR);
 
+    /****************************** AP本机HCC采集 ******************************/
+
+    memset(&wifi_hcc, 0, sizeof(wifi_hcc));
+
+    if (peer_count != 0U)
+    {
+        _linkg_switch_report_collect_wifi_hcc(wifi_link_id, &wifi_hcc);
+    }
+
+    /****************************** Peer质量上报 ******************************/
+
     for (index = 0U; index < peer_count; index++)
     {
         ret = _linkg_switch_report_process_peer(peer_node_ids[index],
                                                  peer_generations[index],
                                                  wifi_link_id,
                                                  cellular_link_id,
+                                                 &wifi_hcc,
                                                  packet_pool,
                                                  now_us);
         _linkg_switch_report_record_error(ret, &first_error);
@@ -633,6 +747,7 @@ uint64_t linkg_switch_report_next_deadline_locked(void)
 }
 
 /****************************** 数据接收 ******************************/
+
 
 /**
  * @brief STA接收AP发来的Wi-Fi和Cellular质量报告。
@@ -700,16 +815,12 @@ int linkg_switch_report_receive_quality(uint8_t peer_node_id, uint32_t message_i
     _linkg_switch_report_publish_loss_locked(&runtime->remote_wifi_downlink_load, &report->wifi_downlink_load, now_us);
     _linkg_switch_report_publish_loss_locked(&runtime->remote_cellular_uplink_loss, &report->cellular_uplink, now_us);
     _linkg_switch_report_publish_loss_locked(&runtime->remote_cellular_downlink_load, &report->cellular_downlink_load, now_us);
+    _linkg_switch_report_publish_hcc_locked(&runtime->remote_wifi_downlink_hcc, &report->wifi_downlink_hcc, now_us);
 
     for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
-        _linkg_switch_report_publish_loss_locked(&runtime->remote_wifi_uplink_classes[class_index],
-                                                  &report->wifi_uplink_classes[class_index],
-                                                  now_us);
-
-        _linkg_switch_report_publish_loss_locked(&runtime->remote_cellular_uplink_classes[class_index],
-                                                  &report->cellular_uplink_classes[class_index],
-                                                  now_us);
+        _linkg_switch_report_publish_loss_locked(&runtime->remote_wifi_uplink_classes[class_index], &report->wifi_uplink_classes[class_index], now_us);
+        _linkg_switch_report_publish_loss_locked(&runtime->remote_cellular_uplink_classes[class_index], &report->cellular_uplink_classes[class_index], now_us);
     }
 
     pthread_mutex_unlock(&g_switch.lock);

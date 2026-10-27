@@ -20,7 +20,8 @@
 #define LINKG_SWITCH_WIRE_MESSAGE_ID_INVALID           0U                                                                               // 无效消息编号
 
 #define LINKG_SWITCH_WIRE_HEADER_SIZE                  8U                                                                               // Switch公共头Wire长度
-#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE  80U                                                                              // Wi-Fi与Cellular质量上报Payload长度
+#define LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE             20U                                                                              // AP本机Wi-Fi HCC状态Wire长度
+#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE  (80U + LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE)                                       // 原有80字节质量数据加20字节HCC
 #define LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE              4U                                                                               // 单业务发送计划Wire长度
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_PAYLOAD_SIZE       (LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE * LINKG_TRANSPORT_CLASS_COUNT)                // 完整Peer发送计划同步Payload长度
 #define LINKG_SWITCH_WIRE_PLAN_ACK_PAYLOAD_SIZE        4U                                                                               // 发送计划确认Payload长度
@@ -34,6 +35,11 @@
 #define LINKG_SWITCH_WIRE_MAINTENANCE_ACK_SIZE         (LINKG_SWITCH_WIRE_HEADER_SIZE + LINKG_SWITCH_WIRE_MAINTENANCE_ACK_PAYLOAD_SIZE) // 维护确认长度
 #define LINKG_SWITCH_WIRE_MAX_SIZE                     LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE                                            // 最大长度
 
+
+#define LINKG_SWITCH_WIRE_HCC_FLAG_VALID               0x00000001U                                                                      // HCC采样有效
+#define LINKG_SWITCH_WIRE_HCC_FLAG_TX_ALLOWED          0x00000002U                                                                      // HCC允许Host向Device发送
+#define LINKG_SWITCH_WIRE_HCC_FLAG_MASK                (LINKG_SWITCH_WIRE_HCC_FLAG_VALID | LINKG_SWITCH_WIRE_HCC_FLAG_TX_ALLOWED)       // 当前支持的全部HCC标志
+
 /****************************** 协议约束 ******************************/
 
 _Static_assert(LINKG_TRANSPORT_CLASS_REALTIME == 0, "invalid realtime class index");
@@ -45,7 +51,13 @@ _Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_PLAN_SYNC_SIZE, "
 _Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_PLAN_ACK_SIZE, "invalid plan ack max size");
 _Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_MAINTENANCE_SIZE, "invalid maintenance max size");
 _Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_MAINTENANCE_ACK_SIZE, "invalid maintenance ack max size");
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE == 20U, "invalid HCC wire size");
 
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE == 100U, "invalid quality report payload size");
+
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE == 108U, "invalid quality report wire size");
+
+_Static_assert((LINKG_SWITCH_WIRE_HCC_FLAG_VALID & LINKG_SWITCH_WIRE_HCC_FLAG_TX_ALLOWED) == 0U, "overlapping HCC flags");
 /****************************** 消息类型 ******************************/
 
 typedef enum
@@ -114,6 +126,17 @@ typedef struct
     uint32_t sample_packets; // 当前窗口总样本数量
 } linkg_switch_wire_loss_t;
 
+/****************************** HCC质量上报 ******************************/
+
+typedef struct
+{
+    uint32_t vo_queue_length;    // AP本机VO实时业务发送队列长度
+    uint32_t vi_queue_length;    // AP本机VI视频业务发送队列长度
+    uint32_t be_queue_length;    // AP本机BE普通业务发送队列长度
+    uint32_t flowctrl_off_count; // AP本机Device FLOWCTRL_OFF累计次数
+    uint32_t flags;              // HCC状态有效性及原始发送允许标志
+} linkg_switch_wire_hcc_t;
+
 /**
  * @brief AP向指定STA上报Wi-Fi和Cellular质量。
  *
@@ -127,14 +150,17 @@ typedef struct
  */
 typedef struct
 {
-    linkg_switch_wire_loss_t wifi_uplink;          // STA到AP Wi-Fi整链路Wire丢包
-    linkg_switch_wire_loss_t wifi_downlink_load;   // AP到STA Wi-Fi整链路Load丢包
+    linkg_switch_wire_loss_t wifi_uplink;            // STA到AP Wi-Fi整链路Wire丢包
+    linkg_switch_wire_loss_t wifi_downlink_load;     // AP到STA Wi-Fi整链路Load丢包
 
     linkg_switch_wire_loss_t cellular_uplink;        // STA到AP Cellular整链路Wire丢包
     linkg_switch_wire_loss_t cellular_downlink_load; // AP到STA Cellular整链路Load丢包
 
     linkg_switch_wire_loss_t wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];     // STA到AP Wi-Fi三业务独立Wire丢包
     linkg_switch_wire_loss_t cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // STA到AP Cellular三业务独立Wire丢包
+
+    linkg_switch_wire_hcc_t  wifi_downlink_hcc;      // AP到STA Wi-Fi发送侧HCC队列及全局流控状态
+
 } linkg_switch_wire_quality_report_t;
 
 /****************************** 发送计划同步 ******************************/

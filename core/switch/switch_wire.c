@@ -28,6 +28,15 @@
 #define LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_CLASSES_OFFSET    (LINKG_SWITCH_WIRE_HEADER_SIZE + 32U) // Wi-Fi上行三业务Wire偏移
 #define LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET (LINKG_SWITCH_WIRE_HEADER_SIZE + 56U) // Cellular上行三业务Wire偏移
 
+/****************************** AP HCC质量偏移 ******************************/
+
+#define LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET       (LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET + LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE * LINKG_TRANSPORT_CLASS_COUNT) // AP HCC起始偏移
+#define LINKG_SWITCH_WIRE_QUALITY_HCC_VO_OFFSET                  (LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET + 0U)  // AP HCC VO队列偏移
+#define LINKG_SWITCH_WIRE_QUALITY_HCC_VI_OFFSET                  (LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET + 4U)  // AP HCC VI队列偏移
+#define LINKG_SWITCH_WIRE_QUALITY_HCC_BE_OFFSET                  (LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET + 8U)  // AP HCC BE队列偏移
+#define LINKG_SWITCH_WIRE_QUALITY_HCC_OFF_COUNT_OFFSET           (LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET + 12U) // AP HCC OFF计数偏移
+#define LINKG_SWITCH_WIRE_QUALITY_HCC_FLAGS_OFFSET               (LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET + 16U) // AP HCC状态标志偏移
+
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_MODE_OFFSET                 LINKG_SWITCH_WIRE_HEADER_SIZE         // 计划同步模式偏移
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_PRIMARY_OFFSET              (LINKG_SWITCH_WIRE_HEADER_SIZE + 1U)  // 计划同步主用接入偏移
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_SECONDARY_OFFSET            (LINKG_SWITCH_WIRE_HEADER_SIZE + 2U)  // 计划同步备用接入偏移
@@ -49,10 +58,17 @@ _Static_assert(LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET ==
                LINKG_SWITCH_WIRE_QUALITY_WIFI_UPLINK_CLASSES_OFFSET +
                LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE * LINKG_TRANSPORT_CLASS_COUNT,
                "invalid Switch quality report class offsets");
-_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE ==
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET ==
                LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET +
                LINKG_SWITCH_WIRE_QUALITY_LOSS_SIZE * LINKG_TRANSPORT_CLASS_COUNT,
+               "invalid Switch quality report HCC offset");
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE ==
+               LINKG_SWITCH_WIRE_QUALITY_WIFI_DOWNLINK_HCC_OFFSET +
+               LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE,
                "invalid Switch quality report wire length");
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_HCC_FLAGS_OFFSET + 4U ==
+               LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE,
+               "invalid Switch quality report HCC field length");
 
 /****************************** 基础编解码 ******************************/
 
@@ -374,13 +390,66 @@ static void _linkg_switch_wire_decode_loss(const uint8_t *buffer, linkg_switch_w
 }
 
 /**
- * @brief 校验整链路指标及三业务独立Wire丢包指标。
+ * @brief 校验AP HCC状态标志及无效样本的零值约束。
+ *
+ * INVALID样本必须全部清零；TX_ALLOWED标志不能脱离VALID独立出现。
+ * 有效样本中的队列长度和累计计数允许为任意uint32_t值。
+ */
+static bool _linkg_switch_wire_hcc_valid(const linkg_switch_wire_hcc_t *hcc)
+{
+    if (hcc == NULL ||
+        (hcc->flags & ~LINKG_SWITCH_WIRE_HCC_FLAG_MASK) != 0U)
+    {
+        return false;
+    }
+
+    if ((hcc->flags & LINKG_SWITCH_WIRE_HCC_FLAG_VALID) != 0U)
+    {
+        return true;
+    }
+
+    return hcc->flags == 0U &&
+           hcc->vo_queue_length == 0U &&
+           hcc->vi_queue_length == 0U &&
+           hcc->be_queue_length == 0U &&
+           hcc->flowctrl_off_count == 0U;
+}
+
+/**
+ * @brief 将AP HCC五个32位字段依次编码到固定Wire偏移。
+ *
+ * 只读取原始状态，不计算FLOWCTRL_OFF差分，也不执行负载判决。
+ */
+static void _linkg_switch_wire_encode_hcc(uint8_t *buffer, const linkg_switch_wire_hcc_t *hcc)
+{
+    _linkg_switch_wire_write_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_VO_OFFSET],        hcc->vo_queue_length);
+    _linkg_switch_wire_write_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_VI_OFFSET],        hcc->vi_queue_length);
+    _linkg_switch_wire_write_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_BE_OFFSET],        hcc->be_queue_length);
+    _linkg_switch_wire_write_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_OFF_COUNT_OFFSET], hcc->flowctrl_off_count);
+    _linkg_switch_wire_write_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_FLAGS_OFFSET],     hcc->flags);
+}
+
+/**
+ * @brief 从固定Wire偏移解码AP HCC五个32位字段。
+ */
+static void _linkg_switch_wire_decode_hcc(const uint8_t *buffer, linkg_switch_wire_hcc_t *hcc)
+{
+    hcc->vo_queue_length    = _linkg_switch_wire_read_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_VO_OFFSET]);
+    hcc->vi_queue_length    = _linkg_switch_wire_read_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_VI_OFFSET]);
+    hcc->be_queue_length    = _linkg_switch_wire_read_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_BE_OFFSET]);
+    hcc->flowctrl_off_count = _linkg_switch_wire_read_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_OFF_COUNT_OFFSET]);
+    hcc->flags              = _linkg_switch_wire_read_u32(&buffer[LINKG_SWITCH_WIRE_QUALITY_HCC_FLAGS_OFFSET]);
+}
+
+/**
+ * @brief 校验整链路、三业务Wire丢包以及AP HCC观测字段。
  */
 static bool _linkg_switch_wire_quality_valid(const linkg_switch_wire_quality_report_t *report)
 {
     uint32_t class_index;
 
     if (report == NULL ||
+        !_linkg_switch_wire_hcc_valid(&report->wifi_downlink_hcc) ||
         !_linkg_switch_wire_loss_valid(&report->wifi_uplink) ||
         !_linkg_switch_wire_loss_valid(&report->wifi_downlink_load) ||
         !_linkg_switch_wire_loss_valid(&report->cellular_uplink) ||
@@ -455,6 +524,10 @@ int linkg_switch_wire_encode_quality_report(uint32_t message_id, const linkg_swi
         _linkg_switch_wire_encode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET + offset],
                                        &report->cellular_uplink_classes[class_index]);
     }
+
+    /****************************** AP本机HCC状态 ******************************/
+
+    _linkg_switch_wire_encode_hcc(buffer, &report->wifi_downlink_hcc);
 
     *length = LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE;
 
@@ -713,6 +786,10 @@ int linkg_switch_wire_decode(const uint8_t *buffer, size_t length, linkg_switch_
                 _linkg_switch_wire_decode_loss(&buffer[LINKG_SWITCH_WIRE_QUALITY_CELLULAR_UPLINK_CLASSES_OFFSET + offset],
                                                &report->cellular_uplink_classes[class_index]);
             }
+
+            /****************************** AP本机HCC状态 ******************************/
+
+            _linkg_switch_wire_decode_hcc(buffer, &report->wifi_downlink_hcc);
 
             if (!_linkg_switch_wire_quality_valid(report))
             {

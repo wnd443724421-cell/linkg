@@ -25,12 +25,15 @@
 #include "linkg_time.h"
 #include "linkg_wifi.h"
 #include "linkg_wifi_link.h"
+#include "wifi_driver_ops.h"
 
 #include "switch_internal.h"
 
 /****************************** 模块常量 ******************************/
 
 #define LINKG_SWITCH_OBSERVATION_REMOTE_LOSS_MAX_AGE_US 1000000ULL   // AP质量报告最长有效期，1秒
+#define LINKG_SWITCH_OBSERVATION_REMOTE_HCC_MAX_AGE_US  1000000ULL   // AP HCC状态最长有效期，1秒
+#define LINKG_SWITCH_OBSERVATION_LOCAL_HCC_MAX_AGE_US   1000000ULL   // STA本机HCC采样最大有效期，1秒
 #define LINKG_SWITCH_OBSERVATION_PROBE_MAX_AGE_US       2500000ULL   // Probe最大结果年龄，覆盖1秒周期和300ms超时
 #define LINKG_SWITCH_OBSERVATION_WIFI_STATUS_MAX_AGE_US 3000000ULL   // Wi-Fi状态最大有效期，3秒
 #define LINKG_SWITCH_OBSERVATION_WIFI_STATS_MAX_AGE_US  3000000ULL   // Wi-Fi Peer无线统计最大有效期，3秒
@@ -45,6 +48,7 @@ typedef struct
     linkg_path_stats_t                       wifi_path_stats;           // Wi-Fi Path累计统计
     linkg_path_stats_t                       cellular_path_stats;       // Cellular Path累计统计
     linkg_wifi_rx_stats_t                    wifi_rx_stats;             // Wi-Fi本机Wire接收统计
+    linkg_switch_wifi_hcc_observation_t      wifi_hcc;                  // STA本机本轮HCC原始状态
     linkg_cellular_rx_stats_t                cellular_rx_stats;         // Cellular本机Wire接收统计
     linkg_switch_observation_state_t         wifi_path_state;           // Wi-Fi Path本轮查询结果
     linkg_switch_observation_state_t         cellular_path_state;       // Cellular Path本轮查询结果
@@ -316,6 +320,47 @@ static void _linkg_switch_observation_collect_wifi_path(uint8_t peer_node_id, li
     {
         _linkg_switch_observation_record_error(ret, &raw->collect_error);
     }
+}
+
+/**
+ * @brief 从HI1105驱动直接采集STA本机发送侧HCC状态。
+ *
+ * HCC为Wi-Fi设备级观测；仅在当前Peer Wi-Fi Path有效时读取。
+ * 读取在Switch锁外执行，不修改Wi-Fi TX流控基线和发送准入状态。
+ * 驱动读取失败仅使本轮HCC无效，不影响其它观测源。
+ */
+static void _linkg_switch_observation_collect_wifi_hcc(linkg_switch_observation_raw_t *raw)
+{
+    wal_tx_flowctrl_status_stru status;
+    uint64_t                   updated_us;
+    int                        ret;
+
+    if (raw->wifi_path_state != LINKG_SWITCH_OBSERVATION_USABLE)
+    {
+        return;
+    }
+
+    ret = wifi_driver_get_tx_flowctrl_status(&status);
+    if (ret != 0)
+    {
+        _linkg_switch_observation_record_error(ret, &raw->collect_error);
+        return;
+    }
+
+    updated_us = linkg_time_monotonic_us();
+    if (updated_us == 0U)
+    {
+        _linkg_switch_observation_record_error(-EIO, &raw->collect_error);
+        return;
+    }
+
+    raw->wifi_hcc.vo_queue_length    = status.vo_queue_length;
+    raw->wifi_hcc.vi_queue_length    = status.vi_queue_length;
+    raw->wifi_hcc.be_queue_length    = status.be_queue_length;
+    raw->wifi_hcc.flowctrl_off_count = status.flowctrl_off_count;
+    raw->wifi_hcc.tx_allowed         = status.tx_allowed != 0U;
+    raw->wifi_hcc.updated_us         = updated_us;
+    raw->wifi_hcc.valid              = true;
 }
 
 /**
@@ -768,6 +813,24 @@ static void _linkg_switch_observation_copy_remote_locked(const linkg_switch_loss
     }
 }
 
+/**
+ * @brief 合并AP上报的HCC设备级状态，并过滤无效或过期数据。
+ *
+ * 调用方已经持有Switch锁；保留STA接收AP报告时记录的原始时间戳。
+ */
+static void _linkg_switch_observation_copy_remote_hcc_locked(const linkg_switch_wifi_hcc_observation_t *source, uint64_t now_us, linkg_switch_wifi_hcc_observation_t *destination)
+{
+    memset(destination, 0, sizeof(*destination));
+
+    if (!source->valid ||
+        !_linkg_switch_observation_fresh(source->updated_us, now_us, LINKG_SWITCH_OBSERVATION_REMOTE_HCC_MAX_AGE_US))
+    {
+        return;
+    }
+
+    *destination = *source;
+}
+
 /****************************** 快照发布 ******************************/
 
 /**
@@ -808,6 +871,13 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
 
     _linkg_switch_observation_build_wifi_radio(raw, now_us, elapsed_ms, &observation.wifi.radio);
     _linkg_switch_observation_build_probe(raw, now_us, &observation);
+
+    // STA本机TX：STA到AP的HCC发送侧状态，使用驱动查询结束时的采样时间。
+    if (raw->wifi_hcc.valid &&
+        _linkg_switch_observation_fresh(raw->wifi_hcc.updated_us, now_us, LINKG_SWITCH_OBSERVATION_LOCAL_HCC_MAX_AGE_US))
+    {
+        observation.wifi.uplink_hcc = raw->wifi_hcc;
+    }
 
     observation.wifi.state     = _linkg_switch_observation_wifi_state(raw, &observation.wifi.radio);
     observation.cellular.state = _linkg_switch_observation_cellular_state(raw);
@@ -882,6 +952,9 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
     _linkg_switch_observation_copy_remote_locked(&runtime->remote_wifi_downlink_load, now_us, &observation.wifi.loss.downlink_load);
     _linkg_switch_observation_copy_remote_locked(&runtime->remote_cellular_downlink_load, now_us, &observation.cellular.loss.downlink_load);
 
+    // AP远端TX：AP到STA的HCC发送侧状态，过期或无效样本不参与发布。
+    _linkg_switch_observation_copy_remote_hcc_locked(&runtime->remote_wifi_downlink_hcc, now_us, &observation.wifi.downlink_hcc);
+
     runtime->observation = observation;
 
     pthread_mutex_unlock(&g_switch.lock);
@@ -945,6 +1018,7 @@ int linkg_switch_observation_refresh(uint8_t peer_node_id, uint32_t peer_generat
     _linkg_switch_observation_collect_wifi_status(&raw);
     _linkg_switch_observation_collect_probe(peer_node_id, &raw);
     _linkg_switch_observation_collect_wifi_path(peer_node_id, &raw);
+    _linkg_switch_observation_collect_wifi_hcc(&raw);
     _linkg_switch_observation_collect_cellular(peer_node_id, &raw);
 
     // 时间戳必须与本轮外部查询结束时对应，而不是使用Worker进入函数前的时间。
@@ -992,6 +1066,7 @@ void linkg_switch_observation_reset_locked(uint8_t peer_node_id)
     memset(&runtime->remote_wifi_uplink_loss, 0, sizeof(runtime->remote_wifi_uplink_loss));
     memset(&runtime->remote_wifi_uplink_classes, 0, sizeof(runtime->remote_wifi_uplink_classes));
     memset(&runtime->remote_wifi_downlink_load, 0, sizeof(runtime->remote_wifi_downlink_load));
+    memset(&runtime->remote_wifi_downlink_hcc, 0, sizeof(runtime->remote_wifi_downlink_hcc));
     memset(&runtime->remote_cellular_uplink_loss, 0, sizeof(runtime->remote_cellular_uplink_loss));
     memset(&runtime->remote_cellular_uplink_classes, 0, sizeof(runtime->remote_cellular_uplink_classes));
     memset(&runtime->remote_cellular_downlink_load, 0, sizeof(runtime->remote_cellular_downlink_load));

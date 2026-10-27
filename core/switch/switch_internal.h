@@ -41,44 +41,45 @@
 typedef struct
 {
     // 本地链路观测
-    linkg_switch_observation_t          observation;                                                  // 最近一次完整链路观测快照
+    linkg_switch_observation_t           observation;                                                  // 最近一次完整链路观测快照
 
     // 本地Wi-Fi流量采样
-    linkg_switch_traffic_sampler_t      wifi_traffic_sampler;                                         // Wi-Fi业务流量差分采样基线
+    linkg_switch_traffic_sampler_t       wifi_traffic_sampler;                                         // Wi-Fi业务流量差分采样基线
 
     // 本地Wi-Fi质量采样
-    linkg_switch_loss_sampler_t         wifi_downlink_loss_sampler;                                   // AP到STA Wi-Fi Wire丢包采样基线
-    linkg_switch_load_sampler_t         wifi_uplink_load_sampler;                                     // STA到AP Wi-Fi Load丢包采样基线
+    linkg_switch_loss_sampler_t          wifi_downlink_loss_sampler;                                   // AP到STA Wi-Fi Wire丢包采样基线
+    linkg_switch_load_sampler_t          wifi_uplink_load_sampler;                                     // STA到AP Wi-Fi Load丢包采样基线
 
     // 本地Cellular质量采样
-    linkg_switch_loss_sampler_t         cellular_downlink_loss_sampler;                               // AP到STA Cellular Wire丢包采样基线
-    linkg_switch_load_sampler_t         cellular_uplink_load_sampler;                                 // STA到AP Cellular Load丢包采样基线
+    linkg_switch_loss_sampler_t          cellular_downlink_loss_sampler;                               // AP到STA Cellular Wire丢包采样基线
+    linkg_switch_load_sampler_t          cellular_uplink_load_sampler;                                 // STA到AP Cellular Load丢包采样基线
 
     // AP上报的Wi-Fi质量数据
-    linkg_switch_loss_observation_t     remote_wifi_uplink_loss;                                      // STA到AP Wi-Fi整链路Wire丢包
-    linkg_switch_loss_observation_t     remote_wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];      // STA到AP Wi-Fi三业务Wire丢包
-    linkg_switch_loss_observation_t     remote_wifi_downlink_load;                                    // AP到STA Wi-Fi整链路Load丢包
+    linkg_switch_loss_observation_t      remote_wifi_uplink_loss;                                      // STA到AP Wi-Fi整链路Wire丢包
+    linkg_switch_loss_observation_t      remote_wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];      // STA到AP Wi-Fi三业务Wire丢包
+    linkg_switch_loss_observation_t      remote_wifi_downlink_load;                                    // AP到STA Wi-Fi整链路Load丢包
+    linkg_switch_wifi_hcc_observation_t  remote_wifi_downlink_hcc;                                     // AP本机Wi-Fi HCC发送队列及全局流控状态
 
     // AP上报的Cellular质量数据
-    linkg_switch_loss_observation_t     remote_cellular_uplink_loss;                                  // STA到AP Cellular整链路Wire丢包
-    linkg_switch_loss_observation_t     remote_cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];  // STA到AP Cellular三业务Wire丢包
-    linkg_switch_loss_observation_t     remote_cellular_downlink_load;                                // AP到STA Cellular整链路Load丢包
+    linkg_switch_loss_observation_t      remote_cellular_uplink_loss;                                  // STA到AP Cellular整链路Wire丢包
+    linkg_switch_loss_observation_t      remote_cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];  // STA到AP Cellular三业务Wire丢包
+    linkg_switch_loss_observation_t      remote_cellular_downlink_load;                                // AP到STA Cellular整链路Load丢包
 
     // Quality Report接收状态
-    uint32_t                            remote_quality_report_id;                                     // 最近接收的AP质量报告编号
+    uint32_t                             remote_quality_report_id;                                     // 最近接收的AP质量报告编号
 
     // Plan同步状态
-    linkg_switch_plan_sync_runtime_t    plan_sync;                                                    // STA向AP同步完整三类发送计划的事务
+    linkg_switch_plan_sync_runtime_t     plan_sync;                                                    // STA向AP同步完整三类发送计划的事务
 
     // Wi-Fi质量异常检测
-    linkg_switch_loss_policy_runtime_t  wifi_loss_policy;                                             // Wi-Fi双向丢包共享异常积分
-    linkg_switch_load_policy_runtime_t  wifi_load_policy;                                             // Wi-Fi队列溢出检测器
+    linkg_switch_loss_policy_runtime_t   wifi_loss_policy;                                             // Wi-Fi双向丢包共享异常积分
+    linkg_switch_load_policy_runtime_t   wifi_load_policy;                                             // Wi-Fi队列溢出检测器
 
     // 三类业务切换事务
-    linkg_switch_policy_runtime_t       policy;                                                       // 三类业务独立切换事务及运行状态
+    linkg_switch_policy_runtime_t        policy;                                                       // 三类业务独立切换事务及运行状态
 
     // 组级冗余质量验证
-    linkg_switch_policy_verify_runtime_t verify;                                                      // 当前Peer唯一的LOSS/RECOVERY验证会话
+    linkg_switch_policy_verify_runtime_t verify;                                                       // 当前Peer唯一的LOSS/RECOVERY验证会话
 } linkg_switch_sta_peer_runtime_t;
 
 
