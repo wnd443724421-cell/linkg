@@ -20,10 +20,6 @@ extern "C" {
 bool wifi_driver_is_loaded(void);
 int  wifi_driver_load(void);
 
-/****************************** 固件选择 ******************************/
-
-int wifi_driver_prepare_firmware(uint8_t hardware_id);
-
 /****************************** INI配置 ******************************/
 
 int wifi_driver_prepare_ini(uint8_t hardware_id, linkg_wifi_work_mode_t work_mode, bool *changed);

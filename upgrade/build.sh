@@ -172,18 +172,7 @@ with tempfile.TemporaryDirectory(prefix="linkg-upgrade-build-") as temp_dir:
         if not os.access(staging / relative, os.X_OK):
             raise SystemExit("必需程序没有执行权限: " + relative)
 
-    # Web cache fingerprint, not an OTA version number. Generated only inside the package.
-    web_hash = hashlib.sha256()
-    for path in walk(staging / "www"):
-        if not path.is_file() or path == staging / "www" / "version.json":
-            continue
-        rel = path.relative_to(staging / "www").as_posix()
-        web_hash.update(rel.encode("utf-8") + b"\0")
-        web_hash.update(bytes.fromhex(hash_file(path)))
-    (staging / "www" / "version.json").write_text(
-        json.dumps({"version": web_hash.hexdigest()[:16]}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    # Keep the manually maintained www/version.json unchanged in the upgrade package.
 
     entries = check_tree(staging)
     manifest_lines = []

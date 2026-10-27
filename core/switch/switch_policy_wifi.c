@@ -21,7 +21,9 @@
 
 /****************************** 容量保护参数 ******************************/
 
-#define LINKG_SWITCH_POLICY_CELLULAR_CAPACITY_MBPS 25U // 蜂窝迁移准入固定阈值25Mbps
+#define LINKG_SWITCH_POLICY_CELLULAR_CAPACITY_MBPS 25U  // 蜂窝迁移准入固定阈值25Mbps
+#define LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_ENABLED 0U  // RSSI强信号保护：1开启，0关闭
+#define LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_DBM  (-65)  // RSSI不低于-65dBm时禁止软件质量迁移
 
 /****************************** 内部辅助 ******************************/
 
@@ -432,10 +434,36 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
         return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN);
     }
 
+    /****************************** RSSI强信号保护 ******************************/
+
+#if LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_ENABLED
+    // RSSI统计无效时，禁止软件质量迁移。
+    if (!input->observation.wifi.radio.statistics_valid)
+    {
+        return 0;
+    }
+
+    // 强信号下禁止LOSS/LOAD触发冗余。
+    if (input->observation.wifi.radio.rssi_dbm >= LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_DBM)
+    {
+        return 0;
+    }
+#endif
+
+    /****************************** 蜂窝容量保护 ******************************/
+
     // Wi-Fi业务负载不能超过Cellular配置容量。
     if (!_linkg_switch_policy_wifi_within_cellular_capacity(input))
     {
         return 0;
+    }
+
+    /****************************** 负载溢出判决 ******************************/
+
+    ret = linkg_switch_policy_load_process(input, now_us, &load_state);
+    if (ret != 0)
+    {
+        return ret;
     }
 
     /****************************** 无线丢包判决 ******************************/
@@ -446,24 +474,18 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
         return ret;
     }
 
-    // LOSS达到BAD门槛，触发Wi-Fi单发到冗余质量验证。
-    if (loss_state == LINKG_SWITCH_POLICY_LOSS_BAD)
-    {
-        return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_LOSS_BAD);
-    }
+    /****************************** 切换事件优先级 ******************************/
 
-    /****************************** 队列溢出判决 ******************************/
-
-    ret = linkg_switch_policy_load_process(input, now_us, &load_state);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    // LOAD达到BAD门槛，触发单类活跃业务的冗余迁移。
+    // 持续负载拥塞优先，尽可能通过迁移单类业务降低Wi-Fi负载。
     if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD)
     {
         return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD);
+    }
+
+    // 无负载迁移事件时，再由无线丢包触发整组冗余质量验证。
+    if (loss_state == LINKG_SWITCH_POLICY_LOSS_BAD)
+    {
+        return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_LOSS_BAD);
     }
 
     return 0;

@@ -34,8 +34,8 @@
  * V2硬件版本接入国产PA。
  */
 
-#define WIFI_DRIVER_HARDWARE_ID_DOMESTIC       1U                                                                // 国产PA硬件版本
-#define WIFI_DRIVER_HARDWARE_ID_IMPORTED       0U                                                                // 进口PA硬件版本
+#define WIFI_DRIVER_HARDWARE_ID_DOMESTIC       0U                                                                // 国产PA硬件版本
+#define WIFI_DRIVER_HARDWARE_ID_IMPORTED       1U                                                                // 进口PA硬件版本
 
 #define WIFI_DRIVER_ENABLE_LQ10_COMPAT    	   1U 																 // 允许旧LQ10测试板使用Wi-Fi资源
 #define WIFI_DRIVER_HARDWARE_ID_LQ10           3U 																 // LQ10测试板当前读取到的GPIO编码
@@ -49,13 +49,6 @@
 #define WIFI_DRIVER_DOMESTIC_NARROW_INI_TARGET "ini/domestic/narr.ini"                                           // 国产版窄带INI目标
 #define WIFI_DRIVER_DOMESTIC_WIDE_INI_TARGET   "ini/domestic/wide.ini"                                           // 国产版宽带INI目标
 #define WIFI_DRIVER_INI_MAX_SIZE               (128U * 1024U)                                                    // HI1105 INI最大文件大小
-
-/****************************** 固件配置 ******************************/
-
-#define WIFI_DRIVER_FIRMWARE_DIRECTORY         "/vendor/firmware/hi1105/pilot"                                   // HI1105固件根目录
-#define WIFI_DRIVER_FIRMWARE_ACTIVE_PATH       WIFI_DRIVER_FIRMWARE_DIRECTORY "/active"                          // 当前硬件版本固件软链接
-#define WIFI_DRIVER_FIRMWARE_IMPORTED_TARGET   "imported"                                                        // 进口版固件目标目录
-#define WIFI_DRIVER_FIRMWARE_DOMESTIC_TARGET   "domestic"                                                        // 国产版固件目标目录
 
 /****************************** 日志定义 ******************************/
 

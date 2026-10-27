@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "linkg_link.h"
+
 /****************************** 一、Wi-Fi单方向丢包判据 ******************************/
 
 /**
@@ -90,7 +92,14 @@ static bool _linkg_switch_verify_window_valid(const linkg_switch_loss_observatio
 }
 
 /**
- * @brief 按业务/方向消费Wire窗口；首个ACK后窗口只建立边界。
+ * @brief 消费指定链路的三业务双方向Wire丢包观测。
+ *
+ * 仅处理class_mask包含的业务，按UL/DL分别累计有效样本。
+ * 每个业务方向独立建立采样边界，首个有效窗口只用于初始化，
+ * 后续有效窗口累计到Path运行状态。
+ *
+ * fresh_lost和fresh_samples同时有效时，额外输出本轮新样本，
+ * 供Wi-Fi质量恢复积分使用。
  */
 static void _linkg_switch_verify_consume_wire(linkg_switch_policy_verify_path_t *path,
                                               const linkg_switch_path_loss_observation_t *loss,
@@ -105,40 +114,68 @@ static void _linkg_switch_verify_consume_wire(linkg_switch_policy_verify_path_t 
     uint32_t                               class_index;
     uint32_t                               direction;
 
+    /****************************** 一、遍历参与业务 ******************************/
+
     for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
+        // 只消费本次Operation参与的业务。
         if ((class_mask & (1U << class_index)) == 0U)
         {
             continue;
         }
 
+        /****************************** 二、遍历双向Wire窗口 ******************************/
+
         for (direction = 0U; direction < LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT; direction++)
         {
+            // 根据方向选择对应业务的Wire丢包观测。
             sample = direction == LINKG_SWITCH_POLICY_VERIFY_UPLINK ?
                          &loss->uplink_classes[class_index] :
                          &loss->downlink_classes[class_index];
 
-            if (!_linkg_switch_verify_window_valid(sample, started_us, deadline_us, now_us,
+            /****************************** 三、窗口有效性检查 ******************************/
+
+            // 跳过无效、过期、重复或不属于本次验证时间范围的窗口。
+            if (!_linkg_switch_verify_window_valid(sample,
+                                                    started_us,
+                                                    deadline_us,
+                                                    now_us,
                                                     path->last_loss_us[class_index][direction]))
             {
                 continue;
             }
 
+            // 记录已消费窗口时间，避免下一轮重复处理。
             path->last_loss_us[class_index][direction] = sample->updated_us;
 
+            /****************************** 四、建立采样边界 ******************************/
+
+            // 每个业务方向首次有效窗口只用于建立边界，不参与质量统计。
             if (!path->loss_primed[class_index][direction])
             {
                 path->loss_primed[class_index][direction] = true;
                 continue;
             }
 
-            _linkg_switch_verify_accumulate(&path->lost_packets[class_index][direction], sample->lost_packets);
-            _linkg_switch_verify_accumulate(&path->sample_packets[class_index][direction], sample->sample_packets);
+            /****************************** 五、累计有效Wire样本 ******************************/
 
+            // 累计当前链路在本次验证期间的丢包数和总样本数。
+            _linkg_switch_verify_accumulate(&path->lost_packets[class_index][direction],
+                                            sample->lost_packets);
+
+            _linkg_switch_verify_accumulate(&path->sample_packets[class_index][direction],
+                                            sample->sample_packets);
+
+            /****************************** 六、输出本轮新样本 ******************************/
+
+            // Wi-Fi需要额外输出本轮UL/DL样本，供恢复积分计算。
             if (fresh_lost != NULL && fresh_samples != NULL)
             {
-                _linkg_switch_verify_accumulate(&fresh_lost[direction], sample->lost_packets);
-                _linkg_switch_verify_accumulate(&fresh_samples[direction], sample->sample_packets);
+                _linkg_switch_verify_accumulate(&fresh_lost[direction],
+                                                sample->lost_packets);
+
+                _linkg_switch_verify_accumulate(&fresh_samples[direction],
+                                                sample->sample_packets);
             }
         }
     }
@@ -498,7 +535,10 @@ void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runt
 }
 
 /**
- * @brief 冗余ACK后固定事务身份和三秒截止时刻。
+ * @brief 冗余ACK确认后启动质量验证会话。
+ *
+ * 固定本次Operation身份、参与业务、链路实例及验证截止时间。
+ * 本函数不判断业务活跃性，也不执行Wire质量比较。
  */
 int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime,
                                      uint8_t peer_node_id,
@@ -514,39 +554,79 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
     uint32_t class_index;
     uint32_t other_index;
 
+    /****************************** 一、基础参数检查 ******************************/
+
     if (runtime == NULL || observation == NULL || operation_ids == NULL ||
         peer_node_id == 0U || peer_node_id == UINT8_MAX ||
-        peer_generation == 0U || class_mask == 0U ||
+        peer_generation == 0U ||
+        class_mask == 0U ||
         (class_mask & ~LINKG_SWITCH_POLICY_CLASS_MASK_ALL) != 0U ||
-        (reason != LINKG_SWITCH_POLICY_REASON_LOSS && reason != LINKG_SWITCH_POLICY_REASON_RECOVERY) ||
-        (reason == LINKG_SWITCH_POLICY_REASON_LOSS && recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_NONE) ||
-        (reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
-         recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_LOSS &&
-         recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_LOAD) ||
-        now_us == 0U || now_us > UINT64_MAX - LINKG_SWITCH_POLICY_VERIFY_DURATION_US)
+        now_us == 0U ||
+        now_us > UINT64_MAX - LINKG_SWITCH_POLICY_VERIFY_DURATION_US)
     {
         return -EINVAL;
     }
 
+    /****************************** 二、事务类型检查 ******************************/
+
+    // 仅支持LOSS验证及RECOVERY恢复验证。
+    if (reason != LINKG_SWITCH_POLICY_REASON_LOSS &&
+        reason != LINKG_SWITCH_POLICY_REASON_RECOVERY)
+    {
+        return -EINVAL;
+    }
+
+    // LOSS不是恢复事务，不允许携带历史迁移原因。
+    if (reason == LINKG_SWITCH_POLICY_REASON_LOSS &&
+        recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_NONE)
+    {
+        return -EINVAL;
+    }
+
+    // RECOVERY必须明确原始迁移原因。
+    if (reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+        recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_LOSS &&
+        recovery_reason != LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    {
+        return -EINVAL;
+    }
+
+    /****************************** 三、运行状态检查 ******************************/
+
+    // 单个Peer同时只允许存在一个活动验证会话。
     if (runtime->active)
     {
         return -EBUSY;
     }
 
-    if (!observation->valid || observation->peer_node_id != peer_node_id ||
-        observation->collected_us == 0U || observation->collected_us > now_us ||
-        now_us - observation->collected_us > LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US ||
-        observation->wifi.state != LINKG_SWITCH_OBSERVATION_USABLE ||
-        observation->cellular.state != LINKG_SWITCH_OBSERVATION_USABLE ||
-        observation->wifi.link_id == 0U || observation->cellular.link_id == 0U)
+    /****************************** 四、链路观测检查 ******************************/
+
+    // 必须使用当前Peer的新鲜有效观测。
+    if (!observation->valid ||
+        observation->peer_node_id != peer_node_id ||
+        observation->collected_us == 0U ||
+        observation->collected_us > now_us ||
+        now_us - observation->collected_us > LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US)
     {
         return -EINVAL;
     }
+
+    // 启动验证前必须确认两条链路均可用。
+    if (observation->wifi.state != LINKG_SWITCH_OBSERVATION_USABLE ||
+        observation->cellular.state != LINKG_SWITCH_OBSERVATION_USABLE ||
+        observation->wifi.link_id == LINKG_LINK_ID_INVALID ||
+        observation->cellular.link_id == LINKG_LINK_ID_INVALID)
+    {
+        return -EINVAL;
+    }
+
+    /****************************** 五、Operation身份检查 ******************************/
 
     operation_id = 0U;
 
     for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
+        // 未参与本次事务的业务不得携带Operation ID。
         if ((class_mask & (1U << class_index)) == 0U)
         {
             if (operation_ids[class_index] != 0U)
@@ -557,11 +637,13 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
             continue;
         }
 
+        // 参与本次事务的业务必须具有有效Operation ID。
         if (operation_ids[class_index] == 0U)
         {
             return -EINVAL;
         }
 
+        // 不同业务的Operation ID必须互不重复。
         for (other_index = 0U; other_index < class_index; other_index++)
         {
             if (operation_ids[class_index] == operation_ids[other_index])
@@ -570,33 +652,51 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
             }
         }
 
+        // 使用首个参与业务的Operation ID作为组级事件身份。
         if (operation_id == 0U)
         {
             operation_id = operation_ids[class_index];
         }
     }
 
+    /****************************** 六、验证会话初始化 ******************************/
+
+    // 全部检查通过后重置运行状态，避免继承历史采样。
     memset(runtime, 0, sizeof(*runtime));
 
-    runtime->active           = true;
-    runtime->peer_node_id     = peer_node_id;
-    runtime->peer_generation  = peer_generation;
-    runtime->operation_id     = operation_id;
+    // 事务身份。
+    runtime->active          = true;
+    runtime->peer_node_id    = peer_node_id;
+    runtime->peer_generation = peer_generation;
+    runtime->operation_id    = operation_id;
+
     memcpy(runtime->operation_ids, operation_ids, sizeof(runtime->operation_ids));
-    runtime->class_mask       = class_mask;
-    runtime->reason           = reason;
-    runtime->recovery_reason  = recovery_reason;
+
+    // 验证范围与原始原因。
+    runtime->class_mask      = class_mask;
+    runtime->reason          = reason;
+    runtime->recovery_reason = recovery_reason;
+
+    // 固定本次验证使用的链路实例。
     runtime->wifi_link_id     = observation->wifi.link_id;
     runtime->cellular_link_id = observation->cellular.link_id;
-    runtime->started_us       = now_us;
-    runtime->deadline_us      = now_us + LINKG_SWITCH_POLICY_VERIFY_DURATION_US;
-    runtime->wifi_loss_score  = LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE;
+
+    // 冗余ACK确认后开始固定三秒验证。
+    runtime->started_us  = now_us;
+    runtime->deadline_us = now_us + LINKG_SWITCH_POLICY_VERIFY_DURATION_US;
+
+    // LOSS及LOSS恢复验证均从异常积分5开始。
+    runtime->wifi_loss_score = LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE;
 
     return 0;
 }
 
 /**
- * @brief 消费观测并在3秒后一次性结算，失败投递可重交付。
+ * @brief 消费双链路质量观测，并在验证截止后形成固定结果。
+ *
+ * 验证期间持续采集Wi-Fi和Cellular质量样本。
+ * 到达三秒截止时间后只结算一次，结果由Operation消费。
+ * 结果尚未消费时允许重复交付同一个VERIFY_DONE事件。
  */
 int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime,
                                        const linkg_switch_observation_t *observation,
@@ -610,24 +710,32 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     bool     paths_usable;
     bool     load_recovery;
 
-    if (runtime == NULL || observation == NULL || event == NULL || event_ready == NULL || now_us == 0U)
+    /****************************** 一、基础参数检查 ******************************/
+
+    if (runtime == NULL || observation == NULL ||
+        event == NULL || event_ready == NULL || now_us == 0U)
     {
         return -EINVAL;
     }
 
     *event_ready = false;
 
+    /****************************** 二、验证会话及事件状态 ******************************/
+
+    // 当前没有活动验证会话，无需处理。
     if (!runtime->active)
     {
         return 0;
     }
 
-    if (observation->peer_node_id != runtime->peer_node_id || now_us < runtime->started_us)
+    // 拒绝其他Peer的观测及早于验证启动时间的调用。
+    if (observation->peer_node_id != runtime->peer_node_id ||
+        now_us < runtime->started_us)
     {
         return -ESTALE;
     }
 
-    // 已形成结果时重复投递同一事件，不重新采样、比较或改变最终结果。
+    // 已形成固定结果时直接重复交付，不重新采样或结算。
     if (runtime->result_pending)
     {
         _linkg_switch_verify_fill_event(runtime, event);
@@ -635,13 +743,15 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
         return 0;
     }
 
-    /****************************** 观测有效性及链路连续性 ******************************/
+    /****************************** 三、观测有效性及链路连续性 ******************************/
 
+    // 仅接受验证启动后生成、且未超过有效期的观测。
     observation_fresh = observation->valid &&
                         observation->collected_us > runtime->started_us &&
                         observation->collected_us <= now_us &&
                         now_us - observation->collected_us <= LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US;
 
+    // 有效观测确认链路不可用或Link实例变化时，永久标记本次验证中断。
     if (observation_fresh &&
         (observation->wifi.state == LINKG_SWITCH_OBSERVATION_UNUSABLE ||
          observation->cellular.state == LINKG_SWITCH_OBSERVATION_UNUSABLE ||
@@ -651,39 +761,76 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
         runtime->path_interrupted = true;
     }
 
-    paths_usable = observation_fresh && !runtime->path_interrupted &&
+    // 只有观测新鲜、链路连续且双链路可用时，才允许采集质量样本。
+    paths_usable = observation_fresh &&
+                   !runtime->path_interrupted &&
                    observation->wifi.state == LINKG_SWITCH_OBSERVATION_USABLE &&
                    observation->cellular.state == LINKG_SWITCH_OBSERVATION_USABLE;
 
-    /****************************** 双链路新窗口采集 ******************************/
+    /****************************** 四、双链路质量样本采集 ******************************/
 
+    // LOAD原因的恢复验证使用独立的队列承载判据。
     load_recovery = runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
                     runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD;
 
     if (paths_usable)
     {
+        /****************************** 4.1 Wire丢包样本 ******************************/
+
         memset(fresh_lost, 0, sizeof(fresh_lost));
         memset(fresh_samples, 0, sizeof(fresh_samples));
 
-        _linkg_switch_verify_consume_wire(&runtime->wifi, &observation->wifi.loss,
-                                          runtime->class_mask, runtime->started_us, runtime->deadline_us, now_us,
-                                          fresh_lost, fresh_samples);
+        // Wi-Fi：累计参与业务的上下行Wire样本，并输出本轮积分输入。
+        _linkg_switch_verify_consume_wire(&runtime->wifi,
+                                          &observation->wifi.loss,
+                                          runtime->class_mask,
+                                          runtime->started_us,
+                                          runtime->deadline_us,
+                                          now_us,
+                                          fresh_lost,
+                                          fresh_samples);
 
-        _linkg_switch_verify_consume_wire(&runtime->cellular, &observation->cellular.loss,
-                                          runtime->class_mask, runtime->started_us, runtime->deadline_us, now_us,
-                                          NULL, NULL);
+        // Cellular：累计参与业务的上下行Wire样本，用于双链路质量比较。
+        _linkg_switch_verify_consume_wire(&runtime->cellular,
+                                          &observation->cellular.loss,
+                                          runtime->class_mask,
+                                          runtime->started_us,
+                                          runtime->deadline_us,
+                                          now_us,
+                                          NULL,
+                                          NULL);
 
+        /****************************** 4.2 Wi-Fi质量恢复积分 ******************************/
+
+        // LOSS验证及LOSS恢复验证持续更新Wi-Fi积分。
         if (!load_recovery)
         {
             _linkg_switch_verify_update_wifi_score(runtime, fresh_lost, fresh_samples);
         }
 
-        _linkg_switch_verify_consume_load(&runtime->wifi, &observation->wifi.loss,
-                                          runtime->started_us, runtime->deadline_us, now_us, load_recovery);
-        _linkg_switch_verify_consume_load(&runtime->cellular, &observation->cellular.loss,
-                                          runtime->started_us, runtime->deadline_us, now_us, false);
+        /****************************** 4.3 双链路队列溢出样本 ******************************/
 
-        if (load_recovery && observation->wifi.traffic.valid &&
+        // Wi-Fi：LOAD恢复验证允许首个有效Load窗口参与判决。
+        _linkg_switch_verify_consume_load(&runtime->wifi,
+                                          &observation->wifi.loss,
+                                          runtime->started_us,
+                                          runtime->deadline_us,
+                                          now_us,
+                                          load_recovery);
+
+        // Cellular：沿用常规Load窗口采集规则。
+        _linkg_switch_verify_consume_load(&runtime->cellular,
+                                          &observation->cellular.loss,
+                                          runtime->started_us,
+                                          runtime->deadline_us,
+                                          now_us,
+                                          false);
+
+        /****************************** 4.4 LOAD恢复业务活动 ******************************/
+
+        // LOAD恢复期间记录Wi-Fi真实收发方向，供截止时检查队列样本。
+        if (load_recovery &&
+            observation->wifi.traffic.valid &&
             observation->wifi.traffic.updated_us > runtime->started_us &&
             observation->wifi.traffic.updated_us <= runtime->deadline_us &&
             observation->wifi.traffic.updated_us <= now_us)
@@ -693,22 +840,31 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
             runtime->wifi_rx_active |= observation->wifi.traffic.rx_pps != 0U;
         }
 
+        /****************************** 4.5 Cellular主动质量探测 ******************************/
+
+        // LOSS相关验证采集Cellular Probe，LOAD恢复不使用该判据。
         if (!load_recovery)
         {
             _linkg_switch_verify_consume_probe(runtime, observation->cellular.probe, now_us);
         }
     }
 
-    /****************************** 三秒截止形成固定结果 ******************************/
+    /****************************** 五、验证截止及事件交付 ******************************/
 
+    // 三秒验证尚未到期，继续等待后续观测。
     if (now_us < runtime->deadline_us)
     {
         return 0;
     }
 
+    /****************************** 5.1 固化验证结果 ******************************/
+
+    // 截止时仅计算一次，后续调用不再改变质量判决。
     runtime->result         = _linkg_switch_verify_result(runtime, observation, now_us);
     runtime->finished_us    = now_us;
     runtime->result_pending = true;
+
+    /****************************** 5.2 交付VERIFY_DONE事件 ******************************/
 
     _linkg_switch_verify_fill_event(runtime, event);
     *event_ready = true;

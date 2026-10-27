@@ -264,6 +264,7 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
 {
     const linkg_switch_observation_t *observation;
     linkg_class_send_plan_t          *item;
+    uint32_t                          selected_class;
     uint32_t                          class_index;
     uint32_t                          index;
     uint32_t                          mask;
@@ -350,13 +351,21 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
 
         /****************************** Wi-Fi队列溢出 ******************************/
 
+
+        /****************************** Wi-Fi队列溢出 ******************************/
+
         case LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD:
-            // DATA、VIDEO、REALTIME依次尝试，只选择一类活跃业务。
+
+            /****************************** 一、选择迁移起点 ******************************/
+
+            selected_class = LINKG_TRANSPORT_CLASS_COUNT;
+
+            // 按DATA、VIDEO、REALTIME顺序寻找最低优先级的活跃业务。
             for (index = LINKG_TRANSPORT_CLASS_COUNT; index > 0U; index--)
             {
                 class_index = index - 1U;
 
-                // 只迁移真实活跃的用户业务。
+                // 迁移起点必须存在近期真实USER_DATA活动。
                 if (!active_classes[class_index])
                 {
                     continue;
@@ -364,6 +373,33 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
 
                 item = &next->classes[class_index];
 
+                // 只选择Wi-Fi单发且具备Cellular备用的业务。
+                if (item->mode != LINKG_SEND_MODE_SINGLE ||
+                    item->primary_link_id != observation->wifi.link_id ||
+                    item->secondary_link_id != observation->cellular.link_id)
+                {
+                    continue;
+                }
+
+                selected_class = class_index;
+                break;
+            }
+
+            // 没有符合条件的活跃业务，不创建负载迁移事务。
+            if (selected_class == LINKG_TRANSPORT_CLASS_COUNT)
+            {
+                break;
+            }
+
+            /****************************** 二、构建QoS迁移集合 ******************************/
+
+            // 迁移选中业务及所有优先级更低的Wi-Fi单发业务。
+            // 低优先级业务即使暂时没有流量，也应同步迁往Cellular。
+            for (class_index = selected_class; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+            {
+                item = &next->classes[class_index];
+
+                // 已迁移、未启用或没有Cellular备用的业务保持原计划。
                 if (item->mode != LINKG_SEND_MODE_SINGLE ||
                     item->primary_link_id != observation->wifi.link_id ||
                     item->secondary_link_id != observation->cellular.link_id)
@@ -372,10 +408,12 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
                 }
 
                 item->mode = LINKG_SEND_MODE_REDUNDANT;
+
                 mask |= LINKG_SWITCH_POLICY_CLASS_BIT(class_index);
-                break;
             }
+
             break;
+
 
         /****************************** Wi-Fi恢复候选 ******************************/
 

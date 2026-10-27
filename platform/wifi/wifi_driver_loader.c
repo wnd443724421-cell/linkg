@@ -124,39 +124,6 @@ static int _wifi_driver_load_module(const char *module_path, const char *module_
 }
 
 /**
- * @brief 根据Wi-Fi硬件类型选择固件目录。
- */
-static int _wifi_driver_firmware_target(uint8_t hardware_id, const char **target)
-{
-    linkg_wifi_hardware_type_t type;
-
-    if (target == NULL)
-    {
-        return -EINVAL;
-    }
-
-    *target = NULL;
-
-    type = linkg_wifi_hardware_from_id(hardware_id);
-
-    switch (type)
-    {
-        case LINKG_WIFI_HARDWARE_DOMESTIC:
-            *target = WIFI_DRIVER_FIRMWARE_DOMESTIC_TARGET;
-            break;
-
-        case LINKG_WIFI_HARDWARE_IMPORTED:
-            *target = WIFI_DRIVER_FIRMWARE_IMPORTED_TARGET;
-            break;
-
-        default:
-            return -EINVAL;
-    }
-
-    return 0;
-}
-
-/**
  * @brief 拼接一个资源目录下的相对路径。
  */
 static int _wifi_driver_join_path(const char *directory, const char *relative, char *path, size_t capacity)
@@ -305,91 +272,6 @@ static int _wifi_driver_replace_symlink_atomic(const char *path, const char *tar
     return 0;
 }
 
-/**
- * @brief 确认两个顶层固件链接指向active下的固定同名固件。
- */
-static int _wifi_driver_check_firmware_links(void)
-{
-    static const struct
-    {
-        const char *name;
-        const char *target;
-    } files[] =
-    {
-        { "WL_ITCM.bin",           "active/WL_ITCM.bin" },
-        { "PLAT_RAM_EXCEPTION.bin", "active/PLAT_RAM_EXCEPTION.bin" }
-    };
-
-    char   path[PATH_MAX];
-    bool   matches;
-    size_t index;
-    int    ret;
-
-    for (index = 0U; index < sizeof(files) / sizeof(files[0]); index++)
-    {
-        ret = _wifi_driver_join_path(WIFI_DRIVER_FIRMWARE_DIRECTORY, files[index].name, path, sizeof(path));
-        if (ret != 0)
-        {
-            return ret;
-        }
-
-        ret = _wifi_driver_symlink_matches(path, files[index].target, false, &matches);
-        if (ret != 0)
-        {
-            return ret;
-        }
-
-        if (!matches)
-        {
-            return -ENOENT;
-        }
-    }
-
-    return 0;
-}
-
-/**
- * @brief 验证指定硬件版本的两个差异固件文件存在。
- */
-static int _wifi_driver_check_firmware_files(const char *target)
-{
-    static const char *const files[] =
-    {
-        "WL_ITCM.bin",
-        "PLAT_RAM_EXCEPTION.bin"
-    };
-
-    char   path[PATH_MAX];
-    char   relative[PATH_MAX];
-    size_t index;
-    int    length;
-    int    ret;
-
-    for (index = 0U; index < sizeof(files) / sizeof(files[0]); index++)
-    {
-        length = snprintf(relative, sizeof(relative), "%s/%s", target, files[index]);
-        if (length < 0 || (size_t)length >= sizeof(relative))
-        {
-            return -ENAMETOOLONG;
-        }
-
-        ret = _wifi_driver_join_path(WIFI_DRIVER_FIRMWARE_DIRECTORY, relative, path, sizeof(path));
-        if (ret != 0)
-        {
-            return ret;
-        }
-
-        ret = _wifi_driver_check_file(path, 0U);
-        if (ret != 0)
-        {
-            WIFI_DRIVER_ERROR("firmware file unavailable, path=%s, error=%d", path, ret);
-            return ret;
-        }
-    }
-
-    return 0;
-}
-
 /****************************** 驱动加载 ******************************/
 
 /**
@@ -443,73 +325,6 @@ int wifi_driver_load(void)
     }
 
     WIFI_DRIVER_INFO("driver modules ready, platform=%s, wifi=%s", WIFI_DRIVER_PLATFORM_MODULE_NAME, WIFI_DRIVER_WIFI_MODULE_NAME);
-
-    return 0;
-}
-
-/****************************** 固件选择 ******************************/
-
-/**
- * @brief 根据焊接PA型号选择HI1105固件目录；已匹配时不写闪存。
- *
- * @note 固件选择必须发生在首次加载HI1105驱动前。
- *       仅检查硬件版本与目录链接；不执行运行期固件更新。
- */
-int wifi_driver_prepare_firmware(uint8_t hardware_id)
-{
-    const char *target;
-    bool        matches;
-    int         ret;
-
-    ret = _wifi_driver_firmware_target(hardware_id, &target);
-    if (ret != 0)
-    {
-        WIFI_DRIVER_ERROR("unsupported hardware id, hardware_id=%u", (unsigned int)hardware_id);
-        return ret;
-    }
-
-    ret = _wifi_driver_check_firmware_links();
-    if (ret != 0)
-    {
-        WIFI_DRIVER_ERROR("invalid firmware top-level links, error=%d", ret);
-        return ret;
-    }
-
-    ret = _wifi_driver_check_firmware_files(target);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = _wifi_driver_symlink_matches(WIFI_DRIVER_FIRMWARE_ACTIVE_PATH, target, false, &matches);
-    if (ret != 0)
-    {
-        WIFI_DRIVER_ERROR("check firmware selector failed, error=%d", ret);
-        return ret;
-    }
-
-    if (matches)
-    {
-        WIFI_DRIVER_DEBUG("firmware already selected, hardware_id=%u, target=%s", (unsigned int)hardware_id, target);
-        return 0;
-    }
-
-    /* 固件目录仅允许在驱动尚未加载时变更；避免切换正在使用的固件。 */
-    if (_wifi_driver_module_loaded(WIFI_DRIVER_PLATFORM_MODULE_NAME) ||
-        _wifi_driver_module_loaded(WIFI_DRIVER_WIFI_MODULE_NAME))
-    {
-        WIFI_DRIVER_ERROR("cannot change firmware selector while driver is loaded, target=%s", target);
-        return -EBUSY;
-    }
-
-    ret = _wifi_driver_replace_symlink_atomic(WIFI_DRIVER_FIRMWARE_ACTIVE_PATH, target);
-    if (ret != 0)
-    {
-        WIFI_DRIVER_ERROR("select firmware failed, target=%s, error=%d", target, ret);
-        return ret;
-    }
-
-    WIFI_DRIVER_INFO("firmware selected, hardware_id=%u, target=%s", (unsigned int)hardware_id, target);
 
     return 0;
 }

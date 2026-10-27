@@ -560,7 +560,7 @@ static int _wifi_hostapd_update_station_limit(char **content, size_t *length, co
     }
 
     // 设置接口兼容模板缺项，并将重复配置合并为一个有效键。
-    return linkg_text_set_key_value(content, length, "max_num_sta", "1");
+    return linkg_text_set_key_value(content, length, "max_num_sta", "3");
 }
 
 /**
