@@ -44,9 +44,7 @@ void                   linkg_wifi_flowctrl_stop(linkg_wifi_flowctrl_t *flowctrl)
 /**
  * @brief 检查当前Wi-Fi是否允许提交一个新的发送批次。
  */
-int linkg_wifi_flowctrl_check(linkg_wifi_flowctrl_t *flowctrl,
-                              bool *submit_allowed,
-                              linkg_wifi_flowctrl_sample_t *sample);
+int linkg_wifi_flowctrl_check(linkg_wifi_flowctrl_t *flowctrl, bool *submit_allowed, linkg_wifi_flowctrl_sample_t *sample);
 
 #ifdef __cplusplus
 }

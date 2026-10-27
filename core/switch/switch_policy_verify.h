@@ -20,7 +20,7 @@ extern "C" {
 /****************************** 验证参数 ******************************/
 
 #define LINKG_SWITCH_POLICY_VERIFY_DURATION_US            3000000ULL // 冗余ACK后固定验证3秒
-#define LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US           250000U    // Cellular RTT必须严格小于250ms
+#define LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US           250000U    // Cellular RTT参考质量阈值
 #define LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US       1500000ULL // 截止时成功Probe最大年龄
 #define LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US 1000000ULL // 截止时观测快照最大年龄
 #define LINKG_SWITCH_POLICY_VERIFY_LOSS_MIN_SAMPLES       20U        // 单方向单轮积分最小样本数
@@ -91,11 +91,11 @@ typedef struct
 
     /****************************** Cellular Probe ******************************/
 
-    uint64_t                               cellular_last_probe_us[LINKG_TRANSPORT_CLASS_COUNT];      // 各业务最后消费的Cellular Probe时间
-    uint64_t                               cellular_last_good_probe_us[LINKG_TRANSPORT_CLASS_COUNT]; // 各业务最近成功的Cellular Probe时间
-    uint32_t                               cellular_probe_seen_mask;                                 // 验证期内成功Probe的业务集合
-    uint32_t                               cellular_max_rtt_us;                                      // 验证期间最大有效Cellular RTT
-    bool                                   cellular_probe_failed;                                    // 验证期间发生Probe失败或RTT超限
+    uint64_t                               cellular_last_probe_us;                                   // 最后消费的Cellular Probe时间
+    uint64_t                               cellular_last_good_probe_us;                              // 最近成功的Cellular Probe时间
+    uint64_t                               cellular_rtt_sum_us;                                      // 验证期间有效RTT累计值
+    uint32_t                               cellular_rtt_count;                                       // 验证期间有效RTT样本数
+    uint32_t                               cellular_max_rtt_us;                                      // 验证期间最大有效RTT
 
     /****************************** 质量与负载状态 ******************************/
 
@@ -130,9 +130,9 @@ typedef struct
     uint32_t                               peer_generation;                             // Peer运行代际
     uint32_t                               operation_ids[LINKG_TRANSPORT_CLASS_COUNT];  // 各参与业务的Operation ID
     uint32_t                               class_mask;                                  // 本次参与验证的业务集合
-    linkg_switch_policy_reason_t           reason;                                      // LOSS或RECOVERY
-    linkg_switch_policy_migration_reason_t recovery_reason;                             // RECOVERY原始迁移原因
-    const linkg_switch_observation_t      *observation;                                 // 启动时的完整链路观测
+    linkg_switch_policy_reason_t           reason;                                      // 当前验证事务原因
+    linkg_switch_policy_migration_reason_t recovery_reason;                             // RECOVERY时的原始迁移原因
+    const linkg_switch_observation_t      *observation;                                 // ACK确认时的链路观测快照
     uint64_t                               now_us;                                      // 冗余ACK确认的单调时间
 } linkg_switch_policy_verify_begin_params_t;
 
