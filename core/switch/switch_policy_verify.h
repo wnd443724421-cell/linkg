@@ -176,6 +176,9 @@ typedef struct
     linkg_switch_policy_verify_load_window_t  wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT]; // Wi-Fi全局Load方向压力窗口
 
     uint8_t                                wifi_loss_score;                                          // Wi-Fi异常积分，LOSS初始5，范围0～5
+    uint8_t                                wifi_load_score;                                          // RECOVERY + LOAD负载恢复积分，初始5，范围0～5
+    uint64_t                               wifi_load_last_traffic_us;                               // LOAD恢复最后使用的Wi-Fi流量源时间
+    bool                                   wifi_load_hcc_primed;                                    // LOAD恢复已建立双方向HCC计数采样基线
     bool                                   wifi_pressure_this_round;                                 // 本轮确认出现Wi-Fi负载压力
     bool                                   wifi_pressure_known_this_round;                           // 本轮具备判断Wi-Fi负载压力的有效来源
     bool                                   path_interrupted;                                         // 物理Path失效或Link实例发生变化

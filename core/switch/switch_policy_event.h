@@ -44,15 +44,18 @@ typedef enum
     LINKG_SWITCH_POLICY_EVENT_COUNT                 // 策略事件类型数量
 } linkg_switch_policy_event_type_t;
 
+
 /****************************** 质量验证结果 ******************************/
 
 typedef enum
 {
-    LINKG_SWITCH_POLICY_VERIFY_NONE = 0,      // 尚无结果，不应作为完成结果提交
-    LINKG_SWITCH_POLICY_VERIFY_WIFI,          // Wi-Fi验证更优
-    LINKG_SWITCH_POLICY_VERIFY_CELLULAR,      // Cellular验证更优
-    LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE   // 样本不足或结果不确定
+    LINKG_SWITCH_POLICY_VERIFY_NONE = 0,     // 尚无验证结果，不允许提交
+    LINKG_SWITCH_POLICY_VERIFY_WIFI,         // 本次参与业务全部选择Wi-Fi
+    LINKG_SWITCH_POLICY_VERIFY_CELLULAR,     // 本次参与业务全部选择Cellular
+    LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE, // 验证结果不确定，由Operation安全回退
+    LINKG_SWITCH_POLICY_VERIFY_MIXED         // 本次参与业务分别选择Wi-Fi和Cellular
 } linkg_switch_policy_verify_result_t;
+
 
 /****************************** 策略事件 ******************************/
 
@@ -84,8 +87,10 @@ typedef struct
 
         struct
         {
-            uint32_t                            operation_id; // 比较结果对应的逻辑事务
-            linkg_switch_policy_verify_result_t result;       // 质量比较结果
+            uint32_t                            operation_id;        // 当前验证事务组的代表Operation ID
+            linkg_switch_policy_verify_result_t result;              // 整组或分类验证结果
+            uint32_t                            wifi_target_mask;    // 本次参与业务中最终选择Wi-Fi的集合
+            uint32_t                            cellular_target_mask;// 本次参与业务中最终选择Cellular的集合
         } verify_done;
 
     } payload;
