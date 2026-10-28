@@ -40,6 +40,11 @@
 #define LINKG_CELLULAR_TX_CONTROL_SIZE                  CMSG_SPACE(sizeof(struct in6_pktinfo))// 单个IPv6 PKTINFO控制区大小
 #define LINKG_CELLULAR_TX_PEER_SLOTS                    256U                                  // 最多256个IPv6对端Sequence状态
 
+_Static_assert(LINKG_LINK_TX_CLASS_COUNT == LINKG_PATH_STATS_CLASS_COUNT, "Cellular TX class count mismatch");
+_Static_assert(LINKG_LINK_TX_CLASS_REALTIME == 0, "REALTIME class index mismatch");
+_Static_assert(LINKG_LINK_TX_CLASS_VIDEO == 1, "VIDEO class index mismatch");
+_Static_assert(LINKG_LINK_TX_CLASS_DATA == 2, "DATA class index mismatch");
+
 /****************************** 内部类型 ******************************/
 
 /**
@@ -263,17 +268,20 @@ static void _linkg_cellular_tx_record_dropped(linkg_path_t *path, const linkg_pa
     linkg_path_record_tx_dropped(path, packet->data_length, 1U);
 }
 
+
 /**
- * @brief 仅队列容量溢出时更新专用计数，不与其它主动丢弃混淆。
+ * @brief 记录指定业务的Cellular TX等待队列溢出。
+ *
+ * 仅记录队列容量不足导致的淘汰，不计入其它主动丢弃。
  */
-static void _linkg_cellular_tx_record_queue_overflow(linkg_path_t *path, const linkg_packet_t *packet)
+static void _linkg_cellular_tx_record_queue_overflow(linkg_link_tx_class_t tx_class, linkg_path_t *path, const linkg_packet_t *packet)
 {
     if (path == NULL || packet == NULL)
     {
         return;
     }
 
-    linkg_path_record_tx_queue_overflow(path, packet->data_length, 1U);
+    linkg_path_record_tx_queue_overflow_class(path, (uint32_t)tx_class, packet->data_length, 1U);
 }
 
 /**
@@ -337,7 +345,7 @@ static uint32_t _linkg_cellular_tx_drop_oldest_locked(linkg_cellular_tx_t *tx, l
     // Queue丢弃会释放Packet和Path引用，因此必须提前记录丢包统计。
     for (index = 0U; index < drop_count; index++)
     {
-        _linkg_cellular_tx_record_queue_overflow(items[index].path, items[index].packet);
+        _linkg_cellular_tx_record_queue_overflow(tx_class, items[index].path, items[index].packet);
     }
 
     ret = linkg_cellular_tx_queue_discard_batch(queue, drop_count);
@@ -698,7 +706,7 @@ static int _linkg_cellular_tx_dispatch_class_locked(linkg_cellular_tx_t *tx, lin
         // Queue释放Packet和Path引用前先完成成功发送统计。
         for (index = 0U; index < sent_count; index++)
         {
-            linkg_path_record_tx_success(scratch->items[index].path, scratch->items[index].packet->data_length, 1U);
+            linkg_path_record_tx_success_class(scratch->items[index].path, (uint32_t)tx_class, scratch->items[index].packet->data_length, 1U);
         }
 
         if (sent_count > 0U)

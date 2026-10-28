@@ -51,6 +51,12 @@
 #define LINKG_WIFI_TX_DIAG_COUNT_STEP               1000ULL                                                                              // 高频异常累计到该步长后才检查日志时间
 
 
+_Static_assert(LINKG_WIFI_TRAFFIC_COUNT == LINKG_PATH_STATS_CLASS_COUNT, "Wi-Fi traffic class count mismatch");
+_Static_assert((uint32_t)LINKG_WIFI_TRAFFIC_REALTIME == (uint32_t)LINKG_LINK_TX_CLASS_REALTIME, "REALTIME class index mismatch");
+_Static_assert((uint32_t)LINKG_WIFI_TRAFFIC_VIDEO == (uint32_t)LINKG_LINK_TX_CLASS_VIDEO, "VIDEO class index mismatch");
+_Static_assert((uint32_t)LINKG_WIFI_TRAFFIC_DATA == (uint32_t)LINKG_LINK_TX_CLASS_DATA, "DATA class index mismatch");
+
+
 /****************************** 内部类型 ******************************/
 
 typedef enum
@@ -289,7 +295,7 @@ static bool _linkg_wifi_tx_diag_time_due(uint64_t now_us, uint64_t last_us)
  *
  * @note 调用方必须持有tx->lock。
  */
-static void _linkg_wifi_tx_record_dropped(linkg_wifi_tx_t *tx, linkg_path_t *path, const linkg_packet_t *packet, linkg_wifi_tx_drop_reason_t reason)
+static void _linkg_wifi_tx_record_dropped(linkg_wifi_tx_t *tx, linkg_wifi_traffic_class_t traffic_class, linkg_path_t *path, const linkg_packet_t *packet, linkg_wifi_tx_drop_reason_t reason)
 {
     uint64_t now_us;
     uint64_t reason_count;
@@ -301,10 +307,12 @@ static void _linkg_wifi_tx_record_dropped(linkg_wifi_tx_t *tx, linkg_path_t *pat
 
     if (reason == LINKG_WIFI_TX_DROP_QUEUE_FULL)
     {
-        linkg_path_record_tx_queue_overflow(path, packet->data_length, 1U);
+        // 仅等待队列溢出淘汰计入分类OVF。
+        linkg_path_record_tx_queue_overflow_class(path, (uint32_t)traffic_class, packet->data_length, 1U);
     }
     else
     {
+        // Path失效导致的主动丢弃不属于队列溢出。
         linkg_path_record_tx_dropped(path, packet->data_length, 1U);
     }
 
@@ -518,7 +526,7 @@ static uint32_t _linkg_wifi_tx_drop_oldest_locked(linkg_wifi_tx_t *tx, linkg_wif
     // Queue丢弃会释放Packet和Path引用，因此必须提前记录丢包统计。
     for (index = 0U; index < drop_count; index++)
     {
-        _linkg_wifi_tx_record_dropped(tx, items[index].path, items[index].packet, LINKG_WIFI_TX_DROP_QUEUE_FULL);
+        _linkg_wifi_tx_record_dropped(tx, traffic_class, items[index].path, items[index].packet, LINKG_WIFI_TX_DROP_QUEUE_FULL);
     }
 
     ret = linkg_wifi_tx_queue_discard_batch(queue, drop_count);
@@ -814,7 +822,7 @@ static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_
          */
         if (send_count == 0U)
         {
-            _linkg_wifi_tx_record_dropped(tx, scratch->items[0].path, scratch->items[0].packet, LINKG_WIFI_TX_DROP_PATH_QUEUE);
+            _linkg_wifi_tx_record_dropped(tx, traffic_class, scratch->items[0].path, scratch->items[0].packet, LINKG_WIFI_TX_DROP_PATH_QUEUE);
 
             ret = linkg_wifi_tx_queue_discard_batch(queue, 1U);
             if (ret != 0)
@@ -873,7 +881,7 @@ static int _linkg_wifi_tx_dispatch_class_locked(linkg_wifi_tx_t *tx, linkg_wifi_
         // Queue释放Packet和Path引用前先完成成功发送统计。
         for (index = 0U; index < sent_count; index++)
         {
-            linkg_path_record_tx_success(scratch->items[index].path, scratch->items[index].packet->data_length, 1U);
+            linkg_path_record_tx_success_class(scratch->items[index].path, (uint32_t)traffic_class, scratch->items[index].packet->data_length, 1U);
         }
 
         if (sent_count > 0U)
@@ -1359,7 +1367,7 @@ int linkg_wifi_tx_submit(linkg_wifi_tx_t *tx, linkg_path_t *path, linkg_link_tx_
         for (index = 0U; index < count; index++)
         {
             results[index] = -ENODEV;
-            _linkg_wifi_tx_record_dropped(tx, path, packets[index], LINKG_WIFI_TX_DROP_PATH_SUBMIT);
+            _linkg_wifi_tx_record_dropped(tx, traffic_class, path, packets[index], LINKG_WIFI_TX_DROP_PATH_SUBMIT);
         }
 
         pthread_mutex_unlock(&tx->lock);

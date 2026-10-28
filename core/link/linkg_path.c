@@ -498,6 +498,36 @@ int linkg_path_get_stats(linkg_path_t *path, linkg_path_stats_t *stats)
     return 0;
 }
 
+/**
+ * @brief 记录指定业务成功提交Socket的数据，同时维护全局统计。
+ */
+void linkg_path_record_tx_success_class(linkg_path_t *path, uint32_t class_index, uint64_t bytes, uint64_t packets)
+{
+    if (path == NULL || !path->initialized || class_index >= LINKG_PATH_STATS_CLASS_COUNT)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&path->stats_lock);
+    linkg_path_stats_record_tx_success_class(&path->stats, class_index, bytes, packets);
+    pthread_mutex_unlock(&path->stats_lock);
+}
+
+/**
+ * @brief 记录指定业务TX队列溢出，同时维护全局丢弃和OVF统计。
+ */
+void linkg_path_record_tx_queue_overflow_class(linkg_path_t *path, uint32_t class_index, uint64_t bytes, uint64_t packets)
+{
+    if (path == NULL || !path->initialized || class_index >= LINKG_PATH_STATS_CLASS_COUNT)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&path->stats_lock);
+    linkg_path_stats_record_tx_queue_overflow_class(&path->stats, class_index, bytes, packets);
+    pthread_mutex_unlock(&path->stats_lock);
+}
+
 /****************************** 状态查询 ******************************/
 
 /**

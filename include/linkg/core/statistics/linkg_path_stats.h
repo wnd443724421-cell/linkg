@@ -15,7 +15,17 @@
 extern "C" {
 #endif
 
+#define LINKG_PATH_STATS_CLASS_COUNT 3U // REALTIME、VIDEO、DATA
+
 /****************************** 路径统计 ******************************/
+
+typedef struct
+{
+    uint64_t tx_packets;                // 成功提交Socket的帧数
+    uint64_t tx_bytes;                  // 成功提交Socket的字节数
+    uint64_t tx_queue_overflow_packets; // TX等待队列溢出淘汰帧数
+    uint64_t tx_queue_overflow_bytes;   // TX等待队列溢出淘汰字节数
+} linkg_path_class_tx_stats_t;
 
 typedef struct
 {
@@ -36,6 +46,7 @@ typedef struct
 
     uint64_t rx_bytes;                  // 从该Path成功接收的LinkG帧字节数
     uint64_t rx_packets;                // 从该Path成功接收的LinkG帧数量
+    linkg_path_class_tx_stats_t tx_classes[LINKG_PATH_STATS_CLASS_COUNT]; // 三业务独立TX统计
 } linkg_path_stats_t;
 
 /****************************** 统计操作 ******************************/
@@ -47,7 +58,8 @@ void linkg_path_stats_record_tx_dropped(linkg_path_stats_t *stats, uint64_t byte
 void linkg_path_stats_record_tx_expired(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
 void linkg_path_stats_record_tx_queue_overflow(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
 void linkg_path_stats_record_rx(linkg_path_stats_t *stats, uint64_t bytes, uint64_t packets);
-
+void linkg_path_stats_record_tx_success_class(linkg_path_stats_t *stats, uint32_t class_index, uint64_t bytes, uint64_t packets);
+void linkg_path_stats_record_tx_queue_overflow_class(linkg_path_stats_t *stats, uint32_t class_index, uint64_t bytes, uint64_t packets);
 #ifdef __cplusplus
 }
 #endif
