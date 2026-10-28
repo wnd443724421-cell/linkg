@@ -920,11 +920,8 @@ static void _linkg_switch_verify_collect_loss_common(linkg_switch_policy_verify_
     // 持续记录Cellular分类Probe，供三秒截止后的双链路质量比较。
     _linkg_switch_verify_collect_cellular_probe(runtime, observation->cellular.probe, observation->collected_us, now_us);
 
-    if (recovery)
-    {
-        // RECOVERY额外记录Wi-Fi分类Probe，防止回切时出现逻辑通信黑洞。
-        _linkg_switch_verify_collect_wifi_probe(runtime, observation->wifi.probe, observation->collected_us, now_us);
-    }
+    // LOSS及RECOVERY都需要比较两个Path的平均Probe RTT。
+    _linkg_switch_verify_collect_wifi_probe(runtime, observation->wifi.probe, observation->collected_us, now_us);
 }
 
 /**
@@ -1124,7 +1121,8 @@ static bool _linkg_switch_verify_probe_average(const linkg_switch_policy_verify_
  * @brief 计算一个Path指定业务的上下行综合丢包率（0~1）。
  *
  * 综合损失=1-(1-Load丢包率)*(1-Wire丢包率)。
- * 仅比较双方均具备Wire/Load样本的方向；最终取两方向较差值。
+ * 全部发送尝试均因Queue Overflow丢弃时允许没有Wire样本。
+ * 其他方向要求Wire/Load均有样本，最终取两方向较差值。
  * 不要求精准端到端对齐，但不能把缺失样本视为零丢包。
  */
 static bool _linkg_switch_verify_class_loss_rate(const linkg_switch_policy_verify_path_t *path, uint32_t class_index, double *loss_rate)
@@ -1149,6 +1147,17 @@ static bool _linkg_switch_verify_class_loss_rate(const linkg_switch_policy_verif
 
     for (direction = 0U; direction < LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT; direction++)
     {
+        // Load累计确认此方向全部发送尝试均已OVF时，Wire无包可观察。
+        // 只要Load样本达到最低门槛，即可确认该方向综合丢包率100%。
+        load_samples = path->load_sample_packets[class_index][direction];
+        load_lost    = path->load_lost_packets[class_index][direction];
+        if (load_samples >= LINKG_SWITCH_POLICY_VERIFY_COMPARE_MIN_SAMPLES &&
+            load_lost == load_samples)
+        {
+            *loss_rate = 1.0;
+            return true;
+        }
+
         wire_samples = path->sample_packets[class_index][direction];
         wire_lost    = path->lost_packets[class_index][direction];
         load_samples = path->load_sample_packets[class_index][direction];
@@ -1193,9 +1202,10 @@ static bool _linkg_switch_verify_class_loss_rate(const linkg_switch_policy_verif
 /**
  * @brief 逐业务判定Wi-Fi或Cellular的可用质量目标。
  *
- * Wi-Fi：有效平均RTT必须严格低于Cellular平均RTT。
- * Cellular：平均RTT严格低于250ms，允许高于Wi-Fi平均RTT。
- * 积分<3时不要求分类Wire比较，但活跃业务仍遵守Probe条件。
+ * LOSS：保留Wi-Fi不需要Probe；仅选择Cellular时要求其平均RTT<250ms。
+ * RECOVERY + LOSS：恢复Wi-Fi必须平均Probe RTT严格低于Cellular；
+ * 维持Cellular只要求其平均Probe RTT<250ms。
+ * 积分<3时不要求分类Wire比较。
  */
 static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_active_class(linkg_switch_policy_verify_runtime_t *runtime, uint32_t class_index, uint64_t now_us)
 {
@@ -1203,6 +1213,7 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_active_cl
     uint64_t cellular_rtt_us;
     double   wifi_loss_rate;
     double   cellular_loss_rate;
+    bool     recovery;
     bool     wifi_probe_ok;
     bool     cellular_probe_ok;
     bool     wifi_allowed;
@@ -1210,15 +1221,24 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_active_cl
     bool     wifi_quality_known;
     bool     cellular_quality_known;
 
-    wifi_probe_ok = _linkg_switch_verify_probe_average(runtime, class_index, true, now_us, &wifi_rtt_us);
-    cellular_probe_ok = _linkg_switch_verify_probe_average(runtime, class_index, false, now_us, &cellular_rtt_us);
+    recovery        = runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY;
+    wifi_rtt_us     = 0U;
+    cellular_rtt_us = 0U;
 
-    wifi_allowed = wifi_probe_ok && cellular_probe_ok && wifi_rtt_us < cellular_rtt_us;
-    cellular_allowed = cellular_probe_ok && cellular_rtt_us < LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US;
+    // LOSS迁出无需Wi-Fi Probe：正在承载的Wi-Fi本身是保守目标。
+    cellular_probe_ok = _linkg_switch_verify_probe_average(runtime, class_index, false, now_us, &cellular_rtt_us);
+    cellular_allowed  = cellular_probe_ok && cellular_rtt_us < LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US;
+    wifi_allowed      = true;
+
+    if (recovery)
+    {
+        // 仅RECOVERY回切要求Wi-Fi平均Probe RTT严格小于Cellular。
+        wifi_probe_ok = _linkg_switch_verify_probe_average(runtime, class_index, true, now_us, &wifi_rtt_us);
+        wifi_allowed  = wifi_probe_ok && cellular_probe_ok && wifi_rtt_us < cellular_rtt_us;
+    }
 
     if (runtime->wifi_loss_score < LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE)
     {
-        // Wi-Fi整体恢复：仅保留活跃业务Probe门槛，避免用慢于5G的Wi-Fi回切。
         if (wifi_allowed)
         {
             return LINKG_SWITCH_POLICY_VERIFY_WIFI;
@@ -1232,28 +1252,25 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_active_cl
 
     if (!wifi_quality_known || !cellular_quality_known)
     {
-        // 分类统计不足：LOSS不强行迁出，RECOVERY不强行回切。
-        if (runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY && cellular_allowed)
+        // LOSS样本不足不迁出；RECOVERY没有足够Wi-Fi恢复证据时维持Cellular。
+        if (!recovery)
         {
-            return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+            return LINKG_SWITCH_POLICY_VERIFY_WIFI;
         }
 
-        return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+        return cellular_allowed ? LINKG_SWITCH_POLICY_VERIFY_CELLULAR : LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
     }
 
-    // 质量更优的Cellular无需比Wi-Fi延迟更低，只需平均RTT<250ms。
     if (cellular_loss_rate < wifi_loss_rate && cellular_allowed)
     {
         return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
     }
 
-    // Wi-Fi承载质量不劣于Cellular，或Cellular质量达标但RTT过高。
     if (wifi_allowed)
     {
         return LINKG_SWITCH_POLICY_VERIFY_WIFI;
     }
 
-    // Wi-Fi未满足严格Probe比较，Cellular仍满足延迟上限时选择Cellular。
     return cellular_allowed ? LINKG_SWITCH_POLICY_VERIFY_CELLULAR : LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
 }
 
@@ -1270,17 +1287,20 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_loss_clas
     uint32_t                             class_index;
     uint32_t                             bit;
     bool                                 force_cellular;
+    bool                                 recovery;
 
     runtime->wifi_target_mask        = 0U;
     runtime->cellular_target_mask    = 0U;
     runtime->comparable_class_mask   = 0U;
     runtime->cellular_preferred_mask = 0U;
 
+    // 不允许将Transport统计读取失败解释为全部业务空闲。
     if (!runtime->class_activity_valid)
     {
         return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
     }
 
+    recovery       = runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY;
     force_cellular = false;
 
     for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
@@ -1297,6 +1317,7 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_loss_clas
             continue;
         }
 
+        // 确认无USER_DATA的高优先级业务不阻挡低优先级恢复。
         if ((runtime->active_class_mask & bit) == 0U)
         {
             runtime->wifi_target_mask |= bit;
@@ -1307,15 +1328,20 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_loss_clas
 
         if (choice == LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE)
         {
-            return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+            // 不确定只回退当前类别，而非抛弃整组已知分类结果。
+            // LOSS保留原Wi-Fi；RECOVERY保留原Cellular。
+            choice = recovery ? LINKG_SWITCH_POLICY_VERIFY_CELLULAR : LINKG_SWITCH_POLICY_VERIFY_WIFI;
         }
-
-        runtime->comparable_class_mask |= bit;
+        else
+        {
+            // 表示此类已产生明确可用的判决，不代表必然进行过Wire比较。
+            runtime->comparable_class_mask |= bit;
+        }
 
         if (choice == LINKG_SWITCH_POLICY_VERIFY_CELLULAR)
         {
-            runtime->cellular_target_mask    |= bit;
-            runtime->cellular_preferred_mask |= bit;
+            runtime->cellular_target_mask |= bit;
+            // 包括保守维持Cellular，后续参与业务须遵循QoS级联。
             force_cellular = true;
         }
         else
