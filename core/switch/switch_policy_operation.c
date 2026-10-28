@@ -1163,31 +1163,29 @@ static void _linkg_switch_operation_abandon_uncertain_locked(linkg_switch_peer_r
     /****************************** 保留未知迁移历史 ******************************/
 
     // MIXED下只处理真实从Wi-Fi迁至Cellular且未获ACK的业务。
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
-        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        if ((policy->group_mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
         {
-            if ((policy->group_mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
-            {
-                continue;
-            }
-
-            operation = &policy->operations[index];
-            if (operation->exit_target != LINKG_SWITCH_POLICY_TARGET_CELLULAR ||
-                !operation->migrated_from_wifi)
-            {
-                continue;
-            }
-
-            // AP计划是否一致仍未知；质量迁移必须保留原因，以继续执行RSSI滞回。
-            operation->migration_reason =
-                policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOSS ? LINKG_SWITCH_POLICY_MIGRATION_LOSS :
-                policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD ? LINKG_SWITCH_POLICY_MIGRATION_LOAD :
-                LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
-            operation->recovery.rssi_valid        = policy->group_rssi_valid;
-            operation->recovery.rssi_dbm          = policy->group_rssi_dbm;
-            operation->recovery.migrated_us       = now_us;
-            operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US);
+            continue;
         }
+
+        operation = &policy->operations[index];
+        if (operation->exit_target != LINKG_SWITCH_POLICY_TARGET_CELLULAR ||
+            !operation->migrated_from_wifi)
+        {
+            continue;
+        }
+
+        // AP计划是否一致仍未知；质量迁移必须保留原因，以继续执行RSSI滞回。
+        operation->migration_reason =
+            policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOSS ? LINKG_SWITCH_POLICY_MIGRATION_LOSS :
+            policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD ? LINKG_SWITCH_POLICY_MIGRATION_LOAD :
+            LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
+        operation->recovery.rssi_valid        = policy->group_rssi_valid;
+        operation->recovery.rssi_dbm          = policy->group_rssi_dbm;
+        operation->recovery.migrated_us       = now_us;
+        operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US);
     }
 
     /****************************** 释放事务并安排后台修复 ******************************/
@@ -1851,7 +1849,7 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
     if (sampled_node_id != 0U && sampled_generation != 0U &&
         linkg_transport_get_peer_stats(sampled_node_id, &stats) == 0)
     {
-        now_ms        = linkg_time_elapsed_ms();
+        now_ms         = linkg_time_elapsed_ms();
         activity_valid = true;
 
         for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
