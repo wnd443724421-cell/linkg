@@ -21,36 +21,116 @@
 #include "linkg_link.h"
 
 
+
 /**
  * @brief 将已固定的验证结果填充为VERIFY_DONE事件。
+ *
+ * 所有结果字段均来自已锁存的runtime，重复交付不重新计算。
  */
 static void _linkg_switch_verify_fill_event(const linkg_switch_policy_verify_runtime_t *runtime, linkg_switch_policy_event_t *event)
 {
     memset(event, 0, sizeof(*event));
 
-    event->type                             = LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE;
-    event->peer_node_id                     = runtime->peer_node_id;
-    event->peer_generation                  = runtime->peer_generation;
-    event->occurred_us                      = runtime->finished_us;
-    event->payload.verify_done.operation_id = runtime->operation_id;
-    event->payload.verify_done.result       = runtime->result;
+    event->type                                     = LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE;
+    event->peer_node_id                             = runtime->peer_node_id;
+    event->peer_generation                          = runtime->peer_generation;
+    event->occurred_us                              = runtime->finished_us;
+    event->payload.verify_done.operation_id         = runtime->operation_id;
+    event->payload.verify_done.result               = runtime->result;
+    event->payload.verify_done.wifi_target_mask     = runtime->wifi_target_mask;
+    event->payload.verify_done.cellular_target_mask = runtime->cellular_target_mask;
 }
+
+
 
 
 /**
  * @brief 固定本次验证结果并生成VERIFY_DONE事件。
  *
+ * WIFI和CELLULAR自动生成整组目标掩码。
+ * MIXED使用截止判决预先生成的分类目标掩码。
+ * INCONCLUSIVE清空目标掩码，由Operation执行安全回退。
+ *
  * 结果只允许固化一次，后续通过result_pending重复交付。
  */
 static void _linkg_switch_verify_finish(linkg_switch_policy_verify_runtime_t *runtime, linkg_switch_policy_verify_result_t result, uint64_t now_us, linkg_switch_policy_verify_process_output_t *output)
 {
+    /****************************** 一、验证结果检查 ******************************/
+
+    if (runtime->result_pending)
+    {
+        _linkg_switch_verify_fill_event(runtime, &output->event);
+        output->event_ready = true;
+        return;
+    }
+
+    /****************************** 二、生成业务目标掩码 ******************************/
+
+    switch (result)
+    {
+        case LINKG_SWITCH_POLICY_VERIFY_WIFI:
+        {
+            // 本次参与验证的业务全部选择Wi-Fi。
+            runtime->wifi_target_mask     = runtime->class_mask;
+            runtime->cellular_target_mask = 0U;
+            break;
+        }
+
+        case LINKG_SWITCH_POLICY_VERIFY_CELLULAR:
+        {
+            // 本次参与验证的业务全部选择Cellular。
+            runtime->wifi_target_mask     = 0U;
+            runtime->cellular_target_mask = runtime->class_mask;
+            break;
+        }
+
+        case LINKG_SWITCH_POLICY_VERIFY_MIXED:
+        {
+            // 分类结果必须非空、互不重叠，且完整覆盖本次参与业务。
+            if (runtime->wifi_target_mask == 0U ||
+                runtime->cellular_target_mask == 0U ||
+                (runtime->wifi_target_mask & runtime->cellular_target_mask) != 0U ||
+                (runtime->wifi_target_mask | runtime->cellular_target_mask) != runtime->class_mask)
+            {
+                result = LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+            }
+            break;
+        }
+
+        case LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE:
+        {
+            // 不确定结果不携带链路目标。
+            break;
+        }
+
+        default:
+        {
+            // NONE及非法枚举值均不能作为有效完成结果。
+            result = LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+            break;
+        }
+    }
+
+    /****************************** 三、不确定结果处理 ******************************/
+
+    if (result == LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE)
+    {
+        runtime->wifi_target_mask     = 0U;
+        runtime->cellular_target_mask = 0U;
+    }
+
+    /****************************** 四、固定验证结果 ******************************/
+
     runtime->result         = result;
     runtime->finished_us    = now_us;
     runtime->result_pending = true;
 
+    /****************************** 五、生成VERIFY_DONE事件 ******************************/
+
     _linkg_switch_verify_fill_event(runtime, &output->event);
     output->event_ready = true;
 }
+
 
 /**
  * @brief 清理当前验证会话及全部运行状态。
