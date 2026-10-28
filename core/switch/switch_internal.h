@@ -23,8 +23,7 @@
 #include "switch_maintenance.h"
 #include "switch_observation.h"
 #include "switch_plan.h"
-#include "switch_policy_load.h"
-#include "switch_policy_loss.h"
+#include "switch_policy_quality.h"
 #include "switch_policy_state.h"
 #include "switch_policy_verify.h"
 
@@ -72,8 +71,7 @@ typedef struct
     linkg_switch_plan_sync_runtime_t     plan_sync;                                                    // STA向AP同步完整三类发送计划的事务
 
     // Wi-Fi质量异常检测
-    linkg_switch_loss_policy_runtime_t   wifi_loss_policy;                                             // Wi-Fi双向丢包共享异常积分
-    linkg_switch_load_policy_runtime_t   wifi_load_policy;                                             // Wi-Fi队列溢出检测器
+    linkg_switch_quality_policy_runtime_t wifi_quality_policy;
 
     // 三类业务切换事务
     linkg_switch_policy_runtime_t        policy;                                                       // 三类业务独立切换事务及运行状态

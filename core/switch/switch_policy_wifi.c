@@ -360,61 +360,84 @@ static int _linkg_switch_policy_wifi_probe_process(const linkg_switch_policy_inp
 
 /****************************** Wi-Fi策略入口 ******************************/
 
+
 /**
- * @brief 检测Wi-Fi硬故障、无线丢包及队列溢出并触发初始策略事件。
+ * @brief 检测Wi-Fi硬故障、负载压力及无线质量异常并触发策略事件。
  *
  * 硬故障优先于软件质量判决。
- * 软件质量判决必须满足维护、候选链路及容量限制。
- * LOSS优先于LOAD，同一轮最多交付一个初始事件。
+ * QUALITY统一处理OVF、HCC及Wire丢包，只输出一个质量状态。
+ * 软件质量检测与迁移准入分离，容量限制不阻止检测器更新。
  *
- * 不直接修改Plan，不管理PlanSync及后续质量验证事务。
+ * 不直接修改Plan，不管理PlanSync及Operation事务。
  */
 int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, uint64_t now_us)
 {
-    linkg_switch_policy_loss_state_t loss_state;
-    linkg_switch_policy_load_state_t load_state;
-    bool                             probe_down;
-    int                              ret;
+    linkg_switch_policy_quality_state_t quality_state;
+    bool                                probe_down;
+    int                                 ret;
 
-    /****************************** 输入有效性 ******************************/
+    /****************************** 一、输入有效性 ******************************/
 
     if (input == NULL || now_us == 0U)
     {
         return -EINVAL;
     }
 
-    if (!input->observation.valid || input->observation.peer_node_id != input->peer_node_id)
+    if (!input->observation.valid ||
+        input->observation.peer_node_id != input->peer_node_id)
     {
         return 0;
     }
 
-    /****************************** Probe低负载逻辑断链检测 ******************************/
+    /****************************** 二、Probe逻辑断链检测 ******************************/
 
-    // 与LOSS/LOAD独立：低负载、三类Probe均连续超时3次，视为逻辑硬故障。
-    // 先维护检测状态，触发时与物理WIFI_DOWN共用原有直接切换事务。
+    // 独立维护低负载Probe黑洞状态，不受QUALITY质量积分影响。
     ret = _linkg_switch_policy_wifi_probe_process(input, &probe_down);
     if (ret != 0)
     {
         return ret;
     }
 
-    /****************************** Wi-Fi硬故障 ******************************/
+    /****************************** 三、Wi-Fi硬故障 ******************************/
 
-    // 只有明确UNUSABLE才触发硬故障，UNKNOWN不作为断链依据。
+    // 明确UNUSABLE时直接触发硬故障，UNKNOWN不作为断链依据。
     if (input->observation.wifi.state == LINKG_SWITCH_OBSERVATION_UNUSABLE)
     {
         return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN);
     }
 
-    /****************************** 软件迁移准入 ******************************/
-
-    // Wi-Fi状态不明确或不可用时，不执行软件质量判决。
+    // Wi-Fi状态未知时不执行软件质量检测。
     if (input->observation.wifi.state != LINKG_SWITCH_OBSERVATION_USABLE)
     {
         return 0;
     }
 
-    // Wi-Fi维护期间禁止LOSS/LOAD软件质量切换。
+    /****************************** 四、Probe逻辑硬故障 ******************************/
+
+    // 低负载通信黑洞直接触发WIFI_DOWN，不进入软件质量判决。
+    if (probe_down)
+    {
+        return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN);
+    }
+
+    /****************************** 五、统一QUALITY质量判决 ******************************/
+
+    // 持续更新OVF、HCC及Wire质量状态，不受蜂窝容量限制。
+    ret = linkg_switch_policy_quality_process(input, now_us, &quality_state);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    // 当前没有达到软件质量异常门槛，无需执行迁移准入检查。
+    if (quality_state == LINKG_SWITCH_POLICY_QUALITY_NONE)
+    {
+        return 0;
+    }
+
+    /****************************** 六、软件迁移准入 ******************************/
+
+    // Wi-Fi维护期间禁止软件质量迁移。
     if (input->wifi_blocked)
     {
         return 0;
@@ -426,64 +449,42 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
         return 0;
     }
 
-    /****************************** Probe逻辑硬故障 ******************************/
-
-    // Probe黑洞不进入LOSS/LOAD质量比较，直接复用WIFI_DOWN切换事务。
-    if (probe_down)
-    {
-        return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN);
-    }
-
-    /****************************** RSSI强信号保护 ******************************/
+    /****************************** 七、RSSI强信号保护 ******************************/
 
 #if LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_ENABLED
+
     // RSSI统计无效时，禁止软件质量迁移。
     if (!input->observation.wifi.radio.statistics_valid)
     {
         return 0;
     }
 
-    // 强信号下禁止LOSS/LOAD触发冗余。
+    // 强信号下禁止软件质量触发迁移。
     if (input->observation.wifi.radio.rssi_dbm >= LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_DBM)
     {
         return 0;
     }
+
 #endif
 
-    /****************************** 蜂窝容量保护 ******************************/
+    /****************************** 八、蜂窝容量保护 ******************************/
 
-    // Wi-Fi业务负载不能超过Cellular配置容量。
+    // 仅限制软件迁移事件，不影响QUALITY检测器的持续观测。
     if (!_linkg_switch_policy_wifi_within_cellular_capacity(input))
     {
         return 0;
     }
 
-    /****************************** 负载溢出判决 ******************************/
+    /****************************** 九、质量异常事件交付 ******************************/
 
-    ret = linkg_switch_policy_load_process(input, now_us, &load_state);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    /****************************** 无线丢包判决 ******************************/
-
-    ret = linkg_switch_policy_loss_process(input, now_us, &loss_state);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    /****************************** 切换事件优先级 ******************************/
-
-    // 持续负载拥塞优先，尽可能通过迁移单类业务降低Wi-Fi负载。
-    if (load_state == LINKG_SWITCH_POLICY_LOAD_BAD)
+    // 负载压力导致业务损失，交由Operation逐类迁移。
+    if (quality_state == LINKG_SWITCH_POLICY_QUALITY_LOAD_BAD)
     {
         return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD);
     }
 
-    // 无负载迁移事件时，再由无线丢包触发整组冗余质量验证。
-    if (loss_state == LINKG_SWITCH_POLICY_LOSS_BAD)
+    // 无线质量异常，交由Operation执行整组冗余质量验证。
+    if (quality_state == LINKG_SWITCH_POLICY_QUALITY_LOSS_BAD)
     {
         return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_LOSS_BAD);
     }

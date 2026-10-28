@@ -28,6 +28,7 @@
 #include "wifi_driver_ops.h"
 
 #include "switch_internal.h"
+#include "switch_trace.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -958,6 +959,9 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
     runtime->observation = observation;
 
     pthread_mutex_unlock(&g_switch.lock);
+
+    // 测试专用CSV写入：只在STA成功发布快照后、Switch锁外执行。
+    linkg_switch_trace_record(&observation);
 
     return 0;
 }

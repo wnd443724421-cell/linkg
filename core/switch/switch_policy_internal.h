@@ -14,21 +14,15 @@
 
 #include "switch_observation.h"
 
-/****************************** Loss状态 ******************************/
+
+/****************************** Wi-Fi质量判决状态 ******************************/
 
 typedef enum
 {
-    LINKG_SWITCH_POLICY_LOSS_NONE = 0, // 尚未达到明显丢包异常触发条件
-    LINKG_SWITCH_POLICY_LOSS_BAD       // 明显丢包异常，需要启动链路质量验证
-} linkg_switch_policy_loss_state_t;
-
-/****************************** Load状态 ******************************/
-
-typedef enum
-{
-    LINKG_SWITCH_POLICY_LOAD_NONE = 0, // 尚未达到队列溢出迁移条件
-    LINKG_SWITCH_POLICY_LOAD_BAD       // 需要迁移下一类Wi-Fi业务
-} linkg_switch_policy_load_state_t;
+    LINKG_SWITCH_POLICY_QUALITY_NONE = 0, // 未达到质量异常触发条件
+    LINKG_SWITCH_POLICY_QUALITY_LOAD_BAD, // 负载导致业务损失，需要逐类迁移Wi-Fi业务
+    LINKG_SWITCH_POLICY_QUALITY_LOSS_BAD  // 无线质量异常，需要启动整组冗余验证
+} linkg_switch_policy_quality_state_t;
 
 /****************************** 策略输入快照 ******************************/
 
@@ -44,8 +38,7 @@ typedef struct
 
 /****************************** 质量判断 ******************************/
 
-int linkg_switch_policy_loss_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_loss_state_t *loss_state);
-int linkg_switch_policy_load_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_load_state_t *load_state);
+int linkg_switch_policy_quality_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_quality_state_t *quality_state);
 
 /****************************** 主链路策略 ******************************/
 
