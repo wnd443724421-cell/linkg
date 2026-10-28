@@ -906,37 +906,43 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     // Wi-Fi业务必须形成高优先级前缀，避免仅恢复VIDEO/DATA而REALTIME仍在Cellular。
     // 已经处于Wi-Fi单发的非参与业务可作为此前缀的一部分；禁用业务不阻断。
-    wifi_prefix_open = true;
-
-    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+    // INCONCLUSIVE仅执行原链路回退；只对确认的Wi-Fi选择应用优先级保护。
+    if (event->type == LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE &&
+        (event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_WIFI ||
+         event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_MIXED))
     {
-        bit = LINKG_SWITCH_POLICY_CLASS_BIT(index);
+        wifi_prefix_open = true;
 
-        if ((mask & bit) == 0U)
+        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
         {
-            current = &peer->plan.classes[index];
+            bit = LINKG_SWITCH_POLICY_CLASS_BIT(index);
 
-            if (current->mode != LINKG_SEND_MODE_NONE &&
-                (current->mode != LINKG_SEND_MODE_SINGLE ||
-                 current->primary_link_id != policy->group_wifi_link_id))
+            if ((mask & bit) == 0U)
             {
-                wifi_prefix_open = false;
+                current = &peer->plan.classes[index];
+
+                if (current->mode != LINKG_SEND_MODE_NONE &&
+                    (current->mode != LINKG_SEND_MODE_SINGLE ||
+                     current->primary_link_id != policy->group_wifi_link_id))
+                {
+                    wifi_prefix_open = false;
+                }
+
+                continue;
             }
 
-            continue;
-        }
+            if ((wifi_target_mask & bit) == 0U)
+            {
+                wifi_prefix_open = false;
+                continue;
+            }
 
-        if ((wifi_target_mask & bit) == 0U)
-        {
-            wifi_prefix_open = false;
-            continue;
-        }
-
-        if (!wifi_prefix_open)
-        {
-            // 不允许低优先级业务单独回Wi-Fi，保守保留或迁至Cellular。
-            wifi_target_mask     &= ~bit;
-            cellular_target_mask |= bit;
+            if (!wifi_prefix_open)
+            {
+                // 不允许低优先级业务单独回Wi-Fi，保守保留或迁至Cellular。
+                wifi_target_mask     &= ~bit;
+                cellular_target_mask |= bit;
+            }
         }
     }
 
