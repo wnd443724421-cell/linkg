@@ -9,15 +9,20 @@
 #include "switch_observation.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "linkg_cellular.h"
 #include "linkg_cellular_link.h"
 #include "linkg_config.h"
 #include "linkg_link.h"
 #include "linkg_link_manager.h"
+#include "linkg_log.h"
 #include "linkg_node.h"
 #include "linkg_path.h"
 #include "linkg_path_probe.h"
@@ -37,6 +42,12 @@
 #define LINKG_SWITCH_OBSERVATION_PROBE_MAX_AGE_US       2500000ULL   // Probe最大结果年龄，覆盖1秒周期和300ms超时
 #define LINKG_SWITCH_OBSERVATION_WIFI_STATUS_MAX_AGE_US 3000000ULL   // Wi-Fi状态最大有效期，3秒
 #define LINKG_SWITCH_OBSERVATION_WIFI_STATS_MAX_AGE_US  3000000ULL   // Wi-Fi Peer无线统计最大有效期，3秒
+
+// 临时诊断：仅STA启用，采样沿用现有250ms Observation周期。
+#define LINKG_SWITCH_TRACE_ENABLE_PATH                 "/tmp/linkg_switch_trace.enable"
+#define LINKG_SWITCH_TRACE_CSV_PATH                    "/tmp/linkg_switch_wifi_250ms.csv"
+#define LINKG_SWITCH_TRACE_MAX_BYTES                   (16U * 1024U * 1024U)
+#define LINKG_SWITCH_TRACE_FLUSH_INTERVAL_US           1000000ULL
 
 /****************************** 内部类型 ******************************/
 
@@ -163,6 +174,293 @@ static uint64_t _linkg_switch_observation_elapsed_to_monotonic(uint64_t updated_
     }
 
     return now_us - age_ms * 1000ULL;
+}
+
+/****************************** 临时CSV诊断 ******************************/
+
+/**
+ * @brief 仅由STA Switch Worker调用的测试记录器。
+ *
+ * /tmp/linkg_switch_trace.enable存在时开始新CSV记录；删除该标记即停止。
+ * /tmp优先使用tmpfs，限制文件最大16MiB，避免持续写入板端Flash。
+ * 保留有效位、源更新时间和窗口分母，避免将无流量/旧AP报告误判为0丢包。
+ */
+typedef struct
+{
+    bool     initialized;
+    uint32_t count;
+    uint64_t updated_us;
+} linkg_switch_trace_off_baseline_t;
+
+typedef struct
+{
+    FILE                            *file;
+    bool                             stopped;
+    bool                             peer_initialized;
+    uint8_t                          peer_node_id;
+    uint32_t                         wifi_link_id;
+    uint64_t                         previous_row_us;
+    uint64_t                         last_flush_us;
+    size_t                           bytes_written;
+    linkg_switch_trace_off_baseline_t off[2];
+} linkg_switch_trace_runtime_t;
+
+static linkg_switch_trace_runtime_t g_switch_trace;
+
+/**
+ * @brief 对同一来源的新HCC样本计算OFF增量。
+ *
+ * -1表示首次基线、来源失效、报告重复或计数器重置；0表示有效新样本没有OFF。
+ */
+static int64_t _linkg_switch_trace_off_delta(linkg_switch_trace_off_baseline_t *baseline, const linkg_switch_wifi_hcc_observation_t *hcc)
+{
+    int64_t delta;
+
+    if (!hcc->valid || hcc->updated_us == 0U)
+    {
+        memset(baseline, 0, sizeof(*baseline));
+        return -1;
+    }
+
+    if (baseline->initialized && hcc->updated_us == baseline->updated_us)
+    {
+        return -1;
+    }
+
+    delta = -1;
+
+    if (baseline->initialized &&
+        hcc->updated_us > baseline->updated_us &&
+        hcc->flowctrl_off_count >= baseline->count)
+    {
+        delta = (int64_t)(hcc->flowctrl_off_count - baseline->count);
+    }
+
+    baseline->initialized = true;
+    baseline->updated_us  = hcc->updated_us;
+    baseline->count       = hcc->flowctrl_off_count;
+
+    return delta;
+}
+
+/**
+ * @brief 按STA现有250ms Observation节拍生成一条Wi-Fi质量CSV。
+ *
+ * 只做本地文件写入，不影响Observation/Policy的原始统计与状态机。
+ * 文件禁用时仅执行一次access；启用时每轮一次缓冲fwrite，每秒fflush。
+ * 注意250ms瞬时tx_allowed不能据此计算精确阻塞时间占空比。
+ */
+static void _linkg_switch_observation_trace_csv(const linkg_switch_observation_t *observation)
+{
+    static const char header[] =
+        "wall_us,mono_us,interval_us,peer_id,wifi_link_id,wifi_state,"
+        "traffic_valid,tx_bps,rx_bps,rssi_valid,rssi_dbm,rate_level_valid,rate_level,"
+        "ul_hcc_valid,ul_hcc_us,ul_vo,ul_vi,ul_be,ul_off_total,ul_off_delta,ul_tx_allowed,"
+        "dl_hcc_valid,dl_hcc_us,dl_vo,dl_vi,dl_be,dl_off_total,dl_off_delta,dl_tx_allowed,"
+        "ul_rt_valid,ul_rt_lost,ul_rt_total,ul_rt_us,"
+        "ul_video_valid,ul_video_lost,ul_video_total,ul_video_us,"
+        "ul_data_valid,ul_data_lost,ul_data_total,ul_data_us,"
+        "dl_rt_valid,dl_rt_lost,dl_rt_total,dl_rt_us,"
+        "dl_video_valid,dl_video_lost,dl_video_total,dl_video_us,"
+        "dl_data_valid,dl_data_lost,dl_data_total,dl_data_us,"
+        "ul_overflow_valid,ul_overflow_lost,ul_overflow_total,ul_overflow_us,"
+        "dl_overflow_valid,dl_overflow_lost,dl_overflow_total,dl_overflow_us,"
+        "ul_wire_valid,ul_wire_lost,ul_wire_total,ul_wire_us,"
+        "dl_wire_valid,dl_wire_lost,dl_wire_total,dl_wire_us,"
+        "collection_error\n";
+
+    const linkg_switch_wifi_hcc_observation_t *hcc[2] =
+    {
+        &observation->wifi.uplink_hcc,
+        &observation->wifi.downlink_hcc
+    };
+    const linkg_switch_loss_observation_t *classes[2] =
+    {
+        observation->wifi.loss.uplink_classes,
+        observation->wifi.loss.downlink_classes
+    };
+    const linkg_switch_loss_observation_t *loads[2] =
+    {
+        &observation->wifi.loss.uplink_load,
+        &observation->wifi.loss.downlink_load
+    };
+    const linkg_switch_loss_observation_t *wire[2] =
+    {
+        &observation->wifi.loss.uplink,
+        &observation->wifi.loss.downlink
+    };
+    struct timespec wall;
+    uint64_t        wall_us;
+    uint64_t        interval_us;
+    int64_t         off_delta[2];
+    char            line[2048];
+    size_t          length;
+    int             n;
+    uint32_t        side;
+    uint32_t        class_index;
+
+    if (access(LINKG_SWITCH_TRACE_ENABLE_PATH, F_OK) != 0)
+    {
+        if (g_switch_trace.file != NULL)
+        {
+            fclose(g_switch_trace.file);
+        }
+        memset(&g_switch_trace, 0, sizeof(g_switch_trace));
+        return;
+    }
+
+    if (g_switch_trace.stopped)
+    {
+        return;
+    }
+
+    if (g_switch_trace.file == NULL)
+    {
+        g_switch_trace.file = fopen(LINKG_SWITCH_TRACE_CSV_PATH, "w");
+        if (g_switch_trace.file == NULL)
+        {
+            g_switch_trace.stopped = true;
+            LINKG_LOG_WARN("SWITCH TRACE: open CSV failed, errno=%d", errno);
+            return;
+        }
+
+        setvbuf(g_switch_trace.file, NULL, _IOFBF, 4096);
+        if (fputs(header, g_switch_trace.file) == EOF)
+        {
+            goto write_failed;
+        }
+        g_switch_trace.bytes_written = sizeof(header) - 1U;
+        g_switch_trace.last_flush_us = observation->collected_us;
+    }
+
+    if (!g_switch_trace.peer_initialized ||
+        g_switch_trace.peer_node_id != observation->peer_node_id ||
+        g_switch_trace.wifi_link_id != observation->wifi.link_id)
+    {
+        memset(g_switch_trace.off, 0, sizeof(g_switch_trace.off));
+        g_switch_trace.peer_initialized = true;
+        g_switch_trace.peer_node_id     = observation->peer_node_id;
+        g_switch_trace.wifi_link_id     = observation->wifi.link_id;
+    }
+
+    for (side = 0U; side < 2U; side++)
+    {
+        off_delta[side] = _linkg_switch_trace_off_delta(&g_switch_trace.off[side], hcc[side]);
+    }
+
+    wall_us = 0U;
+    if (clock_gettime(CLOCK_REALTIME, &wall) == 0 && wall.tv_sec >= 0)
+    {
+        wall_us = (uint64_t)wall.tv_sec * 1000000ULL + (uint64_t)(wall.tv_nsec / 1000L);
+    }
+
+    interval_us = g_switch_trace.previous_row_us != 0U &&
+                  observation->collected_us >= g_switch_trace.previous_row_us ?
+                  observation->collected_us - g_switch_trace.previous_row_us : 0U;
+
+    length = 0U;
+
+#define LINKG_SWITCH_TRACE_APPEND(...)                                                                   \
+    do                                                                                                   \
+    {                                                                                                    \
+        n = snprintf(line + length, sizeof(line) - length, __VA_ARGS__);                                  \
+        if (n < 0 || (size_t)n >= sizeof(line) - length)                                                  \
+        {                                                                                                \
+            goto format_failed;                                                                          \
+        }                                                                                                \
+        length += (size_t)n;                                                                              \
+    } while (0)
+
+    LINKG_SWITCH_TRACE_APPEND("%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%u,%u,%u,%" PRIu64 ",%" PRIu64 ",%u,%d,%u,%u",
+                              wall_us, observation->collected_us, interval_us,
+                              (unsigned int)observation->peer_node_id,
+                              (unsigned int)observation->wifi.link_id,
+                              (unsigned int)observation->wifi.state,
+                              observation->wifi.traffic.valid ? 1U : 0U,
+                              observation->wifi.traffic.tx_bps, observation->wifi.traffic.rx_bps,
+                              observation->wifi.radio.statistics_valid ? 1U : 0U,
+                              observation->wifi.radio.rssi_dbm,
+                              observation->wifi.radio.rate_level_valid ? 1U : 0U,
+                              (unsigned int)observation->wifi.radio.rate_level);
+
+    for (side = 0U; side < 2U; side++)
+    {
+        LINKG_SWITCH_TRACE_APPEND(",%u,%" PRIu64 ",%u,%u,%u,%u,%" PRId64 ",%u",
+                                  hcc[side]->valid ? 1U : 0U, hcc[side]->updated_us,
+                                  hcc[side]->vo_queue_length, hcc[side]->vi_queue_length,
+                                  hcc[side]->be_queue_length, hcc[side]->flowctrl_off_count,
+                                  off_delta[side], hcc[side]->tx_allowed ? 1U : 0U);
+    }
+
+    for (side = 0U; side < 2U; side++)
+    {
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            const linkg_switch_loss_observation_t *loss = &classes[side][class_index];
+            LINKG_SWITCH_TRACE_APPEND(",%u,%u,%u,%" PRIu64,
+                                      loss->valid ? 1U : 0U,
+                                      loss->lost_packets, loss->sample_packets, loss->updated_us);
+        }
+    }
+
+    for (side = 0U; side < 2U; side++)
+    {
+        LINKG_SWITCH_TRACE_APPEND(",%u,%u,%u,%" PRIu64,
+                                  loads[side]->valid ? 1U : 0U,
+                                  loads[side]->lost_packets,
+                                  loads[side]->sample_packets,
+                                  loads[side]->updated_us);
+    }
+
+    for (side = 0U; side < 2U; side++)
+    {
+        LINKG_SWITCH_TRACE_APPEND(",%u,%u,%u,%" PRIu64,
+                                  wire[side]->valid ? 1U : 0U,
+                                  wire[side]->lost_packets,
+                                  wire[side]->sample_packets,
+                                  wire[side]->updated_us);
+    }
+
+    LINKG_SWITCH_TRACE_APPEND(",%d\n", observation->collection_error);
+#undef LINKG_SWITCH_TRACE_APPEND
+
+    if (g_switch_trace.bytes_written + length > LINKG_SWITCH_TRACE_MAX_BYTES)
+    {
+        fflush(g_switch_trace.file);
+        g_switch_trace.stopped = true;
+        LINKG_LOG_WARN("SWITCH TRACE: CSV reached 16MiB limit, stop recording");
+        return;
+    }
+
+    if (fwrite(line, 1U, length, g_switch_trace.file) != length)
+    {
+        goto write_failed;
+    }
+
+    g_switch_trace.bytes_written += length;
+    g_switch_trace.previous_row_us = observation->collected_us;
+
+    if (observation->collected_us >= g_switch_trace.last_flush_us &&
+        observation->collected_us - g_switch_trace.last_flush_us >= LINKG_SWITCH_TRACE_FLUSH_INTERVAL_US)
+    {
+        if (fflush(g_switch_trace.file) != 0)
+        {
+            goto write_failed;
+        }
+        g_switch_trace.last_flush_us = observation->collected_us;
+    }
+    return;
+
+format_failed:
+    g_switch_trace.stopped = true;
+    LINKG_LOG_WARN("SWITCH TRACE: CSV row buffer too small, stop recording");
+    return;
+
+write_failed:
+    LINKG_LOG_WARN("SWITCH TRACE: CSV write failed, errno=%d", errno);
+    fclose(g_switch_trace.file);
+    g_switch_trace.file    = NULL;
+    g_switch_trace.stopped = true;
 }
 
 /****************************** 原始数据采集 ******************************/
@@ -958,6 +1256,9 @@ static int _linkg_switch_observation_publish(uint8_t peer_node_id, uint32_t peer
     runtime->observation = observation;
 
     pthread_mutex_unlock(&g_switch.lock);
+
+    // 仅在成功发布后、Switch锁外写入临时诊断数据，不改变Policy输入。
+    _linkg_switch_observation_trace_csv(&observation);
 
     return 0;
 }
