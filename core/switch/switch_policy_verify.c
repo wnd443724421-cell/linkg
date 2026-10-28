@@ -791,7 +791,7 @@ static void _linkg_switch_verify_collect_loss_common(linkg_switch_policy_verify_
     bool                                   score_enabled;
     int                                    uplink_delta;
     int                                    downlink_delta;
-    uint32_t                               bad_count;
+    int                                    score_delta;
     uint32_t                               direction;
     uint32_t                               next_score;
 
@@ -896,21 +896,19 @@ static void _linkg_switch_verify_collect_loss_common(linkg_switch_policy_verify_
     }
     else if (score_enabled)
     {
-        // 无负载压力时，Wire BAD优先于GOOD，上下行BAD最多加2分。
-        bad_count = (uplink_delta > 0 ? 1U : 0U) +
-                    (downlink_delta > 0 ? 1U : 0U);
+        // 与QUALITY一致：同轮合并上下行评分，BAD为+1、GOOD为-1。
+        // 正积分最多+2，负积分最多-1；负载压力仍优先于Wire评分。
+        score_delta = uplink_delta + downlink_delta;
 
-        if (bad_count != 0U)
+        if (score_delta > 0)
         {
-            next_score = (uint32_t)runtime->wifi_loss_score + bad_count;
+            next_score = (uint32_t)runtime->wifi_loss_score + (uint32_t)score_delta;
 
             runtime->wifi_loss_score = (uint8_t)(next_score > LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE ?
                                                   LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE : next_score);
         }
-        else if ((uplink_delta < 0 || downlink_delta < 0) &&
-                 runtime->wifi_loss_score > 0U)
+        else if (score_delta < 0 && runtime->wifi_loss_score > 0U)
         {
-            // 没有BAD且至少一个方向GOOD，同一轮最多减1分。
             runtime->wifi_loss_score--;
         }
     }

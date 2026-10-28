@@ -782,7 +782,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
     uint32_t                       expected_id;
     bool                           wifi_usable;
     bool                           cellular_usable;
-    bool                           wifi_prefix_open;
     int                            ret;
 
     /****************************** 获取当前事务 ******************************/
@@ -902,49 +901,8 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
         }
     }
 
-    /****************************** 校验完整Plan的业务优先级 ******************************/
-
-    // Wi-Fi业务必须形成高优先级前缀，避免仅恢复VIDEO/DATA而REALTIME仍在Cellular。
-    // 已经处于Wi-Fi单发的非参与业务可作为此前缀的一部分；禁用业务不阻断。
-    // INCONCLUSIVE仅执行原链路回退；只对确认的Wi-Fi选择应用优先级保护。
-    if (event->type == LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE &&
-        (event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_WIFI ||
-         event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_MIXED))
-    {
-        wifi_prefix_open = true;
-
-        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
-        {
-            bit = LINKG_SWITCH_POLICY_CLASS_BIT(index);
-
-            if ((mask & bit) == 0U)
-            {
-                current = &peer->plan.classes[index];
-
-                if (current->mode != LINKG_SEND_MODE_NONE &&
-                    (current->mode != LINKG_SEND_MODE_SINGLE ||
-                     current->primary_link_id != policy->group_wifi_link_id))
-                {
-                    wifi_prefix_open = false;
-                }
-
-                continue;
-            }
-
-            if ((wifi_target_mask & bit) == 0U)
-            {
-                wifi_prefix_open = false;
-                continue;
-            }
-
-            if (!wifi_prefix_open)
-            {
-                // 不允许低优先级业务单独回Wi-Fi，保守保留或迁至Cellular。
-                wifi_target_mask     &= ~bit;
-                cellular_target_mask |= bit;
-            }
-        }
-    }
+    // Verify已按业务优先级完成判决；Operation不改写有效分类目标掩码。
+    // INCONCLUSIVE或非法MIXED已在上面按LOSS/RECOVERY方向安全回退。
 
     /****************************** 最终目标可用性保护 ******************************/
 
