@@ -18,6 +18,7 @@
 #include "linkg_link_manager.h"
 #include "linkg_node.h"
 #include "linkg_path.h"
+#include "linkg_path_stats.h"
 #include "linkg_system_resources.h"
 #include "linkg_time.h"
 #include "linkg_wifi_link.h"
@@ -30,6 +31,8 @@
 
 #define LINKG_SWITCH_REPORT_INTERVAL_US           250000ULL   // AP质量报告周期
 #define LINKG_SWITCH_REPORT_MESSAGE_ID_HALF_RANGE 0x80000000U // 32位消息编号前后关系半区间
+
+_Static_assert(LINKG_TRANSPORT_CLASS_COUNT == LINKG_PATH_STATS_CLASS_COUNT, "Switch and Path TX class count mismatch");
 
 /****************************** 内部类型 ******************************/
 
@@ -129,18 +132,18 @@ static bool _linkg_switch_report_hcc_valid(const linkg_switch_wire_hcc_t *hcc)
 }
 
 /**
- * @brief 校验完整质量报告的四项整链路指标及六项分类Wire指标。
+ * @brief 校验完整质量报告的四项整链路、六项分类Wire及六项分类Load指标。
  */
 static bool _linkg_switch_report_quality_valid(const linkg_switch_wire_quality_report_t *report)
 {
     uint32_t class_index;
 
     if (report == NULL ||
-    !_linkg_switch_report_loss_valid(&report->wifi_uplink) ||
-    !_linkg_switch_report_loss_valid(&report->wifi_downlink_load) ||
-    !_linkg_switch_report_loss_valid(&report->cellular_uplink) ||
-    !_linkg_switch_report_loss_valid(&report->cellular_downlink_load) ||
-    !_linkg_switch_report_hcc_valid(&report->wifi_downlink_hcc))
+        !_linkg_switch_report_loss_valid(&report->wifi_uplink) ||
+        !_linkg_switch_report_loss_valid(&report->wifi_downlink_load) ||
+        !_linkg_switch_report_loss_valid(&report->cellular_uplink) ||
+        !_linkg_switch_report_loss_valid(&report->cellular_downlink_load) ||
+        !_linkg_switch_report_hcc_valid(&report->wifi_downlink_hcc))
     {
         return false;
     }
@@ -148,7 +151,9 @@ static bool _linkg_switch_report_quality_valid(const linkg_switch_wire_quality_r
     for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
         if (!_linkg_switch_report_loss_valid(&report->wifi_uplink_classes[class_index]) ||
-            !_linkg_switch_report_loss_valid(&report->cellular_uplink_classes[class_index]))
+            !_linkg_switch_report_loss_valid(&report->cellular_uplink_classes[class_index]) ||
+            !_linkg_switch_report_loss_valid(&report->wifi_downlink_load_classes[class_index]) ||
+            !_linkg_switch_report_loss_valid(&report->cellular_downlink_load_classes[class_index]))
         {
             return false;
         }
@@ -453,18 +458,22 @@ static void _linkg_switch_report_build_wire_locked(linkg_switch_loss_sampler_t *
 }
 
 /**
- * @brief 将发送端Path累计统计转换成当前窗口Load丢包数量。
+ * @brief 将发送端Path累计统计转换为整链路及三业务独立Load窗口样本。
  *
- * 调用方已经持有Switch锁。
- * Wi-Fi和Cellular统一统计TX Queue Overflow。
+ * 调用方已经持有Switch锁；Wi-Fi和Cellular统一统计TX Queue Overflow。
+ * 首次采样、Link变化、计数回退或Path统计无效时不生成有效窗口。
+ * 样本数为0表示本窗口没有可供判决的流量证据，不代表0丢包。
  */
-static void _linkg_switch_report_build_load_locked(linkg_switch_load_sampler_t *sampler, uint32_t link_id, const linkg_switch_report_path_sample_t *sample, linkg_switch_wire_loss_t *loss)
+static void _linkg_switch_report_build_load_locked(linkg_switch_load_sampler_t *sampler, uint32_t link_id, const linkg_switch_report_path_sample_t *sample, linkg_switch_wire_loss_t *loss, linkg_switch_wire_loss_t classes[LINKG_TRANSPORT_CLASS_COUNT])
 {
     uint64_t sent_delta;
     uint64_t overflow_delta;
     uint64_t total_delta;
+    uint32_t class_index;
+    bool     rebase;
 
     memset(loss, 0, sizeof(*loss));
+    memset(classes, 0, LINKG_TRANSPORT_CLASS_COUNT * sizeof(classes[0]));
 
     if (!sample->available || !sample->tx_stats_valid)
     {
@@ -472,30 +481,67 @@ static void _linkg_switch_report_build_load_locked(linkg_switch_load_sampler_t *
         return;
     }
 
-    if (!sampler->initialized ||
-        sampler->link_id != link_id ||
-        sample->tx_stats.tx_packets < sampler->sent_packets ||
-        sample->tx_stats.tx_queue_overflow_packets < sampler->queue_overflow_packets)
+    rebase = !sampler->initialized ||
+             sampler->link_id != link_id ||
+             sample->tx_stats.tx_packets < sampler->sent_packets ||
+             sample->tx_stats.tx_queue_overflow_packets < sampler->queue_overflow_packets;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
-        sampler->initialized            = true;
-        sampler->link_id                = link_id;
-        sampler->sent_packets           = sample->tx_stats.tx_packets;
-        sampler->queue_overflow_packets = sample->tx_stats.tx_queue_overflow_packets;
-        return;
+        if (sample->tx_stats.tx_classes[class_index].tx_packets < sampler->classes[class_index].sent_packets ||
+            sample->tx_stats.tx_classes[class_index].tx_queue_overflow_packets < sampler->classes[class_index].queue_overflow_packets)
+        {
+            rebase = true;
+        }
     }
 
-    sent_delta     = sample->tx_stats.tx_packets - sampler->sent_packets;
-    overflow_delta = sample->tx_stats.tx_queue_overflow_packets - sampler->queue_overflow_packets;
-    total_delta    = _linkg_switch_report_u64_add(sent_delta, overflow_delta);
-
-    if (total_delta != 0U)
+    if (!rebase)
     {
-        loss->lost_packets   = _linkg_switch_report_u32_saturate(overflow_delta);
-        loss->sample_packets = _linkg_switch_report_u32_saturate(total_delta);
+        // 整条Path的全局Load窗口保持原有统计语义。
+        sent_delta     = sample->tx_stats.tx_packets - sampler->sent_packets;
+        overflow_delta = sample->tx_stats.tx_queue_overflow_packets - sampler->queue_overflow_packets;
+        total_delta    = _linkg_switch_report_u64_add(sent_delta, overflow_delta);
+
+        if (total_delta != 0U)
+        {
+            loss->lost_packets   = _linkg_switch_report_u32_saturate(overflow_delta);
+            loss->sample_packets = _linkg_switch_report_u32_saturate(total_delta);
+        }
+
+        // 对三业务分别计算窗口；不把其它业务的成功发送计入本业务分母。
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            sent_delta = sample->tx_stats.tx_classes[class_index].tx_packets -
+                         sampler->classes[class_index].sent_packets;
+
+            overflow_delta = sample->tx_stats.tx_classes[class_index].tx_queue_overflow_packets -
+                             sampler->classes[class_index].queue_overflow_packets;
+
+            total_delta = _linkg_switch_report_u64_add(sent_delta, overflow_delta);
+            if (total_delta == 0U)
+            {
+                continue;
+            }
+
+            classes[class_index].lost_packets   = _linkg_switch_report_u32_saturate(overflow_delta);
+            classes[class_index].sample_packets = _linkg_switch_report_u32_saturate(total_delta);
+        }
     }
 
+    // 无论本轮是否只是重新建基线，都同步更新整链路与所有分类累计值。
+    sampler->initialized            = true;
+    sampler->link_id                = link_id;
     sampler->sent_packets           = sample->tx_stats.tx_packets;
     sampler->queue_overflow_packets = sample->tx_stats.tx_queue_overflow_packets;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        sampler->classes[class_index].sent_packets =
+            sample->tx_stats.tx_classes[class_index].tx_packets;
+
+        sampler->classes[class_index].queue_overflow_packets =
+            sample->tx_stats.tx_classes[class_index].tx_queue_overflow_packets;
+    }
 }
 
 /**
@@ -543,9 +589,9 @@ static void _linkg_switch_report_build_locked(linkg_switch_ap_peer_runtime_t *ru
     memset(report, 0, sizeof(*report));
 
     _linkg_switch_report_build_wire_locked(&runtime->wifi_uplink_loss_sampler, wifi_link_id, &sample->wifi, &report->wifi_uplink, report->wifi_uplink_classes);
-    _linkg_switch_report_build_load_locked(&runtime->wifi_downlink_load_sampler, wifi_link_id, &sample->wifi, &report->wifi_downlink_load);
+    _linkg_switch_report_build_load_locked(&runtime->wifi_downlink_load_sampler, wifi_link_id, &sample->wifi, &report->wifi_downlink_load, report->wifi_downlink_load_classes);
     _linkg_switch_report_build_wire_locked(&runtime->cellular_uplink_loss_sampler, cellular_link_id, &sample->cellular, &report->cellular_uplink, report->cellular_uplink_classes);
-    _linkg_switch_report_build_load_locked(&runtime->cellular_downlink_load_sampler, cellular_link_id, &sample->cellular, &report->cellular_downlink_load);
+    _linkg_switch_report_build_load_locked(&runtime->cellular_downlink_load_sampler, cellular_link_id, &sample->cellular, &report->cellular_downlink_load, report->cellular_downlink_load_classes);
 
     runtime->wifi_path_available     = sample->wifi.available;
     runtime->cellular_path_available = sample->cellular.available;
@@ -821,6 +867,8 @@ int linkg_switch_report_receive_quality(uint8_t peer_node_id, uint32_t message_i
     {
         _linkg_switch_report_publish_loss_locked(&runtime->remote_wifi_uplink_classes[class_index], &report->wifi_uplink_classes[class_index], now_us);
         _linkg_switch_report_publish_loss_locked(&runtime->remote_cellular_uplink_classes[class_index], &report->cellular_uplink_classes[class_index], now_us);
+        _linkg_switch_report_publish_loss_locked(&runtime->remote_wifi_downlink_load_classes[class_index], &report->wifi_downlink_load_classes[class_index], now_us);
+        _linkg_switch_report_publish_loss_locked(&runtime->remote_cellular_downlink_load_classes[class_index], &report->cellular_downlink_load_classes[class_index], now_us);
     }
 
     pthread_mutex_unlock(&g_switch.lock);

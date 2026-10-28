@@ -60,12 +60,17 @@ typedef struct
 
 typedef struct
 {
-    linkg_switch_loss_observation_t uplink;                                        // STA到AP Wire整链路丢包，由AP上报
-    linkg_switch_loss_observation_t uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];   // STA到AP Wire三业务丢包
-    linkg_switch_loss_observation_t uplink_load;                                   // STA到AP TX队列溢出，由STA采集
-    linkg_switch_loss_observation_t downlink;                                      // AP到STA Wire整链路丢包，由STA采集
-    linkg_switch_loss_observation_t downlink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // AP到STA Wire三业务丢包
-    linkg_switch_loss_observation_t downlink_load;                                 // AP到STA TX队列溢出，由AP上报
+    // STA到AP方向
+    linkg_switch_loss_observation_t uplink;                                            // STA到AP Wire整链路丢包，由AP上报
+    linkg_switch_loss_observation_t uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];       // STA到AP Wire三业务独立丢包
+    linkg_switch_loss_observation_t uplink_load;                                       // STA到AP TX队列全局溢出，由STA采集
+    linkg_switch_loss_observation_t uplink_load_classes[LINKG_TRANSPORT_CLASS_COUNT];  // STA到AP TX队列三业务独立溢出
+
+    // AP到STA方向
+    linkg_switch_loss_observation_t downlink;                                          // AP到STA Wire整链路丢包，由STA采集
+    linkg_switch_loss_observation_t downlink_classes[LINKG_TRANSPORT_CLASS_COUNT];     // AP到STA Wire三业务独立丢包
+    linkg_switch_loss_observation_t downlink_load;                                     // AP到STA TX队列全局溢出，由AP上报
+    linkg_switch_loss_observation_t downlink_load_classes[LINKG_TRANSPORT_CLASS_COUNT];// AP到STA TX队列三业务独立溢出
 } linkg_switch_path_loss_observation_t;
 
 /****************************** Wi-Fi HCC观测 ******************************/
@@ -183,10 +188,17 @@ typedef struct
 
 typedef struct
 {
-    bool     initialized;            // 已取得上一轮累计值
-    uint32_t link_id;                // 基线所属Link实例
-    uint64_t sent_packets;           // 上一轮累计成功提交帧数
-    uint64_t queue_overflow_packets; // 上一轮累计TX队列溢出丢弃帧数
+    uint64_t sent_packets;           // 上一轮指定业务累计成功提交帧数
+    uint64_t queue_overflow_packets; // 上一轮指定业务累计队列溢出帧数
+} linkg_switch_load_class_sampler_t;
+
+typedef struct
+{
+    bool                              initialized;                          // 已取得上一轮累计值
+    uint32_t                          link_id;                              // 基线所属Link实例
+    uint64_t                          sent_packets;                         // 上一轮全局成功提交帧数
+    uint64_t                          queue_overflow_packets;               // 上一轮全局队列溢出帧数
+    linkg_switch_load_class_sampler_t classes[LINKG_TRANSPORT_CLASS_COUNT]; // 三业务独立累计基线
 } linkg_switch_load_sampler_t;
 
 /****************************** 观测操作 ******************************/

@@ -21,7 +21,8 @@
 
 #define LINKG_SWITCH_WIRE_HEADER_SIZE                  8U                                                                               // Switch公共头Wire长度
 #define LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE             20U                                                                              // AP本机Wi-Fi HCC状态Wire长度
-#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE  (80U + LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE)                                       // 原有80字节质量数据加20字节HCC
+#define LINKG_SWITCH_WIRE_QUALITY_LOAD_CLASSES_SIZE    (8U * 2U * LINKG_TRANSPORT_CLASS_COUNT)                                          // Wi-Fi和Cellular下行三业务Load共48字节
+#define LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE  (80U + LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE + LINKG_SWITCH_WIRE_QUALITY_LOAD_CLASSES_SIZE) // 原有100字节加分类Load48字节
 #define LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE              4U                                                                               // 单业务发送计划Wire长度
 #define LINKG_SWITCH_WIRE_PLAN_SYNC_PAYLOAD_SIZE       (LINKG_SWITCH_WIRE_CLASS_PLAN_SIZE * LINKG_TRANSPORT_CLASS_COUNT)                // 完整Peer发送计划同步Payload长度
 #define LINKG_SWITCH_WIRE_PLAN_ACK_PAYLOAD_SIZE        4U                                                                               // 发送计划确认Payload长度
@@ -53,9 +54,10 @@ _Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_MAINTENANCE_SIZE,
 _Static_assert(LINKG_SWITCH_WIRE_MAX_SIZE >= LINKG_SWITCH_WIRE_MAINTENANCE_ACK_SIZE, "invalid maintenance ack max size");
 _Static_assert(LINKG_SWITCH_WIRE_QUALITY_HCC_SIZE == 20U, "invalid HCC wire size");
 
-_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE == 100U, "invalid quality report payload size");
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_LOAD_CLASSES_SIZE == 48U, "invalid class load wire size");
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_PAYLOAD_SIZE == 148U, "invalid quality report payload size");
 
-_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE == 108U, "invalid quality report wire size");
+_Static_assert(LINKG_SWITCH_WIRE_QUALITY_REPORT_SIZE == 156U, "invalid quality report wire size");
 
 _Static_assert((LINKG_SWITCH_WIRE_HCC_FLAG_VALID & LINKG_SWITCH_WIRE_HCC_FLAG_TX_ALLOWED) == 0U, "overlapping HCC flags");
 /****************************** 消息类型 ******************************/
@@ -137,31 +139,36 @@ typedef struct
     uint32_t flags;              // HCC状态有效性及原始发送允许标志
 } linkg_switch_wire_hcc_t;
 
+
 /**
  * @brief AP向指定STA上报Wi-Fi和Cellular质量。
  *
- * Wire由AP接收端根据各业务独立Sequence窗口统计。
- * 保留整链路Wire统计，同时增加三业务独立统计。
+ * Wire由AP接收端根据整链路及三业务独立Sequence统计。
+ * Load由AP发送端根据Path累计TX统计计算。
+ * Wi-Fi和Cellular均提供全局及三业务独立TX队列溢出统计。
  *
- * Load由AP发送端根据Path累计统计计算。
- * Wi-Fi和Cellular统一采用整链路TX Queue Overflow。
- *
- * STA负责自行采集另外四组本地方向的Wire和Load观测。
+ * STA自行采集本地下行Wire及上行Load观测。
  */
 typedef struct
 {
+    // 整链路质量
     linkg_switch_wire_loss_t wifi_uplink;            // STA到AP Wi-Fi整链路Wire丢包
-    linkg_switch_wire_loss_t wifi_downlink_load;     // AP到STA Wi-Fi整链路Load丢包
-
+    linkg_switch_wire_loss_t wifi_downlink_load;     // AP到STA Wi-Fi全局TX队列溢出
     linkg_switch_wire_loss_t cellular_uplink;        // STA到AP Cellular整链路Wire丢包
-    linkg_switch_wire_loss_t cellular_downlink_load; // AP到STA Cellular整链路Load丢包
+    linkg_switch_wire_loss_t cellular_downlink_load; // AP到STA Cellular全局TX队列溢出
 
-    linkg_switch_wire_loss_t wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];     // STA到AP Wi-Fi三业务独立Wire丢包
-    linkg_switch_wire_loss_t cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // STA到AP Cellular三业务独立Wire丢包
+    // 上行三业务Wire丢包
+    linkg_switch_wire_loss_t wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];     // STA到AP Wi-Fi三业务Wire丢包
+    linkg_switch_wire_loss_t cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT]; // STA到AP Cellular三业务Wire丢包
 
-    linkg_switch_wire_hcc_t  wifi_downlink_hcc;      // AP到STA Wi-Fi发送侧HCC队列及全局流控状态
+    // AP本机Wi-Fi HCC状态
+    linkg_switch_wire_hcc_t  wifi_downlink_hcc; // AP到STA Wi-Fi发送侧HCC状态
 
+    // 下行三业务TX队列溢出
+    linkg_switch_wire_loss_t wifi_downlink_load_classes[LINKG_TRANSPORT_CLASS_COUNT];     // AP到STA Wi-Fi三业务TX队列溢出
+    linkg_switch_wire_loss_t cellular_downlink_load_classes[LINKG_TRANSPORT_CLASS_COUNT]; // AP到STA Cellular三业务TX队列溢出
 } linkg_switch_wire_quality_report_t;
+
 
 /****************************** 发送计划同步 ******************************/
 

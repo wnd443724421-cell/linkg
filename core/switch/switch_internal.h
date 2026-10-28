@@ -54,15 +54,18 @@ typedef struct
     linkg_switch_load_sampler_t          cellular_uplink_load_sampler;                                 // STA到AP Cellular Load丢包采样基线
 
     // AP上报的Wi-Fi质量数据
-    linkg_switch_loss_observation_t      remote_wifi_uplink_loss;                                      // STA到AP Wi-Fi整链路Wire丢包
-    linkg_switch_loss_observation_t      remote_wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];      // STA到AP Wi-Fi三业务Wire丢包
-    linkg_switch_loss_observation_t      remote_wifi_downlink_load;                                    // AP到STA Wi-Fi整链路Load丢包
-    linkg_switch_wifi_hcc_observation_t  remote_wifi_downlink_hcc;                                     // AP本机Wi-Fi HCC发送队列及全局流控状态
+    linkg_switch_loss_observation_t      remote_wifi_uplink_loss;                                     // STA到AP Wi-Fi整链路Wire丢包
+    linkg_switch_loss_observation_t      remote_wifi_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];     // STA到AP Wi-Fi三业务Wire丢包
+    linkg_switch_loss_observation_t      remote_wifi_downlink_load;                                   // AP到STA Wi-Fi整链路Load丢包
+    linkg_switch_loss_observation_t      remote_wifi_downlink_load_classes[LINKG_TRANSPORT_CLASS_COUNT]; // AP到STA Wi-Fi三业务Load丢包
+    linkg_switch_wifi_hcc_observation_t  remote_wifi_downlink_hcc;                                    // AP本机Wi-Fi HCC发送队列及全局流控状态
 
     // AP上报的Cellular质量数据
-    linkg_switch_loss_observation_t      remote_cellular_uplink_loss;                                  // STA到AP Cellular整链路Wire丢包
-    linkg_switch_loss_observation_t      remote_cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];  // STA到AP Cellular三业务Wire丢包
-    linkg_switch_loss_observation_t      remote_cellular_downlink_load;                                // AP到STA Cellular整链路Load丢包
+    linkg_switch_loss_observation_t      remote_cellular_uplink_loss;                                        // STA到AP Cellular整链路Wire丢包
+    linkg_switch_loss_observation_t      remote_cellular_uplink_classes[LINKG_TRANSPORT_CLASS_COUNT];        // STA到AP Cellular三业务Wire丢包
+    linkg_switch_loss_observation_t      remote_cellular_downlink_load;                                      // AP到STA Cellular整链路Load丢包
+    linkg_switch_loss_observation_t      remote_cellular_downlink_load_classes[LINKG_TRANSPORT_CLASS_COUNT]; // AP到STA Cellular三业务Load丢包
+
 
     // Quality Report接收状态
     uint32_t                             remote_quality_report_id;                                     // 最近接收的AP质量报告编号
