@@ -166,6 +166,8 @@ typedef struct
 
     uint64_t                               wifi_last_probe_us[LINKG_TRANSPORT_CLASS_COUNT];          // 各业务最后消费的Wi-Fi Probe时间
     uint64_t                               wifi_last_good_probe_us[LINKG_TRANSPORT_CLASS_COUNT];     // 各业务最近成功的Wi-Fi Probe时间
+    uint64_t                               wifi_rtt_sum_us[LINKG_TRANSPORT_CLASS_COUNT];             // 各业务Wi-Fi成功Probe RTT累计和
+    uint32_t                               wifi_rtt_count[LINKG_TRANSPORT_CLASS_COUNT];              // 各业务Wi-Fi成功Probe样本数
     uint32_t                               wifi_probe_seen_mask;                                     // 验证期间已获得有效Wi-Fi Probe的业务集合
     uint32_t                               wifi_probe_reachable_mask;                                // 每业务最新Wi-Fi Probe确认可达的集合
 
@@ -191,15 +193,15 @@ typedef struct
     uint32_t                               active_class_mask;                                        // 已确认存在USER_DATA活动的业务集合
     uint32_t                               comparable_class_mask;                                    // 双链路达到分类比较条件的业务集合
     uint32_t                               cellular_preferred_mask;                                  // 独立质量比较偏向Cellular的业务集合
-    uint32_t                               wifi_target_mask;                                         // QoS约束后计划Wi-Fi单发的参与业务
-    uint32_t                               cellular_target_mask;                                     // QoS约束后计划Cellular单发的参与业务
+    uint32_t                               wifi_target_mask;                                         // 分类判决计划Wi-Fi单发的参与业务
+    uint32_t                               cellular_target_mask;                                     // 分类判决计划Cellular单发的参与业务
     bool                                   class_activity_valid;                                     // 真实USER_DATA活跃状态已确认
 
     /****************************** 生命周期与结果 ******************************/
 
     bool                                   active;                                                   // 验证会话已启动
     bool                                   result_pending;                                           // 固定结果尚待Operation消费
-    linkg_switch_policy_verify_result_t    result;                                                   // 旧组级事件结果，待分类事件契约升级
+    linkg_switch_policy_verify_result_t    result;                                                   // 已锁存的组级或分类验证结果
 
     /****************************** 双链路采样 ******************************/
 

@@ -760,6 +760,12 @@ static void _linkg_switch_verify_collect_wifi_probe(linkg_switch_policy_verify_r
         {
             runtime->wifi_last_good_probe_us[class_index] = probe->updated_us;
             runtime->wifi_probe_reachable_mask            |= bit;
+            runtime->wifi_rtt_sum_us[class_index] = _linkg_switch_verify_add_u64(runtime->wifi_rtt_sum_us[class_index], probe->rtt_us);
+
+            if (runtime->wifi_rtt_count[class_index] != UINT32_MAX)
+            {
+                runtime->wifi_rtt_count[class_index]++;
+            }
         }
         else
         {
@@ -1068,6 +1074,269 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_
     return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
 }
 
+/****************************** LOSS分类截止判决 ******************************/
+
+/**
+ * @brief 检查某业务的最近一次Probe是否仍可达，并读取验证期平均RTT。
+ *
+ * 最新失败会覆盖历史成功资格；平均值由验证期所有有效成功Probe组成。
+ */
+static bool _linkg_switch_verify_probe_average(const linkg_switch_policy_verify_runtime_t *runtime, uint32_t class_index, bool wifi, uint64_t now_us, uint64_t *average_rtt_us)
+{
+    uint64_t last_probe_us;
+    uint64_t last_good_us;
+    uint64_t rtt_sum_us;
+    uint32_t rtt_count;
+
+    if (wifi)
+    {
+        last_probe_us = runtime->wifi_last_probe_us[class_index];
+        last_good_us  = runtime->wifi_last_good_probe_us[class_index];
+        rtt_sum_us    = runtime->wifi_rtt_sum_us[class_index];
+        rtt_count     = runtime->wifi_rtt_count[class_index];
+
+        if ((runtime->wifi_probe_reachable_mask & LINKG_SWITCH_POLICY_CLASS_BIT(class_index)) == 0U)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        last_probe_us = runtime->cellular_last_probe_us[class_index];
+        last_good_us  = runtime->cellular_last_good_probe_us[class_index];
+        rtt_sum_us    = runtime->cellular_rtt_sum_us[class_index];
+        rtt_count     = runtime->cellular_rtt_count[class_index];
+    }
+
+    if (last_good_us == 0U || last_good_us != last_probe_us ||
+        last_good_us > now_us ||
+        now_us - last_good_us > LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US ||
+        rtt_count == 0U)
+    {
+        return false;
+    }
+
+    *average_rtt_us = rtt_sum_us / rtt_count;
+    return true;
+}
+
+/**
+ * @brief 计算一个Path指定业务的上下行综合丢包率（0~1）。
+ *
+ * 综合损失=1-(1-Load丢包率)*(1-Wire丢包率)。
+ * 仅比较双方均具备Wire/Load样本的方向；最终取两方向较差值。
+ * 不要求精准端到端对齐，但不能把缺失样本视为零丢包。
+ */
+static bool _linkg_switch_verify_class_loss_rate(const linkg_switch_policy_verify_path_t *path, uint32_t class_index, double *loss_rate)
+{
+    uint64_t wire_samples;
+    uint64_t wire_lost;
+    uint64_t load_samples;
+    uint64_t load_lost;
+    uint64_t total_wire_samples;
+    uint64_t total_load_samples;
+    double   wire_rate;
+    double   load_rate;
+    double   combined;
+    double   worst;
+    bool     observed;
+    uint32_t direction;
+
+    total_wire_samples = 0U;
+    total_load_samples = 0U;
+    worst              = 0.0;
+    observed           = false;
+
+    for (direction = 0U; direction < LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT; direction++)
+    {
+        wire_samples = path->sample_packets[class_index][direction];
+        wire_lost    = path->lost_packets[class_index][direction];
+        load_samples = path->load_sample_packets[class_index][direction];
+        load_lost    = path->load_lost_packets[class_index][direction];
+
+        if (wire_samples == 0U && load_samples == 0U)
+        {
+            continue;
+        }
+
+        if (wire_samples == 0U || load_samples == 0U ||
+            wire_lost > wire_samples || load_lost > load_samples)
+        {
+            return false;
+        }
+
+        total_wire_samples = _linkg_switch_verify_add_u64(total_wire_samples, wire_samples);
+        total_load_samples = _linkg_switch_verify_add_u64(total_load_samples, load_samples);
+
+        wire_rate = (double)wire_lost / (double)wire_samples;
+        load_rate = (double)load_lost / (double)load_samples;
+        combined  = load_rate + wire_rate - load_rate * wire_rate;
+
+        if (!observed || combined > worst)
+        {
+            worst = combined;
+        }
+
+        observed = true;
+    }
+
+    if (!observed || total_wire_samples < LINKG_SWITCH_POLICY_VERIFY_COMPARE_MIN_SAMPLES ||
+        total_load_samples < LINKG_SWITCH_POLICY_VERIFY_COMPARE_MIN_SAMPLES)
+    {
+        return false;
+    }
+
+    *loss_rate = worst;
+    return true;
+}
+
+/**
+ * @brief 逐业务判定Wi-Fi或Cellular的可用质量目标。
+ *
+ * Wi-Fi：有效平均RTT必须严格低于Cellular平均RTT。
+ * Cellular：平均RTT严格低于250ms，允许高于Wi-Fi平均RTT。
+ * 积分<3时不要求分类Wire比较，但活跃业务仍遵守Probe条件。
+ */
+static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_active_class(linkg_switch_policy_verify_runtime_t *runtime, uint32_t class_index, uint64_t now_us)
+{
+    uint64_t wifi_rtt_us;
+    uint64_t cellular_rtt_us;
+    double   wifi_loss_rate;
+    double   cellular_loss_rate;
+    bool     wifi_probe_ok;
+    bool     cellular_probe_ok;
+    bool     wifi_allowed;
+    bool     cellular_allowed;
+    bool     wifi_quality_known;
+    bool     cellular_quality_known;
+
+    wifi_probe_ok = _linkg_switch_verify_probe_average(runtime, class_index, true, now_us, &wifi_rtt_us);
+    cellular_probe_ok = _linkg_switch_verify_probe_average(runtime, class_index, false, now_us, &cellular_rtt_us);
+
+    wifi_allowed = wifi_probe_ok && cellular_probe_ok && wifi_rtt_us < cellular_rtt_us;
+    cellular_allowed = cellular_probe_ok && cellular_rtt_us < LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US;
+
+    if (runtime->wifi_loss_score < LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE)
+    {
+        // Wi-Fi整体恢复：仅保留活跃业务Probe门槛，避免用慢于5G的Wi-Fi回切。
+        if (wifi_allowed)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_WIFI;
+        }
+
+        return cellular_allowed ? LINKG_SWITCH_POLICY_VERIFY_CELLULAR : LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+    }
+
+    wifi_quality_known = _linkg_switch_verify_class_loss_rate(&runtime->wifi, class_index, &wifi_loss_rate);
+    cellular_quality_known = _linkg_switch_verify_class_loss_rate(&runtime->cellular, class_index, &cellular_loss_rate);
+
+    if (!wifi_quality_known || !cellular_quality_known)
+    {
+        // 分类统计不足：LOSS不强行迁出，RECOVERY不强行回切。
+        if (runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY && cellular_allowed)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+        }
+
+        return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+    }
+
+    // 质量更优的Cellular无需比Wi-Fi延迟更低，只需平均RTT<250ms。
+    if (cellular_loss_rate < wifi_loss_rate && cellular_allowed)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+    }
+
+    // Wi-Fi承载质量不劣于Cellular，或Cellular质量达标但RTT过高。
+    if (wifi_allowed)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_WIFI;
+    }
+
+    // Wi-Fi未满足严格Probe比较，Cellular仍满足延迟上限时选择Cellular。
+    return cellular_allowed ? LINKG_SWITCH_POLICY_VERIFY_CELLULAR : LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+}
+
+/**
+ * @brief 按REALTIME、VIDEO、DATA对本次参与的业务形成完整分类结果。
+ *
+ * 已确认空闲的业务直接选择Wi-Fi，不比较丢包或Probe，也不阻止后续。
+ * 高优先级一旦选择Cellular，低优先级参与业务无条件跟随。
+ * 未知活跃性不能当空闲，分类证据不充分时返回INCONCLUSIVE。
+ */
+static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_loss_classes(linkg_switch_policy_verify_runtime_t *runtime, uint64_t now_us)
+{
+    linkg_switch_policy_verify_result_t choice;
+    uint32_t                             class_index;
+    uint32_t                             bit;
+    bool                                 force_cellular;
+
+    runtime->wifi_target_mask        = 0U;
+    runtime->cellular_target_mask    = 0U;
+    runtime->comparable_class_mask   = 0U;
+    runtime->cellular_preferred_mask = 0U;
+
+    if (!runtime->class_activity_valid)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+    }
+
+    force_cellular = false;
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        bit = LINKG_SWITCH_POLICY_CLASS_BIT(class_index);
+        if ((runtime->class_mask & bit) == 0U)
+        {
+            continue;
+        }
+
+        if (force_cellular)
+        {
+            runtime->cellular_target_mask |= bit;
+            continue;
+        }
+
+        if ((runtime->active_class_mask & bit) == 0U)
+        {
+            runtime->wifi_target_mask |= bit;
+            continue;
+        }
+
+        choice = _linkg_switch_verify_decide_active_class(runtime, class_index, now_us);
+
+        if (choice == LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE;
+        }
+
+        runtime->comparable_class_mask |= bit;
+
+        if (choice == LINKG_SWITCH_POLICY_VERIFY_CELLULAR)
+        {
+            runtime->cellular_target_mask    |= bit;
+            runtime->cellular_preferred_mask |= bit;
+            force_cellular = true;
+        }
+        else
+        {
+            runtime->wifi_target_mask |= bit;
+        }
+    }
+
+    if (runtime->wifi_target_mask == runtime->class_mask)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_WIFI;
+    }
+
+    if (runtime->cellular_target_mask == runtime->class_mask)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+    }
+
+    return LINKG_SWITCH_POLICY_VERIFY_MIXED;
+}
+
 /**
  * @brief 周期处理双链路质量验证并交付验证结果。
  *
@@ -1193,6 +1462,13 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
 
     if (paths_usable)
     {
+        // 三秒内真实USER_DATA曾活跃的业务需参与质量比较。
+        if (params->activity_valid)
+        {
+            runtime->class_activity_valid = true;
+            runtime->active_class_mask   |= params->active_class_mask & runtime->class_mask;
+        }
+
         if (runtime->reason == LINKG_SWITCH_POLICY_REASON_LOSS)
         {
             // 同一轮记录双链路三业务Wire/Load、Wi-Fi HCC及Cellular Probe。
@@ -1223,11 +1499,15 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     // 三秒到期，基于已经累计的有效样本执行一次判决。
     if (runtime->reason == LINKG_SWITCH_POLICY_REASON_LOSS)
     {
-        // LOSS最终判决。
+        // Wi-Fi积分恢复后仍需满足活跃业务Wi-Fi Probe优于Cellular的约束。
+        _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_loss_classes(runtime, params->now_us), params->now_us, output);
+        return 0;
     }
     else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS)
     {
-        // RECOVERY + LOSS最终判决。
+        // 与LOSS使用同一分类比较，仅保守回退方向不同。
+        _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_loss_classes(runtime, params->now_us), params->now_us, output);
+        return 0;
     }
     else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
     {
@@ -1238,7 +1518,8 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
 
     /****************************** 五、固定结果与事件交付 ******************************/
 
-    // LOSS及RECOVERY + LOSS分类判决尚未实现，禁止静默返回成功。
-    return -ENOSYS;
+    // 未识别验证原因不能静默留在冗余状态。
+    _linkg_switch_verify_finish(runtime, LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE, params->now_us, output);
+    return 0;
 }
 
