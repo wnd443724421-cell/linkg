@@ -1129,16 +1129,17 @@ static void _linkg_switch_operation_abandon_uncertain_locked(linkg_switch_peer_r
  */
 int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_result_t *result)
 {
-    linkg_switch_policy_migration_reason_t recovery_reason;
-    linkg_switch_peer_runtime_t           *peer;
-    linkg_switch_policy_runtime_t         *policy;
-    linkg_switch_policy_event_t            event;
-    uint32_t                               operation_ids[LINKG_TRANSPORT_CLASS_COUNT];
-    uint32_t                               index;
-    uint32_t                               mask;
-    uint64_t                               now_us;
-    bool                                   fallback;
-    int                                    ret;
+    linkg_switch_policy_migration_reason_t    recovery_reason;
+    linkg_switch_policy_verify_begin_params_t verify_params;
+    linkg_switch_peer_runtime_t              *peer;
+    linkg_switch_policy_runtime_t            *policy;
+    linkg_switch_policy_event_t               event;
+    uint32_t                                  operation_ids[LINKG_TRANSPORT_CLASS_COUNT];
+    uint32_t                                  index;
+    uint32_t                                  mask;
+    uint64_t                                  now_us;
+    bool                                      fallback;
+    int                                       ret;
 
     if (result == NULL || result->updated_us == 0U)
     {
@@ -1380,10 +1381,21 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
             }
         }
 
-        // 冗余ACK确认后启动3秒验证；LOAD恢复使用队列溢出，LOSS沿用积分。
-        ret = linkg_switch_policy_verify_begin(&peer->role.sta.verify, peer->peer_node_id, peer->generation,
-                                               operation_ids, mask, policy->group_reason, recovery_reason,
-                                               &peer->role.sta.observation, now_us);
+       // 组装Verify启动参数，保持Operation与Verify接口一致。
+        memset(&verify_params, 0, sizeof(verify_params));
+
+        verify_params.peer_node_id    = peer->peer_node_id;
+        verify_params.peer_generation = peer->generation;
+
+        memcpy(verify_params.operation_ids, operation_ids, sizeof(verify_params.operation_ids));
+
+        verify_params.class_mask      = mask;
+        verify_params.reason          = policy->group_reason;
+        verify_params.recovery_reason = recovery_reason;
+        verify_params.observation     = &peer->role.sta.observation;
+        verify_params.now_us          = now_us;
+
+        ret = linkg_switch_policy_verify_begin( &peer->role.sta.verify, &verify_params);
 
         // 无论Verify是否启动成功，都进入固定3秒验证窗口。
         _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY, now_us);
@@ -1682,17 +1694,19 @@ static void _linkg_switch_operation_track_external_locked(linkg_switch_peer_runt
  */
 int linkg_switch_policy_operation_process(uint64_t now_us)
 {
-    linkg_switch_peer_runtime_t   *peer;
-    linkg_switch_policy_runtime_t *policy;
-    linkg_switch_policy_event_t    event;
-    linkg_send_plan_t              previous;
-    uint32_t                       peer_generation;
-    uint32_t                       sync_id;
-    uint32_t                       index;
-    uint8_t                        peer_node_id;
-    bool                           event_ready;
-    bool                           resync;
-    int                            ret;
+    linkg_switch_policy_verify_process_params_t verify_params;
+    linkg_switch_policy_verify_process_output_t verify_output;
+    linkg_switch_peer_runtime_t                *peer;
+    linkg_switch_policy_runtime_t              *policy;
+    linkg_switch_policy_event_t                 event;
+    linkg_send_plan_t                           previous;
+    uint32_t                                    peer_generation;
+    uint32_t                                    sync_id;
+    uint32_t                                    index;
+    uint8_t                                     peer_node_id;
+    bool                                        event_ready;
+    bool                                        resync;
+    int                                         ret;
 
     if (now_us == 0U)
     {
@@ -1797,12 +1811,26 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
             // Verify正常运行，持续采集质量数据并检查验证截止时间。
             if (peer->role.sta.verify.active)
             {
-                ret = linkg_switch_policy_verify_process(&peer->role.sta.verify, &peer->role.sta.observation, now_us, &event, &event_ready);
+                memset(&verify_params, 0, sizeof(verify_params));
+                memset(&verify_output, 0, sizeof(verify_output));
+
+                verify_params.observation = &peer->role.sta.observation;
+                verify_params.now_us      = now_us;
+
+                ret = linkg_switch_policy_verify_process(&peer->role.sta.verify, &verify_params, &verify_output);
+
                 if (ret != 0)
                 {
                     pthread_mutex_unlock(&g_switch.lock);
                     return ret;
                 }
+
+                if (verify_output.event_ready)
+                {
+                    event       = verify_output.event;
+                    event_ready = true;
+                }
+
                 break;
             }
 
