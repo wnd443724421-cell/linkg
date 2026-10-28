@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "linkg_link.h"
+#include "linkg_log.h"
 #include "linkg_time.h"
 #include "linkg_transport.h"
 
@@ -780,8 +781,10 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
     uint32_t                       sync_id;
     uint32_t                       index;
     uint32_t                       expected_id;
+    uint32_t                       priority_violation_mask;
     bool                           wifi_usable;
     bool                           cellular_usable;
+    bool                           wifi_prefix_open;
     int                            ret;
 
     /****************************** 获取当前事务 ******************************/
@@ -901,9 +904,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
         }
     }
 
-    // Verify已按业务优先级完成判决；Operation不改写有效分类目标掩码。
-    // INCONCLUSIVE或非法MIXED已在上面按LOSS/RECOVERY方向安全回退。
-
     /****************************** 最终目标可用性保护 ******************************/
 
     wifi_usable     = _linkg_switch_operation_wifi_usable_locked(peer);
@@ -954,6 +954,46 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
             current->primary_link_id   = policy->group_cellular_link_id;
             current->secondary_link_id = policy->group_wifi_link_id;
         }
+    }
+
+    /****************************** 只读校验完整Plan业务优先级 ******************************/
+
+    // 有效业务要求Wi-Fi处于高优先级前缀；NONE业务不参与约束。
+    // 只记录异常，不修改Verify分类掩码、最终Plan或PlanSync流程。
+    wifi_prefix_open        = true;
+    priority_violation_mask = 0U;
+
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+    {
+        current = &next.classes[index];
+        if (current->mode == LINKG_SEND_MODE_NONE)
+        {
+            continue;
+        }
+
+        if (current->mode == LINKG_SEND_MODE_SINGLE &&
+            current->primary_link_id == policy->group_wifi_link_id)
+        {
+            if (!wifi_prefix_open)
+            {
+                priority_violation_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
+            }
+        }
+        else
+        {
+            wifi_prefix_open = false;
+        }
+    }
+
+    if (priority_violation_mask != 0U)
+    {
+        LINKG_LOG_WARN("SWITCH-OP: priority order invalid, peer=%u reason=%u group=0x%x wifi=0x%x cellular=0x%x violation=0x%x",
+                       (unsigned int)event->peer_node_id,
+                       (unsigned int)policy->group_reason,
+                       (unsigned int)mask,
+                       (unsigned int)wifi_target_mask,
+                       (unsigned int)cellular_target_mask,
+                       (unsigned int)priority_violation_mask);
     }
 
     // 仅对一致目标保留组级兼容值；MIXED使用每类Operation的exit_target。
