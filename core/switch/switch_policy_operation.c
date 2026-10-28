@@ -195,10 +195,8 @@ static bool _linkg_switch_operation_group_plan_matches_locked(const linkg_switch
 
     if (exit_plan)
     {
-        // 退出冗余：根据最终目标确定单发主链路。
-        expected_primary = policy->group_target == LINKG_SWITCH_POLICY_TARGET_CELLULAR ?
-                           policy->group_cellular_link_id : policy->group_wifi_link_id;
-
+        // MIXED不存在统一组目标，退出ACK按每个业务的exit_target核验。
+        expected_primary   = LINKG_LINK_ID_INVALID;
         expected_secondary = LINKG_LINK_ID_INVALID;
     }
     else if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
@@ -228,7 +226,20 @@ static bool _linkg_switch_operation_group_plan_matches_locked(const linkg_switch
 
         if (exit_plan)
         {
-            // 最终单发计划必须保持预期模式和主链路。
+            // MIXED下逐业务检查最终单发目标，不从组目标推导。
+            if (policy->operations[index].exit_target == LINKG_SWITCH_POLICY_TARGET_WIFI)
+            {
+                expected_primary = policy->group_wifi_link_id;
+            }
+            else if (policy->operations[index].exit_target == LINKG_SWITCH_POLICY_TARGET_CELLULAR)
+            {
+                expected_primary = policy->group_cellular_link_id;
+            }
+            else
+            {
+                return false;
+            }
+
             if (current->mode != LINKG_SEND_MODE_SINGLE ||
                 current->primary_link_id != expected_primary)
             {
@@ -758,16 +769,20 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 {
     linkg_switch_peer_runtime_t   *peer;
     linkg_switch_policy_runtime_t *policy;
-    linkg_class_send_plan_t        *current;
+    linkg_class_send_plan_t       *current;
     linkg_send_plan_t              previous;
     linkg_send_plan_t              next;
     linkg_switch_policy_target_t   target;
     uint32_t                       mask;
+    uint32_t                       wifi_target_mask;
+    uint32_t                       cellular_target_mask;
+    uint32_t                       bit;
     uint32_t                       sync_id;
     uint32_t                       index;
     uint32_t                       expected_id;
     bool                           wifi_usable;
     bool                           cellular_usable;
+    bool                           wifi_prefix_open;
     int                            ret;
 
     /****************************** 获取当前事务 ******************************/
@@ -783,7 +798,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     policy = &peer->role.sta.policy;
 
-    // 必须存在活动事务，且当前处于验证或LOAD计时阶段。
     if (policy->group_mask == 0U ||
         (policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY &&
          policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER))
@@ -794,7 +808,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     /****************************** 校验事件身份 ******************************/
 
-    // 使用本组第一个参与业务的Operation ID校验事件归属。
     for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
         if ((policy->group_mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) != 0U)
@@ -805,7 +818,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     expected_id = policy->operations[index].operation_id;
 
-    // VERIFY_DONE必须属于当前WAIT_VERIFY事务。
     if (event->type == LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE &&
         (policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY ||
          event->payload.verify_done.operation_id != expected_id))
@@ -814,7 +826,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
         return 0;
     }
 
-    // LOAD_TIMEOUT必须属于当前WAIT_TIMER事务。
     if (event->type == LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT &&
         (policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER ||
          event->payload.load_timeout.operation_id != expected_id))
@@ -825,7 +836,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     /****************************** 校验当前发送计划 ******************************/
 
-    // 当前Plan必须仍然保持本组进入冗余时的预期状态。
     if (!_linkg_switch_operation_group_plan_matches_locked(peer, false))
     {
         _linkg_switch_operation_clear_group_locked(peer);
@@ -833,74 +843,150 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
         return 0;
     }
 
-    /****************************** 获取链路可用状态 ******************************/
+    /****************************** 解析逐业务验证目标 ******************************/
 
-    wifi_usable     = _linkg_switch_operation_wifi_usable_locked(peer);
-    cellular_usable = _linkg_switch_operation_cellular_usable_locked(peer);
-
-    /****************************** 选择最终单发目标 ******************************/
-
-    // 验证无法判定时，LOSS优先保留Wi-Fi，RECOVERY优先保留Cellular。
-    target = policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY ?
-             LINKG_SWITCH_POLICY_TARGET_CELLULAR : LINKG_SWITCH_POLICY_TARGET_WIFI;
+    mask                 = policy->group_mask;
+    wifi_target_mask     = 0U;
+    cellular_target_mask = 0U;
 
     if (event->type == LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT)
     {
-        // LOAD不比较质量，Cellular可用时直接迁移。
-        target = cellular_usable ? LINKG_SWITCH_POLICY_TARGET_CELLULAR : LINKG_SWITCH_POLICY_TARGET_WIFI;
+        // LOAD计时到期，默认迁出整个参与业务集合。
+        cellular_target_mask = mask;
     }
-    else if (event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_WIFI)
+    else
     {
-        // Verify确认Wi-Fi更优。
-        target = LINKG_SWITCH_POLICY_TARGET_WIFI;
+        switch (event->payload.verify_done.result)
+        {
+            case LINKG_SWITCH_POLICY_VERIFY_WIFI:
+                wifi_target_mask = mask;
+                break;
+
+            case LINKG_SWITCH_POLICY_VERIFY_CELLULAR:
+                cellular_target_mask = mask;
+                break;
+
+            case LINKG_SWITCH_POLICY_VERIFY_MIXED:
+                wifi_target_mask     = event->payload.verify_done.wifi_target_mask;
+                cellular_target_mask = event->payload.verify_done.cellular_target_mask;
+
+                // 必须互斥、非空并严格覆盖参与业务，非法结果按不确定回退。
+                if (wifi_target_mask == 0U ||
+                    cellular_target_mask == 0U ||
+                    (wifi_target_mask & cellular_target_mask) != 0U ||
+                    (wifi_target_mask | cellular_target_mask) != mask)
+                {
+                    wifi_target_mask     = 0U;
+                    cellular_target_mask = 0U;
+                }
+                break;
+
+            case LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE:
+            case LINKG_SWITCH_POLICY_VERIFY_NONE:
+            default:
+                // 不确定时不采纳分类结果，只使用事务开始前的主链路。
+                break;
+        }
+
+        if (wifi_target_mask == 0U && cellular_target_mask == 0U)
+        {
+            // LOSS回退到Wi-Fi，RECOVERY回退到Cellular。
+            if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
+            {
+                cellular_target_mask = mask;
+            }
+            else
+            {
+                wifi_target_mask = mask;
+            }
+        }
     }
-    else if (event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_CELLULAR)
+
+    /****************************** 校验完整Plan的业务优先级 ******************************/
+
+    // Wi-Fi业务必须形成高优先级前缀，避免仅恢复VIDEO/DATA而REALTIME仍在Cellular。
+    // 已经处于Wi-Fi单发的非参与业务可作为此前缀的一部分；禁用业务不阻断。
+    // INCONCLUSIVE仅执行原链路回退；只对确认的Wi-Fi选择应用优先级保护。
+    if (event->type == LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE &&
+        (event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_WIFI ||
+         event->payload.verify_done.result == LINKG_SWITCH_POLICY_VERIFY_MIXED))
     {
-        // Verify确认Cellular更优。
-        target = LINKG_SWITCH_POLICY_TARGET_CELLULAR;
+        wifi_prefix_open = true;
+
+        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        {
+            bit = LINKG_SWITCH_POLICY_CLASS_BIT(index);
+
+            if ((mask & bit) == 0U)
+            {
+                current = &peer->plan.classes[index];
+
+                if (current->mode != LINKG_SEND_MODE_NONE &&
+                    (current->mode != LINKG_SEND_MODE_SINGLE ||
+                     current->primary_link_id != policy->group_wifi_link_id))
+                {
+                    wifi_prefix_open = false;
+                }
+
+                continue;
+            }
+
+            if ((wifi_target_mask & bit) == 0U)
+            {
+                wifi_prefix_open = false;
+                continue;
+            }
+
+            if (!wifi_prefix_open)
+            {
+                // 不允许低优先级业务单独回Wi-Fi，保守保留或迁至Cellular。
+                wifi_target_mask     &= ~bit;
+                cellular_target_mask |= bit;
+            }
+        }
     }
 
     /****************************** 最终目标可用性保护 ******************************/
 
-    // 首选Cellular不可用时，尝试回退Wi-Fi。
-    if (target == LINKG_SWITCH_POLICY_TARGET_CELLULAR && !cellular_usable)
-    {
-        target = LINKG_SWITCH_POLICY_TARGET_WIFI;
-    }
+    wifi_usable     = _linkg_switch_operation_wifi_usable_locked(peer);
+    cellular_usable = _linkg_switch_operation_cellular_usable_locked(peer);
 
-    // 首选Wi-Fi不可用时，尝试改用Cellular。
-    if (target == LINKG_SWITCH_POLICY_TARGET_WIFI && !wifi_usable)
-    {
-        target = LINKG_SWITCH_POLICY_TARGET_CELLULAR;
-    }
-
-    // 最终目标仍不可用，本轮不提交单发计划。
-    if ((target == LINKG_SWITCH_POLICY_TARGET_WIFI && !wifi_usable) ||
-        (target == LINKG_SWITCH_POLICY_TARGET_CELLULAR && !cellular_usable))
+    if (!wifi_usable && !cellular_usable)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
+    }
+
+    // 路径已不可用时，以唯一可用路径覆盖全部参与业务，避免退回失效路径。
+    if (!wifi_usable)
+    {
+        wifi_target_mask     = 0U;
+        cellular_target_mask = mask;
+    }
+    else if (!cellular_usable)
+    {
+        wifi_target_mask     = mask;
+        cellular_target_mask = 0U;
     }
 
     /****************************** 构造最终单发计划 ******************************/
 
     previous = peer->plan;
     next     = previous;
-    mask     = policy->group_mask;
 
-    // 只修改本次Operation涉及的业务类别。
     for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
-        if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
+        bit = LINKG_SWITCH_POLICY_CLASS_BIT(index);
+
+        if ((mask & bit) == 0U)
         {
             continue;
         }
 
-        current = &next.classes[index];
-
+        current       = &next.classes[index];
         current->mode = LINKG_SEND_MODE_SINGLE;
 
-        if (target == LINKG_SWITCH_POLICY_TARGET_WIFI)
+        if ((wifi_target_mask & bit) != 0U)
         {
             current->primary_link_id   = policy->group_wifi_link_id;
             current->secondary_link_id = policy->group_cellular_link_id;
@@ -912,11 +998,15 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
         }
     }
 
+    // 仅对一致目标保留组级兼容值；MIXED使用每类Operation的exit_target。
+    target = wifi_target_mask == mask ? LINKG_SWITCH_POLICY_TARGET_WIFI :
+             cellular_target_mask == mask ? LINKG_SWITCH_POLICY_TARGET_CELLULAR :
+             LINKG_SWITCH_POLICY_TARGET_NONE;
+
     pthread_mutex_unlock(&g_switch.lock);
 
     /****************************** 提交最终PlanSync ******************************/
 
-    // 条件提交完整Plan，防止覆盖锁外发生的其他Plan修改。
     sync_id = 0U;
 
     ret = linkg_switch_plan_submit_if_current(event->peer_node_id, event->peer_generation, &previous, &next, now_us, &sync_id);
@@ -936,7 +1026,6 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     peer = linkg_switch_find_peer_generation_locked(event->peer_node_id, event->peer_generation);
 
-    // 确认Peer、事务组和新PlanSync仍然对应本次提交。
     if (peer != NULL &&
         peer->role.sta.policy.group_mask == mask &&
         peer->role.sta.plan_sync.sync_id == sync_id)
@@ -948,21 +1037,22 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
         policy->next_action_us = 0U;
         policy->recovery_count = 0U;
 
-        // 最终单发Plan已经提交，等待AP的退出确认。
         _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_EXIT_ACK, now_us);
 
-        // 保存本组各业务最终选择的链路。
         for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
         {
-            if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
+            bit = LINKG_SWITCH_POLICY_CLASS_BIT(index);
+
+            if ((mask & bit) == 0U)
             {
                 continue;
             }
 
-            policy->operations[index].exit_target = target;
+            policy->operations[index].exit_target = (wifi_target_mask & bit) != 0U ?
+                                                     LINKG_SWITCH_POLICY_TARGET_WIFI :
+                                                     LINKG_SWITCH_POLICY_TARGET_CELLULAR;
         }
 
-        // 退出验证阶段，清理Verify运行状态。
         linkg_switch_policy_verify_reset(&peer->role.sta.verify);
     }
 
@@ -1027,9 +1117,9 @@ static void _linkg_switch_operation_finish_locked(linkg_switch_peer_runtime_t *p
 
         operation = &policy->operations[index];
 
-        if (policy->group_target == LINKG_SWITCH_POLICY_TARGET_CELLULAR)
+        if (operation->exit_target == LINKG_SWITCH_POLICY_TARGET_CELLULAR)
         {
-            // 确认从Wi-Fi迁移到Cellular，记录原因、RSSI基线和最短恢复等待时间。
+            // 仅为本业务的Cellular退出目标记录迁移或失败恢复历史。
             if (policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY && operation->migrated_from_wifi)
             {
                 operation->migration_reason =
@@ -1078,32 +1168,30 @@ static void _linkg_switch_operation_abandon_uncertain_locked(linkg_switch_peer_r
 
     /****************************** 保留未知迁移历史 ******************************/
 
-    // 只有目标为Cellular且确实从Wi-Fi迁出的业务，才记录UNKNOWN。
-    if (policy->group_target == LINKG_SWITCH_POLICY_TARGET_CELLULAR)
+    // MIXED下只处理真实从Wi-Fi迁至Cellular且未获ACK的业务。
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
-        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        if ((policy->group_mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
         {
-            if ((policy->group_mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
-            {
-                continue;
-            }
-
-            operation = &policy->operations[index];
-            if (!operation->migrated_from_wifi)
-            {
-                continue;
-            }
-
-            // AP计划是否一致仍未知；质量迁移必须保留原因，以继续执行RSSI滞回。
-            operation->migration_reason =
-                policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOSS ? LINKG_SWITCH_POLICY_MIGRATION_LOSS :
-                policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD ? LINKG_SWITCH_POLICY_MIGRATION_LOAD :
-                LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
-            operation->recovery.rssi_valid        = policy->group_rssi_valid;
-            operation->recovery.rssi_dbm          = policy->group_rssi_dbm;
-            operation->recovery.migrated_us       = now_us;
-            operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US);
+            continue;
         }
+
+        operation = &policy->operations[index];
+        if (operation->exit_target != LINKG_SWITCH_POLICY_TARGET_CELLULAR ||
+            !operation->migrated_from_wifi)
+        {
+            continue;
+        }
+
+        // AP计划是否一致仍未知；质量迁移必须保留原因，以继续执行RSSI滞回。
+        operation->migration_reason =
+            policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOSS ? LINKG_SWITCH_POLICY_MIGRATION_LOSS :
+            policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD ? LINKG_SWITCH_POLICY_MIGRATION_LOAD :
+            LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
+        operation->recovery.rssi_valid        = policy->group_rssi_valid;
+        operation->recovery.rssi_dbm          = policy->group_rssi_dbm;
+        operation->recovery.migrated_us       = now_us;
+        operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US);
     }
 
     /****************************** 释放事务并安排后台修复 ******************************/
@@ -1696,14 +1784,20 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
 {
     linkg_switch_policy_verify_process_params_t verify_params;
     linkg_switch_policy_verify_process_output_t verify_output;
+    linkg_transport_peer_stats_t               stats;
     linkg_switch_peer_runtime_t                *peer;
     linkg_switch_policy_runtime_t              *policy;
     linkg_switch_policy_event_t                 event;
     linkg_send_plan_t                           previous;
     uint32_t                                    peer_generation;
+    uint32_t                                    sampled_generation;
+    uint32_t                                    active_class_mask;
     uint32_t                                    sync_id;
     uint32_t                                    index;
     uint8_t                                     peer_node_id;
+    uint8_t                                     sampled_node_id;
+    uint64_t                                    now_ms;
+    bool                                        activity_valid;
     bool                                        event_ready;
     bool                                        resync;
     int                                         ret;
@@ -1724,10 +1818,54 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
 
     memset(&event, 0, sizeof(event));
 
-    event_ready     = false;
-    resync          = false;
-    peer_node_id    = 0U;
-    peer_generation = 0U;
+    event_ready        = false;
+    resync             = false;
+    peer_node_id       = 0U;
+    peer_generation    = 0U;
+    sampled_node_id    = 0U;
+    sampled_generation = 0U;
+    active_class_mask  = 0U;
+    activity_valid     = false;
+
+    /****************************** 锁外采集Verify业务活跃性 ******************************/
+
+    // Transport统计必须在Switch锁外读取，且只在Verify运行时采集。
+    pthread_mutex_lock(&g_switch.lock);
+
+    if (g_switch.initialized && g_switch.running && g_switch.role == LINKG_DEVICE_ROLE_STA)
+    {
+        for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
+        {
+            peer = &g_switch.peers[index];
+            if (!peer->used ||
+                peer->role.sta.policy.group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY ||
+                !peer->role.sta.verify.active)
+            {
+                continue;
+            }
+
+            sampled_node_id    = peer->peer_node_id;
+            sampled_generation = peer->generation;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    if (sampled_node_id != 0U && sampled_generation != 0U &&
+        linkg_transport_get_peer_stats(sampled_node_id, &stats) == 0)
+    {
+        now_ms         = linkg_time_elapsed_ms();
+        activity_valid = true;
+
+        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        {
+            if (_linkg_switch_operation_load_active(&stats.classes[index], now_ms))
+            {
+                active_class_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
+            }
+        }
+    }
 
     /****************************** 获取当前Peer ******************************/
 
@@ -1814,8 +1952,12 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
                 memset(&verify_params, 0, sizeof(verify_params));
                 memset(&verify_output, 0, sizeof(verify_output));
 
-                verify_params.observation = &peer->role.sta.observation;
-                verify_params.now_us      = now_us;
+                verify_params.observation       = &peer->role.sta.observation;
+                verify_params.now_us            = now_us;
+                verify_params.activity_valid    = activity_valid &&
+                                                  peer->peer_node_id == sampled_node_id &&
+                                                  peer->generation == sampled_generation;
+                verify_params.active_class_mask = verify_params.activity_valid ? active_class_mask : 0U;
 
                 ret = linkg_switch_policy_verify_process(&peer->role.sta.verify, &verify_params, &verify_output);
 

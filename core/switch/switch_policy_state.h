@@ -86,7 +86,7 @@ typedef struct
     linkg_switch_policy_phase_t            phase;              // 当前业务的事务阶段
     uint32_t                               operation_id;       // 当前业务事务编号，0表示空闲
     linkg_switch_policy_reason_t           reason;             // 当前事务触发原因
-    linkg_switch_policy_target_t           exit_target;        // 当前业务的最终单发目标
+    linkg_switch_policy_target_t           exit_target;        // 当前业务最终单发目标，MIXED时逐类保存
     bool                                   migrated_from_wifi; // 本次事务开始前主链路是否为Wi-Fi
     linkg_switch_policy_migration_reason_t migration_reason;   // 最近一次完成迁出Wi-Fi的原因
 
@@ -115,7 +115,8 @@ typedef struct
  * @brief 每个Peer的三个独立业务事务及唯一组级PlanSync事务。
  *
  * group_mask非0表示当前有活动事务组；组内业务使用独立Operation ID。
- * group_phase/group_reason/group_target和plan_sync_id描述同一完整Plan的同步过程。
+ * group_phase/group_reason和plan_sync_id描述同一完整Plan的同步过程。
+ * MIXED时group_target为NONE，以各业务exit_target为准。
  * last_wifi_*和observed_*是跨事务的历史信息，清除活动组时不得清空。
  * Verify运行状态独立存放在linkg_switch_sta_peer_runtime_t.verify中。
  */
@@ -129,7 +130,7 @@ typedef struct
     uint32_t                            group_mask;                                     // 当前事务组包含的业务集合，0表示无活动组
     linkg_switch_policy_reason_t        group_reason;                                   // 当前组LOSS/LOAD/RECOVERY/WIFI_DOWN触发原因
     linkg_switch_policy_phase_t         group_phase;                                    // 当前组统一的事务阶段
-    linkg_switch_policy_target_t        group_target;                                   // 退出冗余后的最终单发目标
+    linkg_switch_policy_target_t        group_target;                                   // 统一退出目标，MIXED时为NONE
     uint64_t                            next_action_us;                                 // LOAD到期或同步恢复的下一动作时间
     uint8_t                             recovery_count;                                 // 当前组的追加重同步次数
 
