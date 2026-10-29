@@ -184,6 +184,12 @@ static void _linkg_switch_runtime_process_sta(uint64_t now_us)
         return;
     }
 
+    now_us = linkg_time_monotonic_us();
+    if (now_us == 0U)
+    {
+        return;
+    }
+
     ret = linkg_switch_policy_process(now_us);
     _linkg_switch_runtime_log_error("policy check", ret);
 }
@@ -365,6 +371,10 @@ static void _linkg_switch_runtime_process_due(uint64_t now_us)
     // 质量策略先于Reconcile处理，以免Wi-Fi断线时仅修改本地Plan而漏发AP同步。
     _linkg_switch_runtime_process_plan(now_us);
     _linkg_switch_runtime_process_sta(now_us);
+    
+    // 避免Operation/Verify使用Observation刷新之前的时间。
+    now_us = linkg_time_monotonic_us();
+
     _linkg_switch_runtime_process_operation(now_us);
     _linkg_switch_runtime_process_reconcile(now_us);
     _linkg_switch_runtime_process_report(now_us);
