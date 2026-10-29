@@ -20,7 +20,9 @@
 
 #include "linkg_link.h"
 
+/****************************** LOAD恢复HCC参数 ******************************/
 
+#define LINKG_SWITCH_POLICY_VERIFY_HCC_BE_BAD_THRESHOLD 3U // BE队列严格大于3包视为负载压力
 
 /**
  * @brief 将已固定的验证结果填充为VERIFY_DONE事件。
@@ -940,21 +942,26 @@ static void _linkg_switch_verify_collect_recovery_loss(linkg_switch_policy_verif
 }
 
 /**
- * @brief RECOVERY + LOAD验证期间采集Wi-Fi流控事件、队列OVF及实际发送负载。
+ * @brief RECOVERY + LOAD期间采集Wi-Fi负载压力及恢复积分。
  *
- * 只使用HCC新增FLOWCTRL_OFF和TX队列OVF判断负载BAD，不使用HCC队列水位。
- * BAD每轮最多加1分；只有新鲜双方向HCC及新增Wi-Fi业务流量证据均有效，
- * 且本轮无压力时才减1分。未知观测不计分。
+ * BAD条件：
+ * 1. Wi-Fi分类或全局TX队列发生OVF。
+ * 2. HCC新增FLOWCTRL_OFF。
+ * 3. HCC当前不允许发送。
+ * 4. HCC BE队列长度严格大于3。
  *
- * 本函数只做周期采样，不生成VERIFY_DONE或修改Plan。
+ * 所有BAD条件使用OR关系，每轮最多加1分。
+ * BAD积分无策略上限，GOOD减1分，UNKNOWN不变。
+ * OVF历史由采集模块锁存，最终判决时执行硬否决。
  */
 static void _linkg_switch_verify_collect_recovery_load(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_observation_t *observation, uint64_t now_us)
 {
-    const linkg_switch_traffic_observation_t *traffic;
-    bool                                      wifi_pressure;
-    bool                                      hcc_ready;
-    bool                                      traffic_active;
-    uint32_t                                  direction;
+    const linkg_switch_traffic_observation_t  *traffic;
+    const linkg_switch_wifi_hcc_observation_t *hcc;
+    bool                                       wifi_pressure;
+    bool                                       hcc_ready;
+    bool                                       traffic_active;
+    uint32_t                                   direction;
 
     /****************************** 一、采样轮次去重 ******************************/
 
@@ -977,26 +984,43 @@ static void _linkg_switch_verify_collect_recovery_load(linkg_switch_policy_verif
     _linkg_switch_verify_collect_load(runtime, &runtime->wifi, observation->wifi.loss.uplink_load_classes, LINKG_SWITCH_POLICY_VERIFY_UPLINK, observation->collected_us, now_us);
     _linkg_switch_verify_collect_load(runtime, &runtime->wifi, observation->wifi.loss.downlink_load_classes, LINKG_SWITCH_POLICY_VERIFY_DOWNLINK, observation->collected_us, now_us);
 
-    /****************************** 三、新增流控与负载溢出判定 ******************************/
+    /****************************** 三、合并本轮负载压力 ******************************/
 
+    // 全局或分类TX Queue Overflow均属于负载BAD。
     wifi_pressure = runtime->wifi.overflow_class_mask_this_round != 0U ||
                     runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_UPLINK].overflow_this_round ||
                     runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].overflow_this_round;
 
+    // HCC两方向分别判断；使用当前有效样本，不使用历史最大BE水位。
     for (direction = 0U; direction < LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT; direction++)
     {
-        // 只统计新增FLOWCTRL_OFF，不将持续tx_allowed=false重复计为新事件。
-        wifi_pressure = wifi_pressure || runtime->wifi_hcc[direction].off_delta_this_round != 0U;
+        hcc = direction == LINKG_SWITCH_POLICY_VERIFY_UPLINK ?
+              &observation->wifi.uplink_hcc :
+              &observation->wifi.downlink_hcc;
+
+        // 只有本轮成功消费的新HCC样本才允许参与判断。
+        if (!runtime->wifi_hcc[direction].valid_this_round)
+        {
+            continue;
+        }
+
+        if (runtime->wifi_hcc[direction].off_delta_this_round != 0U ||
+            runtime->wifi_hcc[direction].tx_blocked_this_round ||
+            hcc->be_queue_length > LINKG_SWITCH_POLICY_VERIFY_HCC_BE_BAD_THRESHOLD)
+        {
+            wifi_pressure = true;
+        }
     }
 
     runtime->wifi_pressure_this_round = wifi_pressure;
 
-    /****************************** 四、Wi-Fi实际负载采样 ******************************/
+    /****************************** 四、Wi-Fi实际流量采样 ******************************/
 
     traffic        = &observation->wifi.traffic;
     traffic_active = false;
 
-    // Wi-Fi Path总收发速率仅用于防止空载时通过；不等价于指定业务USER_DATA活跃。
+    // Wi-Fi Path总流量仅用于确认存在传输活动。
+    // 不将控制流量等同于指定业务的USER_DATA。
     if (traffic->valid &&
         traffic->updated_us > runtime->started_us &&
         traffic->updated_us <= runtime->deadline_us &&
@@ -1016,30 +1040,30 @@ static void _linkg_switch_verify_collect_recovery_load(linkg_switch_policy_verif
         }
     }
 
-    /****************************** 五、Wi-Fi负载恢复积分 ******************************/
+    /****************************** 五、LOAD恢复积分 ******************************/
 
     if (wifi_pressure)
     {
-        // RECOVERY + LOAD：本轮确认负载异常，积分加1，不设置策略上限。
+        // 任意BAD条件命中，本轮统一加1，不重复累计。
         runtime->wifi_load_score = _linkg_switch_verify_add_score(runtime->wifi_load_score, 1U);
 
         return;
     }
 
-    // 必须本轮两方向均取得新HCC样本，不能用旧OFF计数反复确认良好窗口。
+    // GOOD必须有双方向最新有效HCC样本。
     hcc_ready = runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK].valid_this_round &&
                 runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].valid_this_round &&
                 runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK].initialized &&
                 runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].initialized;
 
-    // 首个双向完整HCC窗口只确认计数基线，不将可能跨ACK的首轮观测视为GOOD。
+    // 首个完整HCC窗口仅用于确认计数基线。
     if (!runtime->wifi_load_hcc_primed)
     {
         runtime->wifi_load_hcc_primed = hcc_ready;
         return;
     }
 
-    // 没有新HCC或没有新流量活动时不减分，防止空闲Wi-Fi虚假恢复。
+    // 没有压力、有新鲜HCC且存在Wi-Fi传输活动，才允许积分减1。
     if (hcc_ready && traffic_active && runtime->wifi_load_score > 0U)
     {
         runtime->wifi_load_score--;
@@ -1047,13 +1071,25 @@ static void _linkg_switch_verify_collect_recovery_load(linkg_switch_policy_verif
 }
 
 /**
- * @brief RECOVERY + LOAD三秒结束后只根据Wi-Fi负载恢复积分决定整组回切。
+ * @brief RECOVERY + LOAD三秒结束后决定是否恢复Wi-Fi。
  *
- * FLOWCTRL_OFF允许出现，只要最终积分严格小于3即可恢复；没有有效业务
- * 流量观测或HCC过期时不将空载状态视为承载恢复。
+ * 任何已确认的Wi-Fi TX Queue Overflow均直接否决恢复。
+ * 未出现OVF时，继续检查负载积分、流量及双方向HCC新鲜度。
  */
 static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_load(const linkg_switch_policy_verify_runtime_t *runtime, uint64_t now_us)
 {
+    /****************************** 一、TX队列溢出硬否决 ******************************/
+
+    // 三秒验证期内，Wi-Fi任意参与业务发生OVF，禁止恢复。
+    if (runtime->wifi.queue_overflow ||
+        runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_UPLINK].overflow_seen ||
+        runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].overflow_seen)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+    }
+
+    /****************************** 二、积分与有效观测检查 ******************************/
+
     if (runtime->wifi_load_score < LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE &&
         runtime->wifi_traffic_seen &&
         _linkg_switch_verify_hcc_recent(&runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK], now_us) &&
