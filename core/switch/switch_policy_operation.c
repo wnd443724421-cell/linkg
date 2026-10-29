@@ -31,6 +31,7 @@
 #define LINKG_SWITCH_OPERATION_RESYNC_MAX                     2U    // 整组事务追加重同步次数
 #define LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US      10000000ULL  // 重试耗尽后每10秒修复完整Plan
 #define LINKG_SWITCH_OPERATION_LOAD_ACTIVE_MAX_AGE_MS      1500ULL  // LOAD仅迁移最近1.5秒有真实用户数据的业务
+#define LINKG_SWITCH_OPERATION_OVERDUE_RETRY_US           50000ULL  // 已到期但尚未完成的事务，最短50ms后重试
 
 /****************************** 基础辅助 ******************************/
 
@@ -2213,8 +2214,20 @@ uint64_t linkg_switch_policy_operation_next_deadline_locked(void)
 
         /****************************** 更新最早截止时间 ******************************/
 
-        // 仅选择尚未到期且早于当前最早截止时间的候选时间。
-        if (candidate_us > now_us && candidate_us < deadline)
+        // 无有效截止时间，不参与本轮调度。
+        if (candidate_us == 0U)
+        {
+            continue;
+        }
+
+        // 已到期但尚未完成的事务，安排有界重试，避免Worker忙循环。
+        if (candidate_us <= now_us)
+        {
+            candidate_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_OVERDUE_RETRY_US);
+        }
+
+        // 选择最早需要唤醒的事务。
+        if (candidate_us < deadline)
         {
             deadline = candidate_us;
         }
