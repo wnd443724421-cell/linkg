@@ -21,8 +21,9 @@
 
 /****************************** 恢复参数 ******************************/
 
-#define LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB  3    // LOSS恢复要求RSSI较迁出时提高至少3dB
-#define LINKG_SWITCH_POLICY_DIRECT_RECOVERY_RSSI_DBM  (-60)   // 非质量迁移后，Wi-Fi RSSI达到-60dBm即可直接恢复
+#define LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB       3     // LOSS恢复要求RSSI较迁出时提高至少3dB
+#define LINKG_SWITCH_POLICY_LOAD_RECOVERY_RSSI_HYSTERESIS_DB  1     // LOAD恢复要求RSSI较迁出时提高至少1dB
+#define LINKG_SWITCH_POLICY_DIRECT_RECOVERY_RSSI_DBM         (-60)  // 非质量迁移后，RSSI达到-60dBm直接恢复
 
 /****************************** Cellular主链路策略 ******************************/
 
@@ -142,8 +143,11 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
                 continue;
             }
 
-            // 不要求RSSI提高，但必须不低于迁出时的原始RSSI。
-            if (input->observation.wifi.radio.rssi_dbm >= operation->recovery.rssi_dbm)
+            baseline = operation->recovery.rssi_dbm;
+
+            // LOAD恢复要求RSSI较迁出时提高至少2dB，满足后进入冗余验证。
+            if ((int64_t)input->observation.wifi.radio.rssi_dbm - baseline >=
+                LINKG_SWITCH_POLICY_LOAD_RECOVERY_RSSI_HYSTERESIS_DB)
             {
                 load_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
             }

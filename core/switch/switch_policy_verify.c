@@ -41,8 +41,13 @@ static void _linkg_switch_verify_fill_event(const linkg_switch_policy_verify_run
     event->payload.verify_done.cellular_target_mask = runtime->cellular_target_mask;
 }
 
-
-
+/**
+ * @brief 累加验证异常积分，不设置策略上限，仅防止整数溢出。
+ */
+static uint32_t _linkg_switch_verify_add_score(uint32_t score, uint32_t delta)
+{
+    return score > UINT32_MAX - delta ? UINT32_MAX : score + delta;
+}
 
 /**
  * @brief 固定本次验证结果并生成VERIFY_DONE事件。
@@ -793,7 +798,6 @@ static void _linkg_switch_verify_collect_loss_common(linkg_switch_policy_verify_
     int                                    downlink_delta;
     int                                    score_delta;
     uint32_t                               direction;
-    uint32_t                               next_score;
 
     /****************************** 一、采样轮次检查 ******************************/
 
@@ -872,7 +876,7 @@ static void _linkg_switch_verify_collect_loss_common(linkg_switch_policy_verify_
     runtime->wifi_pressure_known_this_round = hcc_known && load_known;
     score_enabled                           = !wifi_pressure && runtime->wifi_pressure_known_this_round;
 
-    /****************************** 六、Wi-Fi整链路恢复积分 ******************************/
+    /****************************** 六、Wi-Fi整链路异常积分 ******************************/
 
     // 负载压力存在或观测不足时，只消费Wire窗口，不执行BAD/GOOD评分。
     uplink_delta   = _linkg_switch_verify_wifi_score_direction(runtime, wifi_wire[LINKG_SWITCH_POLICY_VERIFY_UPLINK], LINKG_SWITCH_POLICY_VERIFY_UPLINK, observation->collected_us, now_us, score_enabled);
@@ -882,30 +886,25 @@ static void _linkg_switch_verify_collect_loss_common(linkg_switch_policy_verify_
     {
         if (recovery)
         {
-            // RECOVERY：Wi-Fi仍有流控或队列溢出，最多加1分。
-            if (runtime->wifi_loss_score < LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE)
-            {
-                runtime->wifi_loss_score++;
-            }
+            // RECOVERY：负载压力说明Wi-Fi尚未恢复，本轮异常积分加1。
+            runtime->wifi_loss_score = _linkg_switch_verify_add_score(
+                runtime->wifi_loss_score, 1U);
         }
         else if (runtime->wifi_loss_score > 0U)
         {
-            // LOSS：负载压力优先归因，本轮最多减1分。
+            // LOSS：负载压力优先归因，避免误判为无线质量问题。
             runtime->wifi_loss_score--;
         }
     }
     else if (score_enabled)
     {
-        // 与QUALITY一致：同轮合并上下行评分，BAD为+1、GOOD为-1。
-        // 正积分最多+2，负积分最多-1；负载压力仍优先于Wire评分。
+        // 上下行合并评分：BAD最多+2，GOOD最多-1，未知窗口不变。
         score_delta = uplink_delta + downlink_delta;
 
         if (score_delta > 0)
         {
-            next_score = (uint32_t)runtime->wifi_loss_score + (uint32_t)score_delta;
-
-            runtime->wifi_loss_score = (uint8_t)(next_score > LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE ?
-                                                  LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE : next_score);
+            // LOSS迁出与RECOVERY恢复均不设置异常积分上限。
+            runtime->wifi_loss_score = _linkg_switch_verify_add_score(runtime->wifi_loss_score, (uint32_t)score_delta);
         }
         else if (score_delta < 0 && runtime->wifi_loss_score > 0U)
         {
@@ -1021,11 +1020,8 @@ static void _linkg_switch_verify_collect_recovery_load(linkg_switch_policy_verif
 
     if (wifi_pressure)
     {
-        // 本轮出现OFF或OVF，最多加1分，不区分同轮新增事件数量。
-        if (runtime->wifi_load_score < LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE)
-        {
-            runtime->wifi_load_score++;
-        }
+        // RECOVERY + LOAD：本轮确认负载异常，积分加1，不设置策略上限。
+        runtime->wifi_load_score = _linkg_switch_verify_add_score(runtime->wifi_load_score, 1U);
 
         return;
     }
