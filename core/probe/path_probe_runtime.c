@@ -348,11 +348,59 @@ void linkg_path_probe_cancel_diagnostic_locked(int status, uint64_t now_us)
 }
 
 /**
+ * @brief 从Pending池移除属于指定异步句柄的在途请求。
+ *
+ * 调用方持有g_path_probe.lock；不修改结果槽位，由调用者决定释放或标记取消。
+ */
+void linkg_path_probe_async_cancel_pending_locked(uint64_t handle)
+{
+    linkg_path_probe_pending_t *pending;
+    uint32_t                    index;
+
+    for (index = LINKG_PATH_PROBE_ASYNC_PENDING_BEGIN; index < LINKG_PATH_PROBE_PENDING_MAX; index++)
+    {
+        pending = &g_path_probe.pending[index];
+        if (pending->state != LINKG_PATH_PROBE_PENDING_FREE &&
+            pending->type == LINKG_PATH_PROBE_PENDING_TYPE_ASYNC &&
+            pending->async_handle == handle)
+        {
+            memset(pending, 0, sizeof(*pending));
+        }
+    }
+}
+
+/**
+ * @brief Path代际失效后取消相关单包，供Switch下一轮读取CANCELED。
+ */
+void linkg_path_probe_async_cancel_path_locked(uint8_t peer_node_id, uint32_t link_id, uint64_t generation, uint64_t now_us)
+{
+    linkg_path_probe_async_runtime_t *slot;
+    uint32_t                          index;
+
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+    {
+        slot = &g_path_probe.async[index];
+        if (!slot->active || slot->peer_node_id != peer_node_id ||
+            slot->wifi_link_id != link_id || slot->path_generation != generation)
+        {
+            continue;
+        }
+
+        linkg_path_probe_async_cancel_pending_locked(slot->handle);
+        // 物理Path代际变更后，即使旧ACK已经完成也不可供新Verify使用。
+        slot->result.state        = LINKG_PATH_PROBE_ASYNC_CANCELED;
+        slot->result.completed_us = now_us;
+        slot->result.rtt_us       = 0U;
+    }
+}
+
+/**
  * @brief 停止全部在途请求并唤醒同步诊断调用者。
  */
 void linkg_path_probe_cancel_all_locked(int status, uint64_t now_us)
 {
     linkg_path_probe_cancel_diagnostic_locked(status, now_us);
+    memset(g_path_probe.async, 0, sizeof(g_path_probe.async));
     memset(g_path_probe.pending, 0, sizeof(g_path_probe.pending));
     pthread_cond_broadcast(&g_path_probe.diagnostic_condition);
 }
@@ -365,6 +413,7 @@ void linkg_path_probe_runtime_reset_locked(void)
     memset(g_path_probe.peers, 0, sizeof(g_path_probe.peers));
     memset(g_path_probe.pending, 0, sizeof(g_path_probe.pending));
     memset(&g_path_probe.diagnostic, 0, sizeof(g_path_probe.diagnostic));
+    memset(g_path_probe.async, 0, sizeof(g_path_probe.async));
 
     g_path_probe.peer_count       = 0U;
     g_path_probe.next_topology_us = 0U;
@@ -381,6 +430,7 @@ static void _linkg_path_probe_complete_pending_locked(linkg_path_probe_pending_t
     linkg_path_probe_diagnostic_runtime_t *diagnostic;
     linkg_path_probe_class_runtime_t      *runtime;
     linkg_path_probe_path_runtime_t       *path;
+    linkg_path_probe_async_runtime_t      *async_slot;
     uint64_t                               elapsed_us;
     uint32_t                               rtt_us;
 
@@ -426,6 +476,25 @@ static void _linkg_path_probe_complete_pending_locked(linkg_path_probe_pending_t
         }
     }
 
+    else if (pending->type == LINKG_PATH_PROBE_PENDING_TYPE_ASYNC &&
+             pending->traffic_class < LINKG_TRANSPORT_CLASS_COUNT)
+    {
+        async_slot = &g_path_probe.async[pending->traffic_class];
+        if (async_slot->active && async_slot->handle == pending->async_handle &&
+            async_slot->path_generation == pending->path_generation &&
+            async_slot->result.state == LINKG_PATH_PROBE_ASYNC_PENDING)
+        {
+            // 若发送尚未进入Scheduler阶段，不能把预留时间当成真实发送时间。
+            async_slot->result.sent_us      = pending->state == LINKG_PATH_PROBE_PENDING_RESERVED ? 0U : pending->sent_us;
+            async_slot->result.completed_us = now_us;
+            async_slot->result.sequence     = pending->sequence;
+            async_slot->result.rtt_us       = state == LINKG_PATH_PROBE_SAMPLE_RECEIVED ? rtt_us : 0U;
+            async_slot->result.state        = state == LINKG_PATH_PROBE_SAMPLE_RECEIVED ? LINKG_PATH_PROBE_ASYNC_ACK :
+                                              state == LINKG_PATH_PROBE_SAMPLE_TIMEOUT ? LINKG_PATH_PROBE_ASYNC_TIMEOUT :
+                                              LINKG_PATH_PROBE_ASYNC_SEND_FAILED;
+        }
+    }
+
     memset(pending, 0, sizeof(*pending));
     _linkg_path_probe_try_finish_diagnostic_locked(now_us);
 }
@@ -457,8 +526,9 @@ static linkg_path_probe_pending_t *_linkg_path_probe_task_pending_locked(const l
 int linkg_path_probe_mark_sending_locked(const linkg_path_probe_tx_task_t *task, uint64_t now_us)
 {
     linkg_path_probe_pending_t      *pending;
-    linkg_path_probe_path_runtime_t *path;
-    uint64_t                         timeout_us;
+    linkg_path_probe_path_runtime_t  *path;
+    linkg_path_probe_async_runtime_t *async_slot;
+    uint64_t                          timeout_us;
 
     pending = _linkg_path_probe_task_pending_locked(task);
     if (!g_path_probe.running || pending == NULL)
@@ -482,6 +552,22 @@ int linkg_path_probe_mark_sending_locked(const linkg_path_probe_tx_task_t *task,
         }
 
         timeout_us = (uint64_t)g_path_probe.diagnostic.request.response_timeout_ms * 1000U;
+    }
+    else if (pending->type == LINKG_PATH_PROBE_PENDING_TYPE_ASYNC)
+    {
+        if (pending->traffic_class >= LINKG_TRANSPORT_CLASS_COUNT)
+        {
+            return -ECANCELED;
+        }
+
+        async_slot = &g_path_probe.async[pending->traffic_class];
+        if (!async_slot->active || async_slot->handle != pending->async_handle ||
+            async_slot->result.state != LINKG_PATH_PROBE_ASYNC_PENDING)
+        {
+            return -ECANCELED;
+        }
+
+        timeout_us = (uint64_t)async_slot->response_timeout_ms * 1000U;
     }
 
     pending->sent_us     = now_us;
@@ -632,6 +718,8 @@ static void _linkg_path_probe_remove_path_locked(uint8_t peer_node_id, linkg_pat
     {
         linkg_path_probe_cancel_diagnostic_locked(-ESTALE, now_us);
     }
+
+    linkg_path_probe_async_cancel_path_locked(peer_node_id, path->link_id, path->generation, now_us);
 
     for (index = 0U; index < LINKG_PATH_PROBE_PENDING_MAX; index++)
     {
@@ -1068,7 +1156,7 @@ static int _linkg_path_probe_reserve_locked(uint8_t peer_node_id, linkg_path_pro
     uint32_t                    index;
 
     begin = diagnostic ? LINKG_PATH_PROBE_PERIODIC_PENDING_MAX : 0U;
-    end   = diagnostic ? LINKG_PATH_PROBE_PENDING_MAX : LINKG_PATH_PROBE_PERIODIC_PENDING_MAX;
+    end   = diagnostic ? LINKG_PATH_PROBE_DIAGNOSTIC_PENDING_END : LINKG_PATH_PROBE_PERIODIC_PENDING_MAX;
 
     for (index = begin; index < end; index++)
     {
@@ -1116,11 +1204,61 @@ static int _linkg_path_probe_reserve_locked(uint8_t peer_node_id, linkg_path_pro
 }
 
 /**
+ * @brief 将到期异步单包放入该业务专属Pending槽位。
+ *
+ * 调用方持有Probe锁；Worker持有发送任务后在锁外提交Scheduler。
+ */
+static int _linkg_path_probe_reserve_async_locked(linkg_path_probe_async_runtime_t *slot, uint32_t class_index, uint64_t now_us, linkg_path_probe_tx_task_t *task)
+{
+    linkg_path_probe_pending_t      *pending;
+    linkg_path_probe_path_runtime_t *path;
+    uint32_t                         pending_index;
+
+    path = linkg_path_probe_find_path_locked(slot->peer_node_id, slot->wifi_link_id);
+    if (path == NULL || path->generation != slot->path_generation)
+    {
+        return -ESTALE;
+    }
+
+    pending_index = LINKG_PATH_PROBE_ASYNC_PENDING_BEGIN + class_index;
+    pending       = &g_path_probe.pending[pending_index];
+    if (pending->state != LINKG_PATH_PROBE_PENDING_FREE)
+    {
+        return -EBUSY;
+    }
+
+    memset(pending, 0, sizeof(*pending));
+    pending->state            = LINKG_PATH_PROBE_PENDING_RESERVED;
+    pending->type             = LINKG_PATH_PROBE_PENDING_TYPE_ASYNC;
+    pending->peer_node_id     = slot->peer_node_id;
+    pending->link_id          = slot->wifi_link_id;
+    pending->traffic_class    = (linkg_transport_class_t)class_index;
+    pending->path_generation  = slot->path_generation;
+    pending->sequence         = _linkg_path_probe_allocate_sequence_locked();
+    pending->sent_us          = now_us;
+    pending->async_handle     = slot->handle;
+    pending->diagnostic_index = LINKG_PATH_PROBE_DIAGNOSTIC_INDEX_INVALID;
+
+    task->pending_index   = pending_index;
+    task->sequence        = pending->sequence;
+    task->path_generation = path->generation;
+    task->peer_node_id    = slot->peer_node_id;
+    task->link_id         = slot->wifi_link_id;
+    task->traffic_class   = (linkg_transport_class_t)class_index;
+    task->endpoint        = path->endpoint;
+
+    slot->result.sequence = pending->sequence;
+    slot->dispatched      = true;
+    return 0;
+}
+
+/**
  * @brief 选择一个到期任务，返回1可发送，2为处理了失约样本，0为暂无任务。
  */
 static int _linkg_path_probe_pick_task_locked(uint64_t now_us, linkg_path_probe_tx_task_t *task)
 {
     linkg_path_probe_diagnostic_runtime_t *diagnostic;
+    linkg_path_probe_async_runtime_t      *async_slot;
     linkg_path_probe_path_runtime_t       *best_path;
     linkg_path_probe_path_runtime_t       *path;
     linkg_path_probe_peer_runtime_t       *peer;
@@ -1131,6 +1269,7 @@ static int _linkg_path_probe_pick_task_locked(uint64_t now_us, linkg_path_probe_
     uint32_t                               peer_index;
     uint32_t                               path_index;
     uint32_t                               sample_index;
+    uint32_t                               async_index;
     uint8_t                                best_peer;
     int                                    ret;
 
@@ -1167,6 +1306,51 @@ static int _linkg_path_probe_pick_task_locked(uint64_t now_us, linkg_path_probe_
                 }
             }
         }
+    }
+
+    // 单包Verify请求和周期、诊断任务竞争同一Worker，按到期先后选择。
+    async_index = LINKG_TRANSPORT_CLASS_COUNT;
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        async_slot = &g_path_probe.async[class_index];
+        if (!async_slot->active || async_slot->dispatched ||
+            async_slot->result.state != LINKG_PATH_PROBE_ASYNC_PENDING ||
+            async_slot->queued_us > now_us || async_slot->queued_us > best_due)
+        {
+            continue;
+        }
+
+        if (diagnostic->active && !diagnostic->completed &&
+            diagnostic->next_sample_index < diagnostic->request.packet_count &&
+            diagnostic->next_send_us <= now_us &&
+            diagnostic->next_send_us < async_slot->queued_us)
+        {
+            continue;
+        }
+
+        if (async_index != LINKG_TRANSPORT_CLASS_COUNT &&
+            g_path_probe.async[async_index].queued_us <= async_slot->queued_us)
+        {
+            continue;
+        }
+
+        async_index = class_index;
+    }
+
+    if (async_index != LINKG_TRANSPORT_CLASS_COUNT)
+    {
+        async_slot = &g_path_probe.async[async_index];
+        ret = _linkg_path_probe_reserve_async_locked(async_slot, async_index, now_us, task);
+        if (ret == 0)
+        {
+            return 1;
+        }
+
+        // 失效Path不能被误记为网络超时。
+        async_slot->result.state        = ret == -ESTALE ? LINKG_PATH_PROBE_ASYNC_CANCELED : LINKG_PATH_PROBE_ASYNC_SEND_FAILED;
+        async_slot->result.completed_us = now_us;
+        async_slot->dispatched          = true;
+        return 2;
     }
 
     if (diagnostic->active && !diagnostic->completed && diagnostic->next_sample_index < diagnostic->request.packet_count && diagnostic->next_send_us <= now_us && diagnostic->next_send_us <= best_due)
@@ -1286,6 +1470,17 @@ static int _linkg_path_probe_poll_timeout_locked(uint64_t now_us)
         if (g_path_probe.diagnostic.final_deadline_us < deadline_us)
         {
             deadline_us = g_path_probe.diagnostic.final_deadline_us;
+        }
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        const linkg_path_probe_async_runtime_t *async_slot = &g_path_probe.async[class_index];
+        if (async_slot->active && !async_slot->dispatched &&
+            async_slot->result.state == LINKG_PATH_PROBE_ASYNC_PENDING &&
+            async_slot->queued_us < deadline_us)
+        {
+            deadline_us = async_slot->queued_us;
         }
     }
 

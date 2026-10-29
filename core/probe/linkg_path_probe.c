@@ -617,3 +617,205 @@ out:
     (void)pthread_setcancelstate(old_cancel_state, NULL);
     return ret;
 }
+
+
+/****************************** 非阻塞单包Probe ******************************/
+
+/**
+ * @brief 非阻塞提交一个指定Wi-Fi Link、指定业务的单包Probe。
+ *
+ * 每业务一个固定槽位；一次submit至一次poll/cancel期间始终独占该槽。
+ * Probe Worker负责发送，Scheduler返回成功不等于已经收到Response。
+ */
+int linkg_path_probe_async_submit(uint8_t peer_node_id, uint32_t wifi_link_id, linkg_transport_class_t traffic_class, uint32_t response_timeout_ms, uint64_t *handle)
+{
+    linkg_path_probe_async_runtime_t *slot;
+    linkg_path_probe_peer_runtime_t  *peer;
+    uint64_t                          request_id;
+    uint32_t                          index;
+    int                               ret;
+
+    if (handle == NULL || peer_node_id == 0U || peer_node_id == UINT8_MAX ||
+        wifi_link_id == LINKG_LINK_ID_INVALID ||
+        traffic_class < LINKG_TRANSPORT_CLASS_REALTIME ||
+        traffic_class >= LINKG_TRANSPORT_CLASS_COUNT ||
+        response_timeout_ms == 0U || response_timeout_ms > LINKG_PATH_PROBE_DIAGNOSTIC_TIMEOUT_MAX_MS)
+    {
+        return -EINVAL;
+    }
+
+    *handle = 0U;
+
+    // 与start/stop/deinit串行化；Probe锁只保护任务状态。
+    pthread_mutex_lock(&g_path_probe_lifecycle_lock);
+    pthread_mutex_lock(&g_path_probe.lock);
+
+    if (!g_path_probe.initialized || !g_path_probe.running)
+    {
+        ret = g_path_probe.initialized ? -ESHUTDOWN : -ENODEV;
+        goto out;
+    }
+
+    if (g_path_probe.role != LINKG_DEVICE_ROLE_STA)
+    {
+        ret = -EPERM;
+        goto out;
+    }
+
+    slot = &g_path_probe.async[traffic_class];
+    if (slot->active)
+    {
+        ret = -EBUSY;
+        goto out;
+    }
+
+    peer = NULL;
+    for (index = 0U; index < LINKG_PATH_PROBE_PEER_MAX; index++)
+    {
+        if (g_path_probe.peers[index].used && g_path_probe.peers[index].peer_node_id == peer_node_id)
+        {
+            peer = &g_path_probe.peers[index];
+            break;
+        }
+    }
+
+    if (peer == NULL)
+    {
+        ret = -ENOENT;
+        goto out;
+    }
+
+    // 必须绑定当前Peer的Wi-Fi Path，不能误向同ID的Cellular Path发包。
+    if (!peer->wifi.active || peer->wifi.link_id != wifi_link_id)
+    {
+        ret = -ENETDOWN;
+        goto out;
+    }
+
+    if (g_path_probe.next_async_handle == UINT64_MAX)
+    {
+        ret = -EOVERFLOW;
+        goto out;
+    }
+
+    request_id = ++g_path_probe.next_async_handle;
+    memset(slot, 0, sizeof(*slot));
+    slot->active                  = true;
+    slot->handle                  = request_id;
+    slot->peer_node_id            = peer_node_id;
+    slot->wifi_link_id            = wifi_link_id;
+    slot->path_generation         = peer->wifi.generation;
+    slot->response_timeout_ms     = response_timeout_ms;
+    slot->queued_us               = linkg_time_monotonic_us();
+    slot->result.state            = LINKG_PATH_PROBE_ASYNC_PENDING;
+    slot->result.traffic_class    = traffic_class;
+    pthread_mutex_unlock(&g_path_probe.lock);
+
+    // 任务可被现有Probe Worker接受，调用者从不等待Response。
+    ret = linkg_thread_wakeup(&g_path_probe.thread);
+    if (ret != 0)
+    {
+        pthread_mutex_lock(&g_path_probe.lock);
+        if (slot->active && slot->handle == request_id)
+        {
+            linkg_path_probe_async_cancel_pending_locked(request_id);
+            memset(slot, 0, sizeof(*slot));
+        }
+        pthread_mutex_unlock(&g_path_probe.lock);
+        pthread_mutex_unlock(&g_path_probe_lifecycle_lock);
+        return ret;
+    }
+
+    *handle = request_id;
+    pthread_mutex_unlock(&g_path_probe_lifecycle_lock);
+    return 0;
+
+out:
+    pthread_mutex_unlock(&g_path_probe.lock);
+    pthread_mutex_unlock(&g_path_probe_lifecycle_lock);
+    return ret;
+}
+
+/**
+ * @brief 非阻塞查询本包结果；仅终态消费才释放槽位。
+ */
+int linkg_path_probe_async_poll(uint64_t handle, linkg_path_probe_async_result_t *result)
+{
+    linkg_path_probe_async_runtime_t *slot;
+    uint32_t                          index;
+    int                               ret;
+
+    if (handle == 0U || result == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(result, 0, sizeof(*result));
+    ret = -ENOENT;
+    pthread_mutex_lock(&g_path_probe.lock);
+
+    if (!g_path_probe.initialized || !g_path_probe.running)
+    {
+        ret = g_path_probe.initialized ? -ESHUTDOWN : -ENODEV;
+        goto out;
+    }
+
+    // 即使Probe Worker本轮尚未唤醒，已超过响应期限的请求也应及时形成终态。
+    // 这里只检查已接受提交的Pending；尚未发送的请求仍保持PENDING。
+    linkg_path_probe_expire_locked(linkg_time_monotonic_us());
+
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+    {
+        slot = &g_path_probe.async[index];
+        if (!slot->active || slot->handle != handle)
+        {
+            continue;
+        }
+
+        *result = slot->result;
+        if (result->state != LINKG_PATH_PROBE_ASYNC_PENDING)
+        {
+            memset(slot, 0, sizeof(*slot));
+        }
+
+        ret = 0;
+        break;
+    }
+
+out:
+    pthread_mutex_unlock(&g_path_probe.lock);
+    return ret;
+}
+
+/**
+ * @brief 显式取消一个请求，阻止旧请求影响后续同业务Probe。
+ */
+int linkg_path_probe_async_cancel(uint64_t handle)
+{
+    linkg_path_probe_async_runtime_t *slot;
+    uint32_t                          index;
+    int                               ret;
+
+    if (handle == 0U)
+    {
+        return -EINVAL;
+    }
+
+    ret = -ENOENT;
+    pthread_mutex_lock(&g_path_probe.lock);
+
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+    {
+        slot = &g_path_probe.async[index];
+        if (slot->active && slot->handle == handle)
+        {
+            linkg_path_probe_async_cancel_pending_locked(handle);
+            memset(slot, 0, sizeof(*slot));
+            ret = 0;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&g_path_probe.lock);
+    return ret;
+}

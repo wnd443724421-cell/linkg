@@ -37,8 +37,11 @@
 #define LINKG_PATH_PROBE_DIAGNOSTIC_DISPATCH_GRACE_US 100000ULL           // 诊断总截止时间预留Worker启动调度余量
 #define LINKG_PATH_PROBE_MAGIC_SIZE                   3U                  // Probe Magic长度
 #define LINKG_PATH_PROBE_WIRE_SIZE                    8U                  // Probe固定载荷长度
-#define LINKG_PATH_PROBE_PENDING_MAX                  256U                // 全部在途记录容量
 #define LINKG_PATH_PROBE_PERIODIC_PENDING_MAX         128U                // 周期记录独立保留容量
+#define LINKG_PATH_PROBE_DIAGNOSTIC_PENDING_END       256U                // 主动诊断保留区右端点
+#define LINKG_PATH_PROBE_ASYNC_PENDING_BEGIN          256U                // 异步单包专用区起点
+#define LINKG_PATH_PROBE_ASYNC_PENDING_MAX            3U                  // REALTIME/VIDEO/DATA各1个
+#define LINKG_PATH_PROBE_PENDING_MAX                  259U                // 所有在途记录总量
 #define LINKG_PATH_PROBE_PEER_MAX                     LINKG_NODE_PEER_MAX // 最大直接Peer数量
 #define LINKG_PATH_PROBE_SEQUENCE_INVALID             0U                  // 无效Wire序列号
 #define LINKG_PATH_PROBE_DIAGNOSTIC_INDEX_INVALID     UINT32_MAX          // 非诊断记录的样本索引
@@ -60,7 +63,9 @@ typedef struct
 } linkg_path_probe_wire_t;
 
 _Static_assert(sizeof(linkg_path_probe_wire_t) == LINKG_PATH_PROBE_WIRE_SIZE, "invalid path probe wire size");
-_Static_assert(LINKG_PATH_PROBE_PERIODIC_PENDING_MAX + LINKG_PATH_PROBE_DIAGNOSTIC_PACKET_MAX == LINKG_PATH_PROBE_PENDING_MAX, "invalid pending pool partition");
+_Static_assert(LINKG_PATH_PROBE_PERIODIC_PENDING_MAX + LINKG_PATH_PROBE_DIAGNOSTIC_PACKET_MAX == LINKG_PATH_PROBE_DIAGNOSTIC_PENDING_END, "invalid diagnostic partition");
+_Static_assert(LINKG_PATH_PROBE_ASYNC_PENDING_BEGIN + LINKG_PATH_PROBE_ASYNC_PENDING_MAX == LINKG_PATH_PROBE_PENDING_MAX, "invalid async partition");
+_Static_assert(LINKG_PATH_PROBE_ASYNC_PENDING_MAX == LINKG_TRANSPORT_CLASS_COUNT, "one async slot per traffic class required");
 _Static_assert(LINKG_NODE_PATH_MAX == 2U && LINKG_TRANSPORT_CLASS_COUNT == 3U, "unsupported probe path or class count");
 _Static_assert(LINKG_PATH_PROBE_PERIODIC_PENDING_MAX >= LINKG_PATH_PROBE_PEER_MAX * LINKG_NODE_PATH_MAX * LINKG_TRANSPORT_CLASS_COUNT, "insufficient periodic probe slots");
 
@@ -103,7 +108,8 @@ typedef enum
 {
     LINKG_PATH_PROBE_PENDING_TYPE_INVALID = 0, // 无效类型
     LINKG_PATH_PROBE_PENDING_TYPE_PERIODIC,    // 周期请求
-    LINKG_PATH_PROBE_PENDING_TYPE_DIAGNOSTIC   // 主动诊断请求
+    LINKG_PATH_PROBE_PENDING_TYPE_DIAGNOSTIC,  // 主动诊断请求
+    LINKG_PATH_PROBE_PENDING_TYPE_ASYNC        // 切换策略非阻塞单包请求
 } linkg_path_probe_pending_type_t;
 
 typedef enum
@@ -118,6 +124,7 @@ typedef struct
 {
     uint64_t                         path_generation;  // 请求所属Path观察代际
     uint64_t                         diagnostic_id;    // 所属诊断编号，周期请求为0
+    uint64_t                         async_handle;     // 单包异步句柄，其他类型为0
     uint64_t                         sent_us;          // Scheduler提交前时间，未提交时为预留时间
     uint64_t                         deadline_us;      // 单包响应截止时间
     uint64_t                         early_reply_us;   // Scheduler返回前到达的首个有效响应时间
@@ -171,6 +178,21 @@ typedef struct
     bool                                  completed;                                       // 结果已完成，等待调用者读取
 } linkg_path_probe_diagnostic_runtime_t;
 
+/****************************** 非阻塞单包运行状态 ******************************/
+
+typedef struct
+{
+    linkg_path_probe_async_result_t result;              // 终态保存至poll消费，不能存放在已释放Pending中
+    uint64_t                        handle;              // 跨启动周期不复用的请求标识
+    uint64_t                        path_generation;     // 固定物理Path观察代际
+    uint64_t                        queued_us;           // 发起时间，不作为响应超时起点
+    uint32_t                        wifi_link_id;        // 固定Wi-Fi链路实例
+    uint32_t                        response_timeout_ms; // 本次响应期限
+    uint8_t                         peer_node_id;        // 固定直连Peer
+    bool                            active;              // 请求占用该业务槽位
+    bool                            dispatched;          // 已经交给Probe Worker，禁止重复分配
+} linkg_path_probe_async_runtime_t;
+
 /****************************** 发送任务 ******************************/
 
 typedef struct
@@ -196,9 +218,11 @@ typedef struct
     linkg_packet_pool_t                   *packet_pool;                           // 应用层Packet Pool，仅借用，stop排空后方可销毁
     linkg_path_probe_peer_runtime_t        peers[LINKG_PATH_PROBE_PEER_MAX];      // 直接Peer固定槽位
     linkg_path_probe_pending_t             pending[LINKG_PATH_PROBE_PENDING_MAX]; // 在途固定槽位，不持有Packet或Path引用
-    linkg_path_probe_diagnostic_runtime_t  diagnostic;                            // STA唯一主动诊断任务
+    linkg_path_probe_diagnostic_runtime_t  diagnostic;                            // STA唯一同步主动诊断任务
+    linkg_path_probe_async_runtime_t       async[LINKG_TRANSPORT_CLASS_COUNT];    // 各业务独立单包槽位
     uint64_t                               next_path_generation;                  // Path观察代际分配器，重启模块不回退
     uint64_t                               next_diagnostic_id;                    // 诊断编号分配器，重启模块不回退
+    uint64_t                               next_async_handle;                     // 异步请求编号，重启模块不回退
     uint64_t                               next_topology_us;                      // 下一次Peer及Path同步时间
     uint64_t                               next_policy_us;                        // 下一次STA主链路查询时间
     uintptr_t                              run_token;                             // 注册回调的运行代际，隔离延迟进入的旧回调
@@ -227,6 +251,8 @@ linkg_path_probe_path_runtime_t *linkg_path_probe_find_path_locked(uint8_t peer_
 void                             linkg_path_probe_runtime_reset_locked(void);
 void                             linkg_path_probe_cancel_diagnostic_locked(int status, uint64_t now_us);
 void                             linkg_path_probe_cancel_all_locked(int status, uint64_t now_us);
+void                             linkg_path_probe_async_cancel_pending_locked(uint64_t handle);
+void                             linkg_path_probe_async_cancel_path_locked(uint8_t peer_node_id, uint32_t link_id, uint64_t generation, uint64_t now_us);
 int                              linkg_path_probe_mark_sending_locked(const linkg_path_probe_tx_task_t *task, uint64_t now_us);
 void                             linkg_path_probe_finish_send_locked(const linkg_path_probe_tx_task_t *task, int status, uint64_t now_us);
 void                             linkg_path_probe_accept_reply_locked(uint8_t peer_node_id, uint32_t link_id, linkg_transport_class_t traffic_class, uint32_t sequence, uint64_t now_us);
