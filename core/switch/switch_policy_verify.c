@@ -5,7 +5,7 @@
  * @version 1.0.0
  * @date 2026-10-26
  *
- * 流程：ACK启动 → 三秒采集 → LOSS及RECOVERY按不同压力积分判决
+ * 流程：ACK启动 → LOSS采集3秒或LOAD恢复采集5秒 → 按分类质量判决
  *       → 固化VERIFY_DONE → Operation决定最终单发Plan。
  *
  * 本模块只评估质量，不修改发送计划，也不执行PlanSync。
@@ -19,10 +19,12 @@
 #include <string.h>
 
 #include "linkg_link.h"
+#include "linkg_path_probe.h"
 
 /****************************** LOAD恢复HCC参数 ******************************/
 
-#define LINKG_SWITCH_POLICY_VERIFY_HCC_BE_BAD_THRESHOLD 3U // BE队列严格大于3包视为负载压力
+#define LINKG_SWITCH_POLICY_VERIFY_HCC_BE_BAD_THRESHOLD 3U      // BE队列严格大于3包视为负载压力
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_RTT_BAD_US      200000U // LOAD恢复Wi-Fi Probe RTT异常阈值
 
 /**
  * @brief 将已固定的验证结果填充为VERIFY_DONE事件。
@@ -49,6 +51,20 @@ static void _linkg_switch_verify_fill_event(const linkg_switch_policy_verify_run
 static uint32_t _linkg_switch_verify_add_score(uint32_t score, uint32_t delta)
 {
     return score > UINT32_MAX - delta ? UINT32_MAX : score + delta;
+}
+
+/**
+ * @brief 验证时长的唯一公共策略入口，Operation和Verify应使用同一结果。
+ */
+uint64_t linkg_switch_policy_verify_duration_us(linkg_switch_policy_reason_t reason, linkg_switch_policy_migration_reason_t recovery_reason)
+{
+    if (reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+        recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US;
+    }
+
+    return LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US;
 }
 
 /**
@@ -126,13 +142,30 @@ static void _linkg_switch_verify_finish(linkg_switch_policy_verify_runtime_t *ru
         runtime->cellular_target_mask = 0U;
     }
 
-    /****************************** 四、固定验证结果 ******************************/
+    /****************************** 四、释放未完成的异步探测 ******************************/
+
+    if (runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+        runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    {
+        uint32_t class_index;
+
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            if (runtime->wifi_load_probe_handle[class_index] != 0U)
+            {
+                (void)linkg_path_probe_async_cancel(runtime->wifi_load_probe_handle[class_index]);
+                runtime->wifi_load_probe_handle[class_index] = 0U;
+            }
+        }
+    }
+
+    /****************************** 五、固定验证结果 ******************************/
 
     runtime->result         = result;
     runtime->finished_us    = now_us;
     runtime->result_pending = true;
 
-    /****************************** 五、生成VERIFY_DONE事件 ******************************/
+    /****************************** 六、生成VERIFY_DONE事件 ******************************/
 
     _linkg_switch_verify_fill_event(runtime, &output->event);
     output->event_ready = true;
@@ -152,6 +185,22 @@ void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runt
         return;
     }
 
+    // Operation撤销或结束时取消所有未完成请求，防止旧请求占用Probe业务槽位。
+    if (runtime->active &&
+        runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+        runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    {
+        uint32_t class_index;
+
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            if (runtime->wifi_load_probe_handle[class_index] != 0U)
+            {
+                (void)linkg_path_probe_async_cancel(runtime->wifi_load_probe_handle[class_index]);
+            }
+        }
+    }
+
     memset(runtime, 0, sizeof(*runtime));
 }
 
@@ -159,7 +208,7 @@ void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runt
  * @brief 冗余PlanSync ACK确认后启动一次质量验证会话。
  *
  * 校验事务身份、验证原因及链路观测，固定本次验证的
- * Peer、Operation、Link实例和三秒时间窗口。
+ * Peer、Operation、Link实例和按原因确定的3秒/5秒时间窗口。
  * 不执行质量判决，不修改发送计划。
  */
 int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_begin_params_t *params)
@@ -168,6 +217,7 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
     uint32_t                          operation_id;
     uint32_t                          class_index;
     uint32_t                          other_index;
+    uint64_t                          duration_us;
 
     /****************************** 基础参数检查 ******************************/
 
@@ -182,7 +232,7 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
         params->class_mask == 0U ||
         (params->class_mask & ~LINKG_SWITCH_POLICY_CLASS_MASK_ALL) != 0U ||
         params->now_us == 0U ||
-        params->now_us > UINT64_MAX - LINKG_SWITCH_POLICY_VERIFY_DURATION_US)
+        params->now_us > UINT64_MAX - LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US)
     {
         return -EINVAL;
     }
@@ -300,9 +350,10 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
     runtime->wifi_link_id     = observation->wifi.link_id;
     runtime->cellular_link_id = observation->cellular.link_id;
 
-    // 从冗余ACK确认时刻开始固定三秒验证。
+    // LOSS及RECOVERY+LOSS仍使用3秒，只有RECOVERY+LOAD使用5秒。
+    duration_us = linkg_switch_policy_verify_duration_us(params->reason, params->recovery_reason);
     runtime->started_us  = params->now_us;
-    runtime->deadline_us = params->now_us + LINKG_SWITCH_POLICY_VERIFY_DURATION_US;
+    runtime->deadline_us = params->now_us + duration_us;
 
     // LOSS及LOSS原因的恢复验证从异常积分开始。
     if (params->reason == LINKG_SWITCH_POLICY_REASON_LOSS ||
@@ -312,13 +363,48 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
     }
     else if (params->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
     {
-        runtime->wifi_load_score = LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE;
+        // 每个参与业务独立积5分，后续只能由该类别Probe证据减分。
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            if ((runtime->class_mask & LINKG_SWITCH_POLICY_CLASS_BIT(class_index)) != 0U)
+            {
+                runtime->wifi_load_score[class_index] = LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE;
+            }
+        }
     }
 
     runtime->result = LINKG_SWITCH_POLICY_VERIFY_NONE;
 
     // 所有会话信息初始化完成后才允许process消费。
     runtime->active = true;
+
+    // ACK进入LOAD恢复时先提交每类首个Probe；无需等待Probe Worker实际发包或ACK。
+    // 暂时提交失败不会直接误判网络丢包，后续process继续尝试；最终样本不足则留在Cellular。
+    if (runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+        runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    {
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            uint64_t handle;
+
+            if ((runtime->class_mask & LINKG_SWITCH_POLICY_CLASS_BIT(class_index)) == 0U)
+            {
+                continue;
+            }
+
+            handle = 0U;
+            if (linkg_path_probe_async_submit(
+                    runtime->peer_node_id,
+                    runtime->wifi_link_id,
+                    (linkg_transport_class_t)class_index,
+                    LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS,
+                    &handle) == 0)
+            {
+                runtime->wifi_load_probe_handle[class_index] = handle;
+                runtime->wifi_load_probe_last_submit_us[class_index] = params->now_us;
+            }
+        }
+    }
 
     return 0;
 }
@@ -1040,65 +1126,293 @@ static void _linkg_switch_verify_collect_recovery_load(linkg_switch_policy_verif
         }
     }
 
-    /****************************** 五、LOAD恢复积分 ******************************/
+    /****************************** 五、刷新完整HCC窗口基线 ******************************/
 
-    if (wifi_pressure)
-    {
-        // 任意BAD条件命中，本轮统一加1，不重复累计。
-        runtime->wifi_load_score = _linkg_switch_verify_add_score(runtime->wifi_load_score, 1U);
-
-        return;
-    }
-
-    // GOOD必须有双方向最新有效HCC样本。
     hcc_ready = runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK].valid_this_round &&
                 runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].valid_this_round &&
                 runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK].initialized &&
                 runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].initialized;
 
-    // 首个完整HCC窗口仅用于确认计数基线。
-    if (!runtime->wifi_load_hcc_primed)
-    {
-        runtime->wifi_load_hcc_primed = hcc_ready;
-        return;
-    }
+    // 首轮仅建立累计FLOWCTRL_OFF计数基线，不把它当作完整GOOD差分窗口。
+    // 当前tx_allowed=false、BE队列过高或OVF等压力仍在本轮立即生效。
+    runtime->wifi_pressure_known_this_round = runtime->wifi_load_hcc_primed && hcc_ready;
 
-    // 没有压力、有新鲜HCC且存在Wi-Fi传输活动，才允许积分减1。
-    if (hcc_ready && traffic_active && runtime->wifi_load_score > 0U)
+    if (hcc_ready)
     {
-        runtime->wifi_load_score--;
+        runtime->wifi_load_hcc_primed = true;
     }
 }
 
 /**
- * @brief RECOVERY + LOAD三秒结束后决定是否恢复Wi-Fi。
+ * @brief 非阻塞处理LOAD恢复阶段各业务的单包Probe。
  *
- * 任何已确认的Wi-Fi TX Queue Overflow均直接否决恢复。
- * 未出现OVF时，继续检查负载积分、流量及双方向HCC新鲜度。
+ * 每轮依次完成：
+ * 1. 查询上一包Probe结果并更新统计。
+ * 2. 结合Probe和HCC结果更新恢复积分。
+ * 3. 满足发送条件时提交下一包Probe。
+ *
+ * 各业务独立维护Probe和积分，最终由截止判决执行整组恢复。
  */
-static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_load(const linkg_switch_policy_verify_runtime_t *runtime, uint64_t now_us)
+static void _linkg_switch_verify_process_recovery_load_probe(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_process_params_t *params, bool observation_advanced, bool allow_quality_score)
 {
-    /****************************** 一、TX队列溢出硬否决 ******************************/
+    linkg_path_probe_async_result_t result;
+    uint32_t                        class_index;
+    uint32_t                        bit;
+    uint64_t                        handle;
+    bool                            hcc_good;
+    bool                            pressure;
+    bool                            traffic_active;
+    bool                            class_active;
+    bool                            probe_ack;
+    bool                            probe_bad;
+    int                             ret;
 
-    // 三秒验证期内，Wi-Fi任意参与业务发生OVF，禁止恢复。
-    if (runtime->wifi.queue_overflow ||
+    /****************************** 一、本轮HCC质量条件 ******************************/
+
+    // 仅允许截止前的新Observation参与HCC质量评分。
+    hcc_good = allow_quality_score && observation_advanced && runtime->wifi_pressure_known_this_round;
+    pressure = allow_quality_score && observation_advanced && runtime->wifi_pressure_this_round;
+
+    /****************************** 二、逐业务处理异步Probe ******************************/
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        bit = LINKG_SWITCH_POLICY_CLASS_BIT(class_index);
+
+        // 只处理当前恢复事务涉及的业务。
+        if ((runtime->class_mask & bit) == 0U)
+        {
+            continue;
+        }
+
+        probe_ack = false;
+        probe_bad = false;
+        handle    = runtime->wifi_load_probe_handle[class_index];
+
+        /****************************** 1. 查询上一包Probe ******************************/
+
+        if (handle != 0U)
+        {
+            memset(&result, 0, sizeof(result));
+            ret = linkg_path_probe_async_poll(handle, &result);
+
+            if (ret == 0 && result.state != LINKG_PATH_PROBE_ASYNC_PENDING)
+            {
+                // 请求已进入终态，释放本业务handle。
+                runtime->wifi_load_probe_handle[class_index] = 0U;
+
+                switch (result.state)
+                {
+                    /****************************** ACK结果 ******************************/
+
+                    case LINKG_PATH_PROBE_ASYNC_ACK:
+                    {
+                        // 检查业务身份、发送时间和完成时间。
+                        if (result.traffic_class != (linkg_transport_class_t)class_index ||
+                            result.sent_us < runtime->started_us ||
+                            result.completed_us < result.sent_us)
+                        {
+                            runtime->wifi_load_probe_invalid_mask |= bit;
+                            break;
+                        }
+
+                        // 截止后完成的ACK不参与本次验证。
+                        if (result.completed_us > runtime->deadline_us)
+                        {
+                            runtime->wifi_load_probe_invalid_mask |= bit;
+                            break;
+                        }
+
+                        // ACK计入网络终态样本；RTT达到200ms视为BAD。
+                        runtime->wifi_load_probe_count[class_index]++;
+                        probe_bad = result.rtt_us >= LINKG_SWITCH_POLICY_VERIFY_LOAD_RTT_BAD_US;
+                        probe_ack = !probe_bad;
+
+                        if (probe_ack)
+                        {
+                            runtime->wifi_load_probe_ack_count[class_index]++;
+                            runtime->wifi_load_probe_last_ack_us[class_index] = result.completed_us;
+                        }
+
+                        break;
+                    }
+
+                    /****************************** TIMEOUT结果 ******************************/
+
+                    case LINKG_PATH_PROBE_ASYNC_TIMEOUT:
+                    {
+                        // 检查业务身份及实际发送时间。
+                        if (result.traffic_class != (linkg_transport_class_t)class_index ||
+                            result.sent_us < runtime->started_us ||
+                            result.completed_us < result.sent_us)
+                        {
+                            runtime->wifi_load_probe_invalid_mask |= bit;
+                            break;
+                        }
+
+                        // 以发送时间加200ms确定逻辑超时是否属于验证窗口。
+                        // Worker延迟处理不能导致截止前的TIMEOUT漏加分。
+                        if (result.sent_us <= runtime->deadline_us &&
+                            runtime->deadline_us - result.sent_us >=
+                                (uint64_t)LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS * 1000ULL)
+                        {
+                            runtime->wifi_load_probe_count[class_index]++;
+                            probe_bad = true;
+                        }
+
+                        break;
+                    }
+
+                    /****************************** 其他终态 ******************************/
+
+                    case LINKG_PATH_PROBE_ASYNC_CANCELED:
+                    {
+                        runtime->wifi_load_probe_invalid_mask |= bit;
+                        break;
+                    }
+
+                    case LINKG_PATH_PROBE_ASYNC_SEND_FAILED:
+                    default:
+                    {
+                        // 本地发送失败不计入网络BAD或GOOD。
+                        break;
+                    }
+                }
+            }
+            else if (ret != 0)
+            {
+                // Probe句柄失效，禁止继续使用该类别的历史质量证据。
+                runtime->wifi_load_probe_invalid_mask |= bit;
+                runtime->wifi_load_probe_handle[class_index] = 0U;
+
+                (void)linkg_path_probe_async_cancel(handle);
+            }
+        }
+
+        /****************************** 2. 更新本业务恢复积分 ******************************/
+
+        // 网络BAD优先；同轮HCC压力和Probe异常最多加1分。
+        // 截止前已形成的Probe BAD不受当前HCC采样窗口限制。
+        if (probe_bad || pressure)
+        {
+            runtime->wifi_load_score[class_index] = _linkg_switch_verify_add_score(runtime->wifi_load_score[class_index], 1U);
+        }
+        else if (allow_quality_score)
+        {
+            // 判断本业务是否存在真实USER_DATA活动。
+            class_active = (params->active_class_mask & bit) != 0U;
+
+            // Wi-Fi Path近期是否存在有效流量观测。
+            traffic_active = runtime->wifi_traffic_seen &&
+                             runtime->wifi_load_last_traffic_us != 0U &&
+                             params->now_us >= runtime->wifi_load_last_traffic_us &&
+                             params->now_us - runtime->wifi_load_last_traffic_us <=
+                                 LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US;
+
+            // ACK合格、HCC正常且业务条件满足才允许减1分。
+            // 没有USER_DATA的随迁业务仍可凭Probe通过验证。
+            if (probe_ack && hcc_good && params->activity_valid &&
+                (!class_active || traffic_active) &&
+                runtime->wifi_load_score[class_index] > 0U)
+            {
+                runtime->wifi_load_score[class_index]--;
+            }
+        }
+
+        /****************************** 3. 提交下一包Probe ******************************/
+
+        // 要求无在途请求、链路未失效、窗口剩余时间足够。
+        // 相邻两次成功提交至少间隔250ms。
+        if (runtime->wifi_load_probe_handle[class_index] == 0U &&
+            (runtime->wifi_load_probe_invalid_mask & bit) == 0U &&
+            params->now_us < runtime->deadline_us &&
+            runtime->deadline_us - params->now_us >
+                (uint64_t)LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS * 1000U &&
+            (runtime->wifi_load_probe_last_submit_us[class_index] == 0U ||
+             (params->now_us >= runtime->wifi_load_probe_last_submit_us[class_index] &&
+              params->now_us - runtime->wifi_load_probe_last_submit_us[class_index] >=
+                  LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_PERIOD_US)))
+        {
+            uint64_t new_handle = 0U;
+
+            ret = linkg_path_probe_async_submit(runtime->peer_node_id, runtime->wifi_link_id, (linkg_transport_class_t)class_index, LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS, &new_handle);
+
+            if (ret == 0)
+            {
+                runtime->wifi_load_probe_handle[class_index] = new_handle;
+                runtime->wifi_load_probe_last_submit_us[class_index] = params->now_us;
+            }
+            else if (ret == -ESTALE || ret == -ENETDOWN || ret == -ENODEV)
+            {
+                runtime->wifi_load_probe_invalid_mask |= bit;
+            }
+
+            // -EBUSY等临时错误不计入网络BAD，下一轮继续尝试。
+        }
+    }
+}
+
+
+/**
+ * @brief RECOVERY + LOAD五秒结束后逐类别确认是否恢复Wi-Fi。
+ *
+ * OVF硬否决；每一类须有足够本类Probe网络样本、最近ACK和独立低积分。
+ */
+static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_load(
+    const linkg_switch_policy_verify_runtime_t *runtime,
+    const linkg_switch_policy_verify_process_params_t *params)
+{
+    uint64_t now_us;
+    uint32_t class_index;
+    uint32_t bit;
+
+    now_us = params->now_us;
+
+    /****************************** 一、硬故障及观测条件 ******************************/
+
+    if (runtime->path_interrupted ||
+        runtime->wifi_load_probe_invalid_mask != 0U ||
+        runtime->wifi.queue_overflow ||
         runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_UPLINK].overflow_seen ||
-        runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].overflow_seen)
+        runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].overflow_seen ||
+        !runtime->class_activity_valid ||
+        !params->activity_valid ||
+        !_linkg_switch_verify_hcc_recent(&runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK], now_us) ||
+        !_linkg_switch_verify_hcc_recent(&runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK], now_us))
     {
         return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
     }
 
-    /****************************** 二、积分与有效观测检查 ******************************/
+    /****************************** 二、逐业务独立判决 ******************************/
 
-    if (runtime->wifi_load_score < LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE &&
-        runtime->wifi_traffic_seen &&
-        _linkg_switch_verify_hcc_recent(&runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK], now_us) &&
-        _linkg_switch_verify_hcc_recent(&runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK], now_us))
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
     {
-        return LINKG_SWITCH_POLICY_VERIFY_WIFI;
+        bit = LINKG_SWITCH_POLICY_CLASS_BIT(class_index);
+        if ((runtime->class_mask & bit) == 0U)
+        {
+            continue;
+        }
+
+        // class_mask中的每一类均独立通过；闲置DATA不要求存在真实DATA业务。
+        // 但如果某类当前活跃，则要求观察到Wi-Fi近期承载实际流量。
+        if (((params->active_class_mask & bit) != 0U &&
+             (!runtime->wifi_traffic_seen ||
+              runtime->wifi_load_last_traffic_us == 0U ||
+              now_us < runtime->wifi_load_last_traffic_us ||
+              now_us - runtime->wifi_load_last_traffic_us >
+                  LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US)) ||
+            runtime->wifi_load_probe_count[class_index] < LINKG_SWITCH_POLICY_VERIFY_LOAD_MIN_SAMPLES ||
+            runtime->wifi_load_probe_ack_count[class_index] == 0U ||
+            runtime->wifi_load_score[class_index] >= LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE ||
+            runtime->wifi_load_probe_last_ack_us[class_index] == 0U ||
+            runtime->wifi_load_probe_last_ack_us[class_index] > now_us ||
+            now_us - runtime->wifi_load_probe_last_ack_us[class_index] > LINKG_SWITCH_POLICY_VERIFY_LOAD_ACK_MAX_AGE_US)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+        }
     }
 
-    return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+    return LINKG_SWITCH_POLICY_VERIFY_WIFI;
 }
 
 /****************************** LOSS分类截止判决 ******************************/
@@ -1396,16 +1710,18 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_loss_clas
 /**
  * @brief 周期处理双链路质量验证并交付验证结果。
  *
- * 验证期间持续采集链路观测，三秒到期后按验证原因执行质量判决。
+ * 验证期间持续采集链路观测，3秒或5秒到期后按验证原因执行质量判决。
  * 最终结果只计算一次，并持续交付VERIFY_DONE直至Operation消费。
  */
 int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_process_params_t *params, linkg_switch_policy_verify_process_output_t *output)
 {
     const linkg_switch_observation_t *observation;
-    bool                              observation_fresh;
+    bool                              observation_current;
+    bool                              observation_sample_eligible;
     bool                              paths_usable;
     bool                              wifi_link_changed;
     bool                              cellular_link_changed;
+    bool                              load_observation_advanced;
 
 
     /****************************** 一、参数与会话检查 ******************************/
@@ -1446,16 +1762,22 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
 
     observation = params->observation;
 
-    // 仅允许验证启动后、截止时间内生成的新鲜观测参与处理。
-    observation_fresh = observation->valid &&
-                        observation->collected_us > runtime->started_us &&
-                        observation->collected_us <= runtime->deadline_us &&
-                        observation->collected_us <= params->now_us &&
-                        params->now_us - observation->collected_us <= LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US;
+    // 当前链路存活检查与截止前质量采样分别判定。
+    // 截止后的新Observation不能计入积分，但必须用于校验Link仍然连续、可用。
+    observation_current = observation->valid &&
+                          observation->peer_node_id == runtime->peer_node_id &&
+                          observation->collected_us != 0U &&
+                          observation->collected_us <= params->now_us &&
+                          params->now_us - observation->collected_us <=
+                              LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US;
+
+    observation_sample_eligible = observation_current &&
+                                  observation->collected_us > runtime->started_us &&
+                                  observation->collected_us <= runtime->deadline_us;
 
     paths_usable = false;
 
-    if (observation_fresh)
+    if (observation_current)
     {
         /****************************** Link实例连续性 ******************************/
 
@@ -1486,11 +1808,18 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
                 return 0;
             }
 
-            // Cellular已明确不可用，Wi-Fi仍可用，提前选择Wi-Fi。
+            // Cellular已明确不可用而Wi-Fi仍可用：保留原LOSS硬故障处理逻辑。
+            // LOAD恢复不允许绕过五秒质量判决宣称Wi-Fi已经恢复。
             if (observation->cellular.state == LINKG_SWITCH_OBSERVATION_UNUSABLE &&
                 observation->wifi.state == LINKG_SWITCH_OBSERVATION_USABLE)
             {
-                _linkg_switch_verify_finish(runtime, LINKG_SWITCH_POLICY_VERIFY_WIFI, params->now_us, output);
+                _linkg_switch_verify_finish(
+                    runtime,
+                    runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+                    runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD ?
+                        LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE :
+                        LINKG_SWITCH_POLICY_VERIFY_WIFI,
+                    params->now_us, output);
                 return 0;
             }
 
@@ -1516,9 +1845,12 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
 
     /****************************** 三、验证数据采集 ******************************/
 
-    if (paths_usable)
+    load_observation_advanced = paths_usable && observation_sample_eligible &&
+                                observation->collected_us > runtime->last_processed_observation_us;
+
+    if (paths_usable && observation_sample_eligible)
     {
-        // 三秒内真实USER_DATA曾活跃的业务需参与质量比较。
+        // 持续记录真实USER_DATA活跃性，闲置的随迁业务仍需独立Probe达标。
         if (params->activity_valid)
         {
             runtime->class_activity_valid = true;
@@ -1539,10 +1871,16 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
         }
         else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
         {
-            // 仅检查新增FLOWCTRL_OFF、实际队列OVF及有效Wi-Fi业务负载。
-            // 不使用HCC队列水位，不进行双链路Wire质量比较。
+            // 同轮合并HCC、OVF和独立Class的单包Probe结果；不等待Response。
             _linkg_switch_verify_collect_recovery_load(runtime, observation, params->now_us);
         }
+    }
+
+    // Probe的最终结果消费独立于质量快照窗口。
+    // 截止后的当前链路有效时，仍最后poll一次；不再评分、提交新包。
+    if (paths_usable && runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY && runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    {
+        _linkg_switch_verify_process_recovery_load_probe(runtime, params, load_observation_advanced, observation_sample_eligible && params->now_us < runtime->deadline_us);
     }
 
     /****************************** 四、截止时间与质量判决 ******************************/
@@ -1552,7 +1890,14 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
         return 0;
     }
 
-    // 三秒到期，基于已经累计的有效样本执行一次判决。
+    // 终点必须仍有新鲜且匹配的Link状态；没有当前证据时不根据旧积分快速回Wi-Fi。
+    if (!observation_current || !paths_usable)
+    {
+        _linkg_switch_verify_finish(runtime, runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY ? LINKG_SWITCH_POLICY_VERIFY_CELLULAR : LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE, params->now_us, output);
+        return 0;
+    }
+
+    // 按本次原因选择3秒或5秒到期，基于累计样本执行一次判决。
     if (runtime->reason == LINKG_SWITCH_POLICY_REASON_LOSS)
     {
         // Wi-Fi积分恢复后仍需满足活跃业务Wi-Fi Probe优于Cellular的约束。
@@ -1568,7 +1913,7 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
     {
         // RECOVERY + LOAD只输出整组WIFI或CELLULAR结果。
-        _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_recovery_load(runtime, params->now_us), params->now_us, output);
+        _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_recovery_load(runtime, params), params->now_us, output);
         return 0;
     }
 

@@ -38,8 +38,8 @@
  */
 int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *input, uint64_t now_us)
 {
-    linkg_switch_policy_event_t           event;
-    linkg_switch_peer_runtime_t          *peer;
+    linkg_switch_policy_event_t            event;
+    linkg_switch_peer_runtime_t           *peer;
     const linkg_switch_policy_operation_t *operation;
     const linkg_class_send_plan_t         *current;
     uint32_t                               loss_mask;

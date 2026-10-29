@@ -19,7 +19,13 @@ extern "C" {
 
 /****************************** 验证参数 ******************************/
 
-#define LINKG_SWITCH_POLICY_VERIFY_DURATION_US            3000000ULL // 冗余ACK后固定验证3秒
+#define LINKG_SWITCH_POLICY_VERIFY_DURATION_US            3000000ULL // Operation原后备截止3秒，仅Verify未启动时使用
+#define LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US       3000000ULL // LOSS及RECOVERY+LOSS实际仍为3秒
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US       5000000ULL // RECOVERY+LOAD固定5秒
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS  200U       // Wi-Fi单包响应截止200ms
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_PERIOD_US   250000ULL  // Switch目标探测周期250ms
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_MIN_SAMPLES       10U        // 每个参与业务至少10个网络终态样本
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_ACK_MAX_AGE_US    1000000ULL // 截止时每类最新成功ACK最大年龄
 #define LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US           250000U    // Cellular RTT参考质量阈值
 #define LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US       1500000ULL // 截止时成功Probe最大年龄
 #define LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US 1000000ULL // 截止时观测快照最大年龄
@@ -27,6 +33,13 @@ extern "C" {
 #define LINKG_SWITCH_POLICY_VERIFY_COMPARE_MIN_SAMPLES    100U       // 双链路分类质量比较最小样本数
 #define LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE            5U         // LOSS验证初始Wi-Fi无线异常积分
 #define LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE          3U         // 积分严格小于3允许进入Wi-Fi恢复判决
+
+/**
+ * @brief 返回Operation和Verify共同使用的验证持续时间。
+ *
+ * LOSS及RECOVERY+LOSS为3秒，RECOVERY+LOAD为5秒。
+ */
+uint64_t linkg_switch_policy_verify_duration_us(linkg_switch_policy_reason_t reason,linkg_switch_policy_migration_reason_t recovery_reason);
 
 /****************************** 流量方向 ******************************/
 
@@ -127,7 +140,7 @@ typedef struct
 /**
  * @brief 一个Peer在同一时刻最多维护一组LOSS或RECOVERY验证会话。
  *
- * ACK后固定3秒，在同一会话内按业务分别累计Wire、Load和Cellular Probe。
+ * ACK后LOSS验证3秒，RECOVERY+LOAD验证5秒；按业务分别累计质量。
  * Wi-Fi无线异常积分为组级；当前轮HCC/Load优先于Wire评分。
  * operation_ids保存各参与业务的事务身份，非参与业务的ID必须为0。
  * 最终分类目标由截止判决生成，发送到Operation的事件协议另行对齐。
@@ -149,7 +162,7 @@ typedef struct
     uint32_t                               wifi_link_id;                                             // 启动时Wi-Fi Link实例
     uint32_t                               cellular_link_id;                                         // 启动时Cellular Link实例
     uint64_t                               started_us;                                               // PlanSync冗余ACK确认时间
-    uint64_t                               deadline_us;                                              // 固定3秒验证截止时间
+    uint64_t                               deadline_us;                                              // 按验证原因选择3秒或5秒的截止时间
     uint64_t                               finished_us;                                              // 最终结果固化时间
     uint64_t                               last_processed_observation_us;                            // 上一次处理的观测快照时间
 
@@ -178,7 +191,13 @@ typedef struct
     linkg_switch_policy_verify_load_window_t  wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT]; // Wi-Fi全局Load方向压力窗口
 
     uint8_t                                wifi_loss_score;                                          // LOSS及RECOVERY + LOSS异常积分，初始5，不设置策略上限
-    uint8_t                                wifi_load_score;                                          // Wi-Fi负载异常积分，RECOVERY不设策略上限
+    uint32_t                               wifi_load_score[LINKG_TRANSPORT_CLASS_COUNT];             // LOAD恢复每类独立积分，最终按class_mask逐类AND
+    uint64_t                               wifi_load_probe_handle[LINKG_TRANSPORT_CLASS_COUNT];      // 每类最多一个在途Wi-Fi Probe
+    uint64_t                               wifi_load_probe_last_submit_us[LINKG_TRANSPORT_CLASS_COUNT]; // 每类最近成功提交Probe的单调时刻
+    uint64_t                               wifi_load_probe_last_ack_us[LINKG_TRANSPORT_CLASS_COUNT]; // 每类最新有效ACK时间
+    uint32_t                               wifi_load_probe_count[LINKG_TRANSPORT_CLASS_COUNT];       // 每类ACK或TIMEOUT网络终态样本数
+    uint32_t                               wifi_load_probe_ack_count[LINKG_TRANSPORT_CLASS_COUNT];   // 每类有效ACK样本数
+    uint32_t                               wifi_load_probe_invalid_mask;                             // Path变化或会话丢失导致无效的类别
     uint64_t                               wifi_load_last_traffic_us;                                // LOAD恢复最后使用的Wi-Fi流量源时间
     bool                                   wifi_load_hcc_primed;                                     // LOAD恢复已建立双方向HCC计数采样基线
     bool                                   wifi_pressure_this_round;                                 // 本轮确认出现Wi-Fi负载压力
@@ -265,7 +284,7 @@ typedef struct
 void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runtime);
 
 /**
- * @brief 冗余PlanSync ACK确认后启动一次固定3秒验证。
+ * @brief 冗余PlanSync ACK确认后启动LOSS 3秒或RECOVERY+LOAD 5秒验证。
  */
 int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_begin_params_t *params);
 
