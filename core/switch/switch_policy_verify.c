@@ -1358,9 +1358,7 @@ static void _linkg_switch_verify_process_recovery_load_probe(linkg_switch_policy
  *
  * OVF硬否决；每一类须有足够本类Probe网络样本、最近ACK和独立低积分。
  */
-static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_load(
-    const linkg_switch_policy_verify_runtime_t *runtime,
-    const linkg_switch_policy_verify_process_params_t *params)
+static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_load(const linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_process_params_t *params)
 {
     uint64_t now_us;
     uint32_t class_index;

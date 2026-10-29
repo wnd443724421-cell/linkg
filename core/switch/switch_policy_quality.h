@@ -68,10 +68,19 @@ typedef struct
     uint64_t                            last_hcc_pressure_us;              // 最近确认新增OFF或流控持续的时间
     uint8_t                             hcc_pressure_score;                // HCC候选压力积分，范围0～3
     bool                                hcc_pressure_active;               // 是否处于已确认压力保护阶段
-    
+
     // Wire质量积分与状态隔离
     uint8_t                             loss_score;                        // 无背压证据时的Wire异常积分，范围0～5
     uint8_t                             load_score;                        // 新增OFF伴随Wire损失的积分，范围0～5
+    uint64_t                            fast_window_started_us;            // 当前250ms合并窗口起始时刻
+    uint64_t                            fast_wire_uplink_us;               // 快速LOAD独立Wire上行去重时间
+    uint64_t                            fast_wire_downlink_us;             // 快速LOAD独立Wire下行去重时间
+    uint32_t                            fast_window_active_mask;           // 当前Wi-Fi活跃业务掩码
+    uint32_t                            fast_window_ack_mask;              // 当前窗口合格Probe ACK掩码
+    uint8_t                             fast_window_evidence;              // 当前窗口HCC/Wire/Probe BAD证据位
+    uint8_t                             fast_window_probe_points;          // 当前窗口Probe证据最高权重，0/1/2
+    uint8_t                             fast_probe_timeout_streak[LINKG_TRANSPORT_CLASS_COUNT];  // 各业务连续TIMEOUT状态（饱和2）
+    uint64_t                            fast_probe_last_timeout_us[LINKG_TRANSPORT_CLASS_COUNT]; // 各业务上次TIMEOUT时间
     linkg_switch_quality_wire_route_t   wire_route;                        // 当前Wire累计所属判决路径
 
     // 生命周期及PlanSync保护

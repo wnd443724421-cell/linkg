@@ -397,8 +397,7 @@ static int _upgrade_manifest_compare(const void *left, const void *right)
 /**
  * @brief 递归检查解压目录不存在任何清单之外的文件或特殊类型。
  */
-static int _upgrade_manifest_scan(const char *root, const char *relative, char **names,
-                                  size_t count, size_t *seen, unsigned int depth)
+static int _upgrade_manifest_scan(const char *root, const char *relative, char **names, size_t count, size_t *seen, unsigned int depth)
 {
     DIR           *directory;
     struct dirent *entry;

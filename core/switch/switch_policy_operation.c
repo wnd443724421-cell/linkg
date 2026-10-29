@@ -24,7 +24,7 @@
 
 /****************************** 事务参数 ******************************/
 
-#define LINKG_SWITCH_OPERATION_LOAD_DURATION_US         1000000ULL  // LOAD冗余ACK后1秒迁移
+#define LINKG_SWITCH_OPERATION_LOAD_DURATION_US         2000000ULL  // LOAD冗余ACK后1秒迁移
 #define LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US     10000000ULL  // 迁出Wi-Fi后最少等待10秒
 #define LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US       15000000ULL  // 恢复失败后延迟15秒重试
 #define LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US       2000000ULL  // 协议终态失败后重同步间隔
@@ -1420,7 +1420,7 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
 
     if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD)
     {
-        // 冗余ACK确认后开始1秒迁移计时。
+        // 冗余ACK确认后开始2秒迁移计时。
         policy->next_action_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_LOAD_DURATION_US);
         _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER, now_us);
 

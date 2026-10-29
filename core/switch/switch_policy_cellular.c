@@ -22,7 +22,7 @@
 /****************************** 恢复参数 ******************************/
 
 #define LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB       3     // LOSS恢复要求RSSI较迁出时提高至少3dB
-#define LINKG_SWITCH_POLICY_LOAD_RECOVERY_RSSI_HYSTERESIS_DB  1     // LOAD恢复要求RSSI较迁出时提高至少1dB
+#define LINKG_SWITCH_POLICY_LOAD_RECOVERY_RSSI_HYSTERESIS_DB  0     // LOAD恢复要求RSSI较迁出时提高至少0dB
 #define LINKG_SWITCH_POLICY_DIRECT_RECOVERY_RSSI_DBM         (-60)  // 非质量迁移后，RSSI达到-60dBm直接恢复
 
 /****************************** Cellular主链路策略 ******************************/
