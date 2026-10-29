@@ -435,16 +435,10 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
         return 0;
     }
 
-    /****************************** 六、软件迁移准入 ******************************/
+    /****************************** 六、Wi-Fi维护准入 ******************************/
 
     // Wi-Fi维护期间禁止软件质量迁移。
     if (input->wifi_blocked)
-    {
-        return 0;
-    }
-
-    // 必须存在Wi-Fi单发业务，并具备可用的Cellular备用链路。
-    if (!_linkg_switch_policy_wifi_has_candidate(input))
     {
         return 0;
     }
@@ -475,7 +469,15 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
         return 0;
     }
 
-    /****************************** 九、质量异常事件交付 ******************************/
+    /****************************** 九、候选业务检查 ******************************/
+
+    // 必须存在Wi-Fi单发业务，并具备可用的Cellular备用链路。
+    if (!_linkg_switch_policy_wifi_has_candidate(input))
+    {
+        return 0;
+    }
+
+    /****************************** 十、质量异常事件交付 ******************************/
 
     // 负载压力导致业务损失，交由Operation逐类迁移。
     if (quality_state == LINKG_SWITCH_POLICY_QUALITY_LOAD_BAD)
