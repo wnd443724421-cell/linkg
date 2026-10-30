@@ -37,18 +37,6 @@
     }
 
     /**
-     * 收起全部一级菜单。
-     */
-    function closeAllMenuItems()
-    {
-        const items = document.querySelectorAll(".menu-item");
-
-        items.forEach(function (item) {
-            setMenuItemOpen(item, false);
-        });
-    }
-
-    /**
      * 根据Route查找对应菜单入口。
      */
     function findRouteLink(route)
@@ -79,8 +67,6 @@
         links.forEach(function (link) {
             link.classList.remove("is-active");
         });
-
-        closeAllMenuItems();
 
         if (activeLink == null)
         {
@@ -350,12 +336,8 @@
                 const item = button.closest(".menu-item");
                 const open = !item.classList.contains("is-open");
 
-                closeAllMenuItems();
-
-                if (open)
-                {
-                    setMenuItemOpen(item, true);
-                }
+                // 每个一级菜单独立展开或折叠，不影响其他菜单。
+                setMenuItemOpen(item, open);
             });
         });
 

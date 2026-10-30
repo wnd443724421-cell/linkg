@@ -72,8 +72,8 @@
 }
 .overview-status-value.is-address {
     font-family: Consolas, "Liberation Mono", monospace;
-    font-size: 12px;
-    font-weight: 400;
+    font-size: 14px;
+    font-weight: 500;
 }
 .overview-internet-state { display: inline-flex; align-items: center; }
 .overview-internet-state::before {
