@@ -179,10 +179,12 @@ extern linkg_uart_manager_context_t g_uart_manager;
 
 /****************************** 生命周期内部接口 ******************************/
 
-int uart_manager_init(void);
-int uart_manager_start(bool strict);
-int uart_manager_stop(void);
-int uart_manager_deinit(void);
+int  uart_manager_init(void);
+int  uart_manager_start(bool strict);
+int  uart_manager_stop(void);
+int  uart_manager_deinit(void);
+int  uart_manager_diagnostic_acquire(void);
+void uart_manager_diagnostic_release(void);
 
 /****************************** 内部工具 ******************************/
 

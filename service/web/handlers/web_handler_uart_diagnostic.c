@@ -343,7 +343,7 @@ int _linkg_web_handler_uart_diagnostic_start(const cJSON *param, char **response
         return ret;
     }
 
-    ret = linkg_uart_diagnostic_start(&params, &job_id);
+    ret = linkg_uart_diagnostic_submit(&params, &job_id);
     if (ret != 0)
     {
         linkg_json_string_free(*response);
@@ -351,6 +351,7 @@ int _linkg_web_handler_uart_diagnostic_start(const cJSON *param, char **response
         return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_START,
                                         ret == -EBUSY ? "串口正在应用配置或执行其他维护任务" :
                                         ret == -ENODEV ? "UART诊断模块尚未初始化" :
+                                        ret == -ESHUTDOWN ? "UART诊断线程尚未启动或正在停止" :
                                         ret == -EINVAL ? "诊断参数无效" : "启动串口硬件诊断失败", response);
     }
 
@@ -510,7 +511,7 @@ int _linkg_web_handler_uart_diagnostic_stop(const cJSON *param, char **response)
         return ret;
     }
 
-    ret = linkg_uart_diagnostic_stop(target_job_id);
+    ret = linkg_uart_diagnostic_cancel(target_job_id);
     if (ret == 0)
     {
         linkg_json_string_free(finished_response);

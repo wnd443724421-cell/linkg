@@ -20,11 +20,12 @@
 
 typedef struct
 {
-    pthread_mutex_t           lock;      // 保护任务和公共生命周期入口，不在后台应用期间持有
-    pthread_cond_t            idle;      // 通知生命周期调用方应用已经结束
-    bool                      busy;      // 至多一个应用任务，完成前拒绝重复SET
-    linkg_uart_config_t       candidate; // 后台线程持有的候选配置副本
-    linkg_uart_apply_status_t status;    // 最后一次应用结果，查询时复制
+    pthread_mutex_t           lock;             // 保护任务和公共生命周期入口，不在后台应用期间持有
+    pthread_cond_t            idle;             // 通知生命周期调用方应用或诊断已经结束
+    bool                      busy;             // 至多一个应用任务，完成前拒绝重复SET
+    bool                      diagnostic_busy;  // 诊断任务独占UART生命周期和配置应用入口
+    linkg_uart_config_t       candidate;        // 后台线程持有的候选配置副本
+    linkg_uart_apply_status_t status;           // 最后一次应用结果，查询时复制
 } uart_apply_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -38,15 +39,56 @@ static uart_apply_context_t g_uart_apply =
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 等待已接受的应用结束，返回时持有入口锁，防止生命周期与重载交错。
+ * @brief 等待配置应用和诊断任务结束，返回时持有入口锁。
  */
 static void _uart_apply_enter(void)
 {
     pthread_mutex_lock(&g_uart_apply.lock);
-    while (g_uart_apply.busy)
+    while (g_uart_apply.busy || g_uart_apply.diagnostic_busy)
     {
         pthread_cond_wait(&g_uart_apply.idle, &g_uart_apply.lock);
     }
+}
+
+/**
+ * @brief 为UART硬件诊断申请独占生命周期，拒绝与配置应用或停止过程并发。
+ */
+int uart_manager_diagnostic_acquire(void)
+{
+    linkg_uart_life_t state;
+
+    pthread_mutex_lock(&g_uart_apply.lock);
+    if (g_uart_apply.busy || g_uart_apply.diagnostic_busy)
+    {
+        pthread_mutex_unlock(&g_uart_apply.lock);
+        return -EBUSY;
+    }
+
+    pthread_mutex_lock(&g_uart_manager.life_lock);
+    state = g_uart_manager.state;
+    pthread_mutex_unlock(&g_uart_manager.life_lock);
+
+    if (state == LINKG_UART_LIFE_STOPPING)
+    {
+        pthread_mutex_unlock(&g_uart_apply.lock);
+        return -EBUSY;
+    }
+
+    g_uart_apply.diagnostic_busy = true;
+    pthread_mutex_unlock(&g_uart_apply.lock);
+
+    return 0;
+}
+
+/**
+ * @brief 释放UART硬件诊断独占权并唤醒等待生命周期操作的调用方。
+ */
+void uart_manager_diagnostic_release(void)
+{
+    pthread_mutex_lock(&g_uart_apply.lock);
+    g_uart_apply.diagnostic_busy = false;
+    pthread_cond_broadcast(&g_uart_apply.idle);
+    pthread_mutex_unlock(&g_uart_apply.lock);
 }
 
 /**
@@ -320,7 +362,7 @@ int linkg_uart_manager_apply(const linkg_uart_config_t *config, uint32_t *job_id
 
     *job_id = 0U;
     pthread_mutex_lock(&g_uart_apply.lock);
-    if (g_uart_apply.busy)
+    if (g_uart_apply.busy || g_uart_apply.diagnostic_busy)
     {
         pthread_mutex_unlock(&g_uart_apply.lock);
         return -EBUSY;

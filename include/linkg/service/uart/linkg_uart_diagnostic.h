@@ -95,13 +95,17 @@ typedef struct
 
 /****************************** 生命周期 ******************************/
 
+// init建立线程对象，start创建常驻线程；stop取消任务并等待资源恢复后join。
 int linkg_uart_diagnostic_init(void);
+int linkg_uart_diagnostic_start(void);
+int linkg_uart_diagnostic_stop(void);
 int linkg_uart_diagnostic_deinit(void);
 
 /****************************** 任务控制 ******************************/
 
-int linkg_uart_diagnostic_start(const linkg_uart_diagnostic_params_t *params, uint32_t *job_id);
-int linkg_uart_diagnostic_stop(uint32_t job_id);
+// submit只登记任务并唤醒已启动线程；cancel只取消任务，不停止常驻线程。
+int linkg_uart_diagnostic_submit(const linkg_uart_diagnostic_params_t *params, uint32_t *job_id);
+int linkg_uart_diagnostic_cancel(uint32_t job_id);
 int linkg_uart_diagnostic_get_status(uint32_t job_id, linkg_uart_diagnostic_status_t *out);
 
 #ifdef __cplusplus

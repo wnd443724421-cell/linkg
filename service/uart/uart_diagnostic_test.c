@@ -11,9 +11,11 @@
 #include <errno.h>
 #include <poll.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "linkg_time.h"
+#include "linkg_log.h"
 #include "linkg_uart.h"
 #include "linkg_uart_manager.h"
 
@@ -32,6 +34,43 @@
 #define LINKG_UART_DIAG_SBUS_INTERVAL_US  7600U   // SBUS帧间隔
 
 /****************************** 内部辅助 ******************************/
+
+/**
+ * @brief 拒绝内核正在使用的控制台，TIOCEXCL无法阻止console输出、登录和SysRq抢占。
+ */
+static int _uart_diag_check_console(const char *device_path)
+{
+    FILE *consoles;
+    char  line[256];
+    char  name[64];
+    char *flags;
+    int   ret;
+
+    consoles = fopen("/proc/consoles", "re");
+    if (consoles == NULL)
+    {
+        return -errno;
+    }
+
+    ret = 0;
+    while (fgets(line, sizeof(line), consoles) != NULL)
+    {
+        flags = strchr(line, '(');
+        if (sscanf(line, "%63s", name) == 1 && flags != NULL && strchr(flags, 'E') != NULL &&
+            strncmp(device_path, "/dev/", 5U) == 0 && strcmp(device_path + 5U, name) == 0)
+        {
+            LINKG_LOG_WARN("UART diagnostic: %s is an enabled system console; loopback refused", device_path);
+            ret = -EBUSY;
+            break;
+        }
+    }
+    if (ret == 0 && ferror(consoles))
+    {
+        ret = -EIO;
+    }
+    fclose(consoles);
+    return ret;
+}
 
 /**
  * @brief 等待串口描述符出现指定事件，并周期检查取消请求。
@@ -85,6 +124,8 @@ static int _uart_diag_wait_fd_until(int fd, short events, uint64_t deadline_ms)
 
         if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
         {
+            LINKG_LOG_WARN("UART diagnostic: poll fd=%d events=0x%x revents=0x%x", fd,
+                           (unsigned int)events, (unsigned int)descriptor.revents);
             return -EIO;
         }
 
@@ -170,6 +211,7 @@ static int _uart_diag_read_exact(int fd, uint8_t *data, uint32_t length, uint32_
 
         if (ret < 0)
         {
+            LINKG_LOG_WARN("UART diagnostic: read fd=%d error=%d", fd, ret);
             return ret;
         }
     }
@@ -414,6 +456,12 @@ int uart_diagnostic_test_port(uint8_t uart_num, linkg_uart_diagnostic_path_t pat
     if (device_path == NULL)
     {
         ret = -EINVAL;
+        goto finished;
+    }
+
+    ret = _uart_diag_check_console(device_path);
+    if (ret != 0)
+    {
         goto finished;
     }
 

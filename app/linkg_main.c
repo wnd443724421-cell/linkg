@@ -36,6 +36,7 @@
 #include "linkg_time.h"
 #include "linkg_transport.h"
 #include "linkg_tun.h"
+#include "linkg_uart_diagnostic.h"
 #include "linkg_uart_manager.h"
 #include "linkg_udhcp.h"
 #include "linkg_web.h"
@@ -70,9 +71,10 @@ typedef struct
     bool                discovery_initialized;       // Discovery模块是否已经初始化
     bool                probe_initialized;           // Path Probe模块是否已经初始化
     bool                udhcp_initialized;           // UDHCP模块是否已经初始化
+    bool                uart_diagnostic_initialized; // UART诊断模块是否已经初始化
     bool                uart_initialized;            // UART Manager是否已经初始化
-    bool                upgrade_initialized;        // Upgrade模块是否已经初始化
-    bool                upgrade_started;            // Upgrade线程是否已经启动
+    bool                upgrade_initialized;         // Upgrade模块是否已经初始化
+    bool                upgrade_started;             // Upgrade线程是否已经启动
     bool                web_initialized;             // Web模块是否已经初始化
     bool                gpio_started;                // GPIO Manager是否进入过start生命周期
     bool                network_started;             // Network Service是否进入过start生命周期
@@ -84,6 +86,7 @@ typedef struct
     bool                probe_started;               // Path Probe模块是否进入过start生命周期
     bool                udhcp_started;               // UDHCP模块是否进入过start生命周期
     bool                uart_started;                // UART Manager是否进入过start生命周期
+    bool                uart_diagnostic_started;     // UART诊断常驻线程是否已经启动
     bool                web_started;                 // Web模块是否进入过start生命周期
 } linkg_app_context_t;
 
@@ -114,6 +117,7 @@ static bool _linkg_app_has_initialized_modules(void)
            g_app.probe_initialized ||
            g_app.udhcp_initialized ||
            g_app.uart_initialized ||
+           g_app.uart_diagnostic_initialized ||
            g_app.upgrade_initialized ||
            g_app.web_initialized;
 }
@@ -133,6 +137,7 @@ static bool _linkg_app_has_started_modules(void)
            g_app.probe_started ||
            g_app.udhcp_started ||
            g_app.uart_started ||
+           g_app.uart_diagnostic_started ||
            g_app.upgrade_started ||
            g_app.web_started;
 }
@@ -360,6 +365,15 @@ static int _linkg_app_init(void)
 
     g_app.uart_initialized = true;
 
+    ret = linkg_uart_diagnostic_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize UART Diagnostic failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.uart_diagnostic_initialized = true;
+
     ret = linkg_upgrade_init();
     if (ret != 0)
     {
@@ -409,6 +423,7 @@ static int _linkg_app_start(void)
         !g_app.probe_initialized ||
         !g_app.udhcp_initialized ||
         !g_app.uart_initialized ||
+        !g_app.uart_diagnostic_initialized ||
         !g_app.upgrade_initialized ||
         !g_app.web_initialized)
     {
@@ -538,7 +553,7 @@ static int _linkg_app_start(void)
         return ret;
     }
 
-    // UART依赖GPIO控制SBUS通路和接收门控，必须在GPIO进入运行态后启动。
+    // UART依赖GPIO控制SBUS通路，必须在GPIO进入运行态后启动。
     g_app.uart_started = true;
 
     ret = linkg_uart_manager_start();
@@ -547,6 +562,14 @@ static int _linkg_app_start(void)
         LINKG_LOG_ERROR("start UART Manager failed, error=%d", ret);
         return ret;
     }
+
+    ret = linkg_uart_diagnostic_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start UART Diagnostic failed, error=%d", ret);
+        return ret;
+    }
+    g_app.uart_diagnostic_started = true;
 
     /**
      * Web最后启动。
@@ -610,6 +633,18 @@ static int _linkg_app_stop(void)
     }
 
     // UART必须在GPIO之前停止，保证串口线程退出时仍能安全控制SBUS和接收门控。
+
+    if (g_app.uart_diagnostic_started)
+    {
+        ret = linkg_uart_diagnostic_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop UART Diagnostic failed, error=%d", ret);
+            return ret;
+        }
+        g_app.uart_diagnostic_started = false;
+    }
+
     if (g_app.uart_started)
     {
         ret = linkg_uart_manager_stop();
@@ -801,6 +836,18 @@ static int _linkg_app_deinit(void)
             return ret;
         }
         g_app.upgrade_initialized = false;
+    }
+
+    if (g_app.uart_diagnostic_initialized)
+    {
+        ret = linkg_uart_diagnostic_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize UART Diagnostic failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.uart_diagnostic_initialized = false;
     }
 
     if (g_app.uart_initialized)

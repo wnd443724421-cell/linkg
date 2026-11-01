@@ -135,3 +135,20 @@ node test/uart/test_browser.cjs http://127.0.0.1:18080 build/uart-test/browser
 ```
 
 隔离测试覆盖配置边界、真实 UDP/PTY 与 TCP/PTY 双向字节流、TCP 关闭前尾包、端口占用、无变化应用、初始化/启动/打开/保存/GPIO 停机故障回滚、停止状态下严格预检、重复请求排斥、24 次普通/SBUS 重载、线程与 fd 泄漏以及失败回滚状态。PTY 不能证明 T113 UART 引脚、电平、奇偶校验、时钟误差或 MCU 模式切换时序，这些项目必须在实板完成。
+
+## 硬件诊断常驻线程
+
+诊断线程与 Web 更新模块使用相同的 `linkg_thread_t` / eventfd 模式：
+
+- `linkg_uart_diagnostic_init()` 初始化线程对象和唤醒 fd。
+- `linkg_uart_diagnostic_start()` 创建名为 `linkg_uart_diag` 的常驻线程；无任务时在 `poll(..., -1)` 中阻塞，不进行定时轮询。
+- Web 1025 调用 `linkg_uart_diagnostic_submit()`，申请 UART 独占权并唤醒线程；每个任务不再创建或回收 pthread。唤醒失败会释放独占权并保留上一轮结果。
+- Web 1027 调用 `linkg_uart_diagnostic_cancel()`，仅取消本轮任务；资源恢复后线程继续等待下一轮。Web 命令及 JSON 数据格式保持一致。
+- `linkg_uart_diagnostic_stop()` 关闭任务入口，取消已接受任务，等待 UART/GPIO 恢复后通过 LinkG 线程接口完成 join。停止失败时保留线程对象，允许再次 stop，不提前拆除依赖。
+- `linkg_uart_diagnostic_deinit()` 在停止成功后释放线程对象；随后允许重新 init/start。
+
+应用在 UART Manager 启动后、Web 启动前启动诊断线程；停止时先停止 Web，再停止诊断线程，之后才停止 UART Manager 和 GPIO。
+
+诊断结果仍在资源和独占权释放后才发布终态，因此成功、失败和取消后都能接收下一轮任务。UART1 保留系统终端用途，实际回环验收通过 `UART_DIAG_LOOPBACK_PORT` 选择当次短接的逻辑串口。UART0 默认只断言普通回环结果，具备 MCU 治具时可设置 `UART_DIAG_CHECK_SBUS=1` 一并验收 SBUS。
+
+运行 `python3 test/uart/run_diagnostic_tests.py` 验证真实任务代码与通用线程实现，包括同一线程连续处理、空闲阻塞、取消/恢复、停止重启及创建/唤醒/等待/join 失败。当前短接 UART0 时，实板浏览器测试使用 `UART_DIAG_LOOPBACK_PORT=0 node test/uart/test_diagnostic_board.cjs http://192.168.1.1`；测试会严格断言普通回环通过，不会将超时当作验收成功。
