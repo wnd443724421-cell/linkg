@@ -1,0 +1,39 @@
+captured_utc=2026-11-02T08:41:21.986122+00:00
+
+========== 192.168.1.1 ==========
+========== CURRENT SESSION ==========
+slot_id=10
+session_id=10
+file=session_10.log
+=====================================
+
+matched_lines=18
+[00:00:02.402083] [INFO ] [linkg_cellular.c:713] CELLULAR: module initialized, link_id=1
+[00:00:02.404725] [INFO ] [linkg_cellular.c:772] CELLULAR: module starting
+[00:00:02.458636] [INFO ] [tun_driver_loader.c:208] TUN-DRIVER: module loaded, path=/app/current/drivers/tun.ko
+[00:00:02.477993] [INFO ] [cellular_modem.c:145] CELLULAR: AT channel ready, device=/dev/ttyUSB1, attempts=1, elapsed_ms=55
+[00:00:02.680911] [INFO ] [cellular_modem.c:369] CELLULAR: persistent config verified, restart_required=0
+[00:00:02.723770] [DEBUG] [cellular_rx.c:1125] Cellular RX worker started, thread=cell-rx, cpu=0
+[00:00:02.809167] [INFO ] [linkg_cellular.c:840] CELLULAR: module started
+[00:00:02.861204] [INFO ] [cellular_fsm_sim.c:125] CELLULAR: SIM session started
+[00:00:02.880367] [INFO ] [cellular_fsm_pdp.c:650] CELLULAR: PDP context selected, operator=telecom, cid=1, apn=ctnet, source=existing
+[00:00:05.094579] [INFO ] [discovery_cellular.c:855] DISCOVERY-CELLULAR: channel ready, interface=usb0 ifindex=3
+[00:00:07.130576] [INFO ] [cellular_fsm.c:334] CELLULAR: data link online
+[00:00:07.131973] [INFO ] [linkg_cellular.c:242] CELLULAR: data link connected, ipv4=10.148.215.154, ipv6=240e:476:882:f7c8:c:29ff:fea3:9b6d
+[00:00:07.591759] [INFO ] [cellular_health.c:361] CELLULAR: public health changed, ipv4=reachable, ipv6=reachable
+[00:00:17.065059] [INFO ] [discovery_peer_runtime.c:625] DISCOVERY: peer online, node=2 access=wifi session=11811874822451095034 revision=2 path=1 peers=1
+[00:01:39.406897] [INFO ] [wifi_tx.c:1239] WIFI: TX Path队列清理开始，path=0xdab78
+[00:01:39.420366] [INFO ] [wifi_tx.c:1252] WIFI: TX Path队列清理获得锁，path=0xdab78 wait_queue_rt_video_data=0/0/0
+[00:01:39.421462] [INFO ] [wifi_tx.c:1298] WIFI: TX Path队列清理完成，path=0xdab78 purged=0 error=0 wait_queue_rt_video_data=0/0/0
+[00:02:07.086488] [INFO ] [discovery_peer_runtime.c:625] DISCOVERY: peer online, node=2 access=wifi session=7674517431720719803 revision=2 path=1 peers=1
+
+========== 192.168.3.1 ==========
+========== CURRENT SESSION ==========
+slot_id=06
+session_id=6
+file=session_06.log
+=====================================
+
+matched_lines=2
+[00:00:02.553209] [INFO ] [tun_driver_loader.c:208] TUN-DRIVER: module loaded, path=/app/current/drivers/tun.ko
+[00:00:17.287820] [INFO ] [discovery_peer_runtime.c:625] DISCOVERY: peer online, node=1 access=wifi session=7993634101408548347 revision=3 path=1 peers=1

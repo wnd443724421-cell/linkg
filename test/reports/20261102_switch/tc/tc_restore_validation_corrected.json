@@ -1,0 +1,606 @@
+{
+  "test_id": "SW-TC-RESTORE-VALIDATION",
+  "started_utc": "2026-11-02T08:51:15.402551+00:00",
+  "boards": {
+    "ap": {
+      "before": {
+        "exit": 0,
+        "stdout": "qdisc mq 8001: root \nqdisc fq_codel 0: parent 8001:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n",
+        "stderr": ""
+      },
+      "before_stats": {
+        "exit": 0,
+        "stdout": "qdisc mq 8001: root \n Sent 373968 bytes 2636 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc fq_codel 0: parent 8001:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 172784 bytes 1022 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 22960 bytes 280 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 177888 bytes 1326 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 336 bytes 8 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\n",
+        "stderr": ""
+      },
+      "switch_before": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 25449286061,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 25449177389,
+                  "path_age_ms": 108,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 1,
+                    "loss_permille": 0,
+                    "updated_us": 25449177389,
+                    "age_ms": 108
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":25449286061,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":25449177389,\"path_age_ms\":108,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":25449177389,\"age_ms\":108},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "netem_add": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "during": {
+        "exit": 0,
+        "stdout": "qdisc netem 7ffe: root refcnt 9 limit 1000 delay 275s  275s\n",
+        "stderr": ""
+      },
+      "error": "RuntimeError: netem did not report loss 0%: 'qdisc netem 7ffe: root refcnt 9 limit 1000 delay 275s  275s\\n'",
+      "restore": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "after": {
+        "exit": 0,
+        "stdout": "qdisc mq 8002: root \nqdisc fq_codel 0: parent 8002:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n",
+        "stderr": ""
+      },
+      "after_stats": {
+        "exit": 0,
+        "stdout": "qdisc mq 8002: root \n Sent 6126 bytes 43 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc fq_codel 0: parent 8002:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 2758 bytes 16 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 328 bytes 4 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 2998 bytes 22 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 42 bytes 1 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\n",
+        "stderr": ""
+      },
+      "switch_after": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 25451453266,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 25451436241,
+                  "path_age_ms": 17,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 1,
+                    "loss_permille": 0,
+                    "updated_us": 25451436241,
+                    "age_ms": 17
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":25451453266,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":25451436241,\"path_age_ms\":17,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":25451436241,\"age_ms\":17},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "restored_structure": true,
+      "passed": false
+    },
+    "sta": {
+      "before": {
+        "exit": 0,
+        "stdout": "qdisc mq 8001: root \nqdisc fq_codel 0: parent 8001:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8001:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n",
+        "stderr": ""
+      },
+      "before_stats": {
+        "exit": 0,
+        "stdout": "qdisc mq 8001: root \n Sent 235079 bytes 2023 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc fq_codel 0: parent 8001:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 39356 bytes 427 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 22468 bytes 274 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 172877 bytes 1313 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 378 bytes 9 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8001:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\n",
+        "stderr": ""
+      },
+      "switch_before": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 25402722016,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 25402657068,
+              "observation_age_ms": 64,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 1
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 1
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 1
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "local",
+                "active": false,
+                "confirmed": false,
+                "message_id": 0,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -38,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 58500,
+                "rx_phy_kbps": 19500,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 4,
+                "temperature_valid": true,
+                "temperature_c": 46,
+                "status_updated_us": 25402376068,
+                "statistics_updated_us": 25402376068,
+                "status_age_ms": 345,
+                "statistics_age_ms": 345,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2035,
+                    "updated_us": 25402652878,
+                    "age_ms": 69
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2103,
+                    "updated_us": 25401753525,
+                    "age_ms": 968
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2256,
+                    "updated_us": 25401955166,
+                    "age_ms": 766
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 7,
+                  "rx_pps": 11,
+                  "tx_bps": 1532,
+                  "rx_bps": 7022,
+                  "updated_us": 25402657001,
+                  "age_ms": 65
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 25402559794,
+                  "age_ms": 162
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 3,
+                  "loss_permille": 0,
+                  "updated_us": 25402657001,
+                  "age_ms": 65
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": true,
+                "updated_us": 25402657068,
+                "age_ms": 64
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":25402722016,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":25402657068,\"observation_age_ms\":64,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":1}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":1}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":1}}}},\"plan_sync\":{\"state\":\"local\",\"active\":false,\"confirmed\":false,\"message_id\":0,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-38,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":58500,\"rx_phy_kbps\":19500,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":4,\"temperature_valid\":true,\"temperature_c\":46,\"status_updated_us\":25402376068,\"statistics_updated_us\":25402376068,\"status_age_ms\":345,\"statistics_age_ms\":345,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":2035,\"updated_us\":25402652878,\"age_ms\":69},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":2103,\"updated_us\":25401753525,\"age_ms\":968},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2256,\"updated_us\":25401955166,\"age_ms\":766}],\"traffic\":{\"valid\":true,\"tx_pps\":7,\"rx_pps\":11,\"tx_bps\":1532,\"rx_bps\":7022,\"updated_us\":25402657001,\"age_ms\":65},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":25402559794,\"age_ms\":162},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":3,\"loss_permille\":0,\"updated_us\":25402657001,\"age_ms\":65}},\"cellular\":{\"status_valid\":true,\"available\":true,\"updated_us\":25402657068,\"age_ms\":64},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "netem_add": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "during": {
+        "exit": 0,
+        "stdout": "qdisc netem 7ffe: root refcnt 9 limit 1000 delay 275s  275s\n",
+        "stderr": ""
+      },
+      "error": "RuntimeError: netem did not report loss 0%: 'qdisc netem 7ffe: root refcnt 9 limit 1000 delay 275s  275s\\n'",
+      "restore": {
+        "exit": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      "after": {
+        "exit": 0,
+        "stdout": "qdisc mq 8002: root \nqdisc fq_codel 0: parent 8002:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent 8002:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n",
+        "stderr": ""
+      },
+      "after_stats": {
+        "exit": 0,
+        "stdout": "qdisc mq 8002: root \n Sent 3933 bytes 32 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\nqdisc fq_codel 0: parent 8002:8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 554 bytes 6 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 328 bytes 4 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 3051 bytes 22 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\nqdisc fq_codel 0: parent 8002:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 \n Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) \n backlog 0b 0p requeues 0\n  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0\n  new_flows_len 0 old_flows_len 0\n",
+        "stderr": ""
+      },
+      "switch_after": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 25405005227,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 25404912047,
+              "observation_age_ms": 93,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 1
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 1
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 1
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "local",
+                "active": false,
+                "confirmed": false,
+                "message_id": 0,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -37,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 13000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 46,
+                "status_updated_us": 25404782047,
+                "statistics_updated_us": 25404782047,
+                "status_age_ms": 223,
+                "statistics_age_ms": 223,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2017,
+                    "updated_us": 25404653437,
+                    "age_ms": 351
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1935,
+                    "updated_us": 25404754147,
+                    "age_ms": 251
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2239,
+                    "updated_us": 25403955933,
+                    "age_ms": 1049
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 7,
+                  "rx_pps": 11,
+                  "tx_bps": 1532,
+                  "rx_bps": 7023,
+                  "updated_us": 25404911965,
+                  "age_ms": 93
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 3,
+                  "loss_permille": 0,
+                  "updated_us": 25404817995,
+                  "age_ms": 187
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 3,
+                  "loss_permille": 0,
+                  "updated_us": 25404911965,
+                  "age_ms": 93
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": true,
+                "updated_us": 25404912047,
+                "age_ms": 93
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":25405005227,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":25404912047,\"observation_age_ms\":93,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":1}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":1}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":1}}}},\"plan_sync\":{\"state\":\"local\",\"active\":false,\"confirmed\":false,\"message_id\":0,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-37,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":13000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":46,\"status_updated_us\":25404782047,\"statistics_updated_us\":25404782047,\"status_age_ms\":223,\"statistics_age_ms\":223,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":2017,\"updated_us\":25404653437,\"age_ms\":351},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":1935,\"updated_us\":25404754147,\"age_ms\":251},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2239,\"updated_us\":25403955933,\"age_ms\":1049}],\"traffic\":{\"valid\":true,\"tx_pps\":7,\"rx_pps\":11,\"tx_bps\":1532,\"rx_bps\":7023,\"updated_us\":25404911965,\"age_ms\":93},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":3,\"loss_permille\":0,\"updated_us\":25404817995,\"age_ms\":187},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":3,\"loss_permille\":0,\"updated_us\":25404911965,\"age_ms\":93}},\"cellular\":{\"status_valid\":true,\"available\":true,\"updated_us\":25404912047,\"age_ms\":93},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "restored_structure": true,
+      "passed": false
+    }
+  },
+  "passed": false,
+  "finished_utc": "2026-11-02T08:51:20.192658+00:00"
+}

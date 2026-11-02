@@ -1,0 +1,287 @@
+captured_utc=2026-11-02T07:33:29.937457+00:00
+
+========== 192.168.1.1 ==========
+
+--- qdisc exit=0 ---
+qdisc mq 0: root 
+qdisc fq_codel 0: parent :8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+
+--- qdisc_stats exit=0 ---
+qdisc mq 0: root 
+ Sent 57338776 bytes 351394 pkt (dropped 0, overlimits 0 requeues 1) 
+ backlog 0b 0p requeues 1
+qdisc fq_codel 0: parent :8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 25541113 bytes 149708 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 230 drop_overlimit 0 new_flow_count 31 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 3395374 bytes 41407 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 28350083 bytes 159050 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 52206 bytes 1229 pkt (dropped 0, overlimits 0 requeues 1) 
+ backlog 0b 0p requeues 1
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+
+--- root_filter exit=1 ---
+RTNETLINK answers: Operation not supported
+Dump terminated
+
+--- ingress_filter exit=1 ---
+RTNETLINK answers: Operation not supported
+Dump terminated
+
+--- egress_filter exit=1 ---
+RTNETLINK answers: Operation not supported
+Dump terminated
+
+--- gact exit=255 ---
+RTNETLINK answers: Operation not supported
+
+--- modules exit=0 ---
+arp_tables             20480  1 arptable_filter
+arpt_mangle            16384  0 
+arptable_filter        16384  0 
+cryptodev              45056  0 
+ebt_802_3              16384  0 
+ebt_among              16384  0 
+ebt_limit              16384  0 
+ebt_mark               16384  0 
+ebt_mark_m             16384  0 
+ebt_pkttype            16384  0 
+ebt_redirect           16384  0 
+ebt_stp                16384  0 
+ebt_vlan               16384  0 
+ebtable_broute         16384  0 
+ebtable_filter         16384  0 
+ebtable_nat            16384  0 
+ip_tunnel              24576  0 
+ip6_tunnel             28672  0 
+ip6_udp_tunnel         16384  1 vxlan
+ip6t_REJECT            16384  0 
+ip6t_ah                16384  0 
+ip6t_eui64             16384  0 
+ip6t_frag              16384  0 
+ip6t_hbh               16384  0 
+ip6t_ipv6header        16384  0 
+ip6t_mh                16384  0 
+ip6t_rt                16384  0 
+ip6table_filter        16384  0 
+ip6table_mangle        16384  0 
+ipt_REJECT             16384  0 
+iptable_filter         16384  0 
+iptable_mangle         16384  0 
+iptable_nat            16384  0 
+linkg_fast_nat        237568  1 
+nf_conncount           20480  1 xt_connlimit
+plat_1105            2605056  1 wifi_1105
+sch_netem              20480  0 
+ts_bm                  16384  0 
+ts_fsm                 16384  0 
+ts_kmp                 16384  0 
+tun                    49152  2 
+tunnel6                16384  1 ip6_tunnel
+udp_tunnel             16384  1 vxlan
+vxlan                  53248  0 
+wifi_1105            2338816  2 
+xt_CT                  16384  0 
+xt_LOG                 16384  0 
+xt_TCPMSS              16384  0 
+xt_addrtype            16384  0 
+xt_bpf                 20480  0 
+xt_comment             16384  0 
+xt_connbytes           16384  0 
+xt_connlimit           16384  0 
+xt_conntrack           16384  0 
+xt_helper              16384  0 
+xt_limit               16384  0 
+xt_mac                 16384  0 
+xt_multiport           16384  0 
+xt_owner               16384  0 
+xt_pkttype             16384  0 
+xt_quota               16384  0 
+xt_recent              24576  0 
+xt_state               16384  0 
+xt_string              16384  0 
+xt_time                16384  0 
+
+--- tc_version exit=0 ---
+tc utility, iproute2-5.11.0
+
+========== 192.168.3.1 ==========
+
+--- qdisc exit=0 ---
+qdisc mq 0: root 
+qdisc fq_codel 0: parent :8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+qdisc fq_codel 0: parent :1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+
+--- qdisc_stats exit=0 ---
+qdisc mq 0: root 
+ Sent 121530030 bytes 324533 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+qdisc fq_codel 0: parent :8 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 5996475 bytes 62993 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 113 drop_overlimit 0 new_flow_count 9 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :7 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 84570857 bytes 100883 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :6 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 30910536 bytes 159430 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :5 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :4 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :3 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 52162 bytes 1227 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+qdisc fq_codel 0: parent :1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 0 bytes 0 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0
+  maxpacket 0 drop_overlimit 0 new_flow_count 0 ecn_mark 0
+  new_flows_len 0 old_flows_len 0
+
+--- root_filter exit=1 ---
+RTNETLINK answers: Operation not supported
+Dump terminated
+
+--- ingress_filter exit=1 ---
+RTNETLINK answers: Operation not supported
+Dump terminated
+
+--- egress_filter exit=1 ---
+RTNETLINK answers: Operation not supported
+Dump terminated
+
+--- gact exit=255 ---
+RTNETLINK answers: Operation not supported
+
+--- modules exit=0 ---
+arp_tables             20480  1 arptable_filter
+arpt_mangle            16384  0 
+arptable_filter        16384  0 
+cryptodev              45056  0 
+ebt_802_3              16384  0 
+ebt_among              16384  0 
+ebt_limit              16384  0 
+ebt_mark               16384  0 
+ebt_mark_m             16384  0 
+ebt_pkttype            16384  0 
+ebt_redirect           16384  0 
+ebt_stp                16384  0 
+ebt_vlan               16384  0 
+ebtable_broute         16384  0 
+ebtable_filter         16384  0 
+ebtable_nat            16384  0 
+ip_tunnel              24576  0 
+ip6_tunnel             28672  0 
+ip6_udp_tunnel         16384  1 vxlan
+ip6t_REJECT            16384  0 
+ip6t_ah                16384  0 
+ip6t_eui64             16384  0 
+ip6t_frag              16384  0 
+ip6t_hbh               16384  0 
+ip6t_ipv6header        16384  0 
+ip6t_mh                16384  0 
+ip6t_rt                16384  0 
+ip6table_filter        16384  0 
+ip6table_mangle        16384  0 
+ipt_REJECT             16384  0 
+iptable_filter         16384  0 
+iptable_mangle         16384  0 
+iptable_nat            16384  0 
+linkg_fast_nat        237568  1 
+nf_conncount           20480  1 xt_connlimit
+plat_1105            2605056  1 wifi_1105
+sch_netem              20480  0 
+ts_bm                  16384  0 
+ts_fsm                 16384  0 
+ts_kmp                 16384  0 
+tun                    49152  2 
+tunnel6                16384  1 ip6_tunnel
+udp_tunnel             16384  1 vxlan
+vxlan                  53248  0 
+wifi_1105            2338816  2 
+xt_CT                  16384  0 
+xt_LOG                 16384  0 
+xt_TCPMSS              16384  0 
+xt_addrtype            16384  0 
+xt_bpf                 20480  0 
+xt_comment             16384  0 
+xt_connbytes           16384  0 
+xt_connlimit           16384  0 
+xt_conntrack           16384  0 
+xt_helper              16384  0 
+xt_limit               16384  0 
+xt_mac                 16384  0 
+xt_multiport           16384  0 
+xt_owner               16384  0 
+xt_pkttype             16384  0 
+xt_quota               16384  0 
+xt_recent              24576  0 
+xt_state               16384  0 
+xt_string              16384  0 
+xt_time                16384  0 
+
+--- tc_version exit=0 ---
+tc utility, iproute2-5.11.0

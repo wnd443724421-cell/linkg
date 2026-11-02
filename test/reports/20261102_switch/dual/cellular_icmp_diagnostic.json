@@ -1,0 +1,258 @@
+{
+  "test_id": "SW-CELLULAR-ICMP-DIAGNOSTIC",
+  "started_utc": "2026-11-02T08:30:36.209146+00:00",
+  "status_before": {
+    "ap": {
+      "response": {
+        "cmd": 1009,
+        "code": "ok",
+        "data": {
+          "enabled": true,
+          "path_enabled": true,
+          "available": true,
+          "partial": false,
+          "internet_available": true,
+          "local": {
+            "network_mode": "auto",
+            "sim_state": "ready"
+          },
+          "network": {
+            "registration": "registered",
+            "network_type": "5g_sa",
+            "plmn": "46011",
+            "band": 1,
+            "rsrp_dbm": -89,
+            "rsrq_db": -12,
+            "sinr_db": 3
+          },
+          "data": {
+            "pdp_apn": "ctnet",
+            "ipv4": "10.140.182.151",
+            "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+          },
+          "path": {
+            "peers": [
+              {
+                "node_id": 2,
+                "active": true,
+                "probe": {
+                  "realtime": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 31305
+                  },
+                  "video": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 35853
+                  },
+                  "data": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 45541
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-89,\"rsrq_db\":-12,\"sinr_db\":3},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":31305},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":35853},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":45541}}}]}}}"
+    },
+    "sta": {
+      "response": {
+        "cmd": 1009,
+        "code": "ok",
+        "data": {
+          "enabled": true,
+          "path_enabled": true,
+          "available": true,
+          "partial": false,
+          "internet_available": true,
+          "local": {
+            "network_mode": "4g",
+            "sim_state": "ready"
+          },
+          "network": {
+            "registration": "registered",
+            "network_type": "lte",
+            "plmn": "46001",
+            "band": 3,
+            "rsrp_dbm": -91,
+            "rsrq_db": -11,
+            "sinr_db": 5
+          },
+          "data": {
+            "pdp_apn": "3gnet",
+            "ipv4": "10.114.76.39",
+            "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+          },
+          "path": {
+            "peers": [
+              {
+                "node_id": 1,
+                "active": true,
+                "probe": {
+                  "realtime": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 42216
+                  },
+                  "video": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 35889
+                  },
+                  "data": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 149283
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-91,\"rsrq_db\":-11,\"sinr_db\":5},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":42216},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":35889},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":149283}}}]}}}"
+    }
+  },
+  "addresses": {
+    "ap": "240e:476:888:97bf:c:29ff:fea3:9b6d",
+    "sta": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+  },
+  "commands": {
+    "ap": "ping6 -I usb0 -c 60 -i 1 -W 1 2408:8469:850:dede:c:29ff:fea3:9b6d",
+    "sta": "ping6 -I usb0 -c 60 -i 1 -W 1 240e:476:888:97bf:c:29ff:fea3:9b6d"
+  },
+  "results": {
+    "ap": {
+      "exit": 0,
+      "stdout": "PING 2408:8469:850:dede:c:29ff:fea3:9b6d (2408:8469:850:dede:c:29ff:fea3:9b6d): 56 data bytes\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=0 ttl=51 time=107.606 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=1 ttl=51 time=60.325 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=2 ttl=51 time=79.093 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=3 ttl=51 time=77.880 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=4 ttl=51 time=41.606 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=5 ttl=51 time=45.382 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=6 ttl=51 time=38.928 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=7 ttl=51 time=50.954 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=8 ttl=51 time=48.565 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=9 ttl=51 time=45.335 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=10 ttl=51 time=71.222 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=11 ttl=51 time=59.057 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=12 ttl=51 time=54.751 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=13 ttl=51 time=67.403 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=14 ttl=51 time=57.181 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=15 ttl=51 time=53.950 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=16 ttl=51 time=50.681 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=17 ttl=51 time=54.464 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=18 ttl=51 time=54.217 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=19 ttl=51 time=42.991 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=20 ttl=51 time=61.756 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=21 ttl=51 time=53.779 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=22 ttl=51 time=60.181 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=23 ttl=51 time=30.946 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=24 ttl=51 time=53.688 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=25 ttl=51 time=35.323 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=26 ttl=51 time=52.117 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=27 ttl=51 time=46.898 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=28 ttl=51 time=57.677 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=29 ttl=51 time=27.426 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=30 ttl=51 time=107.207 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=31 ttl=51 time=29.988 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=32 ttl=51 time=54.760 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=33 ttl=51 time=34.540 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=34 ttl=51 time=62.206 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=35 ttl=51 time=28.968 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=36 ttl=51 time=31.757 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=37 ttl=51 time=37.537 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=38 ttl=51 time=30.331 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=39 ttl=51 time=32.094 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=40 ttl=51 time=40.860 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=41 ttl=51 time=27.630 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=42 ttl=51 time=41.438 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=43 ttl=51 time=34.089 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=44 ttl=51 time=45.999 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=45 ttl=51 time=39.697 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=46 ttl=51 time=28.558 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=47 ttl=51 time=29.213 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=48 ttl=51 time=27.024 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=49 ttl=51 time=36.818 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=50 ttl=51 time=27.595 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=51 ttl=51 time=31.380 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=52 ttl=51 time=24.209 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=53 ttl=51 time=39.015 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=54 ttl=51 time=41.691 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=55 ttl=51 time=34.498 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=56 ttl=51 time=28.248 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=57 ttl=51 time=38.071 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=58 ttl=51 time=32.939 ms\n64 bytes from 2408:8469:850:dede:c:29ff:fea3:9b6d: seq=59 ttl=51 time=39.805 ms\n\n--- 2408:8469:850:dede:c:29ff:fea3:9b6d ping statistics ---\n60 packets transmitted, 60 packets received, 0% packet loss\nround-trip min/avg/max = 24.209/46.325/107.606 ms\n",
+      "stderr": ""
+    },
+    "sta": {
+      "exit": 0,
+      "stdout": "PING 240e:476:888:97bf:c:29ff:fea3:9b6d (240e:476:888:97bf:c:29ff:fea3:9b6d): 56 data bytes\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=0 ttl=52 time=84.756 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=1 ttl=52 time=34.446 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=2 ttl=52 time=46.515 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=3 ttl=52 time=52.982 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=4 ttl=52 time=29.761 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=5 ttl=52 time=29.516 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=6 ttl=52 time=29.166 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=7 ttl=52 time=27.379 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=8 ttl=52 time=24.993 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=9 ttl=52 time=28.541 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=10 ttl=52 time=44.485 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=11 ttl=52 time=33.227 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=12 ttl=52 time=28.999 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=13 ttl=52 time=42.477 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=14 ttl=52 time=27.588 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=15 ttl=52 time=27.318 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=16 ttl=52 time=28.899 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=17 ttl=52 time=30.540 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=18 ttl=52 time=32.603 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=19 ttl=52 time=27.088 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=20 ttl=52 time=34.063 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=21 ttl=52 time=29.793 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=22 ttl=52 time=35.566 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=23 ttl=52 time=28.040 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=24 ttl=52 time=27.777 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=25 ttl=52 time=32.575 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=26 ttl=52 time=26.295 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=27 ttl=52 time=36.087 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=28 ttl=52 time=28.163 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=29 ttl=52 time=36.614 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=30 ttl=52 time=83.659 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=31 ttl=52 time=26.135 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=32 ttl=52 time=30.091 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=33 ttl=52 time=35.692 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=34 ttl=52 time=34.285 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=35 ttl=52 time=29.071 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=36 ttl=52 time=32.864 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=37 ttl=52 time=27.603 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=38 ttl=52 time=29.372 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=39 ttl=52 time=30.048 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=40 ttl=52 time=35.864 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=41 ttl=52 time=34.652 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=42 ttl=52 time=31.272 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=43 ttl=52 time=40.182 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=44 ttl=52 time=27.764 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=45 ttl=52 time=27.558 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=46 ttl=52 time=31.339 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=47 ttl=52 time=25.107 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=48 ttl=52 time=31.877 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=49 ttl=52 time=26.523 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=50 ttl=52 time=30.415 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=51 ttl=52 time=36.206 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=52 ttl=52 time=30.960 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=53 ttl=52 time=46.613 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=54 ttl=52 time=30.490 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=55 ttl=52 time=41.153 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=56 ttl=52 time=27.904 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=57 ttl=52 time=40.686 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=58 ttl=52 time=26.443 ms\n64 bytes from 240e:476:888:97bf:c:29ff:fea3:9b6d: seq=59 ttl=52 time=30.222 ms\n\n--- 240e:476:888:97bf:c:29ff:fea3:9b6d ping statistics ---\n60 packets transmitted, 60 packets received, 0% packet loss\nround-trip min/avg/max = 24.993/33.971/84.756 ms\n",
+      "stderr": ""
+    }
+  },
+  "status_after": {
+    "ap": {
+      "response": {
+        "cmd": 1009,
+        "code": "ok",
+        "data": {
+          "enabled": true,
+          "path_enabled": true,
+          "available": true,
+          "partial": false,
+          "internet_available": true,
+          "local": {
+            "network_mode": "auto",
+            "sim_state": "ready"
+          },
+          "network": {
+            "registration": "registered",
+            "network_type": "5g_sa",
+            "plmn": "46011",
+            "band": 1,
+            "rsrp_dbm": -91,
+            "rsrq_db": -14,
+            "sinr_db": 0
+          },
+          "data": {
+            "pdp_apn": "ctnet",
+            "ipv4": "10.140.182.151",
+            "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+          },
+          "path": {
+            "peers": [
+              {
+                "node_id": 2,
+                "active": true,
+                "probe": {
+                  "realtime": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 32304
+                  },
+                  "video": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 34991
+                  },
+                  "data": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 39649
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-91,\"rsrq_db\":-14,\"sinr_db\":0},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":32304},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":34991},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":39649}}}]}}}"
+    },
+    "sta": {
+      "response": {
+        "cmd": 1009,
+        "code": "ok",
+        "data": {
+          "enabled": true,
+          "path_enabled": true,
+          "available": true,
+          "partial": false,
+          "internet_available": true,
+          "local": {
+            "network_mode": "4g",
+            "sim_state": "ready"
+          },
+          "network": {
+            "registration": "registered",
+            "network_type": "lte",
+            "plmn": "46001",
+            "band": 3,
+            "rsrp_dbm": -93,
+            "rsrq_db": -12,
+            "sinr_db": 5
+          },
+          "data": {
+            "pdp_apn": "3gnet",
+            "ipv4": "10.114.76.39",
+            "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+          },
+          "path": {
+            "peers": [
+              {
+                "node_id": 1,
+                "active": true,
+                "probe": {
+                  "realtime": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 29738
+                  },
+                  "video": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 26275
+                  },
+                  "data": {
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 32934
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-93,\"rsrq_db\":-12,\"sinr_db\":5},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":29738},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":26275},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":32934}}}]}}}"
+    }
+  },
+  "completed": true,
+  "finished_utc": "2026-11-02T08:31:35.495316+00:00"
+}

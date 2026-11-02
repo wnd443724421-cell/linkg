@@ -1,0 +1,113 @@
+Internal ctest changing into directory: /tmp/linkg-v1-supervisor-a1e74eda
+UpdateCTestConfiguration  from :/tmp/linkg-v1-supervisor-a1e74eda/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/tmp/linkg-v1-supervisor-a1e74eda/DartConfiguration.tcl
+Test project /tmp/linkg-v1-supervisor-a1e74eda
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+    Start 1: supervisor-scenarios
+
+1: Test command: /usr/bin/python3 "/home/dawn/project/linkg_v1/supervisor/tests/test_supervisor.py" "/tmp/linkg-v1-supervisor-a1e74eda/linkg-supervisor-test" "/tmp/linkg-v1-supervisor-a1e74eda/supervisor-mock" "/tmp/linkg-v1-supervisor-a1e74eda/libsupervisor-faults.so"
+1: Working Directory: /tmp/linkg-v1-supervisor-a1e74eda
+1: Test timeout computed to be: 90
+1: PASS heartbeat_timeout[3]
+1: PASS heartbeat_before_ready[2]
+1: PASS healthy[0]
+1: PASS startup[1]
+1: PASS crash[5]
+1: PASS abnormal_exit[4]
+1: PASS repeated_restarting[8]
+1: PASS restarting_timeout[7]
+1: PASS repeated_ready[9]
+1: PASS restarting[6]
+1: PASS pipe_eof[12]
+1: PASS force_kill[10]
+1: PASS normal_exit[14]
+1: PASS standalone[16]
+1: PASS bad_environment[17]
+1: PASS <lambda>[18]
+1: PASS <lambda>[19]
+1: PASS cleanup_grace[13]
+1: PASS singleton[21]
+1: PASS client_protocol[20]
+1: PASS backoff[11]
+1: PASS missing_program[23]
+1: PASS early_clean_exit[24]
+1: PASS client_descriptor_flags[26]
+1: PASS fast_normal_exit[27]
+1: PASS fd_leaks[22]
+1: PASS externally_terminated_child[28]
+1: PASS stable_reset[25]
+1: PASS restart_cycles[15]
+1: PASS eof_during_start_or_restart[29]
+1: PASS client_stopping_protocol[32]
+1: PASS stopping_repeated_messages[30]
+1: PASS stopping_send_failure[33]
+1: PASS <lambda>[36]
+1: PASS <lambda>[37]
+1: PASS stopping_during_start_or_restart[31]
+1: PASS <lambda>[34]
+1: PASS <lambda>[35]
+1: PASS <lambda>[39]
+1: PASS <lambda>[40]
+1: PASS unresolved_child_identity[38]
+1: RESULT 41/41 passed
+1/2 Test #1: supervisor-scenarios .............   Passed   10.67 sec
+test 3
+    Start 3: supervisor-release-scenarios
+
+3: Test command: /usr/bin/python3 "/home/dawn/project/linkg_v1/supervisor/tests/test_release.py" "/tmp/linkg-v1-supervisor-a1e74eda/linkg-supervisor-test" "/tmp/linkg-v1-supervisor-a1e74eda/libsupervisor-release-faults.so" "/tmp/linkg-v1-supervisor-a1e74eda/libsupervisor-faults.so"
+3: Working Directory: /tmp/linkg-v1-supervisor-a1e74eda
+3: Test timeout computed to be: 90
+3: PASS stable_start
+3: PASS candidate_confirmation
+3: PASS kernel_confirmation
+3: PASS ready_timeout
+3: PASS heartbeat_timeout
+3: PASS late_exit
+3: PASS restart_timeout
+3: PASS forced_kill
+3: PASS uboot_already_rolled_back
+3: PASS different_kernel_rollback
+3: PASS interrupted_trial
+3: PASS restart_resets_window
+3: PASS stable_recovers
+3: PASS corrupt_json
+3: PASS stable_after_confirmation
+3: PASS uninstalled_candidate
+3: PASS missing_release
+3: PASS invalid_link
+3: PASS pending_decision_recovery
+3: PASS pending_decision_but_uboot_rollback
+3: PASS env_write_failure
+3: PASS unknown_actual_kernel
+3: PASS mixed_links_after_power_loss
+3: PASS json_schema_validation
+3: PASS coordinated_link_failure
+3: PASS app_only_json_failure_retries
+3: PASS json_commit_failure_and_recovery
+3: PASS rollback_json_before_env
+3: PASS directory_sync_failure_retries
+3: PASS partial_env_is_not_confirmation
+3: PASS rollback_json_failure_blocks_spawn
+3: PASS env_commit_without_ack
+3: PASS rollback_env_failure_blocks_spawn
+3: PASS unreaped_candidate_blocks_rollback
+3: PASS duplicate_and_null_strings
+3: PASS slow_env_keeps_monitoring
+3: PASS exit_during_env_cannot_confirm
+3: PASS restart_during_env_resets_window
+3: PASS: 38 managed-release scenarios
+2/2 Test #3: supervisor-release-scenarios .....   Passed   30.59 sec
+
+The following tests passed:
+	supervisor-scenarios
+	supervisor-release-scenarios
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =  41.27 sec

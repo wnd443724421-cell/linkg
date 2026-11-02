@@ -1,0 +1,204 @@
+-- The C compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- -----------------------------------------------
+-- Project:      linkg
+-- Version:      1.0.0
+-- Architecture: x86
+-- Compiler:     /usr/bin/cc
+-- Output:       /home/dawn/project/linkg_v1/output/bin/x86
+-- -----------------------------------------------
+-- Configuring done (0.7s)
+-- Generating done (0.0s)
+-- Build files have been written to: /tmp/linkg-v1-release-build-a1e74eda
+[0/2] Re-checking globbed directories...
+[1/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_channel.c.o
+[2/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_local.c.o
+[3/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_peer_runtime.c.o
+[4/181] Building C object CMakeFiles/linkg.dir/app/linkg_main.c.o
+[5/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_peer.c.o
+[6/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_validate.c.o
+[7/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_topology.c.o
+[8/181] Building C object CMakeFiles/linkg.dir/core/link/link_runtime.c.o
+[9/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_cellular.c.o
+[10/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_wire.c.o
+[11/181] Building C object CMakeFiles/linkg.dir/core/link/link_rx.c.o
+[12/181] Building C object CMakeFiles/linkg.dir/core/discovery/linkg_discovery.c.o
+[13/181] Building C object CMakeFiles/linkg.dir/core/link/linkg_link.c.o
+[14/181] Building C object CMakeFiles/linkg.dir/core/link/link_tx.c.o
+[15/181] Building C object CMakeFiles/linkg.dir/core/link/linkg_link_manager.c.o
+[16/181] Building C object CMakeFiles/linkg.dir/core/discovery/discovery_wifi.c.o
+[17/181] Building C object CMakeFiles/linkg.dir/core/link/linkg_path.c.o
+[18/181] Building C object CMakeFiles/linkg.dir/core/packet/linkg_packet_pool.c.o
+[19/181] Building C object CMakeFiles/linkg.dir/core/probe/path_probe_rx.c.o
+[20/181] Building C object CMakeFiles/linkg.dir/core/nat/linkg_nat.c.o
+[21/181] Building C object CMakeFiles/linkg.dir/core/probe/path_probe_tx.c.o
+[22/181] Building C object CMakeFiles/linkg.dir/core/probe/path_probe_wire.c.o
+[23/181] Building C object CMakeFiles/linkg.dir/core/probe/linkg_path_probe.c.o
+[24/181] Building C object CMakeFiles/linkg.dir/core/statistics/linkg_path_stats.c.o
+[25/181] Building C object CMakeFiles/linkg.dir/core/node/linkg_node.c.o
+[26/181] Building C object CMakeFiles/linkg.dir/core/route/linkg_route.c.o
+[27/181] Building C object CMakeFiles/linkg.dir/core/switch/linkg_switch.c.o
+[28/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_event.c.o
+[29/181] Building C object CMakeFiles/linkg.dir/core/scheduler/linkg_scheduler.c.o
+[30/181] Building C object CMakeFiles/linkg.dir/core/probe/path_probe_runtime.c.o
+[31/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_plan_reconcile.c.o
+[32/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_policy_cellular.c.o
+[33/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_maintenance.c.o
+[34/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_policy.c.o
+[35/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_observation.c.o
+[36/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_policy_wifi.c.o
+[37/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_plan.c.o
+[38/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_runtime.c.o
+[39/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_rx.c.o
+[40/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_report.c.o
+[41/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_status.c.o
+[42/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_policy_operation.c.o
+[43/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_trace.c.o
+[44/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_tx.c.o
+[45/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_policy_quality.c.o
+[46/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_policy_verify.c.o
+[47/181] Building C object CMakeFiles/linkg.dir/core/switch/switch_wire.c.o
+[48/181] Building C object CMakeFiles/linkg.dir/core/transport/transport_forward.c.o
+[49/181] Building C object CMakeFiles/linkg.dir/core/transport/transport_reassembly.c.o
+[50/181] Building C object CMakeFiles/linkg.dir/core/transport/linkg_transport.c.o
+[51/181] Building C object CMakeFiles/linkg.dir/core/transport/transport_wire.c.o
+[52/181] Building C object CMakeFiles/linkg.dir/core/transport/transport_window.c.o
+[53/181] Building C object CMakeFiles/linkg.dir/core/transport/transport_tx.c.o
+[54/181] Building C object CMakeFiles/linkg.dir/core/transport/transport_reorder.c.o
+[55/181] Building C object CMakeFiles/linkg.dir/core/transport/transport_rx.c.o
+[56/181] Building C object CMakeFiles/linkg.dir/core/upgrade/linkg_upgrade.c.o
+[57/181] Building C object CMakeFiles/linkg.dir/core/upgrade/upgrade_archive.c.o
+[58/181] Building C object CMakeFiles/linkg.dir/core/udhcp/linkg_udhcp.c.o
+[59/181] Building C object CMakeFiles/linkg.dir/core/upgrade/upgrade_commit.c.o
+[60/181] Building C object CMakeFiles/linkg.dir/core/tun/linkg_tun.c.o
+[61/181] Building C object CMakeFiles/linkg.dir/core/upgrade/upgrade_install.c.o
+[62/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_atomic_file.c.o
+[63/181] Building C object CMakeFiles/linkg.dir/core/upgrade/upgrade_kernel.c.o
+[64/181] Building C object CMakeFiles/linkg.dir/core/upgrade/upgrade_system.c.o
+[65/181] Building C object CMakeFiles/linkg.dir/core/upgrade/upgrade_manifest.c.o
+[66/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_file.c.o
+[67/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_lifecycle.c.o
+[68/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_boot_env.c.o
+[69/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_log.c.o
+[70/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_supervisor_client.c.o
+[71/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_release_state.c.o
+[72/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_os.c.o
+[73/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_json.c.o
+[74/181] Building C object CMakeFiles/linkg.dir/infra/config/config_internal.c.o
+[75/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_cellular_config.c.o
+[76/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_text.c.o
+[77/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_time.c.o
+[78/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_links_config.c.o
+[79/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_device_config.c.o
+[80/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_thread.c.o
+[81/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_paths_config.c.o
+[82/181] Building C object CMakeFiles/linkg.dir/infra/base/linkg_network_ops.c.o
+[83/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_network_config.c.o
+[84/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_config.c.o
+[85/181] Building C object CMakeFiles/linkg.dir/modules/cellular/cellular_rx_queue.c.o
+[86/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_wifi_config.c.o
+[87/181] Building C object CMakeFiles/linkg.dir/modules/cellular/cellular_tx_queue.c.o
+[88/181] Building C object CMakeFiles/linkg.dir/infra/config/linkg_uart_config.c.o
+[89/181] Building C object CMakeFiles/linkg.dir/modules/cellular/control/cellular_modem.c.o
+[90/181] Building C object CMakeFiles/linkg.dir/modules/cellular/cellular_tx.c.o
+[91/181] Building C object CMakeFiles/linkg.dir/modules/cellular/control/cellular_health.c.o
+[92/181] Building C object CMakeFiles/linkg.dir/modules/cellular/control/cellular_runtime.c.o
+[93/181] Building C object CMakeFiles/linkg.dir/modules/cellular/control/cellular_monitor.c.o
+[94/181] Building C object CMakeFiles/linkg.dir/modules/cellular/cellular_rx.c.o
+[95/181] Building C object CMakeFiles/linkg.dir/modules/cellular/fsm/cellular_fsm_host.c.o
+[96/181] Building C object CMakeFiles/linkg.dir/modules/cellular/fsm/cellular_fsm_ipv6.c.o
+[97/181] Building C object CMakeFiles/linkg.dir/modules/cellular/fsm/cellular_fsm.c.o
+[98/181] Building C object CMakeFiles/linkg.dir/modules/cellular/fsm/cellular_fsm_registration.c.o
+[99/181] Building C object CMakeFiles/linkg.dir/modules/cellular/fsm/cellular_fsm_netdev.c.o
+[100/181] Building C object CMakeFiles/linkg.dir/modules/cellular/fsm/cellular_fsm_sim.c.o
+[101/181] Building C object CMakeFiles/linkg.dir/modules/cellular/fsm/cellular_fsm_pdp.c.o
+[102/181] Building C object CMakeFiles/linkg.dir/modules/cellular/linkg_cellular_link.c.o
+[103/181] Building C object CMakeFiles/linkg.dir/modules/cellular/control/cellular_status.c.o
+[104/181] Building C object CMakeFiles/linkg.dir/modules/cellular/linkg_cellular.c.o
+[105/181] Building C object CMakeFiles/linkg.dir/modules/ethernet/linkg_ethernet.c.o
+[106/181] Building C object CMakeFiles/linkg.dir/modules/wifi/linkg_wifi_ops.c.o
+[107/181] Building C object CMakeFiles/linkg.dir/modules/wifi/linkg_wifi_link.c.o
+[108/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_address.c.o
+[109/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_runtime.c.o
+[110/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_flowctrl.c.o
+[111/181] Building C object CMakeFiles/linkg.dir/modules/wifi/linkg_wifi.c.o
+[112/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_monitor.c.o
+[113/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_rx_queue.c.o
+[114/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_status_query.c.o
+[115/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_radio.c.o
+[116/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_tx_queue.c.o
+[117/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_status.c.o
+[118/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_tx.c.o
+[119/181] Building C object CMakeFiles/linkg.dir/platform/cellular/at/at_channel.c.o
+[120/181] Building C object CMakeFiles/linkg.dir/platform/cellular/rg255/rg255_cmd.c.o
+[121/181] Building C object CMakeFiles/linkg.dir/platform/gpio/linkg_gpio.c.o
+[122/181] Building C object CMakeFiles/linkg.dir/platform/wifi/linkg_wifi_hardware.c.o
+[123/181] Building C object CMakeFiles/linkg.dir/platform/uart/linkg_uart.c.o
+[124/181] Building C object CMakeFiles/linkg.dir/platform/tun/tun_driver_loader.c.o
+[125/181] Building C object CMakeFiles/linkg.dir/modules/wifi/wifi_rx.c.o
+[126/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_nb_report_netlink.c.o
+[127/181] Building C object CMakeFiles/linkg.dir/platform/cellular/rg255/rg255_query.c.o
+[128/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_nb_report.c.o
+[129/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_hostapd.c.o
+[130/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_service_ops.c.o
+[131/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_driver_ops.c.o
+[132/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_driver_loader.c.o
+[133/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_wpa_event.c.o
+[134/181] Building C object CMakeFiles/linkg.dir/service/network/network_cellular.c.o
+[135/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wpa_ctrl_unix.c.o
+[136/181] Building C object CMakeFiles/linkg.dir/platform/wifi/wifi_wpa.c.o
+[137/181] Building C object CMakeFiles/linkg.dir/service/network/linkg_network.c.o
+[138/181] Building C object CMakeFiles/linkg.dir/service/network/network_wifi.c.o
+[139/181] Building C object CMakeFiles/linkg.dir/service/gpio/linkg_gpio_manager.c.o
+[140/181] Building C object CMakeFiles/linkg.dir/service/network/network_manager.c.o
+[141/181] Building C object CMakeFiles/linkg.dir/service/uart/linkg_uart_manager.c.o
+[142/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_debug.c.o
+[143/181] Building C object CMakeFiles/linkg.dir/service/system/linkg_device_info.c.o
+[144/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_apply.c.o
+[145/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_port.c.o
+[146/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_sbus.c.o
+[147/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_diagnostic_test.c.o
+[148/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_status.c.o
+[149/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_diagnostic.c.o
+[150/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_worker.c.o
+[151/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_header.c.o
+[152/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_device.c.o
+[153/181] Building C object CMakeFiles/linkg.dir/service/uart/uart_route.c.o
+[154/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_network_traffic.c.o
+[155/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_network_basic.c.o
+[156/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_system.c.o
+[157/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_cellular.c.o
+[158/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_upgrade.c.o
+[159/181] Building C object CMakeFiles/linkg.dir/service/web/linkg_web.c.o
+[160/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_uart_diagnostic.c.o
+[161/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_overview.c.o
+[162/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_uart.c.o
+[163/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_switch_status.c.o
+[164/181] Building C object CMakeFiles/linkg.dir/service/web/web_response.c.o
+[165/181] Building C object CMakeFiles/linkg.dir/service/web/web_dispatch.c.o
+[166/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/src/supervisor_main.c.o
+[167/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/src/supervisor_version.c.o
+[168/181] Building C object CMakeFiles/linkg.dir/service/web/handlers/web_handler_wifi.c.o
+[169/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/src/supervisor_boot.c.o
+[170/181] Building C object CMakeFiles/linkg.dir/service/web/web_server.c.o
+[171/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/src/supervisor_release.c.o
+[172/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/src/supervisor_links.c.o
+[173/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/src/supervisor_storage.c.o
+[174/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/__/infra/base/linkg_atomic_file.c.o
+[175/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/__/infra/base/linkg_release_state.c.o
+[176/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/src/supervisor_process.c.o
+[177/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/__/infra/base/linkg_boot_env.c.o
+[178/181] Building C object CMakeFiles/linkg.dir/third_party/cjson/cJSON.c.o
+[179/181] Linking C executable /home/dawn/project/linkg_v1/output/bin/x86/linkg
+[180/181] Building C object supervisor/CMakeFiles/linkg-supervisor.dir/__/third_party/cjson/cJSON.c.o
+[181/181] Linking C executable /home/dawn/project/linkg_v1/output/bin/x86/linkg-supervisor
+[0/2] Re-checking globbed directories...
+ninja: no work to do.
+PRODUCT_BUILD_PASS

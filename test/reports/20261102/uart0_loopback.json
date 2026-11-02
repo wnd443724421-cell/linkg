@@ -1,0 +1,308 @@
+{
+  "test": "production UART0 diagnostic",
+  "targets": [
+    {
+      "host": "192.168.1.1",
+      "started_utc": "2026-11-02T06:49:30.609616+00:00",
+      "uart_status_before": {
+        "cmd": 1014,
+        "code": "ok",
+        "data": {
+          "ports": [
+            {
+              "routes": [
+                "waiting_peer"
+              ],
+              "uart_num": 0,
+              "device_path": "/dev/ttyS4",
+              "device_open": true,
+              "sbus_running": true,
+              "route_count": 1,
+              "uart_rx_bytes": "0",
+              "uart_tx_bytes": "0",
+              "net_rx_bytes": "0",
+              "net_tx_bytes": "0",
+              "errors": "0",
+              "drops": "0",
+              "baud": {
+                "verified": true,
+                "baud_base": 1500000,
+                "divisor": 15,
+                "actual": 100000,
+                "error_pct": 0
+              }
+            }
+          ],
+          "apply": {
+            "job_id": 0,
+            "state": "none",
+            "error": 0,
+            "rollback_error": 0,
+            "elapsed_ms": 0
+          },
+          "state": "running",
+          "worker_running": true
+        }
+      },
+      "invalid_start": {
+        "cmd": 1025,
+        "code": "error",
+        "msg": "单串口模式需要uart_num=0、1或2"
+      },
+      "start": {
+        "cmd": 1025,
+        "code": "ok",
+        "msg": "已接受串口硬件诊断任务",
+        "data": {
+          "job_id": 15,
+          "mode": "single",
+          "state": "starting",
+          "selected_uart": 0
+        }
+      },
+      "poll_count": 5,
+      "final": {
+        "cmd": 1026,
+        "code": "ok",
+        "data": {
+          "tests": [
+            {
+              "uart_num": 0,
+              "path": "normal",
+              "state": "passed",
+              "tx_bytes": 1536,
+              "rx_bytes": 1536,
+              "error_count": 0,
+              "first_error_offset": 4294967295,
+              "frames_total": 0,
+              "frames_ok": 0,
+              "error": 0,
+              "elapsed_ms": 188
+            },
+            {
+              "uart_num": 0,
+              "path": "sbus",
+              "state": "passed",
+              "tx_bytes": 500,
+              "rx_bytes": 500,
+              "error_count": 0,
+              "first_error_offset": 4294967295,
+              "frames_total": 20,
+              "frames_ok": 20,
+              "error": 0,
+              "elapsed_ms": 230
+            }
+          ],
+          "job_id": 15,
+          "mode": "single",
+          "state": "completed",
+          "selected_uart": 0,
+          "current_test": 1,
+          "test_count": 2,
+          "cancel_requested": false,
+          "uart_was_initialized": true,
+          "uart_was_running": true,
+          "uart_restored": true,
+          "tests_passed": true,
+          "error": 0,
+          "restore_error": 0,
+          "elapsed_ms": 442
+        }
+      },
+      "uart_status_after": {
+        "cmd": 1014,
+        "code": "ok",
+        "data": {
+          "ports": [
+            {
+              "routes": [
+                "waiting_peer"
+              ],
+              "uart_num": 0,
+              "device_path": "/dev/ttyS4",
+              "device_open": true,
+              "sbus_running": true,
+              "route_count": 1,
+              "uart_rx_bytes": "0",
+              "uart_tx_bytes": "0",
+              "net_rx_bytes": "0",
+              "net_tx_bytes": "0",
+              "errors": "0",
+              "drops": "0",
+              "baud": {
+                "verified": true,
+                "baud_base": 1500000,
+                "divisor": 15,
+                "actual": 100000,
+                "error_pct": 0
+              }
+            }
+          ],
+          "apply": {
+            "job_id": 0,
+            "state": "none",
+            "error": 0,
+            "rollback_error": 0,
+            "elapsed_ms": 0
+          },
+          "state": "running",
+          "worker_running": true
+        }
+      },
+      "finished_utc": "2026-11-02T06:49:31.117660+00:00",
+      "passed": true
+    },
+    {
+      "host": "192.168.3.1",
+      "started_utc": "2026-11-02T06:49:31.217599+00:00",
+      "uart_status_before": {
+        "cmd": 1014,
+        "code": "ok",
+        "data": {
+          "ports": [
+            {
+              "routes": [
+                "udp_ready"
+              ],
+              "uart_num": 0,
+              "device_path": "/dev/ttyS4",
+              "device_open": true,
+              "sbus_running": true,
+              "route_count": 1,
+              "uart_rx_bytes": "0",
+              "uart_tx_bytes": "0",
+              "net_rx_bytes": "0",
+              "net_tx_bytes": "0",
+              "errors": "0",
+              "drops": "0",
+              "baud": {
+                "verified": true,
+                "baud_base": 1500000,
+                "divisor": 15,
+                "actual": 100000,
+                "error_pct": 0
+              }
+            }
+          ],
+          "apply": {
+            "job_id": 0,
+            "state": "none",
+            "error": 0,
+            "rollback_error": 0,
+            "elapsed_ms": 0
+          },
+          "state": "running",
+          "worker_running": true
+        }
+      },
+      "invalid_start": {
+        "cmd": 1025,
+        "code": "error",
+        "msg": "单串口模式需要uart_num=0、1或2"
+      },
+      "start": {
+        "cmd": 1025,
+        "code": "ok",
+        "msg": "已接受串口硬件诊断任务",
+        "data": {
+          "job_id": 2,
+          "mode": "single",
+          "state": "starting",
+          "selected_uart": 0
+        }
+      },
+      "poll_count": 5,
+      "final": {
+        "cmd": 1026,
+        "code": "ok",
+        "data": {
+          "tests": [
+            {
+              "uart_num": 0,
+              "path": "normal",
+              "state": "passed",
+              "tx_bytes": 1536,
+              "rx_bytes": 1536,
+              "error_count": 0,
+              "first_error_offset": 4294967295,
+              "frames_total": 0,
+              "frames_ok": 0,
+              "error": 0,
+              "elapsed_ms": 188
+            },
+            {
+              "uart_num": 0,
+              "path": "sbus",
+              "state": "passed",
+              "tx_bytes": 500,
+              "rx_bytes": 500,
+              "error_count": 0,
+              "first_error_offset": 4294967295,
+              "frames_total": 20,
+              "frames_ok": 20,
+              "error": 0,
+              "elapsed_ms": 230
+            }
+          ],
+          "job_id": 2,
+          "mode": "single",
+          "state": "completed",
+          "selected_uart": 0,
+          "current_test": 1,
+          "test_count": 2,
+          "cancel_requested": false,
+          "uart_was_initialized": true,
+          "uart_was_running": true,
+          "uart_restored": true,
+          "tests_passed": true,
+          "error": 0,
+          "restore_error": 0,
+          "elapsed_ms": 441
+        }
+      },
+      "uart_status_after": {
+        "cmd": 1014,
+        "code": "ok",
+        "data": {
+          "ports": [
+            {
+              "routes": [
+                "udp_ready"
+              ],
+              "uart_num": 0,
+              "device_path": "/dev/ttyS4",
+              "device_open": true,
+              "sbus_running": true,
+              "route_count": 1,
+              "uart_rx_bytes": "0",
+              "uart_tx_bytes": "0",
+              "net_rx_bytes": "0",
+              "net_tx_bytes": "0",
+              "errors": "0",
+              "drops": "0",
+              "baud": {
+                "verified": true,
+                "baud_base": 1500000,
+                "divisor": 15,
+                "actual": 100000,
+                "error_pct": 0
+              }
+            }
+          ],
+          "apply": {
+            "job_id": 0,
+            "state": "none",
+            "error": 0,
+            "rollback_error": 0,
+            "elapsed_ms": 0
+          },
+          "state": "running",
+          "worker_running": true
+        }
+      },
+      "finished_utc": "2026-11-02T06:49:31.868413+00:00",
+      "passed": true
+    }
+  ],
+  "passed": true
+}

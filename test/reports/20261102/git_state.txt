@@ -1,0 +1,72 @@
+[tracked product source diff]
+[full status]
+ D test/cellular/Makefile
+ D test/cellular/RG255_NETMASKSET3_RX_CAPTURE.txt
+ D test/cellular/RG255_NETMASKSET3_RX_DIAGNOSIS.md
+ D test/cellular/RG255_QUERY_TEST_REPORT.md
+ D test/cellular/cellular_keepalive.c
+ D test/cellular/rg255_at_rx_probe.c
+ D test/cellular/rg255_query_fixture_test.c
+ D test/cellular/rg255_query_network_card_fixture_test.c
+ D test/cellular/rg255_query_test.c
+ D test/gpio/CMakeLists.txt
+ D test/gpio/README.md
+ D test/gpio/test_gpio.c
+ D test/network_basic/commands_test.js
+ D test/uart/build_tests.py
+ D test/uart/discovery_node_online_test.c
+ D test/uart/run_diagnostic_tests.py
+ D test/uart/test_api.py
+ D test/uart/test_browser.cjs
+ D test/uart/test_diagnostic_board.cjs
+ D test/uart/test_diagnostic_page.cjs
+ D test/uart/uart_diagnostic_console_test.c
+ D test/uart/uart_diagnostic_lifecycle_test.c
+ D test/uart/uart_platform_test.c
+ D test/uart/uart_route_peer_test.c
+ D test/uart/uart_test_server.c
+ D test/uart/web_test_gateway.py
+ D test/upgrade/BOARD_RESULTS_20261021.md
+ D test/upgrade/RESULTS.md
+ D test/upgrade/build_tests.py
+ D test/upgrade/ota_driver.c
+ D test/upgrade/system_install_test.c
+ D test/upgrade/test_ota.py
+ D test/upgrade/test_system_install.py
+ D test/upgrade/test_web.cjs
+ D test/upgrade/test_web_router.cjs
+ M upgrade/app/bin/linkg
+ M upgrade/output/linkg-upgrade-v1.0.0.tar.gz
+?? test/CMakeLists.txt
+?? test/README.md
+?? test/common/test_assert.h
+?? test/common/test_common.c
+?? test/integration/board_short_check.py
+?? test/integration/rk_video_dhcp_test.py
+?? test/integration/uart0_loopback_test.py
+?? test/reports/20261102/README.md
+?? test/reports/20261102/TEST_MATRIX.md
+?? test/reports/20261102/TEST_REPORT.md
+?? test/reports/20261102/board_short_check.json
+?? test/reports/20261102/environment.txt
+?? test/reports/20261102/git_state.txt
+?? test/reports/20261102/logic_ctest.log
+?? test/reports/20261102/mcu_sbus.log
+?? test/reports/20261102/product_build.log
+?? test/reports/20261102/rk_video_dhcp.json
+?? test/reports/20261102/sha256sums.txt
+?? test/reports/20261102/supervisor_ctest.log
+?? test/reports/20261102/uart0_loopback.json
+?? test/reports/20261102/video_receiver.log
+?? test/reports/20261102/video_sender.log
+?? test/run_logic_tests.sh
+?? test/unit/test_base.c
+?? test/unit/test_config.c
+?? test/unit/test_node_path.c
+?? test/unit/test_packet_pool.c
+?? test/unit/test_switch_verify.c
+?? test/unit/test_switch_wire.c
+?? test/unit/test_transport.c
+?? test/unit/test_wire_protocols.c
+[deployed artifact hash]
+325ab0c7196e0e4e9f94173fb2ab6a522debe17e9727d9505c25ffd1d18c28d1  upgrade/app/bin/linkg

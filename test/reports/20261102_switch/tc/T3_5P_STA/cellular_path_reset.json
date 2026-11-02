@@ -1,0 +1,4229 @@
+{
+  "test_id": "TC-SCENARIO-RESET-CELLULAR-PATH",
+  "started_utc": "2026-11-02T09:14:34.896376+00:00",
+  "samples": [
+    {
+      "captured_utc": "2026-11-02T09:14:35.261125+00:00",
+      "phase": "disabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26848889689,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 26848707621,
+                  "path_age_ms": 182,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 1,
+                    "loss_permille": 0,
+                    "updated_us": 26848707621,
+                    "age_ms": 182
+                  },
+                  "remote_maintenance": {
+                    "active": true,
+                    "access": "cellular",
+                    "message_id": 2,
+                    "started_us": 26848881100,
+                    "elapsed_ms": 8
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26848889689,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":26848707621,\"path_age_ms\":182,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26848707621,\"age_ms\":182},\"remote_maintenance\":{\"active\":true,\"access\":\"cellular\",\"message_id\":2,\"started_us\":26848881100,\"elapsed_ms\":8}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26800021080,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26799842126,
+              "observation_age_ms": 178,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -50,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26799227126,
+                "statistics_updated_us": 26799227126,
+                "status_age_ms": 793,
+                "statistics_age_ms": 793,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 7994,
+                    "updated_us": 26799410307,
+                    "age_ms": 610
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1924,
+                    "updated_us": 26799503882,
+                    "age_ms": 517
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2112,
+                    "updated_us": 26799704952,
+                    "age_ms": 316
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 3,
+                  "rx_pps": 7,
+                  "tx_bps": 766,
+                  "rx_bps": 6260,
+                  "updated_us": 26799842060,
+                  "age_ms": 179
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26799832237,
+                  "age_ms": 188
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 2,
+                  "loss_permille": 0,
+                  "updated_us": 26799842060,
+                  "age_ms": 179
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": true,
+                "updated_us": 26799842126,
+                "age_ms": 178
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": true,
+              "access": "cellular",
+              "message_id": 2,
+              "started_us": 26800003510,
+              "elapsed_ms": 17
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26800021080,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26799842126,\"observation_age_ms\":178,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-50,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26799227126,\"statistics_updated_us\":26799227126,\"status_age_ms\":793,\"statistics_age_ms\":793,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":7994,\"updated_us\":26799410307,\"age_ms\":610},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":1924,\"updated_us\":26799503882,\"age_ms\":517},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2112,\"updated_us\":26799704952,\"age_ms\":316}],\"traffic\":{\"valid\":true,\"tx_pps\":3,\"rx_pps\":7,\"tx_bps\":766,\"rx_bps\":6260,\"updated_us\":26799842060,\"age_ms\":179},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26799832237,\"age_ms\":188},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26799842060,\"age_ms\":179}},\"cellular\":{\"status_valid\":true,\"available\":true,\"updated_us\":26799842126,\"age_ms\":178},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":true,\"access\":\"cellular\",\"message_id\":2,\"started_us\":26800003510,\"elapsed_ms\":17}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": false,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":false,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:35.474263+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26849031074,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 26848958331,
+                  "path_age_ms": 72,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 1,
+                    "loss_permille": 0,
+                    "updated_us": 26848958331,
+                    "age_ms": 72
+                  },
+                  "remote_maintenance": {
+                    "active": true,
+                    "access": "cellular",
+                    "message_id": 2,
+                    "started_us": 26848881100,
+                    "elapsed_ms": 149
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26849031074,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":26848958331,\"path_age_ms\":72,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26848958331,\"age_ms\":72},\"remote_maintenance\":{\"active\":true,\"access\":\"cellular\",\"message_id\":2,\"started_us\":26848881100,\"elapsed_ms\":149}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26800211847,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26800092761,
+              "observation_age_ms": 119,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -49,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26800028761,
+                "statistics_updated_us": 26800028761,
+                "status_age_ms": 183,
+                "statistics_age_ms": 183,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 7994,
+                    "updated_us": 26799410307,
+                    "age_ms": 801
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1924,
+                    "updated_us": 26799503882,
+                    "age_ms": 707
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2112,
+                    "updated_us": 26799704952,
+                    "age_ms": 506
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 3,
+                  "rx_pps": 3,
+                  "tx_bps": 893,
+                  "rx_bps": 5491,
+                  "updated_us": 26800092646,
+                  "age_ms": 119
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26800082963,
+                  "age_ms": 128
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26800092646,
+                  "age_ms": 119
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": false,
+                "updated_us": 26800092761,
+                "age_ms": 119
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": true,
+              "access": "cellular",
+              "message_id": 2,
+              "started_us": 26800003510,
+              "elapsed_ms": 208
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26800211847,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26800092761,\"observation_age_ms\":119,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-49,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26800028761,\"statistics_updated_us\":26800028761,\"status_age_ms\":183,\"statistics_age_ms\":183,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":7994,\"updated_us\":26799410307,\"age_ms\":801},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":1924,\"updated_us\":26799503882,\"age_ms\":707},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2112,\"updated_us\":26799704952,\"age_ms\":506}],\"traffic\":{\"valid\":true,\"tx_pps\":3,\"rx_pps\":3,\"tx_bps\":893,\"rx_bps\":5491,\"updated_us\":26800092646,\"age_ms\":119},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26800082963,\"age_ms\":128},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26800092646,\"age_ms\":119}},\"cellular\":{\"status_valid\":true,\"available\":false,\"updated_us\":26800092761,\"age_ms\":119},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":true,\"access\":\"cellular\",\"message_id\":2,\"started_us\":26800003510,\"elapsed_ms\":208}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -90,
+              "rsrq_db": -13,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 27531
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 33267
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 33108
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-90,\"rsrq_db\":-13,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":27531},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":33267},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":33108}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": false,
+            "partial": false,
+            "internet_available": false,
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 30706
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 28180
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":false,\"partial\":false,\"internet_available\":false,\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":30706},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":28180}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:36.596465+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26850221239,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": false,
+                  "path_status_valid": true,
+                  "path_updated_us": 26850211895,
+                  "path_age_ms": 9,
+                  "wifi_uplink_loss": {
+                    "valid": false,
+                    "lost_packets": 0,
+                    "sample_packets": 0,
+                    "loss_permille": 0,
+                    "updated_us": 26850211895,
+                    "age_ms": 9
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26850221239,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"wifi_path_available\":true,\"cellular_path_available\":false,\"path_status_valid\":true,\"path_updated_us\":26850211895,\"path_age_ms\":9,\"wifi_uplink_loss\":{\"valid\":false,\"lost_packets\":0,\"sample_packets\":0,\"loss_permille\":0,\"updated_us\":26850211895,\"age_ms\":9},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26801352548,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26801345083,
+              "observation_age_ms": 7,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -50,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26800831083,
+                "statistics_updated_us": 26800831083,
+                "status_age_ms": 521,
+                "statistics_age_ms": 521,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1919,
+                    "updated_us": 26800404401,
+                    "age_ms": 948
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2069,
+                    "updated_us": 26800505163,
+                    "age_ms": 847
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2089,
+                    "updated_us": 26800706056,
+                    "age_ms": 646
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 0,
+                  "rx_pps": 3,
+                  "tx_bps": 0,
+                  "rx_bps": 5493,
+                  "updated_us": 26801345025,
+                  "age_ms": 7
+                },
+                "uplink_loss": {
+                  "valid": false,
+                  "lost_packets": 0,
+                  "sample_packets": 0,
+                  "loss_permille": 0,
+                  "updated_us": 26801336548,
+                  "age_ms": 16
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26801345025,
+                  "age_ms": 7
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": false,
+                "updated_us": 26801345083,
+                "age_ms": 7
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26801352548,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26801345083,\"observation_age_ms\":7,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-50,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26800831083,\"statistics_updated_us\":26800831083,\"status_age_ms\":521,\"statistics_age_ms\":521,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1919,\"updated_us\":26800404401,\"age_ms\":948},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":2069,\"updated_us\":26800505163,\"age_ms\":847},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2089,\"updated_us\":26800706056,\"age_ms\":646}],\"traffic\":{\"valid\":true,\"tx_pps\":0,\"rx_pps\":3,\"tx_bps\":0,\"rx_bps\":5493,\"updated_us\":26801345025,\"age_ms\":7},\"uplink_loss\":{\"valid\":false,\"lost_packets\":0,\"sample_packets\":0,\"loss_permille\":0,\"updated_us\":26801336548,\"age_ms\":16},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26801345025,\"age_ms\":7}},\"cellular\":{\"status_valid\":true,\"available\":false,\"updated_us\":26801345083,\"age_ms\":7},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -90,
+              "rsrq_db": -13,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-90,\"rsrq_db\":-13,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": false,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -91,
+              "rsrq_db": -10,
+              "sinr_db": 10
+            },
+            "data": {
+              "pdp_apn": "3gnet"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":false,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-91,\"rsrq_db\":-10,\"sinr_db\":10},\"data\":{\"pdp_apn\":\"3gnet\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:37.734494+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26851351022,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": false,
+                  "path_status_valid": true,
+                  "path_updated_us": 26851214232,
+                  "path_age_ms": 136,
+                  "wifi_uplink_loss": {
+                    "valid": false,
+                    "lost_packets": 0,
+                    "sample_packets": 0,
+                    "loss_permille": 0,
+                    "updated_us": 26851214232,
+                    "age_ms": 136
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26851351022,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"wifi_path_available\":true,\"cellular_path_available\":false,\"path_status_valid\":true,\"path_updated_us\":26851214232,\"path_age_ms\":136,\"wifi_uplink_loss\":{\"valid\":false,\"lost_packets\":0,\"sample_packets\":0,\"loss_permille\":0,\"updated_us\":26851214232,\"age_ms\":136},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26802483661,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26802347052,
+              "observation_age_ms": 136,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -50,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26801633052,
+                "statistics_updated_us": 26801633052,
+                "status_age_ms": 850,
+                "statistics_age_ms": 850,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2154,
+                    "updated_us": 26801404866,
+                    "age_ms": 1078
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2019,
+                    "updated_us": 26801505350,
+                    "age_ms": 978
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2355,
+                    "updated_us": 26801706536,
+                    "age_ms": 777
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 0,
+                  "rx_pps": 3,
+                  "tx_bps": 0,
+                  "rx_bps": 5494,
+                  "updated_us": 26802346994,
+                  "age_ms": 136
+                },
+                "uplink_loss": {
+                  "valid": false,
+                  "lost_packets": 0,
+                  "sample_packets": 0,
+                  "loss_permille": 0,
+                  "updated_us": 26802338869,
+                  "age_ms": 144
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26802346994,
+                  "age_ms": 136
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": false,
+                "updated_us": 26802347052,
+                "age_ms": 136
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26802483661,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26802347052,\"observation_age_ms\":136,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-50,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26801633052,\"statistics_updated_us\":26801633052,\"status_age_ms\":850,\"statistics_age_ms\":850,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":2154,\"updated_us\":26801404866,\"age_ms\":1078},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":2019,\"updated_us\":26801505350,\"age_ms\":978},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2355,\"updated_us\":26801706536,\"age_ms\":777}],\"traffic\":{\"valid\":true,\"tx_pps\":0,\"rx_pps\":3,\"tx_bps\":0,\"rx_bps\":5494,\"updated_us\":26802346994,\"age_ms\":136},\"uplink_loss\":{\"valid\":false,\"lost_packets\":0,\"sample_packets\":0,\"loss_permille\":0,\"updated_us\":26802338869,\"age_ms\":144},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26802346994,\"age_ms\":136}},\"cellular\":{\"status_valid\":true,\"available\":false,\"updated_us\":26802347052,\"age_ms\":136},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -90,
+              "rsrq_db": -13,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-90,\"rsrq_db\":-13,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": false,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -91,
+              "rsrq_db": -10,
+              "sinr_db": 10
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39",
+              "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":false,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-91,\"rsrq_db\":-10,\"sinr_db\":10},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:38.853306+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26852480972,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": false,
+                  "path_status_valid": true,
+                  "path_updated_us": 26852467075,
+                  "path_age_ms": 13,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 5,
+                    "loss_permille": 0,
+                    "updated_us": 26852467075,
+                    "age_ms": 13
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26852480972,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"wifi_path_available\":true,\"cellular_path_available\":false,\"path_status_valid\":true,\"path_updated_us\":26852467075,\"path_age_ms\":13,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":5,\"loss_permille\":0,\"updated_us\":26852467075,\"age_ms\":13},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26803651605,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26803600222,
+              "observation_age_ms": 51,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -47,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 58500,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26803236222,
+                "statistics_updated_us": 26803236222,
+                "status_age_ms": 415,
+                "statistics_age_ms": 415,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1897,
+                    "updated_us": 26803406640,
+                    "age_ms": 244
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2008,
+                    "updated_us": 26803507357,
+                    "age_ms": 144
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2333,
+                    "updated_us": 26802707474,
+                    "age_ms": 944
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 19,
+                  "rx_pps": 23,
+                  "tx_bps": 3831,
+                  "rx_bps": 9324,
+                  "updated_us": 26803600164,
+                  "age_ms": 51
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 5,
+                  "loss_permille": 0,
+                  "updated_us": 26803591615,
+                  "age_ms": 59
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 6,
+                  "loss_permille": 0,
+                  "updated_us": 26803600164,
+                  "age_ms": 51
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": false,
+                "updated_us": 26803600222,
+                "age_ms": 51
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26803651605,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26803600222,\"observation_age_ms\":51,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-47,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":58500,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26803236222,\"statistics_updated_us\":26803236222,\"status_age_ms\":415,\"statistics_age_ms\":415,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1897,\"updated_us\":26803406640,\"age_ms\":244},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":2008,\"updated_us\":26803507357,\"age_ms\":144},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2333,\"updated_us\":26802707474,\"age_ms\":944}],\"traffic\":{\"valid\":true,\"tx_pps\":19,\"rx_pps\":23,\"tx_bps\":3831,\"rx_bps\":9324,\"updated_us\":26803600164,\"age_ms\":51},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":5,\"loss_permille\":0,\"updated_us\":26803591615,\"age_ms\":59},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":6,\"loss_permille\":0,\"updated_us\":26803600164,\"age_ms\":51}},\"cellular\":{\"status_valid\":true,\"available\":false,\"updated_us\":26803600222,\"age_ms\":51},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -90,
+              "rsrq_db": -13,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-90,\"rsrq_db\":-13,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": false,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -91,
+              "rsrq_db": -10,
+              "sinr_db": 10
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":false,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-91,\"rsrq_db\":-10,\"sinr_db\":10},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:39.980538+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26853600984,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": false,
+                  "path_status_valid": true,
+                  "path_updated_us": 26853469284,
+                  "path_age_ms": 131,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 15,
+                    "loss_permille": 0,
+                    "updated_us": 26853469284,
+                    "age_ms": 131
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26853600984,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"wifi_path_available\":true,\"cellular_path_available\":false,\"path_status_valid\":true,\"path_updated_us\":26853469284,\"path_age_ms\":131,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":15,\"loss_permille\":0,\"updated_us\":26853469284,\"age_ms\":131},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26804731769,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26804602226,
+              "observation_age_ms": 129,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "none",
+                      "configured": false,
+                      "link_id": null
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -47,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 58500,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26804038226,
+                "statistics_updated_us": 26804038226,
+                "status_age_ms": 693,
+                "statistics_age_ms": 693,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1911,
+                    "updated_us": 26804407464,
+                    "age_ms": 324
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2086,
+                    "updated_us": 26804508112,
+                    "age_ms": 223
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2423,
+                    "updated_us": 26803708508,
+                    "age_ms": 1023
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 59,
+                  "rx_pps": 63,
+                  "tx_bps": 63699,
+                  "rx_bps": 55110,
+                  "updated_us": 26804602169,
+                  "age_ms": 129
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 15,
+                  "loss_permille": 0,
+                  "updated_us": 26804593805,
+                  "age_ms": 137
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 16,
+                  "loss_permille": 0,
+                  "updated_us": 26804602169,
+                  "age_ms": 129
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": false,
+                "updated_us": 26804602226,
+                "age_ms": 129
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26804731769,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26804602226,\"observation_age_ms\":129,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-47,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":58500,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26804038226,\"statistics_updated_us\":26804038226,\"status_age_ms\":693,\"statistics_age_ms\":693,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1911,\"updated_us\":26804407464,\"age_ms\":324},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":2086,\"updated_us\":26804508112,\"age_ms\":223},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2423,\"updated_us\":26803708508,\"age_ms\":1023}],\"traffic\":{\"valid\":true,\"tx_pps\":59,\"rx_pps\":63,\"tx_bps\":63699,\"rx_bps\":55110,\"updated_us\":26804602169,\"age_ms\":129},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":15,\"loss_permille\":0,\"updated_us\":26804593805,\"age_ms\":137},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":16,\"loss_permille\":0,\"updated_us\":26804602169,\"age_ms\":129}},\"cellular\":{\"status_valid\":true,\"available\":false,\"updated_us\":26804602226,\"age_ms\":129},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -90,
+              "rsrq_db": -13,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-90,\"rsrq_db\":-13,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": false,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -91,
+              "rsrq_db": -10,
+              "sinr_db": 10
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":false,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-91,\"rsrq_db\":-10,\"sinr_db\":10},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:41.117016+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26854731044,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "none",
+                          "configured": false,
+                          "link_id": null
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": false,
+                  "path_status_valid": true,
+                  "path_updated_us": 26854722404,
+                  "path_age_ms": 8,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 1,
+                    "loss_permille": 0,
+                    "updated_us": 26854722404,
+                    "age_ms": 8
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26854731044,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"none\",\"configured\":false,\"link_id\":null}}}},\"wifi_path_available\":true,\"cellular_path_available\":false,\"path_status_valid\":true,\"path_updated_us\":26854722404,\"path_age_ms\":8,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26854722404,\"age_ms\":8},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26805864917,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26805855309,
+              "observation_age_ms": 9,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -48,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26805642309,
+                "statistics_updated_us": 26805642309,
+                "status_age_ms": 222,
+                "statistics_age_ms": 222,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1892,
+                    "updated_us": 26805408078,
+                    "age_ms": 456
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1896,
+                    "updated_us": 26805508539,
+                    "age_ms": 356
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2044,
+                    "updated_us": 26805709359,
+                    "age_ms": 155
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 3,
+                  "rx_pps": 7,
+                  "tx_bps": 766,
+                  "rx_bps": 6258,
+                  "updated_us": 26805855187,
+                  "age_ms": 9
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26805847272,
+                  "age_ms": 17
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 2,
+                  "loss_permille": 0,
+                  "updated_us": 26805855187,
+                  "age_ms": 9
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": false,
+                "updated_us": 26805855309,
+                "age_ms": 9
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26805864917,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26805855309,\"observation_age_ms\":9,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-48,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26805642309,\"statistics_updated_us\":26805642309,\"status_age_ms\":222,\"statistics_age_ms\":222,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1892,\"updated_us\":26805408078,\"age_ms\":456},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":1896,\"updated_us\":26805508539,\"age_ms\":356},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2044,\"updated_us\":26805709359,\"age_ms\":155}],\"traffic\":{\"valid\":true,\"tx_pps\":3,\"rx_pps\":7,\"tx_bps\":766,\"rx_bps\":6258,\"updated_us\":26805855187,\"age_ms\":9},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26805847272,\"age_ms\":17},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26805855187,\"age_ms\":9}},\"cellular\":{\"status_valid\":true,\"available\":false,\"updated_us\":26805855309,\"age_ms\":9},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -89,
+              "rsrq_db": -12,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": false,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-89,\"rsrq_db\":-12,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":false,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": false,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -92,
+              "rsrq_db": -10,
+              "sinr_db": 11
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39",
+              "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "video": {
+                      "valid": false,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": false,
+                      "reachable": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":false,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-92,\"rsrq_db\":-10,\"sinr_db\":11},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":false,\"reachable\":false},\"video\":{\"valid\":false,\"reachable\":false},\"data\":{\"valid\":false,\"reachable\":false}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:42.194443+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26855817687,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 26855725591,
+                  "path_age_ms": 92,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 2,
+                    "loss_permille": 0,
+                    "updated_us": 26855725591,
+                    "age_ms": 92
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26855817687,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":26855725591,\"path_age_ms\":92,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26855725591,\"age_ms\":92},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26806991596,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26806857348,
+              "observation_age_ms": 134,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -49,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26806444348,
+                "statistics_updated_us": 26806444348,
+                "status_age_ms": 547,
+                "statistics_age_ms": 547,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1925,
+                    "updated_us": 26806408295,
+                    "age_ms": 583
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1900,
+                    "updated_us": 26806508929,
+                    "age_ms": 482
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2171,
+                    "updated_us": 26806709894,
+                    "age_ms": 281
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 7,
+                  "rx_pps": 11,
+                  "tx_bps": 1532,
+                  "rx_bps": 7025,
+                  "updated_us": 26806857287,
+                  "age_ms": 134
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 2,
+                  "loss_permille": 0,
+                  "updated_us": 26806850246,
+                  "age_ms": 141
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 3,
+                  "loss_permille": 0,
+                  "updated_us": 26806857287,
+                  "age_ms": 134
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": true,
+                "updated_us": 26806857348,
+                "age_ms": 134
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26806991596,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26806857348,\"observation_age_ms\":134,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-49,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26806444348,\"statistics_updated_us\":26806444348,\"status_age_ms\":547,\"statistics_age_ms\":547,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1925,\"updated_us\":26806408295,\"age_ms\":583},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":1900,\"updated_us\":26806508929,\"age_ms\":482},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2171,\"updated_us\":26806709894,\"age_ms\":281}],\"traffic\":{\"valid\":true,\"tx_pps\":7,\"rx_pps\":11,\"tx_bps\":1532,\"rx_bps\":7025,\"updated_us\":26806857287,\"age_ms\":134},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26806850246,\"age_ms\":141},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":3,\"loss_permille\":0,\"updated_us\":26806857287,\"age_ms\":134}},\"cellular\":{\"status_valid\":true,\"available\":true,\"updated_us\":26806857348,\"age_ms\":134},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -89,
+              "rsrq_db": -12,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 27634
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 29106
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 29670
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-89,\"rsrq_db\":-12,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":27634},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":29106},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":29670}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -92,
+              "rsrq_db": -10,
+              "sinr_db": 11
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39",
+              "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 28099
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": false
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 40672
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-92,\"rsrq_db\":-10,\"sinr_db\":11},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":28099},\"video\":{\"valid\":true,\"reachable\":false},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":40672}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:43.331893+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26856941289,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 26856729160,
+                  "path_age_ms": 212,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 2,
+                    "loss_permille": 0,
+                    "updated_us": 26856729160,
+                    "age_ms": 212
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26856941289,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":26856729160,\"path_age_ms\":212,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26856729160,\"age_ms\":212},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26808073578,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26807859583,
+              "observation_age_ms": 213,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -48,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26807246583,
+                "statistics_updated_us": 26807246583,
+                "status_age_ms": 826,
+                "statistics_age_ms": 826,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1833,
+                    "updated_us": 26807408917,
+                    "age_ms": 664
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1903,
+                    "updated_us": 26807509433,
+                    "age_ms": 564
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 3060,
+                    "updated_us": 26807711730,
+                    "age_ms": 361
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 7,
+                  "rx_pps": 11,
+                  "tx_bps": 1532,
+                  "rx_bps": 7025,
+                  "updated_us": 26807859520,
+                  "age_ms": 214
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 2,
+                  "loss_permille": 0,
+                  "updated_us": 26807853780,
+                  "age_ms": 219
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 3,
+                  "loss_permille": 0,
+                  "updated_us": 26807859520,
+                  "age_ms": 214
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": true,
+                "updated_us": 26807859583,
+                "age_ms": 213
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26808073578,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26807859583,\"observation_age_ms\":213,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-48,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26807246583,\"statistics_updated_us\":26807246583,\"status_age_ms\":826,\"statistics_age_ms\":826,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1833,\"updated_us\":26807408917,\"age_ms\":664},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":1903,\"updated_us\":26807509433,\"age_ms\":564},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":3060,\"updated_us\":26807711730,\"age_ms\":361}],\"traffic\":{\"valid\":true,\"tx_pps\":7,\"rx_pps\":11,\"tx_bps\":1532,\"rx_bps\":7025,\"updated_us\":26807859520,\"age_ms\":214},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26807853780,\"age_ms\":219},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":3,\"loss_permille\":0,\"updated_us\":26807859520,\"age_ms\":214}},\"cellular\":{\"status_valid\":true,\"available\":true,\"updated_us\":26807859583,\"age_ms\":213},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -89,
+              "rsrq_db": -12,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 264809
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 268960
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 257756
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-89,\"rsrq_db\":-12,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":264809},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":268960},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":257756}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -92,
+              "rsrq_db": -10,
+              "sinr_db": 11
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39",
+              "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 53881
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 30322
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 36367
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-92,\"rsrq_db\":-10,\"sinr_db\":11},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":53881},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":30322},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":36367}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:44.453047+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26858080863,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 26857983911,
+                  "path_age_ms": 96,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 1,
+                    "loss_permille": 0,
+                    "updated_us": 26857983911,
+                    "age_ms": 96
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26858080863,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":26857983911,\"path_age_ms\":96,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26857983911,\"age_ms\":96},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26809251687,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26809112473,
+              "observation_age_ms": 139,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -49,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26808850473,
+                "statistics_updated_us": 26808850473,
+                "status_age_ms": 401,
+                "statistics_age_ms": 401,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1804,
+                    "updated_us": 26808409151,
+                    "age_ms": 842
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2079,
+                    "updated_us": 26808509849,
+                    "age_ms": 741
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2209,
+                    "updated_us": 26808711207,
+                    "age_ms": 540
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 3,
+                  "rx_pps": 7,
+                  "tx_bps": 766,
+                  "rx_bps": 6257,
+                  "updated_us": 26809112412,
+                  "age_ms": 139
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26809108467,
+                  "age_ms": 143
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 2,
+                  "loss_permille": 0,
+                  "updated_us": 26809112412,
+                  "age_ms": 139
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": true,
+                "updated_us": 26809112473,
+                "age_ms": 139
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26809251687,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26809112473,\"observation_age_ms\":139,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-49,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26808850473,\"statistics_updated_us\":26808850473,\"status_age_ms\":401,\"statistics_age_ms\":401,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1804,\"updated_us\":26808409151,\"age_ms\":842},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":2079,\"updated_us\":26808509849,\"age_ms\":741},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2209,\"updated_us\":26808711207,\"age_ms\":540}],\"traffic\":{\"valid\":true,\"tx_pps\":3,\"rx_pps\":7,\"tx_bps\":766,\"rx_bps\":6257,\"updated_us\":26809112412,\"age_ms\":139},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26809108467,\"age_ms\":143},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26809112412,\"age_ms\":139}},\"cellular\":{\"status_valid\":true,\"available\":true,\"updated_us\":26809112473,\"age_ms\":139},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -89,
+              "rsrq_db": -12,
+              "sinr_db": 2
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 28757
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 29178
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 36787
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-89,\"rsrq_db\":-12,\"sinr_db\":2},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":28757},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":29178},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":36787}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -92,
+              "rsrq_db": -10,
+              "sinr_db": 11
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39",
+              "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 37554
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 27954
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 28167
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-92,\"rsrq_db\":-10,\"sinr_db\":11},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":37554},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":27954},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":28167}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    },
+    {
+      "captured_utc": "2026-11-02T09:14:45.582619+00:00",
+      "phase": "reenabled",
+      "ap_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "ap",
+            "collected_us": 26859200779,
+            "ap": {
+              "peer_count": 1,
+              "peers": [
+                {
+                  "node_id": 2,
+                  "plan": {
+                    "valid": true,
+                    "classes": {
+                      "realtime": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "video": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      },
+                      "data": {
+                        "valid": true,
+                        "mode": "single",
+                        "primary": {
+                          "access": "wifi",
+                          "configured": true,
+                          "link_id": 1
+                        },
+                        "secondary": {
+                          "access": "cellular",
+                          "configured": true,
+                          "link_id": 2
+                        }
+                      }
+                    }
+                  },
+                  "wifi_path_available": true,
+                  "cellular_path_available": true,
+                  "path_status_valid": true,
+                  "path_updated_us": 26858987953,
+                  "path_age_ms": 212,
+                  "wifi_uplink_loss": {
+                    "valid": true,
+                    "lost_packets": 0,
+                    "sample_packets": 1,
+                    "loss_permille": 0,
+                    "updated_us": 26858987953,
+                    "age_ms": 212
+                  },
+                  "remote_maintenance": {
+                    "active": false,
+                    "access": "none",
+                    "message_id": 0,
+                    "started_us": 0,
+                    "elapsed_ms": 0
+                  }
+                }
+              ]
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"ap\",\"collected_us\":26859200779,\"ap\":{\"peer_count\":1,\"peers\":[{\"node_id\":2,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":1},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":2}}}},\"wifi_path_available\":true,\"cellular_path_available\":true,\"path_status_valid\":true,\"path_updated_us\":26858987953,\"path_age_ms\":212,\"wifi_uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26858987953,\"age_ms\":212},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}]},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "sta_switch": {
+        "response": {
+          "cmd": 1003,
+          "code": "ok",
+          "data": {
+            "role": "sta",
+            "collected_us": 26810332043,
+            "sta": {
+              "peer_present": true,
+              "observation_valid": true,
+              "peer_node_id": 1,
+              "observation_updated_us": 26810114723,
+              "observation_age_ms": 217,
+              "plan": {
+                "valid": true,
+                "classes": {
+                  "realtime": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "video": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  },
+                  "data": {
+                    "valid": true,
+                    "mode": "single",
+                    "primary": {
+                      "access": "wifi",
+                      "configured": true,
+                      "link_id": 2
+                    },
+                    "secondary": {
+                      "access": "cellular",
+                      "configured": true,
+                      "link_id": 4
+                    }
+                  }
+                }
+              },
+              "plan_sync": {
+                "state": "confirmed",
+                "active": false,
+                "confirmed": true,
+                "message_id": 24,
+                "last_status": 0
+              },
+              "wifi": {
+                "available": true,
+                "radio_valid": true,
+                "connected": true,
+                "statistics_valid": true,
+                "rssi_dbm": -47,
+                "noise_valid": true,
+                "noise_dbm": -101,
+                "tx_phy_kbps": 65000,
+                "rx_phy_kbps": 65000,
+                "inactive_ms": 0,
+                "work_mode": "narrow",
+                "bandwidth_mhz": 10,
+                "narrow_mode": "adaptive",
+                "rate_level_valid": true,
+                "rate_level": 5,
+                "temperature_valid": true,
+                "temperature_c": 48,
+                "status_updated_us": 26809652723,
+                "statistics_updated_us": 26809652723,
+                "status_age_ms": 679,
+                "statistics_age_ms": 679,
+                "probes": [
+                  {
+                    "class": "realtime",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 1789,
+                    "updated_us": 26809409381,
+                    "age_ms": 922
+                  },
+                  {
+                    "class": "video",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2016,
+                    "updated_us": 26809510036,
+                    "age_ms": 822
+                  },
+                  {
+                    "class": "data",
+                    "valid": true,
+                    "reachable": true,
+                    "rtt_us": 2226,
+                    "updated_us": 26809711445,
+                    "age_ms": 620
+                  }
+                ],
+                "traffic": {
+                  "valid": true,
+                  "tx_pps": 3,
+                  "rx_pps": 7,
+                  "tx_bps": 766,
+                  "rx_bps": 6257,
+                  "updated_us": 26810114660,
+                  "age_ms": 217
+                },
+                "uplink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 1,
+                  "loss_permille": 0,
+                  "updated_us": 26810112575,
+                  "age_ms": 219
+                },
+                "downlink_loss": {
+                  "valid": true,
+                  "lost_packets": 0,
+                  "sample_packets": 2,
+                  "loss_permille": 0,
+                  "updated_us": 26810114660,
+                  "age_ms": 217
+                }
+              },
+              "cellular": {
+                "status_valid": true,
+                "available": true,
+                "updated_us": 26810114723,
+                "age_ms": 217
+              },
+              "remote_maintenance": {
+                "active": false,
+                "access": "none",
+                "message_id": 0,
+                "started_us": 0,
+                "elapsed_ms": 0
+              }
+            },
+            "local_maintenance": {
+              "active": false,
+              "access": "none",
+              "message_id": 0,
+              "started_us": 0,
+              "elapsed_ms": 0
+            }
+          }
+        },
+        "raw": "{\"cmd\":1003,\"code\":\"ok\",\"data\":{\"role\":\"sta\",\"collected_us\":26810332043,\"sta\":{\"peer_present\":true,\"observation_valid\":true,\"peer_node_id\":1,\"observation_updated_us\":26810114723,\"observation_age_ms\":217,\"plan\":{\"valid\":true,\"classes\":{\"realtime\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"video\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}},\"data\":{\"valid\":true,\"mode\":\"single\",\"primary\":{\"access\":\"wifi\",\"configured\":true,\"link_id\":2},\"secondary\":{\"access\":\"cellular\",\"configured\":true,\"link_id\":4}}}},\"plan_sync\":{\"state\":\"confirmed\",\"active\":false,\"confirmed\":true,\"message_id\":24,\"last_status\":0},\"wifi\":{\"available\":true,\"radio_valid\":true,\"connected\":true,\"statistics_valid\":true,\"rssi_dbm\":-47,\"noise_valid\":true,\"noise_dbm\":-101,\"tx_phy_kbps\":65000,\"rx_phy_kbps\":65000,\"inactive_ms\":0,\"work_mode\":\"narrow\",\"bandwidth_mhz\":10,\"narrow_mode\":\"adaptive\",\"rate_level_valid\":true,\"rate_level\":5,\"temperature_valid\":true,\"temperature_c\":48,\"status_updated_us\":26809652723,\"statistics_updated_us\":26809652723,\"status_age_ms\":679,\"statistics_age_ms\":679,\"probes\":[{\"class\":\"realtime\",\"valid\":true,\"reachable\":true,\"rtt_us\":1789,\"updated_us\":26809409381,\"age_ms\":922},{\"class\":\"video\",\"valid\":true,\"reachable\":true,\"rtt_us\":2016,\"updated_us\":26809510036,\"age_ms\":822},{\"class\":\"data\",\"valid\":true,\"reachable\":true,\"rtt_us\":2226,\"updated_us\":26809711445,\"age_ms\":620}],\"traffic\":{\"valid\":true,\"tx_pps\":3,\"rx_pps\":7,\"tx_bps\":766,\"rx_bps\":6257,\"updated_us\":26810114660,\"age_ms\":217},\"uplink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":1,\"loss_permille\":0,\"updated_us\":26810112575,\"age_ms\":219},\"downlink_loss\":{\"valid\":true,\"lost_packets\":0,\"sample_packets\":2,\"loss_permille\":0,\"updated_us\":26810114660,\"age_ms\":217}},\"cellular\":{\"status_valid\":true,\"available\":true,\"updated_us\":26810114723,\"age_ms\":217},\"remote_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}},\"local_maintenance\":{\"active\":false,\"access\":\"none\",\"message_id\":0,\"started_us\":0,\"elapsed_ms\":0}}}"
+      },
+      "ap_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "auto",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "5g_sa",
+              "plmn": "46011",
+              "band": 1,
+              "rsrp_dbm": -92,
+              "rsrq_db": -13,
+              "sinr_db": 1
+            },
+            "data": {
+              "pdp_apn": "ctnet",
+              "ipv4": "10.140.182.151",
+              "ipv6": "240e:476:888:97bf:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 2,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 210109
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 201476
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 197108
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"auto\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"5g_sa\",\"plmn\":\"46011\",\"band\":1,\"rsrp_dbm\":-92,\"rsrq_db\":-13,\"sinr_db\":1},\"data\":{\"pdp_apn\":\"ctnet\",\"ipv4\":\"10.140.182.151\",\"ipv6\":\"240e:476:888:97bf:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":2,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":210109},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":201476},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":197108}}}]}}}"
+      },
+      "sta_cellular": {
+        "response": {
+          "cmd": 1009,
+          "code": "ok",
+          "data": {
+            "enabled": true,
+            "path_enabled": true,
+            "available": true,
+            "partial": false,
+            "internet_available": true,
+            "local": {
+              "network_mode": "4g",
+              "sim_state": "ready"
+            },
+            "network": {
+              "registration": "registered",
+              "network_type": "lte",
+              "plmn": "46001",
+              "band": 3,
+              "rsrp_dbm": -92,
+              "rsrq_db": -10,
+              "sinr_db": 11
+            },
+            "data": {
+              "pdp_apn": "3gnet",
+              "ipv4": "10.114.76.39",
+              "ipv6": "2408:8469:850:dede:c:29ff:fea3:9b6d"
+            },
+            "path": {
+              "peers": [
+                {
+                  "node_id": 1,
+                  "active": true,
+                  "probe": {
+                    "realtime": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 27459
+                    },
+                    "video": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 36877
+                    },
+                    "data": {
+                      "valid": true,
+                      "reachable": true,
+                      "rtt_us": 34978
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "raw": "{\"cmd\":1009,\"code\":\"ok\",\"data\":{\"enabled\":true,\"path_enabled\":true,\"available\":true,\"partial\":false,\"internet_available\":true,\"local\":{\"network_mode\":\"4g\",\"sim_state\":\"ready\"},\"network\":{\"registration\":\"registered\",\"network_type\":\"lte\",\"plmn\":\"46001\",\"band\":3,\"rsrp_dbm\":-92,\"rsrq_db\":-10,\"sinr_db\":11},\"data\":{\"pdp_apn\":\"3gnet\",\"ipv4\":\"10.114.76.39\",\"ipv6\":\"2408:8469:850:dede:c:29ff:fea3:9b6d\"},\"path\":{\"peers\":[{\"node_id\":1,\"active\":true,\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":27459},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":36877},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":34978}}}]}}}"
+      },
+      "sta_config": {
+        "response": {
+          "cmd": 1007,
+          "code": "ok",
+          "data": {
+            "path_enabled": true,
+            "cellular": {
+              "enabled": true,
+              "network_mode": "4g",
+              "apn": "",
+              "pin": ""
+            }
+          }
+        },
+        "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+      }
+    }
+  ],
+  "before_config": {
+    "response": {
+      "cmd": 1007,
+      "code": "ok",
+      "data": {
+        "path_enabled": true,
+        "cellular": {
+          "enabled": true,
+          "network_mode": "4g",
+          "apn": "",
+          "pin": ""
+        }
+      }
+    },
+    "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+  },
+  "config_sha256_before": {
+    "exit": 0,
+    "stdout": "4c1cc9f4b552e5d5dff07a27c59acfc77a3edecfd168cad30309cdc6f5e193a7  /app/linkgUser.json\n",
+    "stderr": ""
+  },
+  "disable": {
+    "response": {
+      "cmd": 1008,
+      "code": "ok",
+      "data": {
+        "apply": "restart"
+      }
+    },
+    "raw": "{\"cmd\":1008,\"code\":\"ok\",\"data\":{\"apply\":\"restart\"}}"
+  },
+  "wifi_primary_seen_while_disabled": true,
+  "enable": {
+    "response": {
+      "cmd": 1008,
+      "code": "ok",
+      "data": {
+        "apply": "restart"
+      }
+    },
+    "raw": "{\"cmd\":1008,\"code\":\"ok\",\"data\":{\"apply\":\"restart\"}}"
+  },
+  "ready_utc": "2026-11-02T09:14:45.582619+00:00",
+  "normal_confirmed": true,
+  "after_config": {
+    "response": {
+      "cmd": 1007,
+      "code": "ok",
+      "data": {
+        "path_enabled": true,
+        "cellular": {
+          "enabled": true,
+          "network_mode": "4g",
+          "apn": "",
+          "pin": ""
+        }
+      }
+    },
+    "raw": "{\"cmd\":1007,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"cellular\":{\"enabled\":true,\"network_mode\":\"4g\",\"apn\":\"\",\"pin\":\"\"}}}"
+  },
+  "config_sha256_after": {
+    "exit": 0,
+    "stdout": "4c1cc9f4b552e5d5dff07a27c59acfc77a3edecfd168cad30309cdc6f5e193a7  /app/linkgUser.json\n",
+    "stderr": ""
+  },
+  "passed": true,
+  "enable_attempted": true,
+  "finished_utc": "2026-11-02T09:14:45.614674+00:00"
+}

@@ -1,0 +1,1156 @@
+commit=a1e74eda5fee1b3ab5fb62460ac3324c609f6c52
+
+===== core/probe/path_probe_internal.h:25-35 =====
+   25 #define LINKG_PATH_PROBE_THREAD_NAME                  "path-probe"        // Probe线程名称
+   26 #define LINKG_PATH_PROBE_INTERVAL_US                  1000000ULL          // AP全部路径及STA普通路径周期
+   27 #define LINKG_PATH_PROBE_CELLULAR_FAST_INTERVAL_US    100000ULL           // STA主用Cellular三类别快速周期
+   28 #define LINKG_PATH_PROBE_DEFAULT_TIMEOUT_US           300000ULL           // 周期Probe响应超时
+   29 #define LINKG_PATH_PROBE_TOPOLOGY_INTERVAL_US         1000000ULL          // Direct Peer及Path列表同步周期
+   30 #define LINKG_PATH_PROBE_POLICY_INTERVAL_US           100000ULL           // STA主链路计划读取周期
+   31 #define LINKG_PATH_PROBE_PPS_SAMPLE_INTERVAL_US       1000000ULL          // Cellular真实业务PPS统计窗口
+   32 #define LINKG_PATH_PROBE_HIGH_PPS_THRESHOLD           100U                // 超过该PPS后关闭100ms快速Probe
+   33 #define LINKG_PATH_PROBE_WORK_BUDGET                  32U                 // 单轮Worker最大发送或过期时隙处理数量
+   34 #define LINKG_PATH_PROBE_DIAGNOSTIC_MIN_GAP_US        1000ULL             // 主动诊断最小发送间隔
+   35 #define LINKG_PATH_PROBE_DIAGNOSTIC_WINDOW_MAX_MS     60000U              // 单次诊断最大发送窗口
+
+===== core/switch/switch_policy_quality.c:24-42 =====
+   24 /****************************** 判决参数 ******************************/
+   25 
+   26 #define LINKG_SWITCH_QUALITY_MIN_SAMPLES           20U        // 单方向累计达到20包进行一次Wire质量判决
+   27 #define LINKG_SWITCH_QUALITY_BAD_SCORE             5U         // LOAD/LOSS独立的Wire异常积分门槛
+   28 #define LINKG_SWITCH_QUALITY_WIRE_IDLE_RESET_US    2000000ULL // 连续2秒无合法非零Wire新样本时清除旧积分
+   29 #define LINKG_SWITCH_QUALITY_ACCUMULATE_MAX_US     2000000ULL // 单批Wire低样本累计最长保留2秒
+   30 #define LINKG_SWITCH_QUALITY_HCC_BAD_SCORE         3U         // HCC持续流控压力确认积分
+   31 #define LINKG_SWITCH_QUALITY_HCC_FAST_OFF_COUNT    5U         // 本地单250ms窗口OFF超过5次快速确认
+   32 #define LINKG_SWITCH_QUALITY_HCC_WINDOW_US         250000ULL  // HCC压力积分基础窗口
+   33 #define LINKG_SWITCH_QUALITY_HCC_MAX_AGE_US        1000000ULL // HCC观测最大年龄
+   34 #define LINKG_SWITCH_QUALITY_HCC_CANDIDATE_IDLE_US 2000000ULL // HCC候选积分2秒无新OFF自动老化
+   35 #define LINKG_SWITCH_QUALITY_HCC_RECOVERY_US       3000000ULL // HCC压力确认后的LOSS最短保护时间
+   36 #define LINKG_SWITCH_QUALITY_FAST_PERIOD_US        250000ULL  // 单发Probe与快速积分窗口250ms
+   37 #define LINKG_SWITCH_QUALITY_FAST_TIMEOUT_MS       200U       // 单包Probe网络响应超时200ms
+   38 #define LINKG_SWITCH_QUALITY_FAST_ACTIVE_AGE_MS    1500ULL    // 只探测最近有真实USER_DATA的业务
+   39 #define LINKG_SWITCH_QUALITY_FAST_STREAK_GAP_US    750000ULL  // 两次有效TIMEOUT间隔超过750ms不再视为连续
+   40 #define LINKG_SWITCH_QUALITY_FAST_EVIDENCE_HCC     0x01U      // 本窗口HCC新增OFF
+   41 #define LINKG_SWITCH_QUALITY_FAST_EVIDENCE_WIRE    0x02U      // 本窗口Wire BAD丢包
+   42 #define LINKG_SWITCH_QUALITY_FAST_EVIDENCE_PROBE   0x04U      // 本窗口有效Probe超时
+
+===== core/switch/switch_policy_quality.c:143-175 =====
+  143 static void _linkg_switch_quality_fast_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_quality_fast_result_t *output)
+  144 {
+  145     linkg_transport_peer_stats_t   stats;
+  146     linkg_path_probe_async_result_t result;
+  147     uint64_t                       now_ms;
+  148     uint64_t                       handle;
+  149     uint32_t                       index;
+  150     uint32_t                       bit;
+  151     bool                           active;
+  152     int                            ret;
+  153 
+  154     memset(output, 0, sizeof(*output));
+  155 
+  156     if (!_linkg_switch_quality_fast_eligible(input))
+  157     {
+  158         _linkg_switch_quality_fast_reset();
+  159         return;
+  160     }
+  161 
+  162     if (!g_quality_fast_probe.initialized ||
+  163         g_quality_fast_probe.peer_node_id != input->peer_node_id ||
+  164         g_quality_fast_probe.peer_generation != input->peer_generation ||
+  165         g_quality_fast_probe.wifi_link_id != input->observation.wifi.link_id ||
+  166         !_linkg_switch_quality_plan_equal(&g_quality_fast_probe.plan, &input->plan))
+  167     {
+  168         _linkg_switch_quality_fast_reset();
+  169         g_quality_fast_probe.initialized     = true;
+  170         g_quality_fast_probe.peer_node_id    = input->peer_node_id;
+  171         g_quality_fast_probe.peer_generation = input->peer_generation;
+  172         g_quality_fast_probe.wifi_link_id    = input->observation.wifi.link_id;
+  173         g_quality_fast_probe.plan            = input->plan;
+  174     }
+  175 
+
+===== core/switch/switch_policy_quality.c:640-780 =====
+  640  * 新增OFF：Wire归LOAD，且通知快速LOAD计分；无新增OFF不再独立扣减LOAD；
+  641  * 压力候选或确认保护期且无新增OFF：Wire跳过；无HCC压力：Wire归LOSS。
+  642  * HCC缺失不等于无新增OFF，因此不据此递减LOAD积分，也不永久禁止LOSS。
+  643  * 确认压力时只清除LOSS共享积分，保留LOAD积分及Wire当前窗口。
+  644  * 不改变detector->wire_route；第七阶段负责切换归属时的低样本隔离。
+  645  * 调用方必须持有Switch锁。
+  646  */
+  647 static linkg_switch_quality_wire_route_t _linkg_switch_quality_hcc_route_locked(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_quality_policy_runtime_t *detector, bool *new_off)
+  648 {
+  649     const linkg_switch_wifi_observation_t *wifi;
+  650     uint64_t                               observation_us;
+  651     uint64_t                               ul_elapsed_us;
+  652     uint64_t                               dl_elapsed_us;
+  653     uint64_t                               time_gap_us;
+  654     uint32_t                               ul_off;
+  655     uint32_t                               dl_off;
+  656     uint32_t                               next_score;
+  657     bool                                   ul_valid;
+  658     bool                                   dl_valid;
+  659     bool                                   ul_blocked;
+  660     bool                                   dl_blocked;
+  661     bool                                   off_detected;
+  662     bool                                   simultaneous_off;
+  663     bool                                   fast_pressure;
+  664 
+  665     wifi           = &input->observation.wifi;
+  666     observation_us = input->observation.collected_us;
+  667 
+  668     /****************************** 一、候选积分老化 ******************************/
+  669 
+  670     if (!detector->hcc_pressure_active && detector->hcc_pressure_score > 0U &&
+  671         detector->last_hcc_pressure_us != 0U && now_us >= detector->last_hcc_pressure_us &&
+  672         now_us - detector->last_hcc_pressure_us >= LINKG_SWITCH_QUALITY_HCC_CANDIDATE_IDLE_US)
+  673     {
+  674         detector->hcc_pressure_score = 0U;
+  675     }
+  676 
+  677     /****************************** 二、HCC新样本及OFF差分 ******************************/
+  678 
+  679     // 单方向用源时间戳独立去重；同一份Observation不会被重复积分。
+  680     ul_valid = _linkg_switch_quality_hcc_sample_locked(&wifi->uplink_hcc, observation_us, now_us, &detector->uplink_hcc, &ul_off, &ul_elapsed_us, &ul_blocked);
+  681     dl_valid = _linkg_switch_quality_hcc_sample_locked(&wifi->downlink_hcc, observation_us, now_us, &detector->downlink_hcc, &dl_off, &dl_elapsed_us, &dl_blocked);
+  682 
+  683     if (detector->last_hcc_window_us < observation_us)
+  684     {
+  685         detector->last_hcc_window_us = observation_us;
+  686     }
+  687 
+  688     off_detected = (ul_valid && ul_off > 0U) || (dl_valid && dl_off > 0U);
+  689     *new_off = off_detected;
+  690 
+  691     /****************************** 三、单窗口快速确认 ******************************/
+  692 
+  693     // 只对STA本地UL采用OFF>5快速确认；AP的接收时间不能证明真实250ms跨度。
+  694     fast_pressure = ul_valid && ul_elapsed_us <= LINKG_SWITCH_QUALITY_HCC_WINDOW_US &&
+  695                     ul_off > LINKG_SWITCH_QUALITY_HCC_FAST_OFF_COUNT;
+  696 
+  697     /****************************** 四、共享HCC压力积分 ******************************/
+  698 
+  699     time_gap_us = wifi->uplink_hcc.updated_us >= wifi->downlink_hcc.updated_us ?
+  700                   wifi->uplink_hcc.updated_us - wifi->downlink_hcc.updated_us :
+  701                   wifi->downlink_hcc.updated_us - wifi->uplink_hcc.updated_us;
+  702 
+  703     // +2仅用于两个源的新增OFF窗口足够接近，避免跨多个窗口误合并。
+  704     simultaneous_off = ul_valid && dl_valid && ul_off > 0U && dl_off > 0U &&
+  705                        ul_elapsed_us <= LINKG_SWITCH_QUALITY_HCC_WINDOW_US &&
+  706                        dl_elapsed_us <= LINKG_SWITCH_QUALITY_HCC_WINDOW_US &&
+  707                        time_gap_us <= LINKG_SWITCH_QUALITY_HCC_WINDOW_US;
+  708 
+  709     if (off_detected)
+  710     {
+  711         next_score = (uint32_t)detector->hcc_pressure_score + 1U + (simultaneous_off ? 1U : 0U);
+  712 
+  713         detector->hcc_pressure_score = (uint8_t)(next_score >= LINKG_SWITCH_QUALITY_HCC_BAD_SCORE ?
+  714                                                 LINKG_SWITCH_QUALITY_HCC_BAD_SCORE : next_score);
+  715         detector->last_hcc_pressure_us = now_us;
+  716     }
+  717     else if ((ul_valid || dl_valid) && !ul_blocked && !dl_blocked)
+  718     {
+  719         // 至少一个方向的新HCC差分确认本轮无新增OFF，HCC压力积分回落1分。
+  720         if (detector->hcc_pressure_score > 0U)
+  721         {
+  722             detector->hcc_pressure_score--;
+  723         }
+  724 
+  725         // LOAD减分改由250ms快速窗口在收到合格ACK且无BAD证据后执行。
+  726     }
+  727 
+  728     /****************************** 五、确认压力并隔离LOSS积分 ******************************/
+  729 
+  730     if (fast_pressure || (off_detected && detector->hcc_pressure_score >= LINKG_SWITCH_QUALITY_HCC_BAD_SCORE))
+  731     {
+  732         if (!detector->hcc_pressure_active)
+  733         {
+  734             // 仅清除无线质量评分；LOAD积分及本轮Wire样本仍可参与负载判决。
+  735             detector->loss_score         = 0U;
+  736             detector->last_loss_valid_us = 0U;
+  737         }
+  738 
+  739         detector->hcc_pressure_score   = LINKG_SWITCH_QUALITY_HCC_BAD_SCORE;
+  740         detector->hcc_pressure_active  = true;
+  741         detector->last_hcc_pressure_us = now_us;
+  742     }
+  743 
+  744     /****************************** 六、Device当前流控状态 ******************************/
+  745 
+  746     if (ul_blocked || dl_blocked)
+  747     {
+  748         if (detector->hcc_pressure_active)
+  749         {
+  750             detector->last_hcc_pressure_us = now_us;
+  751         }
+  752 
+  753         // 本轮若已确认新增OFF，仍交由LOAD处理业务丢包；否则暂停Wire评分。
+  754         return off_detected ? LINKG_SWITCH_QUALITY_WIRE_LOAD : LINKG_SWITCH_QUALITY_WIRE_SKIP;
+  755     }
+  756 
+  757     /****************************** 七、确认压力恢复 ******************************/
+  758 
+  759     if (detector->hcc_pressure_active && detector->last_hcc_pressure_us != 0U &&
+  760         now_us >= detector->last_hcc_pressure_us &&
+  761         now_us - detector->last_hcc_pressure_us >= LINKG_SWITCH_QUALITY_HCC_RECOVERY_US)
+  762     {
+  763         // 无新OFF证据持续3秒，且没有当前Device阻塞证据，解除LOSS保护。
+  764         detector->hcc_pressure_active = false;
+  765         detector->hcc_pressure_score  = 0U;
+  766     }
+  767 
+  768     /****************************** 八、Wire样本归属 ******************************/
+  769 
+  770     // 新OFF优先归LOAD；本轮即使HCC达到3分，也不能丢掉属于LOAD的Wire样本。
+  771     if (off_detected)
+  772     {
+  773         return LINKG_SWITCH_QUALITY_WIRE_LOAD;
+  774     }
+  775 
+  776     if (detector->hcc_pressure_active || detector->hcc_pressure_score > 0U)
+  777     {
+  778         return LINKG_SWITCH_QUALITY_WIRE_SKIP;
+  779     }
+  780 
+
+===== core/switch/switch_policy_quality.c:838-878 =====
+  838 /****************************** Wire质量判决 ******************************/
+  839 
+  840 /**
+  841  * @brief 判断Wire窗口是否达到BAD丢包阈值。
+  842  *
+  843  * BAD要求loss >= max(0.5%, 50% / sqrt(N))。
+  844  * 等价整数条件：200 * L >= N && 4 * L * L >= N。
+  845  * 调用方保证N >= 20，且L <= N。
+  846  */
+  847 static bool _linkg_switch_quality_wire_bad(uint64_t samples, uint64_t lost_packets)
+  848 {
+  849     // 使用除法计算ceil(N / 200)，避免乘法溢出。
+  850     if (lost_packets < samples / 200ULL + (samples % 200ULL != 0U ? 1ULL : 0ULL))
+  851     {
+  852         return false;
+  853     }
+  854 
+  855     // 只有L >= 2^31时4*L*L才可能超过uint64_t范围，此时必定满足第二条件。
+  856     return lost_packets >= 2147483648ULL || 4ULL * lost_packets * lost_packets >= samples;
+  857 }
+  858 
+  859 /**
+  860  * @brief 判断Wire窗口是否达到GOOD丢包阈值。
+  861  *
+  862  * GOOD要求loss <= min(1%, BAD阈值的一半)。
+  863  * N < 10000：100 * L <= N && 16 * L * L <= N。
+  864  * N >= 10000：400 * L <= N，即丢包率不超过0.25%。
+  865  */
+  866 static bool _linkg_switch_quality_wire_good(uint64_t samples, uint64_t lost_packets)
+  867 {
+  868     if (samples >= 10000ULL)
+  869     {
+  870         return lost_packets <= UINT64_MAX / 400ULL && 400ULL * lost_packets <= samples;
+  871     }
+  872 
+  873     return 100ULL * lost_packets <= samples && 16ULL * lost_packets * lost_packets <= samples;
+  874 }
+  875 
+  876 /**
+  877  * @brief 超过2秒的未完成小样本批次不能继续与新窗口合并。
+  878  */
+
+===== core/switch/switch_policy_quality.c:889-1030 =====
+  889 /**
+  890  * @brief 消费单方向新Wire样本，每累计至少20包输出一次BAD/GOOD评分增量。
+  891  *
+  892  * BAD返回+1，GOOD返回-1，其他情况返回0。
+  893  * 每份源观测仅消费一次；非法样本和空窗口都不能当作GOOD。
+  894  * 有效非零窗口推进业务活跃时间，完成一次评分时推进对应路径的有效时间。
+  895  */
+  896 static int _linkg_switch_quality_evaluate_direction_locked(const linkg_switch_loss_observation_t *sample, uint64_t observation_us, uint64_t now_us, uint64_t *last_updated_us, uint64_t *last_sample_us, uint64_t *last_valid_us, linkg_switch_quality_accumulator_t *accumulator)
+  897 {
+  898     uint64_t samples;
+  899     uint64_t lost_packets;
+  900 
+  901     _linkg_switch_quality_expire_accumulator_locked(accumulator, now_us);
+  902 
+  903     if (sample->updated_us == 0U || sample->updated_us > observation_us ||
+  904         sample->updated_us > now_us || sample->updated_us <= *last_updated_us)
+  905     {
+  906         return 0;
+  907     }
+  908 
+  909     // 源时间戳合法时先去重，包括无效样本，避免后续重复计入。
+  910     *last_updated_us = sample->updated_us;
+  911 
+  912     if (!sample->valid)
+  913     {
+  914         return 0;
+  915     }
+  916 
+  917     if (sample->lost_packets > sample->sample_packets)
+  918     {
+  919         // 非法计数不得与当前未完成的样本批次混合。
+  920         memset(accumulator, 0, sizeof(*accumulator));
+  921         return 0;
+  922     }
+  923 
+  924     if (sample->sample_packets == 0U)
+  925     {
+  926         return 0;
+  927     }
+  928 
+  929     if (sample->updated_us > *last_sample_us)
+  930     {
+  931         *last_sample_us = sample->updated_us;
+  932     }
+  933 
+  934     if (accumulator->first_updated_us == 0U)
+  935     {
+  936         accumulator->first_updated_us = sample->updated_us;
+  937     }
+  938 
+  939     if (accumulator->sample_packets > UINT64_MAX - sample->sample_packets ||
+  940         accumulator->lost_packets > UINT64_MAX - sample->lost_packets)
+  941     {
+  942         // 累加计数溢出时，仅重新建立当前批次基线。
+  943         memset(accumulator, 0, sizeof(*accumulator));
+  944         accumulator->first_updated_us = sample->updated_us;
+  945     }
+  946 
+  947     accumulator->sample_packets += sample->sample_packets;
+  948     accumulator->lost_packets   += sample->lost_packets;
+  949 
+  950     if (accumulator->sample_packets < LINKG_SWITCH_QUALITY_MIN_SAMPLES)
+  951     {
+  952         return 0;
+  953     }
+  954 
+  955     samples      = accumulator->sample_packets;
+  956     lost_packets = accumulator->lost_packets;
+  957 
+  958     memset(accumulator, 0, sizeof(*accumulator));
+  959     *last_valid_us = now_us;
+  960 
+  961     if (_linkg_switch_quality_wire_bad(samples, lost_packets))
+  962     {
+  963         return 1;
+  964     }
+  965 
+  966     if (_linkg_switch_quality_wire_good(samples, lost_packets))
+  967     {
+  968         return -1;
+  969     }
+  970 
+  971     return 0;
+  972 }
+  973 
+  974 /**
+  975  * @brief 对本轮Wire唯一归属路径计算上下行质量积分，并输出质量事件。
+  976  *
+  977  * 这里只累计LOSS积分；LOAD统一由250ms HCC/Wire/Probe证据窗口评分。
+  978  * 每个方向最多一次评分，LOSS单轮正积分最多+2、负积分最多-1。
+  979  * LOSS积分达到5后清除LOSS积分及未完成的批次。
+  980  * 调用方必须持有Switch锁。
+  981  */
+  982 static linkg_switch_policy_quality_state_t _linkg_switch_quality_evaluate_wire_locked(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_quality_policy_runtime_t *detector, linkg_switch_quality_wire_route_t wire_route)
+  983 {
+  984     const linkg_switch_path_loss_observation_t *loss;
+  985     uint64_t                                   *last_valid_us;
+  986     uint8_t                                    *score;
+  987     uint32_t                                    next_score;
+  988     int                                         ul_delta;
+  989     int                                         dl_delta;
+  990     int                                         delta;
+  991 
+  992     if (wire_route != LINKG_SWITCH_QUALITY_WIRE_LOSS)
+  993     {
+  994         return LINKG_SWITCH_POLICY_QUALITY_NONE;
+  995     }
+  996 
+  997     loss = &input->observation.wifi.loss;
+  998 
+  999     score         = &detector->loss_score;
+ 1000     last_valid_us = &detector->last_loss_valid_us;
+ 1001 
+ 1002     ul_delta = _linkg_switch_quality_evaluate_direction_locked(&loss->uplink, input->observation.collected_us, now_us, &detector->last_wire_uplink_updated_us, &detector->last_wire_sample_us, last_valid_us, &detector->uplink_accumulator);
+ 1003     dl_delta = _linkg_switch_quality_evaluate_direction_locked(&loss->downlink, input->observation.collected_us, now_us, &detector->last_wire_downlink_updated_us, &detector->last_wire_sample_us, last_valid_us, &detector->downlink_accumulator);
+ 1004 
+ 1005     delta = ul_delta + dl_delta;
+ 1006 
+ 1007     if (delta > 0)
+ 1008     {
+ 1009         next_score = (uint32_t)(*score) + (uint32_t)delta;
+ 1010         *score     = (uint8_t)(next_score >= LINKG_SWITCH_QUALITY_BAD_SCORE ? LINKG_SWITCH_QUALITY_BAD_SCORE : next_score);
+ 1011     }
+ 1012     else if (delta < 0 && *score > 0U)
+ 1013     {
+ 1014         (*score)--;
+ 1015     }
+ 1016 
+ 1017     if (*score < LINKG_SWITCH_QUALITY_BAD_SCORE)
+ 1018     {
+ 1019         return LINKG_SWITCH_POLICY_QUALITY_NONE;
+ 1020     }
+ 1021 
+ 1022     // 输出一次异常后只重置对应路径积分，PlanSync/Operation负责后续事务去重。
+ 1023     *score = 0U;
+ 1024     memset(&detector->uplink_accumulator, 0, sizeof(detector->uplink_accumulator));
+ 1025     memset(&detector->downlink_accumulator, 0, sizeof(detector->downlink_accumulator));
+ 1026 
+ 1027     return LINKG_SWITCH_POLICY_QUALITY_LOSS_BAD;
+ 1028 }
+ 1029 
+ 1030 /****************************** 统一质量判决入口 ******************************/
+
+===== core/switch/switch_policy_quality.c:1039-1230 =====
+ 1039  * @brief 独立检查Wire BAD，避免与LOSS评分窗口共用去重时间戳。
+ 1040  * 无效和重复样本不构成负载证据；每方向每窗口最多提供一个WIRE证据。
+ 1041  */
+ 1042 static bool _linkg_switch_quality_fast_wire_bad(const linkg_switch_loss_observation_t *sample, uint64_t observation_us, uint64_t *last_us)
+ 1043 {
+ 1044     if (sample->updated_us == 0U || sample->updated_us > observation_us ||
+ 1045         sample->updated_us <= *last_us)
+ 1046     {
+ 1047         return false;
+ 1048     }
+ 1049 
+ 1050     *last_us = sample->updated_us;
+ 1051     return sample->valid && sample->sample_packets >= LINKG_SWITCH_QUALITY_MIN_SAMPLES &&
+ 1052            sample->lost_packets <= sample->sample_packets &&
+ 1053            _linkg_switch_quality_wire_bad(sample->sample_packets, sample->lost_packets);
+ 1054 }
+ 1055 
+ 1056 /**
+ 1057  * @brief 按业务类别维护连续Probe TIMEOUT并计算本轮探测证据权重。
+ 1058  *
+ 1059  * 首次TIMEOUT +1，750ms内再次连续TIMEOUT权重为+2（后续保持+2）。
+ 1060  * 合格ACK/不可信终态打断连续性；PENDING不计分，由时间间隔保护避免跨长时间复用。
+ 1061  * 多业务同窗口只取一个Probe证据权重，避免按业务数量重复加分。
+ 1062  */
+ 1063 static void _linkg_switch_quality_fast_update_probe_locked(linkg_switch_quality_policy_runtime_t *detector, const linkg_switch_quality_fast_result_t *probe, uint64_t now_us)
+ 1064 {
+ 1065     uint64_t last_us;
+ 1066     uint32_t index;
+ 1067     uint32_t bit;
+ 1068 
+ 1069     for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+ 1070     {
+ 1071         bit = 1U << index;
+ 1072         if ((probe->active_mask & bit) == 0U)
+ 1073         {
+ 1074             continue;
+ 1075         }
+ 1076 
+ 1077         if (((probe->ack_mask | probe->break_mask) & bit) != 0U)
+ 1078         {
+ 1079             detector->fast_probe_timeout_streak[index]  = 0U;
+ 1080             detector->fast_probe_last_timeout_us[index] = 0U;
+ 1081             continue;
+ 1082         }
+ 1083 
+ 1084         if ((probe->timeout_mask & bit) == 0U)
+ 1085         {
+ 1086             // PENDING/本轮无终态：保持连续性，但不凭空增加次数。
+ 1087             continue;
+ 1088         }
+ 1089 
+ 1090         last_us = detector->fast_probe_last_timeout_us[index];
+ 1091         if (last_us != 0U && now_us >= last_us &&
+ 1092             now_us - last_us <= LINKG_SWITCH_QUALITY_FAST_STREAK_GAP_US &&
+ 1093             detector->fast_probe_timeout_streak[index] > 0U)
+ 1094         {
+ 1095             // 连续第二次及以后统一按+2，不突破全局单窗+2上限。
+ 1096             detector->fast_probe_timeout_streak[index] = 2U;
+ 1097         }
+ 1098         else
+ 1099         {
+ 1100             detector->fast_probe_timeout_streak[index] = 1U;
+ 1101         }
+ 1102 
+ 1103         detector->fast_probe_last_timeout_us[index] = now_us;
+ 1104         detector->fast_window_evidence |= LINKG_SWITCH_QUALITY_FAST_EVIDENCE_PROBE;
+ 1105         if (detector->fast_window_probe_points < detector->fast_probe_timeout_streak[index])
+ 1106         {
+ 1107             detector->fast_window_probe_points = detector->fast_probe_timeout_streak[index];
+ 1108         }
+ 1109     }
+ 1110 }
+ 1111 
+ 1112 /**
+ 1113  * @brief 合并250ms的HCC OFF、Wire BAD及按类别加权的Probe TIMEOUT，总加分最多+2。
+ 1114  * 只有所有活跃Wi-Fi单发业务均收到合格ACK且本窗口没有BAD，才减1分。
+ 1115  * 活跃集合变化时清除旧LOAD积分和Probe连续性并重建窗口，避免跨业务借用证据。
+ 1116  * 无活跃业务时只推进快速Wire去重基线，不参与LOAD评分。
+ 1117  */
+ 1118 static bool _linkg_switch_quality_fast_score_locked(linkg_switch_quality_policy_runtime_t *detector, const linkg_switch_policy_input_t *input, const linkg_switch_quality_fast_result_t *probe, bool hcc_off, uint64_t now_us)
+ 1119 {
+ 1120     const linkg_switch_path_loss_observation_t *loss = &input->observation.wifi.loss;
+ 1121     uint32_t evidence;
+ 1122     uint32_t plus;
+ 1123     bool     active_changed;
+ 1124     bool     uplink_bad;
+ 1125     bool     downlink_bad;
+ 1126 
+ 1127     active_changed = detector->fast_window_active_mask != probe->active_mask;
+ 1128 
+ 1129     if (active_changed)
+ 1130     {
+ 1131         // 活跃集合变更后，旧业务的积分、ACK和BAD证据均不得传给新业务。
+ 1132         // 新窗口从本轮开始计时；本轮尚未覆盖完整250ms，只重建采样基线。
+ 1133         detector->load_score               = 0U;
+ 1134         detector->fast_window_started_us   = now_us;
+ 1135         detector->fast_window_evidence     = 0U;
+ 1136         detector->fast_window_ack_mask     = 0U;
+ 1137         detector->fast_window_probe_points = 0U;
+ 1138         detector->fast_window_active_mask = probe->active_mask;
+ 1139         memset(detector->fast_probe_timeout_streak, 0, sizeof(detector->fast_probe_timeout_streak));
+ 1140         memset(detector->fast_probe_last_timeout_us, 0, sizeof(detector->fast_probe_last_timeout_us));
+ 1141     }
+ 1142     else if (detector->fast_window_started_us == 0U || now_us < detector->fast_window_started_us)
+ 1143     {
+ 1144         detector->fast_window_started_us = now_us;
+ 1145     }
+ 1146 
+ 1147     // 即使当前没有活跃业务，也必须消费上下行新Wire窗口，防止后续重复加分。
+ 1148     uplink_bad   = _linkg_switch_quality_fast_wire_bad(&loss->uplink, input->observation.collected_us, &detector->fast_wire_uplink_us);
+ 1149     downlink_bad = _linkg_switch_quality_fast_wire_bad(&loss->downlink, input->observation.collected_us, &detector->fast_wire_downlink_us);
+ 1150 
+ 1151     if (active_changed || probe->active_mask == 0U)
+ 1152     {
+ 1153         // 空业务不允许LOAD加减分或输出LOAD_BAD；活跃集合变更首轮也不计分。
+ 1154         // LOSS的Wire判决与HCC压力更新由调用方独立执行，不在此修改。
+ 1155         if (probe->active_mask == 0U)
+ 1156         {
+ 1157             detector->load_score               = 0U;
+ 1158             detector->fast_window_evidence     = 0U;
+ 1159             detector->fast_window_ack_mask     = 0U;
+ 1160             detector->fast_window_probe_points = 0U;
+ 1161             detector->fast_window_started_us   = now_us;
+ 1162         }
+ 1163 
+ 1164         return false;
+ 1165     }
+ 1166 
+ 1167     if (hcc_off)
+ 1168     {
+ 1169         detector->fast_window_evidence |= LINKG_SWITCH_QUALITY_FAST_EVIDENCE_HCC;
+ 1170     }
+ 1171 
+ 1172     if (uplink_bad || downlink_bad)
+ 1173     {
+ 1174         detector->fast_window_evidence |= LINKG_SWITCH_QUALITY_FAST_EVIDENCE_WIRE;
+ 1175     }
+ 1176 
+ 1177     // Probe结果以业务类别为单位计连续性，不能让不同类别拼接成连续TIMEOUT。
+ 1178     _linkg_switch_quality_fast_update_probe_locked(detector, probe, now_us);
+ 1179 
+ 1180     detector->fast_window_ack_mask |= probe->ack_mask;
+ 1181 
+ 1182     if (now_us - detector->fast_window_started_us < LINKG_SWITCH_QUALITY_FAST_PERIOD_US)
+ 1183     {
+ 1184         return false;
+ 1185     }
+ 1186 
+ 1187     evidence = detector->fast_window_evidence;
+ 1188     plus     = (evidence & LINKG_SWITCH_QUALITY_FAST_EVIDENCE_HCC ? 1U : 0U) +
+ 1189                (evidence & LINKG_SWITCH_QUALITY_FAST_EVIDENCE_WIRE ? 1U : 0U) +
+ 1190                (evidence & LINKG_SWITCH_QUALITY_FAST_EVIDENCE_PROBE ?
+ 1191                     detector->fast_window_probe_points : 0U);
+ 1192     if (plus > 2U)
+ 1193     {
+ 1194         plus = 2U;
+ 1195     }
+ 1196 
+ 1197     if (plus != 0U)
+ 1198     {
+ 1199         uint32_t next = (uint32_t)detector->load_score + plus;
+ 1200         detector->load_score = (uint8_t)(next >= LINKG_SWITCH_QUALITY_BAD_SCORE ?
+ 1201                                           LINKG_SWITCH_QUALITY_BAD_SCORE : next);
+ 1202     }
+ 1203     else if (probe->active_mask != 0U &&
+ 1204              (detector->fast_window_ack_mask & probe->active_mask) == probe->active_mask &&
+ 1205              detector->load_score > 0U)
+ 1206     {
+ 1207         detector->load_score--;
+ 1208     }
+ 1209 
+ 1210     detector->fast_window_started_us   = now_us;
+ 1211     detector->fast_window_evidence     = 0U;
+ 1212     detector->fast_window_ack_mask     = 0U;
+ 1213     detector->fast_window_probe_points = 0U;
+ 1214 
+ 1215     if (detector->load_score < LINKG_SWITCH_QUALITY_BAD_SCORE)
+ 1216     {
+ 1217         return false;
+ 1218     }
+ 1219 
+ 1220     // LOAD事件已产生，下次诊断须重新从首次TIMEOUT开始。
+ 1221     detector->load_score = 0U;
+ 1222     memset(detector->fast_probe_timeout_streak, 0, sizeof(detector->fast_probe_timeout_streak));
+ 1223     memset(detector->fast_probe_last_timeout_us, 0, sizeof(detector->fast_probe_last_timeout_us));
+ 1224     return true;
+ 1225 }
+ 1226 
+ 1227 int linkg_switch_policy_quality_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_quality_state_t *quality_state)
+ 1228 {
+ 1229     linkg_switch_quality_policy_runtime_t *detector;
+ 1230     linkg_switch_peer_runtime_t           *peer;
+
+===== core/switch/switch_policy_verify.h:18-35 =====
+   18 #endif
+   19 
+   20 /****************************** 验证参数 ******************************/
+   21 
+   22 #define LINKG_SWITCH_POLICY_VERIFY_DURATION_US            3000000ULL // Operation原后备截止3秒，仅Verify未启动时使用
+   23 #define LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US       3000000ULL // LOSS及RECOVERY+LOSS实际仍为3秒
+   24 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US       5000000ULL // RECOVERY+LOAD固定5秒
+   25 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS  200U       // Wi-Fi单包响应截止200ms
+   26 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_PERIOD_US   250000ULL  // Switch目标探测周期250ms
+   27 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_MIN_SAMPLES       10U        // 每个参与业务至少10个网络终态样本
+   28 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_ACK_MAX_AGE_US    1000000ULL // 截止时每类最新成功ACK最大年龄
+   29 #define LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US           250000U    // Cellular RTT参考质量阈值
+   30 #define LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US       1500000ULL // 截止时成功Probe最大年龄
+   31 #define LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US 1000000ULL // 截止时观测快照最大年龄
+   32 #define LINKG_SWITCH_POLICY_VERIFY_LOSS_MIN_SAMPLES       20U        // 单方向单轮积分最小样本数
+   33 #define LINKG_SWITCH_POLICY_VERIFY_COMPARE_MIN_SAMPLES    100U       // 双链路分类质量比较最小样本数
+   34 #define LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE            5U         // LOSS验证初始Wi-Fi无线异常积分
+   35 #define LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE          3U         // 积分严格小于3允许进入Wi-Fi恢复判决
+
+===== core/switch/switch_policy_verify.h:172-215 =====
+  172     uint64_t                               cellular_last_good_probe_us[LINKG_TRANSPORT_CLASS_COUNT]; // 各业务最近成功Probe时间
+  173     uint64_t                               cellular_rtt_sum_us[LINKG_TRANSPORT_CLASS_COUNT];         // 各业务有效RTT累计和
+  174     uint32_t                               cellular_rtt_count[LINKG_TRANSPORT_CLASS_COUNT];          // 各业务有效RTT样本数量
+  175     uint32_t                               cellular_max_rtt_us[LINKG_TRANSPORT_CLASS_COUNT];         // 各业务最大有效RTT
+  176     uint32_t                               cellular_probe_unreachable_mask;                          // 验证期间报告不可达的业务掩码
+  177 
+  178         /****************************** Wi-Fi Probe ******************************/
+  179 
+  180     uint64_t                               wifi_last_probe_us[LINKG_TRANSPORT_CLASS_COUNT];          // 各业务最后消费的Wi-Fi Probe时间
+  181     uint64_t                               wifi_last_good_probe_us[LINKG_TRANSPORT_CLASS_COUNT];     // 各业务最近成功的Wi-Fi Probe时间
+  182     uint64_t                               wifi_rtt_sum_us[LINKG_TRANSPORT_CLASS_COUNT];             // 各业务Wi-Fi成功Probe RTT累计和
+  183     uint32_t                               wifi_rtt_count[LINKG_TRANSPORT_CLASS_COUNT];              // 各业务Wi-Fi成功Probe样本数
+  184     uint32_t                               wifi_probe_seen_mask;                                     // 验证期间已获得有效Wi-Fi Probe的业务集合
+  185     uint32_t                               wifi_probe_reachable_mask;                                // 每业务最新Wi-Fi Probe确认可达的集合
+  186 
+  187     /****************************** 质量与负载状态 ******************************/
+  188 
+  189     linkg_switch_policy_verify_score_window_t wifi_score[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT]; // Wi-Fi全局Wire方向评分窗口
+  190     linkg_switch_policy_verify_hcc_window_t   wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT];   // Wi-Fi设备级HCC方向压力窗口
+  191     linkg_switch_policy_verify_load_window_t  wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DIRECTION_COUNT]; // Wi-Fi全局Load方向压力窗口
+  192 
+  193     uint8_t                                wifi_loss_score;                                          // LOSS及RECOVERY + LOSS异常积分，初始5，不设置策略上限
+  194     uint32_t                               wifi_load_score[LINKG_TRANSPORT_CLASS_COUNT];             // LOAD恢复每类独立积分，最终按class_mask逐类AND
+  195     uint64_t                               wifi_load_probe_handle[LINKG_TRANSPORT_CLASS_COUNT];      // 每类最多一个在途Wi-Fi Probe
+  196     uint64_t                               wifi_load_probe_last_submit_us[LINKG_TRANSPORT_CLASS_COUNT]; // 每类最近成功提交Probe的单调时刻
+  197     uint64_t                               wifi_load_probe_last_ack_us[LINKG_TRANSPORT_CLASS_COUNT]; // 每类最新有效ACK时间
+  198     uint32_t                               wifi_load_probe_count[LINKG_TRANSPORT_CLASS_COUNT];       // 每类ACK或TIMEOUT网络终态样本数
+  199     uint32_t                               wifi_load_probe_ack_count[LINKG_TRANSPORT_CLASS_COUNT];   // 每类有效ACK样本数
+  200     uint32_t                               wifi_load_probe_invalid_mask;                             // Path变化或会话丢失导致无效的类别
+  201     uint64_t                               wifi_load_last_traffic_us;                                // LOAD恢复最后使用的Wi-Fi流量源时间
+  202     bool                                   wifi_load_hcc_primed;                                     // LOAD恢复已建立双方向HCC计数采样基线
+  203     bool                                   wifi_pressure_this_round;                                 // 本轮确认出现Wi-Fi负载压力
+  204     bool                                   wifi_pressure_known_this_round;                           // 本轮具备判断Wi-Fi负载压力的有效来源
+  205     bool                                   path_interrupted;                                         // 物理Path失效或Link实例发生变化
+  206     bool                                   wifi_traffic_seen;                                        // LOAD恢复期间已采集Wi-Fi流量观测
+  207     bool                                   wifi_tx_active;                                           // LOAD恢复期间Wi-Fi存在发送活动
+  208     bool                                   wifi_rx_active;                                           // LOAD恢复期间Wi-Fi存在接收活动
+  209 
+  210     /****************************** 业务活动与分类结果 ******************************/
+  211 
+  212     uint32_t                               active_class_mask;                                        // 已确认存在USER_DATA活动的业务集合
+  213     uint32_t                               comparable_class_mask;                                    // 双链路达到分类比较条件的业务集合
+  214     uint32_t                               cellular_preferred_mask;                                  // 独立质量比较偏向Cellular的业务集合
+  215     uint32_t                               wifi_target_mask;                                         // 分类判决计划Wi-Fi单发的参与业务
+
+===== core/switch/switch_policy_operation.c:27-34 =====
+   27 #define LINKG_SWITCH_OPERATION_LOAD_DURATION_US         1000000ULL  // LOAD冗余ACK后1秒迁移
+   28 #define LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US     10000000ULL  // 迁出Wi-Fi后最少等待10秒
+   29 #define LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US       15000000ULL  // 恢复失败后延迟15秒重试
+   30 #define LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US       2000000ULL  // 协议终态失败后重同步间隔
+   31 #define LINKG_SWITCH_OPERATION_RESYNC_MAX                     2U    // 整组事务追加重同步次数
+   32 #define LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US      10000000ULL  // 重试耗尽后每10秒修复完整Plan
+   33 #define LINKG_SWITCH_OPERATION_LOAD_ACTIVE_MAX_AGE_MS      1500ULL  // LOAD仅迁移最近1.5秒有真实用户数据的业务
+   34 #define LINKG_SWITCH_OPERATION_OVERDUE_RETRY_US           50000ULL  // 已到期但尚未完成的事务，最短50ms后重试
+
+===== core/switch/switch_policy_operation.c:330-430 =====
+  330                 if (item->mode == LINKG_SEND_MODE_NONE ||
+  331                     item->primary_link_id == observation->cellular.link_id ||
+  332                     item->secondary_link_id != observation->cellular.link_id)
+  333                 {
+  334                     continue;
+  335                 }
+  336 
+  337                 // 不依赖当前Wi-Fi Link ID，兼容旧Wi-Fi实例已经失效的情况。
+  338                 item->mode              = LINKG_SEND_MODE_SINGLE;
+  339                 item->primary_link_id   = observation->cellular.link_id;
+  340                 item->secondary_link_id = LINKG_LINK_ID_INVALID;
+  341                 mask |= bit;
+  342             }
+  343             break;
+  344 
+  345         /****************************** Wi-Fi无线丢包 ******************************/
+  346 
+  347         case LINKG_SWITCH_POLICY_EVENT_WIFI_LOSS_BAD:
+  348             // 所有符合条件的Wi-Fi单发业务进入冗余质量验证。
+  349             for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+  350             {
+  351                 item = &next->classes[index];
+  352 
+  353                 if (item->mode != LINKG_SEND_MODE_SINGLE ||
+  354                     item->primary_link_id != observation->wifi.link_id ||
+  355                     item->secondary_link_id != observation->cellular.link_id)
+  356                 {
+  357                     continue;
+  358                 }
+  359 
+  360                 item->mode = LINKG_SEND_MODE_REDUNDANT;
+  361                 mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
+  362             }
+  363             break;
+  364 
+  365         /****************************** Wi-Fi队列溢出 ******************************/
+  366 
+  367 
+  368         /****************************** Wi-Fi队列溢出 ******************************/
+  369 
+  370         case LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD:
+  371 
+  372             /****************************** 一、选择迁移起点 ******************************/
+  373 
+  374             selected_class = LINKG_TRANSPORT_CLASS_COUNT;
+  375 
+  376             // 按DATA、VIDEO、REALTIME顺序寻找最低优先级的活跃业务。
+  377             for (index = LINKG_TRANSPORT_CLASS_COUNT; index > 0U; index--)
+  378             {
+  379                 class_index = index - 1U;
+  380 
+  381                 // 迁移起点必须存在近期真实USER_DATA活动。
+  382                 if (!active_classes[class_index])
+  383                 {
+  384                     continue;
+  385                 }
+  386 
+  387                 item = &next->classes[class_index];
+  388 
+  389                 // 只选择Wi-Fi单发且具备Cellular备用的业务。
+  390                 if (item->mode != LINKG_SEND_MODE_SINGLE ||
+  391                     item->primary_link_id != observation->wifi.link_id ||
+  392                     item->secondary_link_id != observation->cellular.link_id)
+  393                 {
+  394                     continue;
+  395                 }
+  396 
+  397                 selected_class = class_index;
+  398                 break;
+  399             }
+  400 
+  401             // 没有符合条件的活跃业务，不创建负载迁移事务。
+  402             if (selected_class == LINKG_TRANSPORT_CLASS_COUNT)
+  403             {
+  404                 break;
+  405             }
+  406 
+  407             /****************************** 二、构建QoS迁移集合 ******************************/
+  408 
+  409             // 迁移选中业务及所有优先级更低的Wi-Fi单发业务。
+  410             // 低优先级业务即使暂时没有流量，也应同步迁往Cellular。
+  411             for (class_index = selected_class; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+  412             {
+  413                 item = &next->classes[class_index];
+  414 
+  415                 // 已迁移、未启用或没有Cellular备用的业务保持原计划。
+  416                 if (item->mode != LINKG_SEND_MODE_SINGLE ||
+  417                     item->primary_link_id != observation->wifi.link_id ||
+  418                     item->secondary_link_id != observation->cellular.link_id)
+  419                 {
+  420                     continue;
+  421                 }
+  422 
+  423                 item->mode = LINKG_SEND_MODE_REDUNDANT;
+  424 
+  425                 mask |= LINKG_SWITCH_POLICY_CLASS_BIT(class_index);
+  426             }
+  427 
+  428             break;
+  429 
+  430 
+
+===== core/switch/switch_plan.c:32-35 =====
+   32 #define LINKG_SWITCH_PLAN_SYNC_RETRY_INTERVAL_US 200000ULL   // 发送计划同步重试周期
+   33 #define LINKG_SWITCH_PLAN_SYNC_TIMEOUT_US        2000000ULL  // 发送计划同步事务超时时间
+   34 #define LINKG_SWITCH_PLAN_SYNC_RECOVERY_MAX      3U          // 单个完整计划最多追加三轮恢复事务
+   35 #define LINKG_SWITCH_PLAN_SYNC_RECOVERY_BASE_US  1000000ULL  // 恢复事务初始退避时间
+
+===== include/linkg/core/switch/linkg_switch_status.h:34-176 =====
+   34 } linkg_switch_status_access_t;
+   35 
+   36 /****************************** 通用状态 ******************************/
+   37 
+   38 typedef struct
+   39 {
+   40     bool     valid;      // 当前Probe结果是否有效
+   41     bool     reachable;  // 最近一次Probe是否可达
+   42     uint32_t rtt_us;     // 最近一次有效往返时延，单位微秒
+   43     uint64_t updated_us; // 最近一次Probe状态更新时间
+   44 } linkg_switch_status_probe_t;
+   45 
+   46 typedef struct
+   47 {
+   48     bool     valid;      // 当前流量统计是否有效
+   49     uint32_t tx_pps;     // 当前发送包速率，单位packet/s
+   50     uint32_t rx_pps;     // 当前接收包速率，单位packet/s
+   51     uint64_t tx_bps;     // 当前发送比特率，单位bit/s
+   52     uint64_t rx_bps;     // 当前接收比特率，单位bit/s
+   53     uint64_t updated_us; // 最近一次流量统计更新时间
+   54 } linkg_switch_status_traffic_t;
+   55 
+   56 typedef struct
+   57 {
+   58     bool     valid;          // 当前丢包统计窗口是否具有有效样本
+   59     uint32_t lost_packets;   // 当前窗口实际确认的丢包数量
+   60     uint32_t sample_packets; // 当前窗口参与统计的总包数
+   61     uint32_t loss_permille;  // 仅用于对外显示的千分比丢包率
+   62     uint64_t updated_us;     // 最近一次丢包状态更新时间
+   63 } linkg_switch_status_loss_t;
+   64 
+   65 typedef struct
+   66 {
+   67     bool                         active;     // 当前是否存在Maintenance接入屏蔽
+   68     linkg_switch_status_access_t access;     // 当前被本机或对端维护阻断的接入
+   69     uint32_t                     message_id; // 当前Maintenance事务编号
+   70     uint64_t                     started_us; // 当前Maintenance开始时间
+   71 } linkg_switch_maintenance_status_t;
+   72 
+   73 /****************************** STA Wi-Fi状态 ******************************/
+   74 
+   75 typedef struct
+   76 {
+   77     bool                          available;                          // 当前Peer Wi-Fi Path是否存在且可用
+   78     bool                          radio_valid;                        // 当前Wi-Fi基础无线状态是否有效
+   79     bool                          connected;                          // Wi-Fi STA当前是否保持关联
+   80     bool                          statistics_valid;                   // Wi-Fi底层统计数据是否有效
+   81     int32_t                       rssi_dbm;                           // 当前接收信号强度，单位dBm
+   82     bool                          noise_valid;                        // 当前噪声数据是否有效
+   83     int32_t                       noise_dbm;                          // 当前噪声，单位dBm
+   84     uint32_t                      tx_phy_kbps;                        // 当前Wi-Fi发送PHY速率，单位Kbit/s
+   85     uint32_t                      rx_phy_kbps;                        // 当前Wi-Fi接收PHY速率，单位Kbit/s
+   86     uint32_t                      inactive_ms;                        // 当前Peer最近一次无线活动距今时间，单位毫秒
+   87     linkg_wifi_work_mode_t        work_mode;                          // 当前宽带或窄带工作模式
+   88     uint16_t                      bandwidth_mhz;                      // 当前实际工作带宽，单位MHz
+   89     linkg_wifi_narrow_mode_t      narrow_mode;                        // 当前窄带速率控制模式
+   90     bool                          rate_level_valid;                   // 当前窄带实际速率档位是否有效
+   91     uint16_t                      rate_level;                         // 当前窄带实际速率档位
+   92     bool                          temperature_valid;                  // 当前Wi-Fi温度是否有效
+   93     int32_t                       temperature_c;                      // 当前Wi-Fi温度，单位摄氏度
+   94     uint64_t                      status_updated_us;                  // 最近一次Wi-Fi基础状态更新时间
+   95     uint64_t                      statistics_updated_us;              // 最近一次Wi-Fi统计状态更新时间
+   96     linkg_switch_status_probe_t   probe[LINKG_TRANSPORT_CLASS_COUNT]; // REALTIME/VIDEO/DATA各自的Probe状态
+   97     linkg_switch_status_traffic_t traffic;                            // 当前Peer Wi-Fi业务流量状态
+   98     linkg_switch_status_loss_t    uplink_loss;                        // STA到AP Wi-Fi上行真实丢包
+   99     linkg_switch_status_loss_t    downlink_loss;                      // AP到STA Wi-Fi下行真实丢包
+  100 } linkg_switch_sta_wifi_status_t;
+  101 
+  102 /****************************** STA Cellular状态 ******************************/
+  103 
+  104 typedef struct
+  105 {
+  106     bool     available;  // 当前Peer Cellular Path及网络状态可用
+  107     uint64_t updated_us; // 最近一次Cellular备用状态更新时间
+  108 } linkg_switch_sta_cellular_status_t;
+  109 
+  110 /****************************** STA计划同步诊断 ******************************/
+  111 
+  112 /**
+  113  * @brief STA最近一次主动PLAN_SYNC的对外诊断摘要。
+  114  *
+  115  * 本状态仅描述最近一次同步事务，并非AP与STA全部本地Plan一致性证明。
+  116  * Reconcile和Maintenance仍可独立更新各自的本地发送计划。
+  117  */
+  118 typedef struct
+  119 {
+  120     bool     active;      // 当前同步事务是否正在等待AP确认
+  121     bool     confirmed;   // 最近一次同步事务是否收到AP成功ACK
+  122     uint32_t message_id;  // 最近一次PLAN_SYNC消息编号，0表示尚未发起
+  123     int32_t  last_status; // 最近一次ACK、超时或取消结果，0成功，负值为错误码
+  124 } linkg_switch_plan_sync_status_t;
+  125 
+  126 /****************************** STA状态 ******************************/
+  127 
+  128 typedef struct
+  129 {
+  130     bool                               peer_present;           // 当前是否存在已注册的直接AP Peer
+  131     bool                               observation_valid;      // 当前是否已经形成有效完整观测快照
+  132     uint8_t                            peer_node_id;           // 当前直接AP节点编号
+  133     linkg_send_plan_t                  plan;                   // 当前STA到AP的完整三类业务本地发送计划
+  134     linkg_switch_plan_sync_status_t    plan_sync;              // 最近一次STA主动PLAN_SYNC的同步诊断摘要
+  135     linkg_switch_sta_wifi_status_t     wifi;                   // 当前Wi-Fi完整观测状态
+  136     linkg_switch_sta_cellular_status_t cellular;               // 当前Cellular观测状态
+  137     linkg_switch_maintenance_status_t  local_maintenance;      // 当前STA本机Access Maintenance状态
+  138     linkg_switch_maintenance_status_t  remote_maintenance;     // 当前AP通知的Access Maintenance状态
+  139     uint64_t                           observation_updated_us; // 最近一次完整观测快照更新时间
+  140 } linkg_switch_sta_status_t;
+  141 
+  142 /****************************** AP Peer状态 ******************************/
+  143 
+  144 typedef struct
+  145 {
+  146     uint8_t                           peer_node_id;            // 当前直接STA节点编号
+  147     linkg_send_plan_t                 plan;                    // 当前AP到该STA的完整三类业务本地发送计划
+  148     bool                              wifi_path_available;     // 当前Wi-Fi Path是否存在且可用
+  149     bool                              cellular_path_available; // 当前Cellular Path是否存在且可用
+  150     linkg_switch_status_loss_t        wifi_uplink_loss;        // 当前STA到AP Wi-Fi上行真实丢包
+  151     linkg_switch_maintenance_status_t remote_maintenance;      // 当前STA通知的Access Maintenance状态
+  152     uint64_t                          path_updated_us;         // 最近一次Path状态更新时间，0表示尚未形成Path状态
+  153 } linkg_switch_ap_peer_status_t;
+  154 
+  155 /****************************** AP状态 ******************************/
+  156 
+  157 typedef struct
+  158 {
+  159     linkg_switch_maintenance_status_t local_maintenance;                     // 当前AP本机Access Maintenance状态
+  160     uint32_t                          peer_count;                            // 当前已注册直接STA数量
+  161     linkg_switch_ap_peer_status_t     peers[LINKG_RESOURCE_NETWORK_STA_MAX]; // 当前全部直接STA状态
+  162 } linkg_switch_ap_status_t;
+  163 
+  164 /****************************** Switch状态 ******************************/
+  165 
+  166 typedef struct
+  167 {
+  168     linkg_device_role_t role;         // 当前本机设备角色
+  169     uint64_t            collected_us; // 本次对外状态快照形成时间
+  170 
+  171     union
+  172     {
+  173         linkg_switch_sta_status_t sta; // STA角色运行状态
+  174         linkg_switch_ap_status_t  ap;  // AP角色运行状态
+  175     } data;
+  176 } linkg_switch_status_t;
+
+===== service/web/handlers/web_handler_switch_status.c:481-710 =====
+  481 static int _linkg_web_switch_status_json_add_loss(cJSON *parent, const char *key, const linkg_switch_status_loss_t *source, uint64_t collected_us)
+  482 {
+  483     cJSON *object;
+  484     int    ret;
+  485 
+  486     object = cJSON_CreateObject();
+  487     if (object == NULL)
+  488     {
+  489         return LINKG_JSON_ERR_MEMORY;
+  490     }
+  491 
+  492     ret = linkg_json_add_bool(object, "valid", source->valid);
+  493     if (ret != LINKG_JSON_OK)
+  494     {
+  495         goto error;
+  496     }
+  497 
+  498     ret = linkg_json_add_uint32(object, "lost_packets", source->lost_packets);
+  499     if (ret != LINKG_JSON_OK)
+  500     {
+  501         goto error;
+  502     }
+  503 
+  504     ret = linkg_json_add_uint32(object, "sample_packets", source->sample_packets);
+  505     if (ret != LINKG_JSON_OK)
+  506     {
+  507         goto error;
+  508     }
+  509 
+  510     ret = linkg_json_add_uint32(object, "loss_permille", source->loss_permille);
+  511     if (ret != LINKG_JSON_OK)
+  512     {
+  513         goto error;
+  514     }
+  515 
+  516     ret = _linkg_web_switch_status_json_add_uint64(object, "updated_us", source->updated_us);
+  517     if (ret != LINKG_JSON_OK)
+  518     {
+  519         goto error;
+  520     }
+  521 
+  522     ret = _linkg_web_switch_status_json_add_uint64(object, "age_ms", _linkg_web_switch_status_age_ms(collected_us, source->updated_us));
+  523     if (ret != LINKG_JSON_OK)
+  524     {
+  525         goto error;
+  526     }
+  527 
+  528     ret = linkg_json_add_object(parent, key, object);
+  529     if (ret != LINKG_JSON_OK)
+  530     {
+  531         goto error;
+  532     }
+  533 
+  534     return LINKG_JSON_OK;
+  535 
+  536 error:
+  537     cJSON_Delete(object);
+  538 
+  539     return ret;
+  540 }
+  541 
+  542 /**
+  543  * @brief 向JSON对象写入业务流量状态。
+  544  */
+  545 static int _linkg_web_switch_status_json_add_traffic(cJSON *parent, const linkg_switch_status_traffic_t *source, uint64_t collected_us)
+  546 {
+  547     cJSON *object;
+  548     int    ret;
+  549 
+  550     object = cJSON_CreateObject();
+  551     if (object == NULL)
+  552     {
+  553         return LINKG_JSON_ERR_MEMORY;
+  554     }
+  555 
+  556     ret = linkg_json_add_bool(object, "valid", source->valid);
+  557     if (ret != LINKG_JSON_OK)
+  558     {
+  559         goto error;
+  560     }
+  561 
+  562     ret = linkg_json_add_uint32(object, "tx_pps", source->tx_pps);
+  563     if (ret != LINKG_JSON_OK)
+  564     {
+  565         goto error;
+  566     }
+  567 
+  568     ret = linkg_json_add_uint32(object, "rx_pps", source->rx_pps);
+  569     if (ret != LINKG_JSON_OK)
+  570     {
+  571         goto error;
+  572     }
+  573 
+  574     ret = _linkg_web_switch_status_json_add_uint64(object, "tx_bps", source->tx_bps);
+  575     if (ret != LINKG_JSON_OK)
+  576     {
+  577         goto error;
+  578     }
+  579 
+  580     ret = _linkg_web_switch_status_json_add_uint64(object, "rx_bps", source->rx_bps);
+  581     if (ret != LINKG_JSON_OK)
+  582     {
+  583         goto error;
+  584     }
+  585 
+  586     ret = _linkg_web_switch_status_json_add_uint64(object, "updated_us", source->updated_us);
+  587     if (ret != LINKG_JSON_OK)
+  588     {
+  589         goto error;
+  590     }
+  591 
+  592     ret = _linkg_web_switch_status_json_add_uint64(object, "age_ms", _linkg_web_switch_status_age_ms(collected_us, source->updated_us));
+  593     if (ret != LINKG_JSON_OK)
+  594     {
+  595         goto error;
+  596     }
+  597 
+  598     ret = linkg_json_add_object(parent, "traffic", object);
+  599     if (ret != LINKG_JSON_OK)
+  600     {
+  601         goto error;
+  602     }
+  603 
+  604     return LINKG_JSON_OK;
+  605 
+  606 error:
+  607     cJSON_Delete(object);
+  608 
+  609     return ret;
+  610 }
+  611 
+  612 /**
+  613  * @brief 向JSON数组写入单个业务Probe状态。
+  614  */
+  615 static int _linkg_web_switch_status_json_add_probe(cJSON *array, uint32_t traffic_class, const linkg_switch_status_probe_t *source, uint64_t collected_us)
+  616 {
+  617     cJSON *object;
+  618     int    ret;
+  619 
+  620     object = cJSON_CreateObject();
+  621     if (object == NULL)
+  622     {
+  623         return LINKG_JSON_ERR_MEMORY;
+  624     }
+  625 
+  626     ret = linkg_json_add_string(object, "class", _linkg_web_switch_status_transport_class_string(traffic_class));
+  627     if (ret != LINKG_JSON_OK)
+  628     {
+  629         goto error;
+  630     }
+  631 
+  632     ret = linkg_json_add_bool(object, "valid", source->valid);
+  633     if (ret != LINKG_JSON_OK)
+  634     {
+  635         goto error;
+  636     }
+  637 
+  638     ret = linkg_json_add_bool(object, "reachable", source->reachable);
+  639     if (ret != LINKG_JSON_OK)
+  640     {
+  641         goto error;
+  642     }
+  643 
+  644     ret = linkg_json_add_uint32(object, "rtt_us", source->rtt_us);
+  645     if (ret != LINKG_JSON_OK)
+  646     {
+  647         goto error;
+  648     }
+  649 
+  650     ret = _linkg_web_switch_status_json_add_uint64(object, "updated_us", source->updated_us);
+  651     if (ret != LINKG_JSON_OK)
+  652     {
+  653         goto error;
+  654     }
+  655 
+  656     ret = _linkg_web_switch_status_json_add_uint64(object, "age_ms", _linkg_web_switch_status_age_ms(collected_us, source->updated_us));
+  657     if (ret != LINKG_JSON_OK)
+  658     {
+  659         goto error;
+  660     }
+  661 
+  662     if (!cJSON_AddItemToArray(array, object))
+  663     {
+  664         ret = LINKG_JSON_ERR_MEMORY;
+  665         goto error;
+  666     }
+  667 
+  668     return LINKG_JSON_OK;
+  669 
+  670 error:
+  671     cJSON_Delete(object);
+  672 
+  673     return ret;
+  674 }
+  675 
+  676 /**
+  677  * @brief 向JSON对象写入全部业务Probe状态。
+  678  */
+  679 static int _linkg_web_switch_status_json_add_probes(cJSON *parent, const linkg_switch_status_probe_t *source, uint64_t collected_us)
+  680 {
+  681     cJSON   *array;
+  682     uint32_t index;
+  683     int      ret;
+  684 
+  685     array = cJSON_CreateArray();
+  686     if (array == NULL)
+  687     {
+  688         return LINKG_JSON_ERR_MEMORY;
+  689     }
+  690 
+  691     for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+  692     {
+  693         ret = _linkg_web_switch_status_json_add_probe(array, index, &source[index], collected_us);
+  694         if (ret != LINKG_JSON_OK)
+  695         {
+  696             cJSON_Delete(array);
+  697             return ret;
+  698         }
+  699     }
+  700 
+  701     ret = linkg_json_add_array(parent, "probes", array);
+  702     if (ret != LINKG_JSON_OK)
+  703     {
+  704         cJSON_Delete(array);
+  705         return ret;
+  706     }
+  707 
+  708     return LINKG_JSON_OK;
+  709 }
+  710 

@@ -1,0 +1,128 @@
+Internal ctest changing into directory: /tmp/linkg-v1-logic-a1e74eda
+UpdateCTestConfiguration  from :/tmp/linkg-v1-logic-a1e74eda/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/tmp/linkg-v1-logic-a1e74eda/DartConfiguration.tcl
+Test project /tmp/linkg-v1-logic-a1e74eda
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 1
+    Start 1: test_base
+
+1: Test command: /tmp/linkg-v1-logic-a1e74eda/test_base
+1: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+1: Environment variables: 
+1:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+1:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+1: Test timeout computed to be: 20
+1: PASS test_text_edit
+1: PASS test_time_logic
+1: PASS test_file_and_atomic_logic
+1: RESULT suite=base cases=3 assertions=47 failures=0
+1/8 Test #1: test_base ........................   Passed    0.05 sec
+test 2
+    Start 2: test_packet_pool
+
+2: Test command: /tmp/linkg-v1-logic-a1e74eda/test_packet_pool
+2: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+2: Environment variables: 
+2:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+2:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+2: Test timeout computed to be: 20
+2: PASS test_invalid_configuration
+2: PASS test_allocation_and_reference_lifecycle
+2: RESULT suite=packet_pool cases=2 assertions=51 failures=0
+2/8 Test #2: test_packet_pool .................   Passed    0.03 sec
+test 3
+    Start 3: test_node_path
+
+3: Test command: /tmp/linkg-v1-logic-a1e74eda/test_node_path
+3: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+3: Environment variables: 
+3:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+3:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+3: Test timeout computed to be: 20
+3: PASS test_path_lifecycle_and_statistics
+3: PASS test_node_peer_and_deferred_release
+3: PASS test_sta_single_peer_constraint
+3: RESULT suite=node_path cases=3 assertions=79 failures=0
+3/8 Test #3: test_node_path ...................   Passed    0.03 sec
+test 4
+    Start 4: test_transport
+
+4: Test command: /tmp/linkg-v1-logic-a1e74eda/test_transport
+4: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+4: Environment variables: 
+4:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+4:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+4: Test timeout computed to be: 20
+4: PASS test_wire_roundtrip_and_rejection
+4: PASS test_receive_window
+4: PASS test_fragment_wire_and_reassembly
+4: RESULT suite=transport cases=3 assertions=62 failures=0
+4/8 Test #4: test_transport ...................   Passed    0.04 sec
+test 5
+    Start 5: test_wire_protocols
+
+5: Test command: /tmp/linkg-v1-logic-a1e74eda/test_wire_protocols
+5: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+5: Environment variables: 
+5:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+5:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+5: Test timeout computed to be: 20
+5: PASS test_probe_wire
+5: PASS test_discovery_sta_report
+5: PASS test_discovery_ap_sync_and_leave
+5: PASS test_malformed_wire_corpus
+5: RESULT suite=wire_protocols cases=4 assertions=20527 failures=0
+5/8 Test #5: test_wire_protocols ..............   Passed    0.05 sec
+test 6
+    Start 6: test_switch_wire
+
+6: Test command: /tmp/linkg-v1-logic-a1e74eda/test_switch_wire
+6: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+6: Environment variables: 
+6:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+6:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+6: Test timeout computed to be: 20
+6: PASS test_plan_roundtrip
+6: PASS test_quality_roundtrip_and_validation
+6: PASS test_ack_and_maintenance
+6: PASS test_malformed_wire_corpus
+6: RESULT suite=switch_wire cases=4 assertions=4129 failures=0
+6/8 Test #6: test_switch_wire .................   Passed    0.06 sec
+test 7
+    Start 7: test_switch_verify
+
+7: Test command: /tmp/linkg-v1-logic-a1e74eda/test_switch_verify
+7: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+7: Environment variables: 
+7:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+7:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+7: Test timeout computed to be: 20
+7: PASS test_duration_and_begin_validation
+7: PASS test_early_failure_and_stable_result
+7: PASS test_recovery_load_probe_lifecycle
+7: RESULT suite=switch_verify cases=3 assertions=39 failures=0
+7/8 Test #7: test_switch_verify ...............   Passed    0.03 sec
+test 8
+    Start 8: test_config
+
+8: Test command: /tmp/linkg-v1-logic-a1e74eda/test_config
+8: Working Directory: /tmp/linkg-v1-logic-a1e74eda
+8: Environment variables: 
+8:  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+8:  UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+8: Test timeout computed to be: 20
+8: PASS test_common_and_device
+8: PASS test_network_addresses_and_rules
+8: PASS test_link_path_and_radio_config
+8: PASS test_uart_config
+8: RESULT suite=config cases=4 assertions=68 failures=0
+8/8 Test #8: test_config ......................   Passed    0.04 sec
+
+100% tests passed, 0 tests failed out of 8
+
+Total Test time (real) =   0.32 sec

@@ -1,0 +1,1529 @@
+[
+  {
+    "test_id": "T1",
+    "configured_loss_percent": 1,
+    "injection_sides": [
+      "sta"
+    ],
+    "injection_actual_seconds_including_restore_check": 61.385,
+    "tc_checkpoint_seconds_after_injection": 57.173,
+    "tc_checkpoint": {
+      "sta": {
+        "sent_packets": 49687,
+        "dropped_packets": 510,
+        "attempted_packets": 50197,
+        "observed_drop_percent": 1.016
+      }
+    },
+    "linkg_loss_max_any": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 29,
+      "lost_packets": 5,
+      "sample_packets": 169,
+      "captured_utc": "2026-11-02T09:00:14.167441+00:00",
+      "seconds_after_injection": 2.629
+    },
+    "linkg_loss_max_sample_ge_20": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 29,
+      "lost_packets": 5,
+      "sample_packets": 169,
+      "captured_utc": "2026-11-02T09:00:14.167441+00:00",
+      "seconds_after_injection": 2.629
+    },
+    "first_redundant_seconds": {
+      "data": null,
+      "video": null,
+      "realtime": null
+    },
+    "first_cellular_primary_seconds": {
+      "data": null,
+      "video": null,
+      "realtime": null
+    },
+    "migration_order": [],
+    "loss_phase_wifi_return_oscillations": [],
+    "automatic_recovery_confirmed": true,
+    "first_all_wifi_seconds_after_restore": null,
+    "recovery_redundant_attempts": 0,
+    "receiver": {
+      "realtime": {
+        "packets": 8721,
+        "bytes": 2232576,
+        "max_gap_ms": 268.988,
+        "gaps_ge_100ms_count": 4
+      },
+      "video": {
+        "packets": 41519,
+        "bytes": 52380425,
+        "max_gap_ms": 383.3,
+        "gaps_ge_100ms_count": 2
+      },
+      "data": {
+        "packets": 8689,
+        "bytes": 4448768,
+        "max_gap_ms": 230.353,
+        "gaps_ge_100ms_count": 13
+      }
+    },
+    "sta_usb0_tx_bytes": 50875,
+    "ap_usb0_rx_bytes": 45425,
+    "interface_error_deltas": {
+      "ap": {},
+      "sta": {}
+    },
+    "hcc_trace": {
+      "lines": 586,
+      "off_zero": 584,
+      "off_invalid": 2,
+      "off_nonzero": 0,
+      "ovf_zero": 586,
+      "ovf_invalid": 0,
+      "ovf_nonzero": 0
+    },
+    "qdisc_restored_semantically": true,
+    "cleanup_ok": true,
+    "scenario_error": null,
+    "sta_plan_events": [
+      {
+        "captured_utc": "2026-11-02T09:00:06.306526+00:00",
+        "elapsed_seconds": 2.793,
+        "phase": "baseline",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      }
+    ],
+    "raw_result": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T1_1P_STA/result.json",
+    "pcap": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T1_1P_STA/result.pcap"
+  },
+  {
+    "test_id": "T2",
+    "configured_loss_percent": 3,
+    "injection_sides": [
+      "sta"
+    ],
+    "injection_actual_seconds_including_restore_check": 61.389,
+    "tc_checkpoint_seconds_after_injection": 56.878,
+    "tc_checkpoint": {
+      "sta": {
+        "sent_packets": 22572,
+        "dropped_packets": 684,
+        "attempted_packets": 23256,
+        "observed_drop_percent": 2.941
+      }
+    },
+    "linkg_loss_max_any": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 102,
+      "lost_packets": 4,
+      "sample_packets": 39,
+      "captured_utc": "2026-11-02T09:06:29.248321+00:00",
+      "seconds_after_injection": 26.156
+    },
+    "linkg_loss_max_sample_ge_20": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 102,
+      "lost_packets": 4,
+      "sample_packets": 39,
+      "captured_utc": "2026-11-02T09:06:29.248321+00:00",
+      "seconds_after_injection": 26.156
+    },
+    "first_redundant_seconds": {
+      "data": 11.872,
+      "video": 21.898,
+      "realtime": null
+    },
+    "first_cellular_primary_seconds": {
+      "data": 12.874,
+      "video": 22.899,
+      "realtime": null
+    },
+    "migration_order": [
+      "data",
+      "video"
+    ],
+    "loss_phase_wifi_return_oscillations": [],
+    "automatic_recovery_confirmed": false,
+    "first_all_wifi_seconds_after_restore": null,
+    "recovery_redundant_attempts": 0,
+    "receiver": {
+      "realtime": {
+        "packets": 15854,
+        "bytes": 4058624,
+        "max_gap_ms": 302.653,
+        "gaps_ge_100ms_count": 3
+      },
+      "video": {
+        "packets": 77069,
+        "bytes": 97252538,
+        "max_gap_ms": 250.304,
+        "gaps_ge_100ms_count": 11
+      },
+      "data": {
+        "packets": 16005,
+        "bytes": 8194560,
+        "max_gap_ms": 483.772,
+        "gaps_ge_100ms_count": 119
+      }
+    },
+    "sta_usb0_tx_bytes": 92479638,
+    "ap_usb0_rx_bytes": 91095355,
+    "interface_error_deltas": {
+      "ap": {
+        "usb0": {
+          "rx_errors": 4,
+          "tx_errors": 0
+        }
+      },
+      "sta": {}
+    },
+    "hcc_trace": {
+      "lines": 1058,
+      "off_zero": 1056,
+      "off_invalid": 2,
+      "off_nonzero": 0,
+      "ovf_zero": 1057,
+      "ovf_invalid": 1,
+      "ovf_nonzero": 0
+    },
+    "qdisc_restored_semantically": true,
+    "cleanup_ok": true,
+    "scenario_error": null,
+    "sta_plan_events": [
+      {
+        "captured_utc": "2026-11-02T09:05:57.879312+00:00",
+        "elapsed_seconds": 2.605,
+        "phase": "baseline",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:06:14.964865+00:00",
+        "elapsed_seconds": 19.69,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:06:15.966367+00:00",
+        "elapsed_seconds": 20.692,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:06:24.990426+00:00",
+        "elapsed_seconds": 29.716,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:06:25.991704+00:00",
+        "elapsed_seconds": 30.717,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      }
+    ],
+    "raw_result": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T2_3P_STA/result.json",
+    "pcap": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T2_3P_STA/result.pcap"
+  },
+  {
+    "test_id": "T3",
+    "configured_loss_percent": 5,
+    "injection_sides": [
+      "sta"
+    ],
+    "injection_actual_seconds_including_restore_check": 61.35,
+    "tc_checkpoint_seconds_after_injection": 57.074,
+    "tc_checkpoint": {
+      "sta": {
+        "sent_packets": 18796,
+        "dropped_packets": 1033,
+        "attempted_packets": 19829,
+        "observed_drop_percent": 5.21
+      }
+    },
+    "linkg_loss_max_any": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 140,
+      "lost_packets": 10,
+      "sample_packets": 71,
+      "captured_utc": "2026-11-02T09:12:25.508472+00:00",
+      "seconds_after_injection": 35.396
+    },
+    "linkg_loss_max_sample_ge_20": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 140,
+      "lost_packets": 10,
+      "sample_packets": 71,
+      "captured_utc": "2026-11-02T09:12:25.508472+00:00",
+      "seconds_after_injection": 35.396
+    },
+    "first_redundant_seconds": {
+      "data": 2.242,
+      "video": 5.509,
+      "realtime": 48.929
+    },
+    "first_cellular_primary_seconds": {
+      "data": 3.493,
+      "video": 6.26,
+      "realtime": 51.999
+    },
+    "migration_order": [
+      "data",
+      "video",
+      "realtime"
+    ],
+    "loss_phase_wifi_return_oscillations": [
+      {
+        "class": "data",
+        "at_seconds": 18.593
+      },
+      {
+        "class": "data",
+        "at_seconds": 37.65
+      },
+      {
+        "class": "video",
+        "at_seconds": 28.379
+      }
+    ],
+    "automatic_recovery_confirmed": false,
+    "first_all_wifi_seconds_after_restore": null,
+    "recovery_redundant_attempts": 0,
+    "receiver": {
+      "realtime": {
+        "packets": 15771,
+        "bytes": 4037376,
+        "max_gap_ms": 247.072,
+        "gaps_ge_100ms_count": 30
+      },
+      "video": {
+        "packets": 77105,
+        "bytes": 97276884,
+        "max_gap_ms": 251.091,
+        "gaps_ge_100ms_count": 17
+      },
+      "data": {
+        "packets": 16126,
+        "bytes": 8256512,
+        "max_gap_ms": 554.795,
+        "gaps_ge_100ms_count": 54
+      }
+    },
+    "sta_usb0_tx_bytes": 107655882,
+    "ap_usb0_rx_bytes": 106053480,
+    "interface_error_deltas": {
+      "ap": {
+        "usb0": {
+          "rx_errors": 3,
+          "tx_errors": 0
+        }
+      },
+      "sta": {}
+    },
+    "hcc_trace": {
+      "lines": 1078,
+      "off_zero": 1076,
+      "off_invalid": 2,
+      "off_nonzero": 0,
+      "ovf_zero": 947,
+      "ovf_invalid": 131,
+      "ovf_nonzero": 0
+    },
+    "qdisc_restored_semantically": true,
+    "cleanup_ok": true,
+    "scenario_error": null,
+    "sta_plan_events": [
+      {
+        "captured_utc": "2026-11-02T09:11:44.851151+00:00",
+        "elapsed_seconds": 2.67,
+        "phase": "baseline",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:11:52.354381+00:00",
+        "elapsed_seconds": 10.174,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:11:53.605880+00:00",
+        "elapsed_seconds": 11.425,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:11:55.621499+00:00",
+        "elapsed_seconds": 13.441,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:11:56.373184+00:00",
+        "elapsed_seconds": 14.192,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:03.673512+00:00",
+        "elapsed_seconds": 21.493,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:08.705970+00:00",
+        "elapsed_seconds": 26.525,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:11.722294+00:00",
+        "elapsed_seconds": 29.541,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:12.725271+00:00",
+        "elapsed_seconds": 30.544,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:13.476616+00:00",
+        "elapsed_seconds": 31.296,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:18.491760+00:00",
+        "elapsed_seconds": 36.311,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:20.497934+00:00",
+        "elapsed_seconds": 38.317,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:21.499064+00:00",
+        "elapsed_seconds": 39.318,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:22.751296+00:00",
+        "elapsed_seconds": 40.57,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:27.762918+00:00",
+        "elapsed_seconds": 45.582,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:39.041523+00:00",
+        "elapsed_seconds": 56.861,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:12:42.111830+00:00",
+        "elapsed_seconds": 59.931,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      }
+    ],
+    "raw_result": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T3_5P_STA/result.json",
+    "pcap": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T3_5P_STA/result.pcap"
+  },
+  {
+    "test_id": "T4",
+    "configured_loss_percent": 10,
+    "injection_sides": [
+      "sta"
+    ],
+    "injection_actual_seconds_including_restore_check": 61.249,
+    "tc_checkpoint_seconds_after_injection": 56.263,
+    "tc_checkpoint": {
+      "sta": {
+        "sent_packets": 6037,
+        "dropped_packets": 674,
+        "attempted_packets": 6711,
+        "observed_drop_percent": 10.043
+      }
+    },
+    "linkg_loss_max_any": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 500,
+      "lost_packets": 1,
+      "sample_packets": 2,
+      "captured_utc": "2026-11-02T09:15:16.748362+00:00",
+      "seconds_after_injection": 8.123
+    },
+    "linkg_loss_max_sample_ge_20": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 205,
+      "lost_packets": 7,
+      "sample_packets": 34,
+      "captured_utc": "2026-11-02T09:15:35.556580+00:00",
+      "seconds_after_injection": 26.932
+    },
+    "first_redundant_seconds": {
+      "data": 1.102,
+      "video": 3.856,
+      "realtime": 3.856
+    },
+    "first_cellular_primary_seconds": {
+      "data": 2.104,
+      "video": 6.872,
+      "realtime": 6.872
+    },
+    "migration_order": [
+      "data",
+      "video",
+      "realtime"
+    ],
+    "loss_phase_wifi_return_oscillations": [
+      {
+        "class": "data",
+        "at_seconds": 24.671
+      }
+    ],
+    "automatic_recovery_confirmed": false,
+    "first_all_wifi_seconds_after_restore": null,
+    "recovery_redundant_attempts": 0,
+    "receiver": {
+      "realtime": {
+        "packets": 16027,
+        "bytes": 4102912,
+        "max_gap_ms": 278.273,
+        "gaps_ge_100ms_count": 26
+      },
+      "video": {
+        "packets": 77531,
+        "bytes": 97854453,
+        "max_gap_ms": 358.912,
+        "gaps_ge_100ms_count": 16
+      },
+      "data": {
+        "packets": 16219,
+        "bytes": 8304128,
+        "max_gap_ms": 363.275,
+        "gaps_ge_100ms_count": 61
+      }
+    },
+    "sta_usb0_tx_bytes": 114062818,
+    "ap_usb0_rx_bytes": 112265487,
+    "interface_error_deltas": {
+      "ap": {},
+      "sta": {}
+    },
+    "hcc_trace": {
+      "lines": 1080,
+      "off_zero": 1078,
+      "off_invalid": 2,
+      "off_nonzero": 0,
+      "ovf_zero": 869,
+      "ovf_invalid": 211,
+      "ovf_nonzero": 0
+    },
+    "qdisc_restored_semantically": true,
+    "cleanup_ok": true,
+    "scenario_error": null,
+    "sta_plan_events": [
+      {
+        "captured_utc": "2026-11-02T09:15:03.258084+00:00",
+        "elapsed_seconds": 2.863,
+        "phase": "baseline",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:09.727028+00:00",
+        "elapsed_seconds": 9.332,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:10.728533+00:00",
+        "elapsed_seconds": 10.334,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:12.480884+00:00",
+        "elapsed_seconds": 12.086,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:15.496772+00:00",
+        "elapsed_seconds": 15.102,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:28.282755+00:00",
+        "elapsed_seconds": 27.888,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:33.295647+00:00",
+        "elapsed_seconds": 32.901,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:36.057019+00:00",
+        "elapsed_seconds": 35.662,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:15:37.059314+00:00",
+        "elapsed_seconds": 36.664,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      }
+    ],
+    "raw_result": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T4_10P_STA/result.json",
+    "pcap": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T4_10P_STA/result.pcap"
+  },
+  {
+    "test_id": "T5",
+    "configured_loss_percent": 100,
+    "injection_sides": [
+      "sta",
+      "ap"
+    ],
+    "injection_actual_seconds_including_restore_check": 61.545,
+    "tc_checkpoint_seconds_after_injection": 56.944,
+    "tc_checkpoint": {
+      "sta": {
+        "sent_packets": 0,
+        "dropped_packets": 3858,
+        "attempted_packets": 3858,
+        "observed_drop_percent": 100.0
+      },
+      "ap": {
+        "sent_packets": 0,
+        "dropped_packets": 104,
+        "attempted_packets": 104,
+        "observed_drop_percent": 100.0
+      }
+    },
+    "linkg_loss_max_any": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 0,
+      "lost_packets": 0,
+      "sample_packets": 220,
+      "captured_utc": "2026-11-02T09:18:24.144046+00:00",
+      "seconds_after_injection": 0.207
+    },
+    "linkg_loss_max_sample_ge_20": {
+      "side": "ap",
+      "direction": "uplink",
+      "loss_permille": 0,
+      "lost_packets": 0,
+      "sample_packets": 220,
+      "captured_utc": "2026-11-02T09:18:24.144046+00:00",
+      "seconds_after_injection": 0.207
+    },
+    "first_redundant_seconds": {
+      "data": 0.982,
+      "video": 3.486,
+      "realtime": 5.991
+    },
+    "first_cellular_primary_seconds": {
+      "data": 1.983,
+      "video": 4.488,
+      "realtime": 6.992
+    },
+    "migration_order": [
+      "data",
+      "video",
+      "realtime"
+    ],
+    "loss_phase_wifi_return_oscillations": [],
+    "automatic_recovery_confirmed": true,
+    "first_all_wifi_seconds_after_restore": 27.161,
+    "recovery_redundant_attempts": 2,
+    "receiver": {
+      "realtime": {
+        "packets": 11383,
+        "bytes": 2914048,
+        "max_gap_ms": 5898.312,
+        "gaps_ge_100ms_count": 46
+      },
+      "video": {
+        "packets": 55808,
+        "bytes": 70438619,
+        "max_gap_ms": 3589.581,
+        "gaps_ge_100ms_count": 16
+      },
+      "data": {
+        "packets": 11990,
+        "bytes": 6138880,
+        "max_gap_ms": 1359.821,
+        "gaps_ge_100ms_count": 95
+      }
+    },
+    "sta_usb0_tx_bytes": 80844334,
+    "ap_usb0_rx_bytes": 79821256,
+    "interface_error_deltas": {
+      "ap": {
+        "usb0": {
+          "rx_errors": 1,
+          "tx_errors": 0
+        }
+      },
+      "sta": {}
+    },
+    "hcc_trace": {
+      "lines": 802,
+      "off_zero": 596,
+      "off_invalid": 206,
+      "off_nonzero": 0,
+      "ovf_zero": 357,
+      "ovf_invalid": 445,
+      "ovf_nonzero": 0
+    },
+    "qdisc_restored_semantically": true,
+    "cleanup_ok": true,
+    "scenario_error": null,
+    "sta_plan_events": [
+      {
+        "captured_utc": "2026-11-02T09:18:18.616684+00:00",
+        "elapsed_seconds": 2.642,
+        "phase": "baseline",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:18:24.918272+00:00",
+        "elapsed_seconds": 8.944,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:18:25.920131+00:00",
+        "elapsed_seconds": 9.945,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:18:27.422543+00:00",
+        "elapsed_seconds": 11.448,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:18:28.424596+00:00",
+        "elapsed_seconds": 12.45,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:18:29.927248+00:00",
+        "elapsed_seconds": 13.953,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "redundant",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:18:30.928492+00:00",
+        "elapsed_seconds": 14.954,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:18:34.434271+00:00",
+        "elapsed_seconds": 18.46,
+        "phase": "loss",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "none"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "none"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "none"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:19:25.482177+00:00",
+        "elapsed_seconds": 69.507,
+        "phase": "recovery",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:19:30.428057+00:00",
+        "elapsed_seconds": 74.453,
+        "phase": "recovery",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:19:46.773618+00:00",
+        "elapsed_seconds": 90.799,
+        "phase": "recovery",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "video": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          },
+          "data": {
+            "mode": "redundant",
+            "primary": "cellular",
+            "secondary": "wifi"
+          }
+        }
+      },
+      {
+        "captured_utc": "2026-11-02T09:19:51.534930+00:00",
+        "elapsed_seconds": 95.56,
+        "phase": "recovery",
+        "side": "sta",
+        "plan": {
+          "realtime": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "video": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          },
+          "data": {
+            "mode": "single",
+            "primary": "wifi",
+            "secondary": "cellular"
+          }
+        }
+      }
+    ],
+    "raw_result": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T5_100P_BOTH/result.json",
+    "pcap": "/home/dawn/project/linkg_v1/test/reports/20261102_switch/tc/T5_100P_BOTH/result.pcap"
+  }
+]
