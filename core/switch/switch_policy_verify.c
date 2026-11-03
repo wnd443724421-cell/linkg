@@ -54,14 +54,23 @@ static uint32_t _linkg_switch_verify_add_score(uint32_t score, uint32_t delta)
 }
 
 /**
- * @brief 验证时长的唯一公共策略入口，Operation和Verify应使用同一结果。
+ * @brief 验证时长的唯一公共策略入口，Operation和Verify使用同一结果。
+ *
+ * LOSS迁出为3秒，RECOVERY+LOSS和RECOVERY+LOAD均为5秒。
  */
 uint64_t linkg_switch_policy_verify_duration_us(linkg_switch_policy_reason_t reason, linkg_switch_policy_migration_reason_t recovery_reason)
 {
-    if (reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
-        recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+    if (reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
     {
-        return LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US;
+        if (recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_RECOVERY_LOSS_DURATION_US;
+        }
+
+        if (recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US;
+        }
     }
 
     return LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US;
@@ -350,7 +359,7 @@ int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runti
     runtime->wifi_link_id     = observation->wifi.link_id;
     runtime->cellular_link_id = observation->cellular.link_id;
 
-    // LOSS及RECOVERY+LOSS仍使用3秒，只有RECOVERY+LOAD使用5秒。
+    // LOSS迁出使用3秒，RECOVERY+LOSS和RECOVERY+LOAD使用5秒。
     duration_us = linkg_switch_policy_verify_duration_us(params->reason, params->recovery_reason);
     runtime->started_us  = params->now_us;
     runtime->deadline_us = params->now_us + duration_us;
@@ -1855,7 +1864,7 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
             runtime->active_class_mask   |= params->active_class_mask & runtime->class_mask;
         }
 
-        if (runtime->reason == LINKG_SWITCH_POLICY_REASON_LOSS)
+    if (runtime->reason == LINKG_SWITCH_POLICY_REASON_LOSS)
         {
             // 同一轮记录双链路三业务Wire/Load、Wi-Fi HCC及Cellular Probe。
             // 队列溢出仅锁存LOAD压力，不在Verify内创建或抢占Operation。
@@ -1863,9 +1872,17 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
         }
         else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS)
         {
-            // 复用LOSS三秒采样：恢复阶段HCC流控和OVF加分，Wire BAD加分、GOOD减分。
-            // 各业务Wire/Load、双链路Probe保持独立累计；不在此处执行回切判决。
-            _linkg_switch_verify_collect_recovery_loss(runtime, observation, params->now_us);
+            // RECOVERY+LOSS验证结束时，只有异常积分归零才允许回切。
+            if (runtime->wifi_loss_score >= LINKG_SWITCH_POLICY_VERIFY_RECOVERY_LOSS_SCORE_LIMIT)
+            {
+                // 积分尚未归零，继续保持Cellular主链路。
+                _linkg_switch_verify_finish(runtime, LINKG_SWITCH_POLICY_VERIFY_CELLULAR, params->now_us, output);
+                return 0;
+            }
+
+            // 积分归零后，执行原有逐业务双链路质量判决。
+            _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_loss_classes(runtime, params->now_us), params->now_us, output);
+            return 0;
         }
         else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
         {

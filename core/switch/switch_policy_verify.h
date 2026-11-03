@@ -19,25 +19,27 @@ extern "C" {
 
 /****************************** 验证参数 ******************************/
 
-#define LINKG_SWITCH_POLICY_VERIFY_DURATION_US            3000000ULL // Operation原后备截止3秒，仅Verify未启动时使用
-#define LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US       3000000ULL // LOSS及RECOVERY+LOSS实际仍为3秒
-#define LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US       5000000ULL // RECOVERY+LOAD固定5秒
-#define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS  200U       // Wi-Fi单包响应截止200ms
-#define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_PERIOD_US   250000ULL  // Switch目标探测周期250ms
-#define LINKG_SWITCH_POLICY_VERIFY_LOAD_MIN_SAMPLES       10U        // 每个参与业务至少10个网络终态样本
-#define LINKG_SWITCH_POLICY_VERIFY_LOAD_ACK_MAX_AGE_US    1000000ULL // 截止时每类最新成功ACK最大年龄
-#define LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US           250000U    // Cellular RTT参考质量阈值
-#define LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US       1500000ULL // 截止时成功Probe最大年龄
-#define LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US 1000000ULL // 截止时观测快照最大年龄
-#define LINKG_SWITCH_POLICY_VERIFY_LOSS_MIN_SAMPLES       20U        // 单方向单轮积分最小样本数
-#define LINKG_SWITCH_POLICY_VERIFY_COMPARE_MIN_SAMPLES    100U       // 双链路分类质量比较最小样本数
-#define LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE            5U         // LOSS验证初始Wi-Fi无线异常积分
-#define LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE          3U         // 积分严格小于3允许进入Wi-Fi恢复判决
+#define LINKG_SWITCH_POLICY_VERIFY_DURATION_US                  3000000ULL // Operation原后备截止3秒，仅Verify未启动时使用
+#define LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US             3000000ULL // LOSS及RECOVERY+LOSS实际仍为3秒
+#define LINKG_SWITCH_POLICY_VERIFY_RECOVERY_LOSS_DURATION_US    5000000ULL // RECOVERY+LOSS恢复验证5秒
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US             5000000ULL // RECOVERY+LOAD恢复验证5秒
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS        200U       // Wi-Fi单包响应截止200ms
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_PERIOD_US         250000ULL  // Switch目标探测周期250ms
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_MIN_SAMPLES             10U        // 每个参与业务至少10个网络终态样本
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_ACK_MAX_AGE_US          1000000ULL // 截止时每类最新成功ACK最大年龄
+#define LINKG_SWITCH_POLICY_VERIFY_RTT_LIMIT_US                 250000U    // Cellular RTT参考质量阈值
+#define LINKG_SWITCH_POLICY_VERIFY_PROBE_MAX_AGE_US             1500000ULL // 截止时成功Probe最大年龄
+#define LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US       1000000ULL // 截止时观测快照最大年龄
+#define LINKG_SWITCH_POLICY_VERIFY_LOSS_MIN_SAMPLES             20U        // 单方向单轮积分最小样本数
+#define LINKG_SWITCH_POLICY_VERIFY_COMPARE_MIN_SAMPLES          100U       // 双链路分类质量比较最小样本数
+#define LINKG_SWITCH_POLICY_VERIFY_ENTER_SCORE                  5U         // LOSS验证初始Wi-Fi无线异常积分
+#define LINKG_SWITCH_POLICY_VERIFY_RECOVERY_LOSS_SCORE_LIMIT    1U         // RECOVERY+LOSS最终积分必须小于1
+#define LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE                3U         // 积分严格小于3允许进入Wi-Fi恢复判决
 
 /**
  * @brief 返回Operation和Verify共同使用的验证持续时间。
  *
- * LOSS及RECOVERY+LOSS为3秒，RECOVERY+LOAD为5秒。
+ * LOSS迁出为3秒，RECOVERY+LOSS和RECOVERY+LOAD均为5秒。
  */
 uint64_t linkg_switch_policy_verify_duration_us(linkg_switch_policy_reason_t reason,linkg_switch_policy_migration_reason_t recovery_reason);
 
@@ -140,7 +142,7 @@ typedef struct
 /**
  * @brief 一个Peer在同一时刻最多维护一组LOSS或RECOVERY验证会话。
  *
- * ACK后LOSS验证3秒，RECOVERY+LOAD验证5秒；按业务分别累计质量。
+ * ACK后LOSS验证3秒，RECOVERY+LOSS和RECOVERY+LOAD验证5秒；按业务分别累计质量。
  * Wi-Fi无线异常积分为组级；当前轮HCC/Load优先于Wire评分。
  * operation_ids保存各参与业务的事务身份，非参与业务的ID必须为0。
  * 最终分类目标由截止判决生成，发送到Operation的事件协议另行对齐。
@@ -284,7 +286,7 @@ typedef struct
 void linkg_switch_policy_verify_reset(linkg_switch_policy_verify_runtime_t *runtime);
 
 /**
- * @brief 冗余PlanSync ACK确认后启动LOSS 3秒或RECOVERY+LOAD 5秒验证。
+ * @brief 冗余PlanSync ACK确认后启动LOSS 3秒或RECOVERY 5秒验证。
  */
 int linkg_switch_policy_verify_begin(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_begin_params_t *params);
 

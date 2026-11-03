@@ -1225,6 +1225,7 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
     uint32_t                                  index;
     uint32_t                                  mask;
     uint64_t                                  now_us;
+    uint64_t                                  verify_duration_us;
     bool                                      fallback;
     int                                       ret;
 
@@ -1468,7 +1469,7 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
             }
         }
 
-       // 组装Verify启动参数，保持Operation与Verify接口一致。
+        // 组装Verify启动参数，保持Operation与Verify接口一致。
         memset(&verify_params, 0, sizeof(verify_params));
 
         verify_params.peer_node_id    = peer->peer_node_id;
@@ -1482,11 +1483,15 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
         verify_params.observation     = &peer->role.sta.observation;
         verify_params.now_us          = now_us;
 
-        ret = linkg_switch_policy_verify_begin( &peer->role.sta.verify, &verify_params);
+        // Operation与Verify统一使用按原因确定的验证持续时间。
+        verify_duration_us = linkg_switch_policy_verify_duration_us(
+            verify_params.reason, verify_params.recovery_reason);
 
-        // 无论Verify是否启动成功，都进入固定3秒验证窗口。
+        ret = linkg_switch_policy_verify_begin(&peer->role.sta.verify, &verify_params);
+
+        // 无论Verify是否启动成功，都进入对应的3秒或5秒验证窗口。
         _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY, now_us);
-        policy->next_action_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_POLICY_VERIFY_DURATION_US);
+        policy->next_action_us = _linkg_switch_operation_add_us(now_us, verify_duration_us);
 
         // 记录本组参与业务的验证起点和截止时间。
         for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
@@ -1497,10 +1502,10 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
             }
 
             policy->operations[index].started_us  = now_us;
-            policy->operations[index].deadline_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_POLICY_VERIFY_DURATION_US);
+            policy->operations[index].deadline_us = policy->next_action_us;
         }
 
-        // Verify启动失败时，由Operation在3秒后输出INCONCLUSIVE。
+        // Verify启动失败时，由Operation在对应验证窗口结束后输出INCONCLUSIVE。
         (void)ret;
     }
 
@@ -1975,7 +1980,7 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
                 break;
             }
 
-            // Verify未启动时，仍等待完整3秒窗口后安全回退。
+            // Verify未启动时，仍等待本次事务对应的完整验证窗口后安全回退。
             if (now_us < policy->next_action_us)
             {
                 break;
