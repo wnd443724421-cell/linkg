@@ -20,7 +20,7 @@ extern "C" {
 /****************************** 验证参数 ******************************/
 
 #define LINKG_SWITCH_POLICY_VERIFY_DURATION_US                  3000000ULL // Operation原后备截止3秒，仅Verify未启动时使用
-#define LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US             3000000ULL // LOSS及RECOVERY+LOSS实际仍为3秒
+#define LINKG_SWITCH_POLICY_VERIFY_LOSS_DURATION_US             3000000ULL // LOSS迁出验证3秒
 #define LINKG_SWITCH_POLICY_VERIFY_RECOVERY_LOSS_DURATION_US    5000000ULL // RECOVERY+LOSS恢复验证5秒
 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_DURATION_US             5000000ULL // RECOVERY+LOAD恢复验证5秒
 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_PROBE_TIMEOUT_MS        200U       // Wi-Fi单包响应截止200ms

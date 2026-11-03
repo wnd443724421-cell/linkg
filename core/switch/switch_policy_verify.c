@@ -5,7 +5,7 @@
  * @version 1.0.0
  * @date 2026-10-26
  *
- * 流程：ACK启动 → LOSS采集3秒或LOAD恢复采集5秒 → 按分类质量判决
+ * 流程：ACK启动 → LOSS采集3秒或RECOVERY采集5秒 → 按分类质量判决
  *       → 固化VERIFY_DONE → Operation决定最终单发Plan。
  *
  * 本模块只评估质量，不修改发送计划，也不执行PlanSync。
@@ -827,7 +827,7 @@ static bool _linkg_switch_verify_wifi_load_recent(const linkg_switch_policy_veri
  * @brief 收集RECOVERY + LOSS期间参与业务的Wi-Fi Probe最新可达性。
  *
  * Probe按业务独立去重。最新失败可以覆盖先前成功状态，最新成功也可以
- * 恢复对应业务的可达标记；三秒截止时再判断成功结果的新鲜度。
+ * 恢复对应业务的可达标记；验证截止时再判断成功结果的新鲜度。
  */
 static void _linkg_switch_verify_collect_wifi_probe(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_probe_observation_t probes[LINKG_TRANSPORT_CLASS_COUNT], uint64_t observation_us, uint64_t now_us)
 {
@@ -1011,7 +1011,7 @@ static void _linkg_switch_verify_collect_loss_common(linkg_switch_policy_verify_
 
     /****************************** 七、双链路Probe采集 ******************************/
 
-    // 持续记录Cellular分类Probe，供三秒截止后的双链路质量比较。
+    // 持续记录Cellular分类Probe，供验证截止后的双链路质量比较。
     _linkg_switch_verify_collect_cellular_probe(runtime, observation->cellular.probe, observation->collected_us, now_us);
 
     // LOSS及RECOVERY都需要比较两个Path的平均Probe RTT。
@@ -1864,7 +1864,7 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
             runtime->active_class_mask   |= params->active_class_mask & runtime->class_mask;
         }
 
-    if (runtime->reason == LINKG_SWITCH_POLICY_REASON_LOSS)
+        if (runtime->reason == LINKG_SWITCH_POLICY_REASON_LOSS)
         {
             // 同一轮记录双链路三业务Wire/Load、Wi-Fi HCC及Cellular Probe。
             // 队列溢出仅锁存LOAD压力，不在Verify内创建或抢占Operation。
@@ -1872,17 +1872,8 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
         }
         else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS)
         {
-            // RECOVERY+LOSS验证结束时，只有异常积分归零才允许回切。
-            if (runtime->wifi_loss_score >= LINKG_SWITCH_POLICY_VERIFY_RECOVERY_LOSS_SCORE_LIMIT)
-            {
-                // 积分尚未归零，继续保持Cellular主链路。
-                _linkg_switch_verify_finish(runtime, LINKG_SWITCH_POLICY_VERIFY_CELLULAR, params->now_us, output);
-                return 0;
-            }
-
-            // 积分归零后，执行原有逐业务双链路质量判决。
-            _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_loss_classes(runtime, params->now_us), params->now_us, output);
-            return 0;
+            // 恢复期间继续采集HCC、Load、Wire及双链路Probe，截止后再判决。
+            _linkg_switch_verify_collect_recovery_loss(runtime, observation, params->now_us);
         }
         else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
         {
@@ -1921,7 +1912,14 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     }
     else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS)
     {
-        // 与LOSS使用同一分类比较，仅保守回退方向不同。
+        // 恢复验证截止时积分必须归零，否则继续保持Cellular。
+        if (runtime->wifi_loss_score >= LINKG_SWITCH_POLICY_VERIFY_RECOVERY_LOSS_SCORE_LIMIT)
+        {
+            _linkg_switch_verify_finish(runtime, LINKG_SWITCH_POLICY_VERIFY_CELLULAR, params->now_us, output);
+            return 0;
+        }
+
+        // 积分归零后仍需执行原有逐业务双链路质量判决。
         _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_loss_classes(runtime, params->now_us), params->now_us, output);
         return 0;
     }
