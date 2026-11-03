@@ -314,7 +314,7 @@ static int _linkg_app_init(void)
 
     g_app.route_initialized = true;
 
-    ret = linkg_nat_init(&config.network, config.links.cellular.enabled);
+    ret = linkg_nat_init(&config.network);
     if (ret != 0)
     {
         LINKG_LOG_ERROR("initialize NAT module failed, error=%d", ret);

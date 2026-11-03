@@ -1,0 +1,259 @@
+{
+  "captured_utc": "2026-11-03T01:59:56.820888+00:00",
+  "web_samples": [
+    {
+      "response": {
+        "cmd": 1006,
+        "code": "ok",
+        "data": {
+          "path_enabled": true,
+          "role": "sta",
+          "available": true,
+          "partial": false,
+          "local": {
+            "interface_state": "connected",
+            "mac": "00:01:02:F7:DB:B6",
+            "updated_ms": 251775,
+            "chip_temperature_valid": true,
+            "chip_temperature_c": 45,
+            "radio": {
+              "work_mode": "narrow",
+              "frequency_mhz": 5785,
+              "channel": 157,
+              "noise_valid": true,
+              "noise_dbm": -92,
+              "narrow": {
+                "mode": "adaptive",
+                "configured_rate_level": 0,
+                "current_rate_valid": true,
+                "current_rate_level": 4
+              }
+            }
+          },
+          "sta": {
+            "peer": {
+              "mac": "00:01:02:F7:DA:4E",
+              "probe": {
+                "realtime": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 2208
+                },
+                "video": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 2017
+                },
+                "data": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 3002
+                }
+              },
+              "rtt_us": 3002,
+              "rtt_valid": true,
+              "state": "connected",
+              "statistics_valid": true,
+              "connected_time_s": 237,
+              "updated_ms": 251775,
+              "rssi_dbm": -27,
+              "tx_rate_kbps": 58500,
+              "rx_rate_kbps": 65000,
+              "inactive_ms": 0,
+              "statistics_updated_ms": 251775,
+              "driver": {
+                "tx_bytes": "410778",
+                "rx_bytes": "575537",
+                "tx_packets": "3430",
+                "rx_packets": "4401",
+                "tx_failed": "2"
+              }
+            }
+          }
+        }
+      },
+      "raw": "{\"cmd\":1006,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"role\":\"sta\",\"available\":true,\"partial\":false,\"local\":{\"interface_state\":\"connected\",\"mac\":\"00:01:02:F7:DB:B6\",\"updated_ms\":251775,\"chip_temperature_valid\":true,\"chip_temperature_c\":45,\"radio\":{\"work_mode\":\"narrow\",\"frequency_mhz\":5785,\"channel\":157,\"noise_valid\":true,\"noise_dbm\":-92,\"narrow\":{\"mode\":\"adaptive\",\"configured_rate_level\":0,\"current_rate_valid\":true,\"current_rate_level\":4}}},\"sta\":{\"peer\":{\"mac\":\"00:01:02:F7:DA:4E\",\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":2208},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":2017},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":3002}},\"rtt_us\":3002,\"rtt_valid\":true,\"state\":\"connected\",\"statistics_valid\":true,\"connected_time_s\":237,\"updated_ms\":251775,\"rssi_dbm\":-27,\"tx_rate_kbps\":58500,\"rx_rate_kbps\":65000,\"inactive_ms\":0,\"statistics_updated_ms\":251775,\"driver\":{\"tx_bytes\":\"410778\",\"rx_bytes\":\"575537\",\"tx_packets\":\"3430\",\"rx_packets\":\"4401\",\"tx_failed\":\"2\"}}}}}"
+    },
+    {
+      "response": {
+        "cmd": 1006,
+        "code": "ok",
+        "data": {
+          "path_enabled": true,
+          "role": "sta",
+          "available": true,
+          "partial": false,
+          "local": {
+            "interface_state": "connected",
+            "mac": "00:01:02:F7:DB:B6",
+            "updated_ms": 251775,
+            "chip_temperature_valid": true,
+            "chip_temperature_c": 45,
+            "radio": {
+              "work_mode": "narrow",
+              "frequency_mhz": 5785,
+              "channel": 157,
+              "noise_valid": true,
+              "noise_dbm": -92,
+              "narrow": {
+                "mode": "adaptive",
+                "configured_rate_level": 0,
+                "current_rate_valid": true,
+                "current_rate_level": 4
+              }
+            }
+          },
+          "sta": {
+            "peer": {
+              "mac": "00:01:02:F7:DA:4E",
+              "probe": {
+                "realtime": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 2208
+                },
+                "video": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 2017
+                },
+                "data": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 3002
+                }
+              },
+              "rtt_us": 3002,
+              "rtt_valid": true,
+              "state": "connected",
+              "statistics_valid": true,
+              "connected_time_s": 237,
+              "updated_ms": 251775,
+              "rssi_dbm": -27,
+              "tx_rate_kbps": 58500,
+              "rx_rate_kbps": 65000,
+              "inactive_ms": 0,
+              "statistics_updated_ms": 251775,
+              "driver": {
+                "tx_bytes": "410778",
+                "rx_bytes": "575537",
+                "tx_packets": "3430",
+                "rx_packets": "4401",
+                "tx_failed": "2"
+              }
+            }
+          }
+        }
+      },
+      "raw": "{\"cmd\":1006,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"role\":\"sta\",\"available\":true,\"partial\":false,\"local\":{\"interface_state\":\"connected\",\"mac\":\"00:01:02:F7:DB:B6\",\"updated_ms\":251775,\"chip_temperature_valid\":true,\"chip_temperature_c\":45,\"radio\":{\"work_mode\":\"narrow\",\"frequency_mhz\":5785,\"channel\":157,\"noise_valid\":true,\"noise_dbm\":-92,\"narrow\":{\"mode\":\"adaptive\",\"configured_rate_level\":0,\"current_rate_valid\":true,\"current_rate_level\":4}}},\"sta\":{\"peer\":{\"mac\":\"00:01:02:F7:DA:4E\",\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":2208},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":2017},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":3002}},\"rtt_us\":3002,\"rtt_valid\":true,\"state\":\"connected\",\"statistics_valid\":true,\"connected_time_s\":237,\"updated_ms\":251775,\"rssi_dbm\":-27,\"tx_rate_kbps\":58500,\"rx_rate_kbps\":65000,\"inactive_ms\":0,\"statistics_updated_ms\":251775,\"driver\":{\"tx_bytes\":\"410778\",\"rx_bytes\":\"575537\",\"tx_packets\":\"3430\",\"rx_packets\":\"4401\",\"tx_failed\":\"2\"}}}}}"
+    },
+    {
+      "response": {
+        "cmd": 1006,
+        "code": "ok",
+        "data": {
+          "path_enabled": true,
+          "role": "sta",
+          "available": true,
+          "partial": false,
+          "local": {
+            "interface_state": "connected",
+            "mac": "00:01:02:F7:DB:B6",
+            "updated_ms": 251775,
+            "chip_temperature_valid": true,
+            "chip_temperature_c": 45,
+            "radio": {
+              "work_mode": "narrow",
+              "frequency_mhz": 5785,
+              "channel": 157,
+              "noise_valid": true,
+              "noise_dbm": -92,
+              "narrow": {
+                "mode": "adaptive",
+                "configured_rate_level": 0,
+                "current_rate_valid": true,
+                "current_rate_level": 4
+              }
+            }
+          },
+          "sta": {
+            "peer": {
+              "mac": "00:01:02:F7:DA:4E",
+              "probe": {
+                "realtime": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 2019
+                },
+                "video": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 2017
+                },
+                "data": {
+                  "valid": true,
+                  "reachable": true,
+                  "rtt_us": 3002
+                }
+              },
+              "rtt_us": 3002,
+              "rtt_valid": true,
+              "state": "connected",
+              "statistics_valid": true,
+              "connected_time_s": 237,
+              "updated_ms": 251775,
+              "rssi_dbm": -27,
+              "tx_rate_kbps": 58500,
+              "rx_rate_kbps": 65000,
+              "inactive_ms": 0,
+              "statistics_updated_ms": 251775,
+              "driver": {
+                "tx_bytes": "410778",
+                "rx_bytes": "575537",
+                "tx_packets": "3430",
+                "rx_packets": "4401",
+                "tx_failed": "2"
+              }
+            }
+          }
+        }
+      },
+      "raw": "{\"cmd\":1006,\"code\":\"ok\",\"data\":{\"path_enabled\":true,\"role\":\"sta\",\"available\":true,\"partial\":false,\"local\":{\"interface_state\":\"connected\",\"mac\":\"00:01:02:F7:DB:B6\",\"updated_ms\":251775,\"chip_temperature_valid\":true,\"chip_temperature_c\":45,\"radio\":{\"work_mode\":\"narrow\",\"frequency_mhz\":5785,\"channel\":157,\"noise_valid\":true,\"noise_dbm\":-92,\"narrow\":{\"mode\":\"adaptive\",\"configured_rate_level\":0,\"current_rate_valid\":true,\"current_rate_level\":4}}},\"sta\":{\"peer\":{\"mac\":\"00:01:02:F7:DA:4E\",\"probe\":{\"realtime\":{\"valid\":true,\"reachable\":true,\"rtt_us\":2019},\"video\":{\"valid\":true,\"reachable\":true,\"rtt_us\":2017},\"data\":{\"valid\":true,\"reachable\":true,\"rtt_us\":3002}},\"rtt_us\":3002,\"rtt_valid\":true,\"state\":\"connected\",\"statistics_valid\":true,\"connected_time_s\":237,\"updated_ms\":251775,\"rssi_dbm\":-27,\"tx_rate_kbps\":58500,\"rx_rate_kbps\":65000,\"inactive_ms\":0,\"statistics_updated_ms\":251775,\"driver\":{\"tx_bytes\":\"410778\",\"rx_bytes\":\"575537\",\"tx_packets\":\"3430\",\"rx_packets\":\"4401\",\"tx_failed\":\"2\"}}}}}"
+    }
+  ],
+  "uptime": {
+    "exit": 0,
+    "stdout": "260.65 487.62\n",
+    "stderr": ""
+  },
+  "processes": {
+    "exit": 0,
+    "stdout": "  PID USER       VSZ STAT COMMAND\n    1 root      2608 S    /sbin/procd\n    2 root         0 SW   [kthreadd]\n    3 root         0 IW<  [rcu_gp]\n    4 root         0 IW<  [rcu_par_gp]\n    5 root         0 IW   [kworker/0:0-rcu]\n    6 root         0 IW<  [kworker/0:0H-kb]\n    7 root         0 IW   [kworker/u4:0-g_]\n    8 root         0 IW<  [mm_percpu_wq]\n    9 root         0 SW   [ksoftirqd/0]\n   10 root         0 IW   [rcu_preempt]\n   11 root         0 SW   [migration/0]\n   12 root         0 SW   [cpuhp/0]\n   13 root         0 SW   [cpuhp/1]\n   14 root         0 SW   [migration/1]\n   15 root         0 SW   [ksoftirqd/1]\n   16 root         0 IW   [kworker/1:0-eve]\n   17 root         0 IW<  [kworker/1:0H-kb]\n   18 root         0 SW   [kdevtmpfs]\n   19 root         0 IW   [kworker/u4:1-ev]\n   21 root         0 SW   [rcu_tasks_kthre]\n   34 root         0 IW   [kworker/1:1-mm_]\n   35 root         0 IW   [kworker/0:1-eve]\n  375 root         0 SW   [oom_reaper]\n  376 root         0 IW<  [writeback]\n  408 root         0 IW<  [kblockd]\n  541 root         0 SW   [ion_system_heap]\n  556 root         0 SW   [watchdogd]\n  653 root         0 IW<  [cfg80211]\n  657 root         0 SW   [spi0]\n  668 root         0 SW   [kswapd0]\n  759 root         0 IW   [kworker/u4:2-ev]\n  886 root         0 IW<  [uas]\n  915 root         0 SW   [irq/41-mmc1]\n  925 root         0 IW<  [3000008.dsp_rpr]\n  928 root         0 IW<  [6010000.c906_rp]\n  951 root         0 IW<  [ipv6_addrconf]\n  963 root         0 IW   [kworker/0:2-rcu]\n  964 root         0 IW   [kworker/0:3-eve]\n  985 root         0 DW   [usb-hardware-sc]\n  995 root         0 IW<  [kworker/1:1H-kb]\n  997 root         0 IW<  [kworker/0:1H-kb]\n  998 root         0 IW<  [kworker/1:2H-kb]\n 1086 root         0 SWN  [jffs2_gcd_mtd8]\n 1233 ubus      2268 S    /sbin/ubusd\n 1238 root      1820 S    /sbin/askfirst /bin/ash --login\n 1378 root         0 IW<  [kworker/0:2H]\n 1453 root      1940 S    /usr/sbin/linkg-supervisor\n 1539 logd      2416 S    /sbin/logd -S 64\n 1540 root      2220 S    /sbin/logread -f -F /tmp/.lastlog -p /var/run/logread.1.pid -S 512\n 1552 root      3276 S<   /usr/sbin/ntpd -n -N -S /usr/sbin/ntpd-hotplug -p ntp5.aliyun.com -p 0.openwrt.pool.ntp.org -p 0.cn.pool.ntp.org\n 1578 root         0 IW   [kworker/1:2-eve]\n 1609 root         0 IW<  [cryptodev_queue]\n 1705 root      2324 S    /usr/sbin/dropbear -F -P /var/run/dropbear.1.pid -p 22 -K 300 -T 3\n 1742 root      202m S    /app/current/bin/linkg\n 1900 root      2552 S    /sbin/netifd\n 1977 root     29524 S    /bin/adbd -D\n 2031 root      1908 S    /usr/bin/boa\n 2095 root      3140 S    udhcpc -f -i usb0 -t 5\n 2116 root      3140 S    udhcpd -f /var/run/linkg/udhcp/udhcpd.conf\n 2127 root         0 IW<  [plat_exception_]\n 2149 root         0 SW<  [wlan_bus_rx/sdi]\n 2155 root         0 IW<  [sdio_test]\n 2157 root         0 IW<  [g_oal_workqueue]\n 2158 root         0 SW   [hisi_frw/0]\n 2159 root         0 IW<  [wlan_pm_wq]\n 2212 root         0 SW   [hisi_hcc]\n 2213 root         0 SW   [hisi_rxdata]\n 2214 root         0 SW   [hisi_rx_comp]\n 2215 root         0 SW   [hisi_encry]\n 2220 root         0 IW<  [wifi_exception_]\n 2271 root         0 IW   [kworker/u4:3-g_]\n 2403 root      6604 S    wpa_supplicant -D nl80211 -i wlan0 -c /var/run/linkg/wifi/wpa_supplicant.conf\n 2452 root      2448 S    /usr/sbin/dropbear -F -P /var/run/dropbear.1.pid -p 22 -K 300 -T 3\n 2662 root      2448 S    /usr/sbin/dropbear -F -P /var/run/dropbear.1.pid -p 22 -K 300 -T 3\n 2663 root      2448 S    /usr/sbin/dropbear -F -P /var/run/dropbear.1.pid -p 22 -K 300 -T 3\n 2664 root      3192 S    -ash\n 2674 root      4544 S    /usr/libexec/sftp-server\n 2691 root      2448 S    /usr/sbin/dropbear -F -P /var/run/dropbear.1.pid -p 22 -K 300 -T 3\n 2693 root      3192 R    ps -ww\n",
+    "stderr": ""
+  },
+  "linkg_fds": {
+    "exit": 0,
+    "stdout": "lr-x------    1 root     root            64 Nov  3 09:59 0 -> /dev/null\nl-wx------    1 root     root            64 Nov  3 09:59 1 -> pipe:[4218]\nlr-x------    1 root     root            64 Nov  3 09:59 10 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 11 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 12 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 13 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 14 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 15 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 16 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 17 -> anon_inode:gpio-linehandle\nlrwx------    1 root     root            64 Nov  3 09:59 18 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 19 -> anon_inode:[eventfd]\nl-wx------    1 root     root            64 Nov  3 09:59 2 -> pipe:[4219]\nlrwx------    1 root     root            64 Nov  3 09:59 20 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 21 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 22 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 23 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 24 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 25 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 26 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 27 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 28 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 29 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 3 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 30 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 31 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 32 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 33 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 34 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 35 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 36 -> socket:[4555]\nlrwx------    1 root     root            64 Nov  3 09:59 37 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 38 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 39 -> /dev/ttyUSB1\nlrwx------    1 root     root            64 Nov  3 09:59 4 -> anon_inode:[signalfd]\nlrwx------    1 root     root            64 Nov  3 09:59 40 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 41 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 42 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 43 -> /dev/linkg_fast_nat\nlrwx------    1 root     root            64 Nov  3 09:59 44 -> socket:[5398]\nlrwx------    1 root     root            64 Nov  3 09:59 45 -> socket:[5399]\nlrwx------    1 root     root            64 Nov  3 09:59 46 -> socket:[5400]\nlrwx------    1 root     root            64 Nov  3 09:59 47 -> anon_inode:[eventpoll]\nlrwx------    1 root     root            64 Nov  3 09:59 48 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 49 -> /dev/net/tun\nl-wx------    1 root     root            64 Nov  3 09:59 5 -> pipe:[2020]\nlrwx------    1 root     root            64 Nov  3 09:59 50 -> socket:[4580]\nlrwx------    1 root     root            64 Nov  3 09:59 51 -> /dev/ttyS4\nlrwx------    1 root     root            64 Nov  3 09:59 52 -> socket:[5459]\nlrwx------    1 root     root            64 Nov  3 09:59 53 -> socket:[5526]\nlrwx------    1 root     root            64 Nov  3 09:59 54 -> socket:[5871]\nlrwx------    1 root     root            64 Nov  3 09:59 55 -> socket:[5872]\nlrwx------    1 root     root            64 Nov  3 09:59 56 -> socket:[5876]\nlrwx------    1 root     root            64 Nov  3 09:59 57 -> socket:[5877]\nlrwx------    1 root     root            64 Nov  3 09:59 58 -> socket:[5878]\nlrwx------    1 root     root            64 Nov  3 09:59 59 -> anon_inode:[eventpoll]\nlrwx------    1 root     root            64 Nov  3 09:59 6 -> anon_inode:[eventfd]\nlrwx------    1 root     root            64 Nov  3 09:59 60 -> anon_inode:[eventfd]\nlr-x------    1 root     root            64 Nov  3 09:59 61 -> /dev/hi1105_tx_flowctrl\nlrwx------    1 root     root            64 Nov  3 09:59 62 -> socket:[5888]\nlrwx------    1 root     root            64 Nov  3 09:59 63 -> socket:[6156]\nlr-x------    1 root     root            64 Nov  3 09:59 7 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 8 -> anon_inode:gpio-linehandle\nlr-x------    1 root     root            64 Nov  3 09:59 9 -> anon_inode:gpio-linehandle\n",
+    "stderr": ""
+  },
+  "log_listing": {
+    "exit": 0,
+    "stdout": "/tmp:\ndrwxrwxrwt   10 root     root           300 Nov  3 09:59 .\ndrwxr-xr-x    1 root     root             0 Jan  1  1970 ..\n-rw-------    1 root     root        136856 Nov  3 09:59 .lastlog\ndrwx------    2 root     root            40 Nov  3 09:55 .uci\n-rw-r--r--    1 root     root           146 Nov  3 09:55 board.json\ndrwx------    2 root     root            40 Nov  3 09:55 linkg-private\nsrwxr-xr-x    1 root     root             0 Nov  3 09:55 linkg_wpa_ctrl_1742_12\nlrwxrwxrwx    1 root     root            33 Nov  3 09:55 localtime -> /usr/share/zoneinfo/Asia/Shanghai\ndrwxr-xr-x    2 root     root            40 Nov  3 09:55 lock\nlrwxrwxrwx    1 root     root            35 Nov  3 09:55 resolv.conf -> /tmp/resolv.conf.d/resolv.conf.auto\ndrwxr-xr-x    2 root     root            60 Nov  3 09:55 resolv.conf.d\ndrwxr-xr-x    2 root     root            40 Nov  3 09:55 run\ndrwxrwxrwt    2 root     root            40 Nov  3 09:55 shm\ndrwxr-xr-x    2 root     root            40 Nov  3 09:55 state\ndrwxr-xr-x    2 root     root            80 Nov  3 09:55 sysinfo\n\n/var/log:\ndrwxr-xr-x    2 root     root             0 Jan  1  1970 .\ndrwxrwxr-x    1 root     root             0 Jan  1  1970 ..\n-rw-r--r--    1 root     root             0 Nov  3 09:55 lastlog\n-rw-r--r--    1 root     root             0 Nov  3 09:55 wtmp\n\n/var/run/linkg:\ndrwxr-xr-x    4 root     root             0 Jan  1  1970 .\ndrwxrwxr-x    1 root     root             0 Nov  3 09:55 ..\ndrwxr-xr-x    2 root     root             0 Nov  3 09:55 udhcp\ndrwxr-xr-x    2 root     root             0 Nov  3 09:55 wifi\n\n/var/run/linkg/wifi:\ndrwxr-xr-x    2 root     root             0 Nov  3 09:55 .\ndrwxr-xr-x    4 root     root             0 Jan  1  1970 ..\n-rw-------    1 root     root           307 Nov  3 09:55 wpa_supplicant.conf\n",
+    "stderr": ""
+  },
+  "iw_pids": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "dmesg_tail": {
+    "exit": 0,
+    "stdout": "[   18.908966] [W][MPXX][vap:0]update info tmp:0, chan_idx_1_2[0 0],cali_time:0 [F:11349][L:435]\n[   18.908978] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:1, c_code[0x3], rc_code[0x48] r_code[0x0] [F:11349][L:440]\n[   18.908990] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:classa[0xf], classb[0x0], close_fem[0] [F:11349][L:444]\n[   18.909560] us_strlen is 0\n[   18.909571] [W][MPXX][vap:0]chan:1, cali_data dog_tag:0, check_hw_status:0 [F:11349][L:431]\n[   18.909583] [W][MPXX][vap:0]update info tmp:0, chan_idx_1_2[0 0],cali_time:1 [F:11349][L:435]\n[   18.909595] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:1, c_code[0x3], rc_code[0x48] r_code[0x0] [F:11349][L:440]\n[   18.909606] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:classa[0x12], classb[0x0], close_fem[0] [F:11349][L:444]\n[   18.910181] us_strlen is 0\n[   18.910961] [W][MPXX][vap:0]{hwifi_config_init_dts_cali::wal_send_cfg_event send succ} [F:11416][L:337]\n[   18.924638] [W][MPXX][vap:0]{hmac_config_device_m2s_info_syn::en_nss_num:[1] smps mode[3].} [F:11330][L:65]\n[   19.917835] [MPXX][I][HCC_BUS]device ready, bus:sdio[hcc_bus_device_init_ready:1498]\n[   19.917876] [W][MPXX][vap:0]wlan_pm_open::wlan_pm_open SUCC!! [F:11001][L:767]\n[   19.917914] [W][MPXX][vap:0]wlan_pm_set_timeout[5] [F:11001][L:2195]\n[   19.917936] [W][MPXX][vap:0]{hmac_tid_sche_list_dump::type[6]} [F:11322][L:456]\n[   19.920182] plat_1105:I]wifi_get_bfgx_rc_data_buf_addr_mp]wifi cali size is 20\n[   19.920198] [W][MPXX][vap:0]chan:0, cali_data dog_tag:0, check_hw_status:0 [F:11349][L:431]\n[   19.920226] [W][MPXX][vap:0]update info tmp:0, chan_idx_1_2[0 0],cali_time:0 [F:11349][L:435]\n[   19.920249] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:1, c_code[0x3], rc_code[0x48] r_code[0x0] [F:11349][L:440]\n[   19.920265] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:classa[0xf], classb[0x0], close_fem[0] [F:11349][L:444]\n[   19.920863] us_strlen is 0\n[   19.920873] [W][MPXX][vap:0]chan:1, cali_data dog_tag:0, check_hw_status:0 [F:11349][L:431]\n[   19.920889] [W][MPXX][vap:0]update info tmp:0, chan_idx_1_2[0 0],cali_time:2 [F:11349][L:435]\n[   19.920904] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:1, c_code[0x3], rc_code[0x48] r_code[0x0] [F:11349][L:440]\n[   19.920919] [W][MPXX][vap:0]st_rc_r_c_cali_data save_all:classa[0x12], classb[0x0], close_fem[0] [F:11349][L:444]\n[   19.921496] us_strlen is 0\n[   19.921508] [W][MPXX][vap:0][20dbm]start to get 20dbm cali data from wlan len[232] [F:10182][L:1992]\n[   19.921520] plat_1105:I]wifi_get_bt_cali_data_buf_mp]bfgx wifi cali data for bt buf size is 896\n[   19.921528] [W][MPXX][vap:0][20dbm]:start get the chan_idx:=0x0 cali data [F:10182][L:2001]\n[   19.921543] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000e [F:10182][L:1965]\n[   19.921558] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xffff000e [F:10182][L:1965]\n[   19.921573] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000d [F:10182][L:1965]\n[   19.921587] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000c [F:10182][L:1965]\n[   19.921602] [W][MPXX][vap:0][20dbm]:uc_atx_pwr_cmp:=0x1d9 us_ppa_cmp:=0x15 uc_dtx_pwr_cmp:=0x41 [F:10182][L:1953]\n[   19.921616] [W][MPXX][vap:0][20dbm]:start get the chan_idx:=0x1 cali data [F:10182][L:2001]\n[   19.921631] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xffff000e [F:10182][L:1965]\n[   19.921646] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000e [F:10182][L:1965]\n[   19.921660] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000d [F:10182][L:1965]\n[   19.921675] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000c [F:10182][L:1965]\n[   19.921690] [W][MPXX][vap:0][20dbm]:uc_atx_pwr_cmp:=0x1cc us_ppa_cmp:=0x11 uc_dtx_pwr_cmp:=0x41 [F:10182][L:1953]\n[   19.921704] [W][MPXX][vap:0][20dbm]:start get the chan_idx:=0x2 cali data [F:10182][L:2001]\n[   19.921719] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xffff000e [F:10182][L:1965]\n[   19.921734] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000f [F:10182][L:1965]\n[   19.921748] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xfffe000e [F:10182][L:1965]\n[   19.921763] [W][MPXX][vap:0][20dbm]:l_txiq_cmp_alpha:=0x7ff l_txiq_cmp_beta:=0xffff000d [F:10182][L:1965]\n[   19.921778] [W][MPXX][vap:0][20dbm]:uc_atx_pwr_cmp:=0x1f2 us_ppa_cmp:=0x11 uc_dtx_pwr_cmp:=0x41 [F:10182][L:1953]\n[   19.954131] [W][MPXX][vap:0]{hal_host_approve_access_device::access approve} [F:11439][L:80]\n[   19.954177] [W][MPXX][vap:0][PMQOS]: wifi is switched to 1 [F:10127][L:187]\n[   19.954197] wal_netdev_open,dev_name is:wlan0\n[   19.954206] [W][MPXX][vap:0]{wal_netdev_open::iftype:2.!} [F:10039][L:298]\n[   19.954220] DMA latency[0]\r\n[   19.954225] CPU freq high[800] low[500]\r\n[   19.954230] irq affinity enable[1]High_th[100]Low_th[50]\r\n[   19.954241] TCP ACK BUF en[1],high/low:20M[90]/[30],40M[180]/[90],80M[630]/[500],160M[800]/[700],        TCP ACK BUF USERCTL[0], userctl[30]/[20]\n[   19.954252] [W][MPXX][vap:0]{hwifi_config_host_global_ini_param::ul_speed_level = 0,                 min_cpu_freq = 403200, min_ddr_freq = 0, uc_device_type = 0}\r\n[   19.954252]  [F:10184][L:869]\n[   19.954271] [W][MPXX][vap:0]{hwifi_config_host_global_ini_param::ul_speed_level = 1200,                 min_cpu_freq = 604800, min_ddr_freq = 3456, uc_device_type = 1}\r\n[   19.954271]  [F:10184][L:869]\n[   19.954288] [W][MPXX][vap:0]{hwifi_config_host_global_ini_param::ul_speed_level = 4000,                 min_cpu_freq = 806400, min_ddr_freq = 6403, uc_device_type = 2}\r\n[   19.954288]  [F:10184][L:869]\n[   19.954305] [W][MPXX][vap:0]{hwifi_config_host_global_ini_param::ul_speed_level = 10000,                 min_cpu_freq = 1305600, min_ddr_freq = 9216, uc_device_type = 3}\r\n[   19.954305]  [F:10184][L:869]\n[   19.954317] DYN_BYPASS_EXTLNA SWITCH en[1],high[100],low[50]\r\n[   19.954321] hwifi_config_host_global_ini_param::ampdu_tx_max_num:64\n[   19.954325] ampdu_hw enable[1]H[350]L[250]\r\n[   19.954331] ampdu+amsdu lareg amsdu en[1],high[500],low[50],middle[100]\r\n[   19.954335] SMALL AMSDU SWITCH en[1],high[300],low[200]\r\n[   19.954340] tcp ack filter en[1],high[50],low[20]\r\n[   19.954343] Rx:ampdu+amsdu skb en[1]\r\n[   19.954347] Rx:ampdu bitmap size[64]\r\n[   19.954728] wal_cfg_vap_h2d_event succ \r\n[   19.954834] [W][MPXX][vap:0]{wal_wlan_mac_cfg_add_vap_param_set::vap_mode:1, p2p_mode:0} [F:11425][L:1062]\n[   19.954937] [W][MPXX][vap:2]{mac_vap_state_change:from[0]to[0]} [F:10247][L:1663]\n[   19.955009] [W][MPXX][vap:2]{mac_vap_state_change:from[0]to[0]} [F:10247][L:1663]\n[   19.955055] [W][MPXX][vap:0]{mac_user_set_key::keytpe==1, ciphertype==3, keyid==0, usridx==1} [F:10249][L:433]\n[   19.955073] [W][MPXX][vap:0]mac_user_set_port::user[1] old 0, new 0 [F:10249][L:397]\n[   19.955090] [W][MPXX][vap:0]mac_user_set_port::user[1] old 0, new 1 [F:10249][L:397]\n[   19.955105] [W][MPXX][vap:2]{hmac_user_add_multi_user, user index[1].} [F:10096][L:2048]\n[   19.955139] [W][MPXX][vap:2]{hmac_config_add_vap::SUCCESS!!vap_mode[1], p2p_mode[0]}, multi user idx[1], device id[0] [F:11314][L:1352]\n[   19.955158] [W][MPXX][vap:0]{hmac_dbac_teardown_twt_session::check vap num for twt,vap num=[1]} [F:10211][L:1035]\n[   19.955833] [W][MPXX][vap:2]{mac_vap_state_change:from[0]to[4]} [F:10247][L:1663]\n[   19.955894] [W][MPXX][vap:2]{hmac_config_start_vap::host start vap ok. event to dmac. vap        mode[1], p2p mode[0] bw[8]} [F:11314][L:1611]\n[   19.957740] [W][MPXX][vap:0]{wal_cfg80211_set_power_mgmt::vap mode[1]p2p mode[0]set pm:[0]} [F:10005][L:1021]\n[   19.957841] [W][MPXX][vap:2]hmac_config_set_sta_pm_on,enable[0], ps_mode[0] [F:11318][L:1043]\n[   19.958191] [W][MPXX][vap:0]hmac_config_set_rx_listen_ps_switch::en[0] bitmap[2] [F:11318][L:982]\n[   19.958787] [W][MPXX][vap:2]{wal_hipriv_inet6addr_notifier_call::UP IPv6[fe80:0000:XXXX:XXXX:XXXX:XXXX:fef7:dbb6].} [F:11421][L:1546]\n[   19.960080] [W][MPXX][vap:0]{wal_ioctl_set_pm_switch:[0]}\r\n[   19.960080]  [F:11422][L:266]\n[   19.960134] [W][MPXX][vap:0]wlan_pm_disable already disabled! [F:11001][L:1018]\n[   19.965492] [W][MPXX][vap:0]{hmac_config_d2h_vap_m2s_info_syn::en_vap_rx_nss:1, en_sm_power_save:3, en_m2s_type:0.} [F:11330][L:222]\n[   19.965545] [W][MPXX][vap:2]{hmac_config_d2h_vap_mib_update::11ax_cap=1,radar_cap=1         lan_bw_max=3, beacon_period=100} [F:11330][L:450]\n[   19.965564] [W][MPXX][vap:2]{hmac_config_d2h_vap_mib_update::en_11ax_hal=[1],ax_custom=[0],mib_11ax=[0]} [F:11330][L:379]\n[   19.965595] [W][MPXX][vap:2]{hmac_config_d2h_vap_cap_update::1024_cap=[1],nb_cap=[0],2g_custom_siso[0],bt20dbm[0].} [F:11330][L:480]\n[   19.972154] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx:13.} [F:10007][L:1317]\n[   19.972198] [W][MPXX][vap:0]{wal_hipriv_autorate_param::to_set autorate_en=0x3 (NARROW_RATE_UNLIMIT_STA=0x2)}\r\n[   19.972198]  [F:11424][L:1305]\n[   19.972792] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx:7.} [F:10007][L:1317]\n[   19.972829] [W][MPXX][vap:0]{wal_hipriv_alg_cfg_get_cmd_idx:: alg_cfg cmd[87]!} [F:10043][L:2463]\n[   19.973417] [W][MPXX][vap:0]{hmac_config_set_ampdu_tx_on:: tx_aggr_on[0x0], snd type[0],aggr mode[0]!} [F:11318][L:850]\n[   19.973457] [W][MPXX][vap:2]{wal_set_amsdu_tx_on::ENABLE[0].} [F:11423][L:182]\n[   19.973476] [W][MPXX][vap:0]{wal_hipriv_alg_cfg_get_cmd_idx:: alg_cfg cmd[21]!} [F:10043][L:2463]\n[   19.973806] [W][MPXX][vap:0]{wal_hipriv_alg_cfg_get_cmd_idx:: alg_cfg cmd[127]!} [F:10043][L:2463]\n[   19.974197] [W][MPXX][vap:0]{wal_hipriv_alg_cfg_get_cmd_idx:: alg_cfg cmd[5]!} [F:10043][L:2463]\n[   19.974541] [W][MPXX][vap:0]{wal_hipriv_autorate_param::to_set autorate_en=0x3 (NARROW_RATE_UNLIMIT_STA=0x2)}\r\n[   19.974541]  [F:11424][L:1305]\n[   19.975260] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx:12.} [F:10007][L:1317]\n[   19.975287] [W][MPXX][vap:0]{wal_hipriv_alg_cfg::en_type [0]!} [F:11424][L:1564]\n[   19.979373] [W][MPXX][vap:2]{hmac_config_autorate_level_report:is_connected[0],ratelvl[0],channel[0],bw[128].} [F:11318][L:584]\n[   19.979410] [W][MPXX][vap:2]{hmac_config_autorate_level_report:rssi[-127], fail_num[0], succ_num[0].} [F:11318][L:587]\n[   19.979449] [W][MPXX][vap:2]{hmac_config_autorate_level_report:is_connected[0],ratelvl[0],channel[0],bw[128].} [F:11318][L:584]\n[   19.979470] [W][MPXX][vap:2]{hmac_config_autorate_level_report:rssi[-127], fail_num[0], succ_num[0].} [F:11318][L:587]\n[   21.090410] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx:114.} [F:10007][L:1317]\n[   21.090531] [W][MPXX][vap:0]{wal_vendor_priv_cmd::vendor private cmd total_len:18, used_len:0.} [F:10037][L:2601]\n[   21.090577] [MPXX][I][HCC_BUS]hcc_bus_ip_pm_ctrl enable =0[hcc_bus_ip_pm_ctrl:652]\n[   21.090588] [W][MPXX][vap:0]wal_hid2d_sleep_mode::ctrl = 0 [F:10223][L:191]\n[   21.090601] [W][MPXX][vap:0]{wal_ioctl_set_sta_pm_on::ip addr not obtained, cannot set pm switch.} [F:10037][L:611]\n[   21.090613] [W][MPXX][vap:0]wal_hid2d_napi_mode::ctrl = 0 [F:10223][L:214]\n[   21.090624] [W][MPXX][vap:0]wal_hid2d_freq_boost::uc_ctrl = 1 [F:10223][L:261]\n[   21.090639] [W][MPXX][vap:0]{wal_hipriv_set_val_cmd_msg:: cfg id[571], cfg type[0],set_val[0]!} [F:10007][L:620]\n[   21.090663] [W][MPXX][vap:0]{wal_hipriv_set_val_cmd_msg:: cfg id[571], cfg type[1],set_val[30]!} [F:10007][L:620]\n[   21.090678] [W][MPXX][vap:0]{wal_ioctl_config_low_latency::uc_param[0x8].} [F:10223][L:1483]\n[   21.090705] [W][MPXX][vap:0]{hmac_set_device_freq_mode: enable mode[0][1:enable,0:disable].} [F:11333][L:243]\n[   21.090709] [W][MPXX][vap:0]{wal_vendor_priv_cmd::vendor private cmd total_len:16, used_len:0.} [F:10037][L:2601]\n[   21.090728] [W][MPXX][vap:0]wal_hid2d_napi_mode::ctrl = 0 [F:10223][L:214]\n[   21.090742] [W][MPXX][vap:0]{hmac_config_set_auto_freq_enable:set_auto_freq_enable:uc_cmd_type = 0, uc_value = 0} [F:11333][L:430]\n[   21.090765] [W][MPXX][vap:0]{hmac_config_set_device_freq: set mode[2],device freq level[30].} [F:11333][L:277]\n[   21.090788] [W][MPXX][vap:0]{hmac_config_set_auto_freq_enable:set_auto_freq_enable:uc_cmd_type = 1, uc_value = 30} [F:11333][L:430]\n[   21.115983] [W][MPXX][vap:0]wal_cfg80211_scan::flags[16384] [F:11431][L:560]\n[   21.125308] [W][MPXX][vap:0]{hmac_config_device_m2s_info_syn::en_nss_num:[1] smps mode[3].} [F:11330][L:65]\n[   21.154574] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx = 0.} [F:10007][L:1307]\n[   21.155055] [W][MPXX][vap:0]wlan_pm_set_timeout[5] [F:11001][L:2195]\n[   21.155322] [W][MPXX][vap:0]wlan_pm_set_timeout[5] [F:11001][L:2195]\n[   21.534405] [W][MPXX][vap:0]{mac_vap_get_hmac_user_by_addr::find_user_by_macaddr failed[30801].} [F:10096][L:2214]\n[   21.534432] [W][MPXX][vap:0]{mac_vap_get_hmac_user_by_addr:: mac_addr[ee XX XX XX a7 67]!.} [F:10096][L:2217]\n[   21.534449] [W][MPXX][vap:0]{hmac_sta_not_up_rx_public_action::rx other public action frame } [F:10110][L:183]\n[   22.919033] [W][MPXX][vap:0]{hmac_config_device_m2s_info_syn::en_nss_num:[1] smps mode[3].} [F:11330][L:65]\n[   22.919095] [W][MPXX][vap:0]{hmac_config_d2h_vap_m2s_info_syn::en_vap_rx_nss:1, en_sm_power_save:3, en_m2s_type:0.} [F:11330][L:222]\n[   22.919414] [W][MPXX][vap:0]{wal_scan_report::scan complete.abort flag[0]!} [F:10017][L:58]\n[   22.924709] [W][MPXX][vap:0]{wal_cfg80211_connect::start a new connect, ssid_len[5], auth_type[0], privacy[0], mfp[0]}\r\n[   22.924709]  [F:11433][L:127]\n[   22.924758] [W][MPXX][vap:0]wlan_pm_set_timeout[20] [F:11001][L:2195]\n[   22.924833] [W][MPXX][vap:0]{hmac_config_connect:: connect param en_mfp[0] pmf_cap[0]!} [F:11337][L:1000]\n[   22.924924] [W][MPXX][vap:0]hmac_sta_join_update_protocol_mib::bss_he_cap=0,bss_vht_cap=0         en_p2p_scenes=0 [F:10084][L:2447]\n[   22.924940] [W][MPXX][vap:0]hmac_sta_join_update_protocol_mib::he_mib=0,         VAP_IS_SUPPORT_11AX=0, MAC_VAP_GET_CAP_BW=0 [F:10084][L:2451]\n[   22.924997] [W][MPXX][vap:0]{hmac_sta_get_min_rate:: uc_min_rate_idx[7]un_capable_flag.uc_value[2]legacy rate[0][0]} [F:10110][L:1465]\n[   22.925076] [W][MPXX][vap:0]{hmac_roam_record_chan_info::idx=0, ChanNum=157 mac:da::4e} [F:10173][L:603]\n[   22.925123] [W][MPXX][vap:0]{mac_user_set_key::keytpe==1, ciphertype==3, keyid==0, usridx==2} [F:10249][L:433]\n[   22.925136] [W][MPXX][vap:0]mac_user_set_port::user[2] old 0, new 0 [F:10249][L:397]\n[   22.925154] [W][MPXX][vap:0]{hmac_user_set_amsdu_level::en_amsdu_level=[3].} [F:10096][L:2244]\n[   22.925184] [W][MPXX][vap:0]{hmac_tid_sche_list_dump::type[0]} [F:11322][L:456]\n[   22.925198] [W][MPXX][vap:0]{hmac_tid_sche_list_dump::type[1]} [F:11322][L:456]\n[   22.925212] [W][MPXX][vap:0]{mac_chip_inc_assoc_user::uc_asoc_user_cnt[1].} [F:10245][L:451]\n[   22.927353] [W][MPXX][vap:0]{hmac_config_d2h_vap_m2s_info_syn::en_vap_rx_nss:1, en_sm_power_save:3, en_m2s_type:0.} [F:11330][L:222]\n[   23.088429] [W][MPXX][vap:0]{hmac_set_assoc_req_opmode_ie::bit_opmode[0]ap_chip_oui[0], protocol[0]}\r\n[   23.088429]  [F:10134][L:670]\n[   23.093805] [W][MPXX][vap:0]mac_user_set_port::user[2] old 0, new 1 [F:10249][L:397]\n[   23.093852] [W][MPXX][vap:0]hmac_user_cap_update_by_hisi_cap_ie::1024qam_cap=0, 4096qam_cap=0, sgi_400ns_cap=0, 3nss_80m_mcs6=0 [F:10096][L:2320]\n[   23.093870] [W][MPXX][vap:0]hmac_user_cap_update_by_hisi_cap_ie::he_ltf_repeat=0 [F:10096][L:2322]\n[   23.093946] [HCC]hcc_host_set_flowctl_param, queue[8]: burst limit = 40, low_waterline = 40, high_waterline =80\r\n[   23.108612] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx = 0.} [F:10007][L:1307]\n[   95.864820] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx = 0.} [F:10007][L:1307]\n[   96.873455] [W][MPXX][vap:0]{wal_hipriv_find_cmd::wal_hipriv_find_cmd en_cmd_idx = 0.} [F:10007][L:1307]\n",
+    "stderr": ""
+  },
+  "proc_interrupts": {
+    "exit": 0,
+    "stdout": "           CPU0       CPU1       \n 17:          0          0     GIC-0  29 Level     arch_timer\n 18:      32823      54788     GIC-0  30 Level     arch_timer\n 21:          0          0     GIC-0  91 Level     timer@2050000\n 24:          0          0     GIC-0  96 Level     2010000.iommu\n 25:          0          0     GIC-0 176 Level     7090000.rtc\n 26:      35912          0     GIC-0  82 Level     3002000.dma-controller\n 36:          0          0     GIC-0  38 Level     uart4\n 40:       2943          0     GIC-0  78 Level     4500000.gmac0\n 41:      22258          0     GIC-0  73 Level     mmc1\n 42:     171882          0     GIC-0  47 Level     spi0\n 44:          0          0     GIC-0  32 Level     3003000.msgbox\n 45:          0          0     GIC-0 155 Level     3003000.msgbox\n 46:          0          0     GIC-0 162 Level     3003000.msgbox\n 50:       7798          0     GIC-0  65 Level     ehci_hcd:usb1\n 51:          0          0     GIC-0  66 Level     ohci_hcd:usb2\n222:       7961          0  sunxi_pio_edge 170 Edge      wlan_wake_host\nIPI0:          0          0  CPU wakeup interrupts\nIPI1:          0          0  Timer broadcast interrupts\nIPI2:      42301     164142  Rescheduling interrupts\nIPI3:         18         35  Function call interrupts\nIPI4:          0          0  CPU stop interrupts\nIPI5:          2          5  IRQ work interrupts\nIPI6:          0          0  completion interrupts\nErr:          0\n",
+    "stderr": ""
+  }
+}

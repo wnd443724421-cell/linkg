@@ -51,17 +51,18 @@
 - AP `usb0 rx_errors` 场景增量：T2=4、T3=3、T5=1；T1/T4=0。
 - 限制：单一 sysfs 计数无法区分 USB/RNDIS、协议栈或瞬时链路原因；本轮未修改产品源码增加诊断。
 
-## RF-OBS-001：noise 无独立 freshness，无法区分稳定值与旧缓存
+## RF-DEF-001：DMAC `s_free_power` 约 5 分钟后停止变化，Host 仍永久标记有效
 
-- 状态：BLOCKED（可观测性缺口）；“主动扫描导致底噪卡死”未复现为稳定因果关系。
-- 第一轮：STA 连续 20 秒 Web 快照持续更新、RSSI 变化，但 `noise_dbm` 20/20 次为 -68 dBm。
-- 断电重启复测：两次正常扫描均完整结束且 `abort=0`；扫描后 noise 继续变化约 55 秒，随后保持为 -87 dBm，当时没有 scan 事件。
-- 正常扫描监测：478 样本，noise 值域 -97～-77 dBm；1200 个 Ping 0% 丢包。
-- abort 隔离：开始前 noise 已为 -87 dBm；abort 完整上报 `abort=1`，后续 359 样本仍为 -87，不能建立 abort→固定的因果关系。
-- 源码定位：Web 直接读取 `hmac_vap->s_free_power`；survey 从扫描记录 `ast_chan_results[]` 单独计算。Web 的 `updated_ms` 是整份快照时间，不是 noise 测量时间。
-- 确定缺口：没有 noise 专属的采样时间、对应信道、来源、generation 和 freshness；仅以 -120～0 dBm 数值范围设置 `noise_valid`。
-- 影响：无法证明页面值是实时当前信道噪声，也无法安全判断由 `RSSI - noise` 得到的 SNR 是否新鲜。
-- 证据：`rf_scan/RF_SCAN_RSSI_REPORT.md`、`rf_scan/rf_scan_observation.json`、`rf_scan/manual_scan_monitor.json`、`rf_scan/abort_scan_monitor.json`。
+- 状态：CONFIRMED；四轮单变量测试稳定复现，错误边界已定位。
+- 复现窗口：关联约 294～331 秒后，noise 分别固定为 -81、-84、-82 dBm；整板重启后暂时恢复，数分钟后再次出现。
+- 排除项：主动扫描、scan abort、外部 `station get`、Web 轮询和 120 秒 STA PM 自动定时器均不是必要触发条件。
+- 同窗证据：noise 固定 45 秒期间 RSSI 从 -26～-23 dBm 变化，状态时间戳增加 44100 ms，TX/RX 增加 643/828 包；station-info 查询/响应没有整体停止。
+- 设备侧边界：`hmac_reset.c:139` 将每次 DMAC station-info 响应的 `s_free_power` 原样写入 `hmac_vap->s_free_power`；其他响应字段持续更新而该字段停止变化。设备侧实现位于无符号 `WL_ITCM.bin`，当前 SDK 不含 WCPU/DMAC 源码、ELF 或 MAP，不能继续命名内部函数。
+- Host 缺陷：LinkG `kernel/wal_linux_netdev_ops.c:1258-1261` 只按 `[-120,0)` 数值范围设置 `WAL_RADIO_FLAG_NOISE_VALID`，没有 noise 专属采样时间、序号、信道、来源或 freshness，导致旧值被无限期当作实时值展示。
+- 固件一致性：板上 `WL_ITCM.bin`、`WCPU_ROM.bin`、`wifi_cfg`、`wifi_only_cfg` SHA-256 均与当前 SDK 一致，排除版本错配。
+- 影响：Web“信道噪声”及 `RSSI - noise` 推导的 SNR 在冻结后不可信；页面仍显示正常数值，无法感知陈旧状态。
+- 修复方向：设备固件持续刷新 `s_free_power` 或返回有效位/采样序号/时间；Host ABI 传播 freshness 并在不可证明新鲜时置 `noise_valid=false`。禁止用主动扫描作为刷新方案，已实测会造成明显业务丢包和时延。
+- 证据：`rf_scan/RF_SCAN_RSSI_REPORT.md`、`rf_scan/getstation_baseline_after_reboot.json`、`rf_scan/getstation_single_trigger.json`、`rf_scan/no_read_until_330s.json`、`rf_scan/frozen_field_freshness.json`、`rf_scan/pm_timer_prevention_probe.json`、`rf_scan/natural_cycle4_near_300s.json`。
 
 ## 工具异常：`tc -d` 的零延迟显示为 275 秒
 

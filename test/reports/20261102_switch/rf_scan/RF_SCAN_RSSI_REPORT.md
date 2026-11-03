@@ -5,14 +5,14 @@
 1. STA 当前对端 RSSI 可以直接用 `iw dev wlan0 link` 获取；AP 可以用指定已知 MAC 的 `iw dev wlan0 station get <STA-MAC>` 获取。两种方法均不需要断开连接，也不需要枚举全部 station。
 2. `iw dev wlan0 scan` 不要求先人为断开 STA，但 HI1105 会离开当前工作信道执行全信道扫描，对在线业务造成明显影响。本轮扫描期间关联保持，UDP 吞吐却出现 38%～43% 的秒级丢包峰值，直连 Ping 最大 RTT 达 4.868 秒。
 3. `iw dev wlan0 survey dump` 与 Web“信道噪声”不是同一数据源。survey 读取最近一次扫描的逐信道统计；Web 读取 HI1105 station-info 响应中的 `hmac_vap->s_free_power`。
-4. 第一轮主动扫描附近曾观察到 STA Web `noise_dbm` 固定为 -68 dBm，但断电重启后的复测没有复现“扫描立即固定为 -68”：两次正常扫描均收到 `abort=0` 完成事件，noise 在扫描后仍继续变化约 55 秒。
-5. 当前只能确认 Web 没有冻结、`s_free_power` 曾长时间返回同一值；不能确认该值是旧缓存还是真实稳定的底噪估计。现有接口不提供 noise 专属采样时间、对应信道、来源或 freshness，这是已确认的可观测性缺口；“主动扫描导致底噪卡死”因果关系尚未证实。
+4. 后续四轮单变量复测已稳定复现：STA 关联约 294～331 秒后，`noise_dbm` 分别固定为 -81、-84、-82 dBm；固定值每轮不同。冻结期间 RSSI、TX/RX 包计数、连接时长及状态时间戳仍持续更新。
+5. 主动扫描、外部 `station get`、Web 轮询及 120 秒 STA PM 定时器均已排除为必要触发条件。错误边界位于 WCPU/DMAC station-info 响应的 `s_free_power` 生产端；Host 侧另有确定缺陷：仅按数值范围设置 `NOISE_VALID`，没有检查测量 freshness，导致旧值被无限期当作实时噪声展示。
 
 ## 2. 环境与对端
 
 - AP：`192.168.1.1`，`wlan0=11.21.191.1`，MAC `00:01:02:F7:DA:4E`，`type AP`。
 - STA：`192.168.3.1`，`wlan0=11.21.191.2`，MAC `00:01:02:F7:DB:B6`，`type managed`。
-- 当前工作频率：4960 MHz，窄带 10 MHz，信道 192。
+- 初始扫描专项工作频率：4960 MHz，窄带 10 MHz，信道 192；后续重启定位周期由当前配置运行在 5785 MHz、信道 157。两组结论均以各自同窗状态为准。
 - 无线直连监测：AP→STA `ping -I wlan0 11.21.191.2`；STA→AP `ping -I wlan0 11.21.191.1`。
 - 主动扫描期间未修改产品源码、Wi-Fi 配置、角色或工作频率。
 - 最终审计发现工作区另有 `core/switch/switch_policy_verify.c` 格式化差异（1 行合并，mtime `2026-11-02 17:46:52 +0800`）。本轮 RF 测试所有写入均位于 `test/` 和 `/tmp`，没有触碰或回退该并发差异。
@@ -167,13 +167,53 @@ uptime 460.997  scan complete, abort=1
 
 但 abort 测试开始前 noise 已经保持为 -87 dBm，因此该轮不能用来证明 abort 导致固定。90 秒共 359 个 Web 样本全部为 -87 dBm，同时 RSSI 从 -30 变化到 -23 dBm，900 个 Ping 全收，最终无残留 `iw`。
 
-### 6.5 当前严谨结论
+### 6.5 四轮单变量稳定复现
 
-- `-68` 或 `-87` 长时间不变，不足以单独证明测量卡死；真实噪声估计可能稳定，也可能是固件缓存未刷新。
-- Web 的 `updated_ms` 是整份 Wi-Fi 快照更新时间，不是 noise 自己的测量时间；它持续增长不能证明 noise 已重新测量。
-- `survey dump` 与 Web noise 来自不同数据源，也不能仅凭数值不同判定其中一个错误。
-- 当前确定问题是 noise 缺少独立的 `updated_ms/channel/source/freshness`，系统无法从外部区分“真实稳定”与“旧缓存”。
-- 如果产品要求页面展示实时当前信道噪声，则需要在驱动 ABI 中补齐这些元数据并设置严格的 `noise_valid`；但在此之前，不应把主动扫描写成已确认根因。
+| 周期 | 控制条件 | 冻结点 | 固定值 | 关键结论 |
+|---|---|---:|---:|---|
+| 周期 1 | 重启后先做 90 秒纯 Web 基线；计划在第 30.16 秒执行一次 `station get` | `station get` 前 4.02 秒，连接 308 秒，`updated_ms=323015` | -81 dBm | 外部 `station get` 不是本轮触发；冻结前 90 秒基线出现 65 次 noise 跳变 |
+| 周期 2 | 软件重启后约 390 秒内不读 Web、不执行 `iw` | 首次读取时已经固定；连接 367～411 秒的 45 个样本全部相同 | -81 dBm | Web 读取、主动 scan 和外部 `iw` 都不是必要触发条件 |
+| 周期 3 | 关联早期执行私有 PM ON→OFF，销毁 120 秒自动 PM 定时器；dmesg 确认没有自动 `pm_enable=1` | 连接 294 秒，`updated_ms=308701` | -84 dBm | 即使阻止 PM 自动回开仍会冻结，排除 PM 定时器为根因；随后 131 个有效样本不变 |
+| 周期 4 | 用户再次重启后，在 uptime 282～373 秒间仅读 Web | 连接 331 秒，`updated_ms=346426` | -82 dBm | 第三次自然复现；固定值不是硬编码常量 |
+
+周期 1 的冻结窗口内，90 秒报告共有 120 个有效快照，`updated_ms` 119 次推进；周期 3 冻结后，RSSI 范围仍为 -30～-21 dBm。另做 45 秒字段新鲜度检查时，noise 45/45 次为 -81 dBm，但：
+
+- RSSI 在 -26～-23 dBm 变化；
+- `updated_ms` 和 `statistics_updated_ms` 均增加 44100 ms；
+- TX/RX 分别增加 643/828 包；
+- 连接时间增加 44 秒。
+
+这组同一响应链证据表明 station-info 查询和响应没有整体停止，只有 `s_free_power` 字段停止变化。
+
+### 6.6 精确错误边界
+
+运行路径及精确位置：
+
+1. LinkG `modules/wifi/wifi_status.c:29,811,961-963`：状态线程每 800 ms 调用 `wifi_driver_get_radio_status()`；冻结期间快照持续成功更新。
+2. LinkG `kernel/wal_linux_netdev_ops.c:1258-1261`：直接读取 `hmac_vap->s_free_power`，只要数值在 `[-120,0)` 就设置 `WAL_RADIO_FLAG_NOISE_VALID`。这里没有 noise 专属时间戳、序号、信道或 freshness 检查。
+3. HI1105 Host 驱动 `hmac/dfx/hmac_reset.c:127-151`：收到 `OAL_QUERY_STATION_INFO_EVENT` 后，将 DMAC 响应的 `reponse_event->s_free_power` 原样复制到 `hmac_vap->s_free_power`；同一个响应还更新包计数、RSSI、速率等字段并唤醒查询等待者。
+4. HI1105 Host 驱动 `wal_linux_connect_cfg80211.c:1239-1267`：持续向 DMAC 发送 `WLAN_CFGID_QUERY_STATION_STATS` 并等待响应；冻结期间没有查询超时日志，且同一响应链的其他统计字段持续变化。
+
+因此可确认：
+
+- **设备侧问题边界**：WCPU/DMAC 仍返回 station-info 响应，但其中 `s_free_power` 在关联约 5 分钟后不再随新响应变化。
+- **Host 集成缺陷**：`wal_radio_status_build()` 将该可能陈旧的字段仅凭数值范围标记为有效，并无限期向应用/Web 暴露。
+- **不能再下探的边界**：当前 SDK 只有 Host 侧 C 源码；设备侧实现位于剥离符号的 `/vendor/firmware/hi1105/pilot/WL_ITCM.bin`，SDK 中没有对应 DMAC/WCPU ELF、MAP 或源文件，无法在现有材料中负责任地命名固件内部具体函数。
+
+板上运行固件与当前 SDK 文件 SHA-256 完全一致，排除版本错配：
+
+```text
+WL_ITCM.bin   0fb0a2bc7cb68680560fecf47fbfc26c35709f53ef456ea00dd7306add7ca2a0
+WCPU_ROM.bin  8b1c455d46ceb7dd7ca8500616fd67d28622edc2e07124fc6ea84d20add1d193
+wifi_cfg      b65830bec313d84de711a7c91b006cdac5aa870aa61b2f5031141cac49b1edca
+wifi_only_cfg a87a692b0af412c56ec87d888aef89ea5a00fed57bcf3822f8ffd5f59bee7fd8
+```
+
+### 6.7 修复方向
+
+根治需要设备固件侧保证 `s_free_power` 持续重新测量，或在 station-info ABI 中同时返回 `noise_valid`、采样序号/时间、测量信道及来源。Host 侧必须将这些 freshness 元数据继续传到 LinkG/Web，不能只做数值范围判断。
+
+在设备固件暂时不可修改时，可做保守降级：当没有可证明的新 noise 采样时返回 `noise_valid=false`，Web 显示“数据陈旧/不可用”，而不是继续显示固定数字。仅凭“连续相同若干秒”判旧只能作为临时启发式，因为真实噪声量化后也可能相同；不建议用周期主动扫描刷新 noise，扫描已实测会造成明显业务丢包和长时延。
 
 ## 7. 使用建议与未验证边界
 
@@ -183,13 +223,22 @@ uptime 460.997  scan complete, abort=1
 - `survey dump` 可以读取最近保存的信道统计，但没有新扫描时可能是旧数据；它不是持续实时的频谱监测。
 - 不在承载视频、实时或高吞吐业务时运行无信道限制的 `iw dev wlan0 scan`。
 - 如确需邻居 BSS RSSI，应在维护窗口执行，并同步监测业务中断；当前驱动的全信道扫描会明显影响在线业务。
-- 尚未执行 STA 断开/重关联、Wi-Fi Path 重启或驱动重载来验证 `-68 dBm` 的恢复条件，因为这些操作会中断当前链路。
+- 已确认整板重启后 noise 会恢复变化，但约 5 分钟后再次冻结；已冻结后再次关闭 STA 省电 110 秒不能恢复。尚未用断开/重关联或驱动重载作为恢复方案，因为这类操作会中断当前链路，且不能修复 freshness 语义。
 
 ## 8. 证据文件
 
 - `rf_scan_observation.json`：完整命令输出、扫描前后 link、survey、Ping 和看门狗 stderr。
 - `manual_scan_monitor.json`：断电重启后完整扫描的 120 秒、478 样本复测。
 - `abort_scan_monitor.json`：正式 scan abort 的 90 秒、359 样本隔离观察。
+- `getstation_baseline_after_reboot.json`：重启后 90 秒纯 Web 基线，noise 65 次变化。
+- `getstation_single_trigger.json`：冻结发生在单次外部 `station get` 之前的时序证据。
+- `no_read_until_330s.json`：重启后约 390 秒内不访问 STA、首次读取即已固定的隔离证据。
+- `frozen_field_freshness.json`：noise 固定时 RSSI、包计数、连接时间及状态时间戳持续变化的 45 秒证据。
+- `pm_off_recovery_probe.json`：冻结后关闭 STA 省电仍不恢复的 120 秒证据。
+- `pm_timer_prevention_probe.json`：取消 120 秒 PM 定时器后仍在连接 294 秒冻结的排除证据；末尾 SSH reset 发生在冻结约 131 秒后，不影响结论。
+- `natural_cycle4_near_300s.json`：用户再次重启后的第三次自然冻结证据。
+- `freeze_postmortem_no_iw.json`、`no_read_cycle2_postmortem.json`、`pm_prevention_midpoint.json`：无 `iw` 的进程、dmesg 与中点现场。
 - `test/integration/rf_scan_observation.py`：受限扫描复现脚本；已修正为 3 秒整秒看门狗，未使用修正版重跑。
 - `test/integration/rf_manual_scan_monitor.py`：不触发扫描、仅采集 Web/link/Ping 的观察脚本。
+- `test/integration/rf_getstation_race_probe.py`：Web-only、单次 get_station、PM 关闭及 PM 定时器取消的单变量脚本。
 

@@ -49,7 +49,7 @@
 #define LINKG_UDHCP_POOL_FIRST_HOST_ID              2U                                               // DHCP地址池首个主机编号
 #define LINKG_UDHCP_DNS_PRIMARY                     "223.5.5.5"                                      // 默认主DNS服务器
 #define LINKG_UDHCP_DNS_SECONDARY                   "223.6.6.6"                                      // 默认备用DNS服务器
-#define LINKG_UDHCP_LEASE_TIME_SEC                  600U                                             // DHCP默认租约时长，单位秒
+#define LINKG_UDHCP_LEASE_TIME_SEC                  60U                                              // DHCP默认租约时长，单位秒
 #define LINKG_UDHCP_LEASE_WRITE_INTERVAL_SEC        60U                                              // 租约文件自动写回周期，单位秒
 #define LINKG_UDHCP_PROCESS_START_PROBE_COUNT       20U                                              // udhcpd启动存活探测次数
 #define LINKG_UDHCP_PROCESS_START_PROBE_INTERVAL_US 10000U                                           // udhcpd启动存活探测间隔

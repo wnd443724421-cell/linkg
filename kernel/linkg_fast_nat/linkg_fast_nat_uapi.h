@@ -59,12 +59,12 @@ typedef struct
     __s32 ethernet_ifindex; // Ethernet接口ifindex
     __s32 tun_ifindex;      // LinkG TUN接口ifindex
 
-    __u16 snat_port_start; // Fast SNAT动态端口池起始端口
-    __u16 reserved0;       // 对齐及后续扩展预留
+    __u16 snat_port_start;  // Fast SNAT动态端口池起始端口
+    __u16 reserved0;        // 对齐及后续扩展预留
 
-    __s32 uplink_ifindex; // 外部网络上行接口ifindex
+    __s32 uplink_ifindex;   // 外部网络上行接口ifindex
 
-    __u32 reserved[7]; // 后续UAPI扩展预留
+    __u32 reserved[7];      // 后续UAPI扩展预留
 } linkg_fast_nat_config_t;
 
 /****************************** IOCTL定义 ******************************/

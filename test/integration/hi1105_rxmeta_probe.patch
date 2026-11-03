@@ -1,0 +1,79 @@
+--- a/wifi/hmac/hmac_hcc_adapt.c
++++ b/wifi/hmac/hmac_hcc_adapt.c
+@@ -27,6 +27,68 @@
+ OAL_STATIC uint32_t g_hcc_sched_event_pkts[FRW_EVENT_TYPE_BUTT] = { 0 };
+ OAL_STATIC uint8_t g_wlan_queue_to_dmac_queue[WLAN_NET_QUEUE_BUTT];
+ 
++/*
++ * Test-only passive probe. It samples RX metadata already attached to the
++ * device-to-host packet. It does not start a scan, retune the radio, or send
++ * a firmware query. Keep all aggregation in-kernel and print at most once per
++ * second so that the probe itself does not become a per-packet logging load.
++ */
++typedef struct {
++    uint32_t window_start_ms;
++    uint32_t samples;
++    int8_t rssi_min;
++    int8_t rssi_max;
++    int8_t rssi_last;
++    int8_t snr0_min;
++    int8_t snr0_max;
++    int8_t snr0_last;
++    int8_t snr1_min;
++    int8_t snr1_max;
++    int8_t snr1_last;
++} hmac_rxmeta_probe_stru;
++
++OAL_STATIC hmac_rxmeta_probe_stru g_rxmeta_probe;
++
++OAL_STATIC void hmac_rxmeta_probe_update(const uint8_t *raw_cb)
++{
++    const dmac_rx_ctl_stru *rx_ctl = (const dmac_rx_ctl_stru *)raw_cb;
++    const hal_rx_statistic_stru *stat = &rx_ctl->st_rx_statistic;
++    uint32_t now = (uint32_t)oal_time_get_stamp_ms();
++
++    if (g_rxmeta_probe.samples == 0) {
++        g_rxmeta_probe.rssi_min = stat->c_rssi_dbm;
++        g_rxmeta_probe.rssi_max = stat->c_rssi_dbm;
++        g_rxmeta_probe.snr0_min = stat->snr[0];
++        g_rxmeta_probe.snr0_max = stat->snr[0];
++        g_rxmeta_probe.snr1_min = stat->snr[1];
++        g_rxmeta_probe.snr1_max = stat->snr[1];
++        if (g_rxmeta_probe.window_start_ms == 0) {
++            g_rxmeta_probe.window_start_ms = now;
++        }
++    }
++
++    g_rxmeta_probe.samples++;
++    g_rxmeta_probe.rssi_min = oal_min(g_rxmeta_probe.rssi_min, stat->c_rssi_dbm);
++    g_rxmeta_probe.rssi_max = oal_max(g_rxmeta_probe.rssi_max, stat->c_rssi_dbm);
++    g_rxmeta_probe.rssi_last = stat->c_rssi_dbm;
++    g_rxmeta_probe.snr0_min = oal_min(g_rxmeta_probe.snr0_min, stat->snr[0]);
++    g_rxmeta_probe.snr0_max = oal_max(g_rxmeta_probe.snr0_max, stat->snr[0]);
++    g_rxmeta_probe.snr0_last = stat->snr[0];
++    g_rxmeta_probe.snr1_min = oal_min(g_rxmeta_probe.snr1_min, stat->snr[1]);
++    g_rxmeta_probe.snr1_max = oal_max(g_rxmeta_probe.snr1_max, stat->snr[1]);
++    g_rxmeta_probe.snr1_last = stat->snr[1];
++
++    if ((uint32_t)oal_time_get_runtime(g_rxmeta_probe.window_start_ms, now) >= 1000U) {
++        oal_io_print("RXMETA_PROBE n=%u rssi=%d..%d last=%d snr0=%d..%d last=%d snr1=%d..%d last=%d\n",
++            g_rxmeta_probe.samples, g_rxmeta_probe.rssi_min, g_rxmeta_probe.rssi_max,
++            g_rxmeta_probe.rssi_last, g_rxmeta_probe.snr0_min, g_rxmeta_probe.snr0_max,
++            g_rxmeta_probe.snr0_last, g_rxmeta_probe.snr1_min, g_rxmeta_probe.snr1_max,
++            g_rxmeta_probe.snr1_last);
++        g_rxmeta_probe.samples = 0;
++        g_rxmeta_probe.window_start_ms = now;
++    }
++}
++
+ extern uint32_t hmac_hcc_tx_netbuf(frw_event_mem_stru *pst_hcc_event_mem,
+                                    oal_netbuf_stru *pst_netbuf, uint32_t hdr_len,
+                                    uint32_t fc_type,
+@@ -620,6 +682,7 @@
+     }
+ 
+     puc_hcc_extend_hdr = oal_netbuf_data((oal_netbuf_stru *)pst_hcc_event_payload->pst_netbuf);
++    hmac_rxmeta_probe_update(puc_hcc_extend_hdr);
+     bit_mac_header_len = ((mac_rx_ctl_stru *)puc_hcc_extend_hdr)->uc_mac_header_len;
+     if (bit_mac_header_len) {
+         if (bit_mac_header_len > MAX_MAC_HEAD_LEN) {

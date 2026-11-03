@@ -57,7 +57,7 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--trigger",
-        choices=("none", "link", "station_get"),
+        choices=("none", "link", "station_get", "pm_off", "pm_cancel_timer"),
         default="none",
     )
     parser.add_argument("--trigger-at", type=float, default=30.0)
@@ -99,8 +99,20 @@ def main():
             if not trigger_done and elapsed >= args.trigger_at:
                 if args.trigger == "link":
                     command = "iw dev wlan0 link"
-                else:
+                elif args.trigger == "station_get":
                     command = f"iw dev wlan0 station get {args.peer_mac}"
+                elif args.trigger == "pm_off":
+                    command = (
+                        "iw dev wlan0 set power_save off; "
+                        "printf 'wlan0 set_sta_pm_on 0\\n' > /sys/hisys/hipriv"
+                    )
+                else:
+                    command = (
+                        "printf 'wlan0 set_sta_pm_on 1\\n' > /sys/hisys/hipriv; "
+                        "sleep 1; "
+                        "printf 'wlan0 set_sta_pm_on 0\\n' > /sys/hisys/hipriv; "
+                        "iw dev wlan0 set power_save off"
+                    )
                 report["trigger_event"] = {
                     "elapsed_seconds": elapsed,
                     "utc": utc_now(),

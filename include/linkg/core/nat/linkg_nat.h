@@ -15,7 +15,7 @@ extern "C" {
 
 /****************************** 生命周期 ******************************/
 
-int linkg_nat_init(const linkg_network_config_t *network_config, bool uplink_enabled);
+int linkg_nat_init(const linkg_network_config_t *linkg_network_config_set_default);
 int linkg_nat_start(void);
 int linkg_nat_stop(void);
 int linkg_nat_deinit(void);
