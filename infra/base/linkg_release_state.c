@@ -616,12 +616,7 @@ int linkg_release_failure_clear(const char *state_path)
         return ret;
     }
 
-    if (unlink(path) != 0)
-    {
-        return errno == ENOENT ? 0 : -errno;
-    }
-
-    return linkg_atomic_sync_parent(path);
+    return linkg_atomic_remove(path);
 }
 
 /**
