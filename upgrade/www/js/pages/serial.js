@@ -169,13 +169,52 @@
         return row;
     }
 
+    /**
+     * 比较规范化UART配置；端口排序无关，路由排序沿用后端的顺序语义。
+     */
+    function uartSignature(items)
+    {
+        return JSON.stringify(items.slice().sort(function (left, right) {
+            return left.uart_num - right.uart_num;
+        }).map(function (item) {
+            return {
+                uart_num: Number(item.uart_num),
+                port_config: {
+                    type: item.port_config.type,
+                    baudrate: Number(item.port_config.baudrate),
+                    data_bits: Number(item.port_config.data_bits),
+                    stop_bits: Number(item.port_config.stop_bits),
+                    parity: item.port_config.parity
+                },
+                routes: item.routes.map(function (route) {
+                    return {
+                        proto: route.proto,
+                        endpoint: route.endpoint,
+                        dir: route.dir,
+                        ip: String(route.ip).trim(),
+                        port: Number(route.port)
+                    };
+                })
+            };
+        }));
+    }
+
+    /**
+     * 根据当前表单与已确认快照计算Dirty，输入无效时保留修改标记。
+     */
+    function hasConfigChanges()
+    {
+        const draft = validate(false);
+        return config != null && (!draft.valid || uartSignature(draft.uart) !== uartSignature(config.uart));
+    }
+
     function updateControls()
     {
         const enabled = editable();
 
         field("serialReload").disabled = reading || saving || remoteApplying;
-        field("serialSave").disabled = !enabled;
-        field("serialReset").disabled = config == null || reading || saving || remoteApplying;
+        field("serialSave").disabled = !enabled || !dirty;
+        field("serialReset").disabled = config == null || reading || saving || remoteApplying || !dirty;
         cards().forEach(function (card) {
             if (config == null)
             {
@@ -454,9 +493,8 @@
             }
             routeHint(row);
         }
-        dirty = true;
+        dirty = hasConfigChanges();
         updateControls();
-        validate(false);
         message("有未保存修改；保存将短暂中断串口数据，仅重载 UART 服务。", "");
     }
 
@@ -489,9 +527,8 @@
             }
             role(card, "routes").replaceChildren();
         }
-        dirty = true;
+        dirty = hasConfigChanges();
         updateControls();
-        validate(false);
         message("规则已修改，保存后生效。", "");
     }
 
@@ -507,11 +544,13 @@
         }
         renderConfig(config);
         dirty = false;
+        updateControls();
         message(uncertain ? "已还原草稿；设备结果尚未确认，请重新读取。" : "已还原到最后一次成功读取的配置。", "");
     }
 
     async function readConfig(token, expected)
     {
+        const firstLoad = config == null;
         reading = true;
         field("serialPorts").setAttribute("aria-busy", "true");
         updateControls();
@@ -534,6 +573,10 @@
             uncertain = false;
             dirty = false;
             field("serialReadState").textContent = "配置已读取";
+            if (firstLoad)
+            {
+                message("配置已读取，修改后点击保存并应用。", "");
+            }
             return true;
         }
         catch (error)
@@ -572,7 +615,7 @@
     async function save(event)
     {
         event.preventDefault();
-        if (!editable())
+        if (!editable() || !dirty)
         {
             return;
         }

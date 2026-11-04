@@ -35,6 +35,7 @@ int supervisor_release_init(supervisor_release_t *release, const supervisor_rele
 int supervisor_release_prepare(supervisor_release_t *release);
 int supervisor_release_confirm(supervisor_release_t *release);
 int supervisor_release_rollback(supervisor_release_t *release);
+void supervisor_release_record_failure(supervisor_release_t *release, const char *stage, const char *check, int error_code, const char *reason);
 void supervisor_release_running(supervisor_release_t *release);
 
 #endif

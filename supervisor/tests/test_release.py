@@ -33,6 +33,7 @@ class Fixture:
         self.app = self.root / "app"
         self.web = self.root / "www"
         self.state = self.app / "version_state.json"
+        self.failure = self.app / "upgrade_failure.json"
         self.journal = self.app / "version_state.json.confirming"
         for release in ["v1", "v2"]:
             for base in [self.app, self.web]:
@@ -162,12 +163,15 @@ def stable_start(f):
 
 
 def candidate_confirmation(f):
+    # 先模拟之前一次升级失败的诊断文件，成功确认后应清除。
+    f.failure.write_text('{"obsolete": true}')
     f.start()
     f.wait(lambda: "state=RUNNING" in f.output())
     require(f.read_state()["stable_release_partition"] == "v1", f.output())
     f.wait(lambda: "release=CONFIRMED" in f.output())
     require(f.read_state()["stable_release_partition"] == "v2" and f.selected("v2"), f.output())
     require(len(f.starts()) == 1 and not f.journal.exists(), f.output())
+    require(not f.failure.exists(), "successful confirmation must clear stale failure record")
 
 
 @options(different=True)
@@ -182,6 +186,12 @@ def kernel_confirmation(f):
 def failed_candidate(f):
     f.start()
     f.wait(lambda: any(row[0] == "v1" for row in f.starts()))
+    f.wait(lambda: f.read_state().get("upgrade_state") == "rolled_back")
+    require(f.failure.exists(), f.output())
+    detail = json.loads(f.failure.read_text())
+    require(detail["candidate_release"] == "v2" and detail["rollback_release"] == "v1", str(detail))
+    require(detail["failed_stage"] == "candidate_health_check" and detail["failed_check"], str(detail))
+    require(isinstance(detail["error_code"], int) and detail["failure_reason"], str(detail))
     require(f.read_state()["release_partition"] == f.read_state()["stable_release_partition"] == "v1", f.output())
     require(f.selected("v1") and not (f.root / "reboot").exists(), f.output())
     require(sum(row[0] == "v2" for row in f.starts()) == 1, f.output())
@@ -191,24 +201,28 @@ def failed_candidate(f):
 def ready_timeout(f):
     failed_candidate(f)
     require("timeout=READY" in f.output(), f.output())
+    require(json.loads(f.failure.read_text())["failed_check"] == "ready_timeout", f.output())
 
 
 @options(mode="heartbeat")
 def heartbeat_timeout(f):
     failed_candidate(f)
     require("timeout=HEARTBEAT" in f.output(), f.output())
+    require(json.loads(f.failure.read_text())["failed_check"] == "heartbeat_timeout", f.output())
 
 
 @options(mode="exit")
 def late_exit(f):
     failed_candidate(f)
     require("exited code=17" in f.output(), f.output())
+    require(json.loads(f.failure.read_text())["failed_check"] == "process_exit", f.output())
 
 
 @options(mode="restart-timeout")
 def restart_timeout(f):
     failed_candidate(f)
     require("timeout=RESTARTING" in f.output(), f.output())
+    require(json.loads(f.failure.read_text())["failed_check"] == "transition_timeout", f.output())
 
 
 @options(mode="ignore-term")
@@ -231,6 +245,7 @@ def different_kernel_rollback(f):
     f.start()
     f.wait(lambda: any(row[0] == "v1" for row in f.starts()))
     require(f.selected("v1"), f.output())
+    require(f.failure.exists(), "failure reason must survive reboot")
 
 
 @options(different=True, actual="boot_a")
@@ -300,6 +315,7 @@ def missing_release(f):
     f.start()
     f.wait(lambda: len(f.starts()) > 0)
     require(f.starts()[0][0] == "v1", f.output())
+    require(json.loads(f.failure.read_text())["failed_check"] == "release_files", f.output())
 
 
 def invalid_link(f):

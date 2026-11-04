@@ -395,6 +395,23 @@
         };
     }
 
+    /**
+     * 从表单读取规范化规则，空值及非法端口不会误判为未修改。
+     */
+    function hasConfigChanges()
+    {
+        const draft = getRuleRows().map(function (row) {
+            return {
+                class: row.querySelector('[data-field="class"]').value,
+                protocol: row.querySelector('[data-field="protocol"]').value,
+                start: parsePort(row.querySelector('[data-field="start"]')),
+                end: parsePort(row.querySelector('[data-field="end"]'))
+            };
+        });
+
+        return configData != null && !rulesEqual(draft, configData.traffic_rules);
+    }
+
     function updateControls()
     {
         const rows = getRuleRows();
@@ -405,8 +422,8 @@
             " / " + TRAFFIC_RULE_MAX + " 条";
         field("trafficRulesReloadButton").disabled = configBusy || applying;
         field("trafficRulesAddButton").disabled = !editable || rows.length >= TRAFFIC_RULE_MAX;
-        field("trafficRulesResetButton").disabled = !editable;
-        field("trafficRulesApplyButton").disabled = !editable;
+        field("trafficRulesResetButton").disabled = !editable || !hasConfigChanges();
+        field("trafficRulesApplyButton").disabled = !editable || !hasConfigChanges();
 
         rows.forEach(function (row) {
             row.querySelectorAll("input, select, button").forEach(function (control) {
@@ -423,6 +440,7 @@
         }
 
         clearAllErrors();
+        updateControls();
         setMessage("修改规则后点击应用配置", "");
     }
 
@@ -570,7 +588,7 @@
 
         event.preventDefault();
 
-        if (!mounted || configData == null || applying || configBusy)
+        if (!mounted || configData == null || applying || configBusy || !hasConfigChanges())
         {
             return;
         }

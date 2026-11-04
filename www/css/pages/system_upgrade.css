@@ -130,3 +130,5 @@
     .upgrade-file-picker, .upgrade-progress-fill, .upgrade-page .btn { transition: none; }
     .upgrade-progress-fill.is-indeterminate { animation: none; width: 100%; opacity: 0.45; }
 }
+
+.upgrade-error-detail { margin-top: 8px; color: var(--linkg-color-text-secondary); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }

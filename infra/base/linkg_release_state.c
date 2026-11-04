@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "cJSON.h"
@@ -28,7 +29,8 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_RELEASE_JSON_SIZE 4096U // 固定结构状态文件读取上限
+#define LINKG_RELEASE_JSON_SIZE         4096U // 固定结构状态文件读取上限
+#define LINKG_RELEASE_FAILURE_JSON_SIZE 1024U // 失败诊断文件读取上限
 
 /****************************** 内部辅助 ******************************/
 
@@ -376,6 +378,250 @@ int linkg_release_replace(const char *path, const linkg_release_state_t *expecte
 
     close(descriptor);
     return ret;
+}
+
+
+/****************************** 升级诊断 ******************************/
+
+/**
+ * @brief 从版本状态路径构造同目录独立诊断文件，不修改版本状态Schema。
+ */
+static int _linkg_release_failure_path(const char *state_path, char *path, size_t capacity)
+{
+    const char *separator;
+    size_t      prefix_length;
+    const char *filename = "upgrade_failure.json";
+    size_t      name_length;
+
+    if (state_path == NULL || path == NULL || capacity == 0U || state_path[0] != '/')
+    {
+        return -EINVAL;
+    }
+
+    separator = strrchr(state_path, '/');
+    if (separator == NULL || separator[1] == '\0')
+    {
+        return -EINVAL;
+    }
+
+    prefix_length = (size_t)(separator - state_path) + 1U;
+    name_length   = strlen(filename);
+    if (prefix_length + name_length >= capacity)
+    {
+        return -ENAMETOOLONG;
+    }
+
+    memcpy(path, state_path, prefix_length);
+    memcpy(path + prefix_length, filename, name_length + 1U);
+    return 0;
+}
+
+/**
+ * @brief 校验诊断字段有界且Release索引合法。
+ */
+static bool _linkg_release_failure_valid(const linkg_release_failure_t *failure)
+{
+    return failure != NULL && failure->candidate < 2U && failure->rollback < 2U &&
+           failure->candidate != failure->rollback &&
+           strnlen(failure->failed_stage, sizeof(failure->failed_stage)) > 0U &&
+           strnlen(failure->failed_stage, sizeof(failure->failed_stage)) < sizeof(failure->failed_stage) &&
+           strnlen(failure->failed_check, sizeof(failure->failed_check)) > 0U &&
+           strnlen(failure->failed_check, sizeof(failure->failed_check)) < sizeof(failure->failed_check) &&
+           strnlen(failure->failure_reason, sizeof(failure->failure_reason)) > 0U &&
+           strnlen(failure->failure_reason, sizeof(failure->failure_reason)) < sizeof(failure->failure_reason);
+}
+
+/**
+ * @brief 原子写入最近一次升级失败记录，诊断文件不参与JSON/ENV事务。
+ */
+int linkg_release_failure_save(const char *state_path, const linkg_release_failure_t *failure)
+{
+    char        path[PATH_MAX];
+    char        timestamp[LINKG_RELEASE_FAILURE_TIME_MAX];
+    struct tm   utc;
+    time_t      now;
+    cJSON      *root;
+    char       *text;
+    int         ret;
+
+    if (!_linkg_release_failure_valid(failure))
+    {
+        return -EINVAL;
+    }
+
+    ret = _linkg_release_failure_path(state_path, path, sizeof(path));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    now = time(NULL);
+    if (now == (time_t)-1 || gmtime_r(&now, &utc) == NULL ||
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc) == 0U)
+    {
+        (void)snprintf(timestamp, sizeof(timestamp), "%s", "unknown");
+    }
+
+    root = cJSON_CreateObject();
+    if (root == NULL)
+    {
+        return -ENOMEM;
+    }
+
+    if (cJSON_AddNumberToObject(root, "schema_version", 1) == NULL ||
+        cJSON_AddStringToObject(root, "candidate_release", linkg_release_name(failure->candidate)) == NULL ||
+        cJSON_AddStringToObject(root, "rollback_release", linkg_release_name(failure->rollback)) == NULL ||
+        cJSON_AddStringToObject(root, "failed_stage", failure->failed_stage) == NULL ||
+        cJSON_AddStringToObject(root, "failed_check", failure->failed_check) == NULL ||
+        cJSON_AddNumberToObject(root, "error_code", failure->error_code) == NULL ||
+        cJSON_AddStringToObject(root, "failure_time", timestamp) == NULL ||
+        cJSON_AddStringToObject(root, "failure_reason", failure->failure_reason) == NULL)
+    {
+        cJSON_Delete(root);
+        return -ENOMEM;
+    }
+
+    text = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (text == NULL)
+    {
+        return -ENOMEM;
+    }
+
+    if (strlen(text) >= LINKG_RELEASE_FAILURE_JSON_SIZE)
+    {
+        cJSON_free(text);
+        return -EOVERFLOW;
+    }
+
+    ret = linkg_atomic_write(path, text, strlen(text));
+    cJSON_free(text);
+    return ret;
+}
+
+/**
+ * @brief 读取固定长度的诊断字符串，拒绝超长或非法类型。
+ */
+static int _linkg_release_failure_read_string(const cJSON *root, const char *name, char *output, size_t capacity)
+{
+    const cJSON *value;
+
+    value = cJSON_GetObjectItemCaseSensitive(root, name);
+    if (!cJSON_IsString(value) || strlen(value->valuestring) >= capacity)
+    {
+        return -EINVAL;
+    }
+
+    strcpy(output, value->valuestring);
+    return 0;
+}
+
+/**
+ * @brief 读取最近一次失败记录，文件不存在返回-ENOENT，损坏时明确返回错误。
+ */
+int linkg_release_failure_load(const char *state_path, linkg_release_failure_t *failure)
+{
+    const char *const keys[] = {"schema_version", "candidate_release", "rollback_release", "failed_stage",
+                                "failed_check", "error_code", "failure_time", "failure_reason"};
+    char             path[PATH_MAX];
+    char             text[LINKG_RELEASE_FAILURE_JSON_SIZE];
+    const cJSON     *value;
+    cJSON           *root;
+    int              ret;
+
+    if (failure == NULL)
+    {
+        return -EINVAL;
+    }
+
+    memset(failure, 0, sizeof(*failure));
+    ret = _linkg_release_failure_path(state_path, path, sizeof(path));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = linkg_atomic_read(path, text, sizeof(text));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    root = cJSON_ParseWithOpts(text, NULL, 1);
+    if (!_linkg_release_keys(root, keys, sizeof(keys) / sizeof(keys[0])))
+    {
+        cJSON_Delete(root);
+        return -EINVAL;
+    }
+
+    value = cJSON_GetObjectItemCaseSensitive(root, "schema_version");
+    if (!cJSON_IsNumber(value) || value->valuedouble != 1.0 ||
+        _linkg_release_release(cJSON_GetObjectItemCaseSensitive(root, "candidate_release"), &failure->candidate) != 0 ||
+        _linkg_release_release(cJSON_GetObjectItemCaseSensitive(root, "rollback_release"), &failure->rollback) != 0)
+    {
+        ret = -EINVAL;
+        goto finish;
+    }
+
+    value = cJSON_GetObjectItemCaseSensitive(root, "error_code");
+    if (!cJSON_IsNumber(value) || value->valuedouble != (double)value->valueint)
+    {
+        ret = -EINVAL;
+        goto finish;
+    }
+    failure->error_code = value->valueint;
+
+    ret = _linkg_release_failure_read_string(root, "failed_stage", failure->failed_stage, sizeof(failure->failed_stage));
+    if (ret == 0)
+    {
+        ret = _linkg_release_failure_read_string(root, "failed_check", failure->failed_check, sizeof(failure->failed_check));
+    }
+    if (ret == 0)
+    {
+        ret = _linkg_release_failure_read_string(root, "failure_time", failure->failure_time, sizeof(failure->failure_time));
+    }
+    if (ret == 0)
+    {
+        ret = _linkg_release_failure_read_string(root, "failure_reason", failure->failure_reason, sizeof(failure->failure_reason));
+    }
+    if (ret != 0)
+    {
+        goto finish;
+    }
+
+
+
+    ret = _linkg_release_failure_valid(failure) && failure->failure_time[0] != '\0' ? 0 : -EINVAL;
+
+finish:
+    cJSON_Delete(root);
+    if (ret != 0)
+    {
+        memset(failure, 0, sizeof(*failure));
+    }
+    return ret;
+}
+
+/**
+ * @brief 仅在成功确认候选版本后清除历史失败记录并同步父目录。
+ */
+int linkg_release_failure_clear(const char *state_path)
+{
+    char path[PATH_MAX];
+    int  ret;
+
+    ret = _linkg_release_failure_path(state_path, path, sizeof(path));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (unlink(path) != 0)
+    {
+        return errno == ENOENT ? 0 : -errno;
+    }
+
+    return linkg_atomic_sync_parent(path);
 }
 
 /**

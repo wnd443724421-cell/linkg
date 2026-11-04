@@ -10,6 +10,30 @@
     let initialized = false;
 
     /**
+     * 统一控制普通页面移动导航，不干扰 UART 专用页面的导航状态。
+     */
+    function setMobileNavOpen(open)
+    {
+        const toggle = document.getElementById("appMobileNavToggle");
+        const backdrop = document.getElementById("appMobileNavBackdrop");
+        const allowed = !document.body.classList.contains("serial-active") &&
+                        !document.body.classList.contains("uart-diagnostic-active");
+
+        open = open && allowed && window.innerWidth <= 959;
+        document.body.classList.toggle("app-mobile-menu-open", open);
+        if (toggle != null)
+        {
+            toggle.setAttribute("aria-expanded", String(open));
+            toggle.setAttribute("aria-label", open ? "关闭导航菜单" : "打开导航菜单");
+        }
+        if (backdrop != null)
+        {
+            backdrop.hidden = !open;
+        }
+    }
+
+
+    /**
      * 设置一级菜单展开状态。
      */
     function setMenuItemOpen(item, open)
@@ -206,6 +230,7 @@
             return;
         }
 
+        setMobileNavOpen(false);
         setActiveMenu(route);
         unmountActivePage();
         showPageLoading();
@@ -328,6 +353,8 @@
      */
     function initMenu()
     {
+        const mobileToggle = document.getElementById("appMobileNavToggle");
+        const mobileBackdrop = document.getElementById("appMobileNavBackdrop");
         const menuTitles = document.querySelectorAll(".menu-title");
         const routeLinks = document.querySelectorAll("[data-route]");
 
@@ -356,6 +383,24 @@
             });
         });
 
+        if (mobileToggle != null)
+        {
+            mobileToggle.addEventListener("click", function () {
+                setMobileNavOpen(!document.body.classList.contains("app-mobile-menu-open"));
+            });
+        }
+        if (mobileBackdrop != null)
+        {
+            mobileBackdrop.addEventListener("click", function () { setMobileNavOpen(false); });
+        }
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && document.body.classList.contains("app-mobile-menu-open"))
+            {
+                setMobileNavOpen(false);
+                if (mobileToggle != null) { mobileToggle.focus(); }
+            }
+        });
+        window.addEventListener("resize", function () { setMobileNavOpen(false); });
         window.addEventListener("hashchange", handleRouteChange);
     }
 

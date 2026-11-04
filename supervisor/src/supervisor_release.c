@@ -59,9 +59,42 @@ static int _supervisor_release_commit(supervisor_release_t *release, const super
 
     release->version = *confirmed;
     release->trial   = false;
+    ret = linkg_release_failure_clear(release->paths.state_path);
+    if (ret != 0)
+    {
+        fprintf(stderr, "Supervisor failure diagnostics clear pending error=%d\n", ret);
+    }
     fprintf(stderr, "Supervisor release=CONFIRMED stable=%s kernel=%s\n",
             supervisor_version_name(confirmed->stable), supervisor_version_kernel_name(confirmed->kernel[confirmed->stable]));
     return 0;
+}
+
+/**
+ * @brief 在修改候选槽位之前记录失败原因，诊断写入失败不得阻止回滚。
+ */
+void supervisor_release_record_failure(supervisor_release_t *release, const char *stage, const char *check, int error_code, const char *reason)
+{
+    linkg_release_failure_t failure;
+    int                     ret;
+
+    if (release == NULL || !release->trial || stage == NULL || check == NULL || reason == NULL)
+    {
+        return;
+    }
+
+    memset(&failure, 0, sizeof(failure));
+    failure.candidate  = release->version.target;
+    failure.rollback   = release->version.stable;
+    failure.error_code = error_code;
+    (void)snprintf(failure.failed_stage, sizeof(failure.failed_stage), "%s", stage);
+    (void)snprintf(failure.failed_check, sizeof(failure.failed_check), "%s", check);
+    (void)snprintf(failure.failure_reason, sizeof(failure.failure_reason), "%s", reason);
+
+    ret = linkg_release_failure_save(release->paths.state_path, &failure);
+    if (ret != 0)
+    {
+        fprintf(stderr, "Supervisor failure diagnostics persist error=%d original=%d\n", ret, error_code);
+    }
 }
 
 /****************************** 生命周期 ******************************/
@@ -150,6 +183,16 @@ static int _supervisor_release_prepare(supervisor_release_t *release)
     if (release->trial && (ret != 0 || actual != release->version.kernel[release->version.target]))
     {
         // 包括U-Boot已经回退稳定Kernel、但JSON仍指向候选的情况。
+        if (ret != 0)
+        {
+            supervisor_release_record_failure(release, "candidate_prepare", "release_files", ret,
+                                              "候选App/Web文件校验失败");
+        }
+        else
+        {
+            supervisor_release_record_failure(release, "candidate_prepare", "kernel_slot", -ESTALE,
+                                              "实际Kernel与候选版本不一致");
+        }
         ret = supervisor_release_rollback(release);
         if (ret != 0)
         {
@@ -204,6 +247,8 @@ static int _supervisor_release_prepare(supervisor_release_t *release)
     if (ret != 0 && release->trial)
     {
         fprintf(stderr, "Supervisor candidate preparation failed error=%d\n", ret);
+        supervisor_release_record_failure(release, "candidate_prepare", "boot_or_links", ret,
+                                          "候选版本启动准备或软链接切换失败");
         ret = supervisor_release_rollback(release);
         return ret == 0 ? -EAGAIN : ret;
     }

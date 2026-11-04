@@ -47,6 +47,8 @@ typedef struct
     uint64_t           running_ms;    // 本次连续RUN起始时间
     uint64_t           confirm_ms;    // 下一次允许重试确认事务的时间
     int                monitor_error; // 确认辅助命令等待期间观察到的监控故障
+    int                exit_status;   // 最近一次waitpid回收的原始退出状态
+    bool               has_exit_status; // 是否已回收子进程并取得退出状态
     bool               stable;        // 本次RUN是否已清除连续故障计数
 } supervisor_child_t;
 
@@ -274,6 +276,8 @@ static int _supervisor_spawn(supervisor_child_t *child, char *const arguments[],
     child->running_ms  = 0U;
     child->confirm_ms  = 0U;
     child->monitor_error = 0;
+    child->exit_status   = 0;
+    child->has_exit_status = false;
     child->stable      = false;
 
     fprintf(stderr, "Supervisor t=%llu pid=%ld state=STARTING\n", (unsigned long long)_supervisor_now_ms(), (long)child_pid);
@@ -318,6 +322,8 @@ static int _supervisor_reap(supervisor_child_t *child, int *status)
         return -errno;
     }
 
+    child->exit_status = *status;
+    child->has_exit_status = true;
     _supervisor_log_exit(child->child_pid, *status);
     return 1;
 }
@@ -746,6 +752,46 @@ static void _supervisor_backoff(unsigned int *failures, bool interruptible)
 /****************************** 生命周期 ******************************/
 
 /**
+ * @brief 将候选进程实际监控错误转换成持久化诊断，不改变恢复决策。
+ */
+static void _supervisor_record_candidate_failure(supervisor_release_t *release, const supervisor_child_t *child, int error_code, bool spawned)
+{
+    const char *check;
+    char        reason[LINKG_RELEASE_FAILURE_REASON_MAX];
+
+    if (!spawned)
+    {
+        check = "process_spawn";
+        (void)snprintf(reason, sizeof(reason), "%s", "候选LinkG进程创建失败");
+    }
+    else if (error_code == -ETIMEDOUT)
+    {
+        check = child->state == SUPERVISOR_STATE_STARTING ? "ready_timeout" :
+                child->state == SUPERVISOR_STATE_RUNNING ? "heartbeat_timeout" : "transition_timeout";
+        (void)snprintf(reason, sizeof(reason), "%s",
+                       child->state == SUPERVISOR_STATE_STARTING ? "候选LinkG未在期限内发送READY" :
+                       child->state == SUPERVISOR_STATE_RUNNING ? "候选LinkG心跳超时" : "候选LinkG状态转换超时");
+    }
+    else if (child->has_exit_status && WIFEXITED(child->exit_status))
+    {
+        check = "process_exit";
+        (void)snprintf(reason, sizeof(reason), "候选LinkG提前退出，退出码=%d", WEXITSTATUS(child->exit_status));
+    }
+    else if (child->has_exit_status && WIFSIGNALED(child->exit_status))
+    {
+        check = "process_signal";
+        (void)snprintf(reason, sizeof(reason), "候选LinkG被信号终止，信号=%d", WTERMSIG(child->exit_status));
+    }
+    else
+    {
+        check = error_code == -EPIPE ? "supervisor_channel" : "health_monitor";
+        (void)snprintf(reason, sizeof(reason), "候选LinkG监控失败，error=%d", error_code);
+    }
+
+    supervisor_release_record_failure(release, "candidate_health_check", check, error_code, reason);
+}
+
+/**
  * @brief 串行启动、监控、回收和恢复子进程，正常退出时释放进程锁。
  */
 static int _supervisor_process_run(char *const child_arguments[], const char *lock_path, const supervisor_release_paths_t *paths)
@@ -755,6 +801,7 @@ static int _supervisor_process_run(char *const child_arguments[], const char *lo
     char                *managed_arguments[] = {release.program, NULL};
     unsigned int         failures;
     bool                 rollback_pending;
+    bool                 spawned;
     int                  lock_fd;
     int                  stop_ret;
     int                  ret;
@@ -815,9 +862,14 @@ static int _supervisor_process_run(char *const child_arguments[], const char *lo
             }
 
             ret = _supervisor_spawn(&child, paths == NULL ? child_arguments : managed_arguments, paths != NULL);
-            if (ret == 0)
+            spawned = ret == 0;
+            if (spawned)
             {
                 ret = _supervisor_monitor(&child, &failures, paths == NULL ? NULL : &release);
+            }
+            if (paths != NULL && release.trial && !g_supervisor_stop && ret != 0)
+            {
+                _supervisor_record_candidate_failure(&release, &child, ret, spawned);
             }
 
             rollback_pending = paths != NULL && release.trial && !g_supervisor_stop;
