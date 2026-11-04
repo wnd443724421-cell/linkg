@@ -510,9 +510,44 @@
         }
     }
 
+    /**
+     * 与后端读取的规范化快照比较，输入无效时仍视为有修改以保留校验反馈。
+     */
+    function hasConfigChanges()
+    {
+        let draft;
+
+        if (configData == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            draft = collectConfig();
+        }
+        catch (error)
+        {
+            return true;
+        }
+
+        return JSON.stringify(draft) !== JSON.stringify({
+            path_enabled: configData.path_enabled,
+            cellular: configData.cellular
+        });
+    }
+
+    /**
+     * 配置变更时刷新操作按钮，恢复原值后自动清除Dirty状态。
+     */
+    function onConfigDraftChanged()
+    {
+        updateActionButtons();
+    }
+
     function updateActionButtons()
     {
-        const disabled = configData == null || applying;
+        const disabled = configData == null || applying || !hasConfigChanges();
 
         field("cellularApplyButton").disabled = disabled;
         field("cellularResetButton").disabled = disabled;
@@ -683,7 +718,7 @@
 
         event.preventDefault();
 
-        if (!mounted || configData == null || applying)
+        if (!mounted || configData == null || applying || !hasConfigChanges())
         {
             return;
         }
@@ -900,6 +935,8 @@
 
         field("cellularRefreshButton").addEventListener("click", handleRefreshClick);
         field("cellularConfigForm").addEventListener("submit", applyConfig);
+        field("cellularConfigForm").addEventListener("input", onConfigDraftChanged);
+        field("cellularConfigForm").addEventListener("change", onConfigDraftChanged);
         field("cellularResetButton").addEventListener("click", resetConfig);
         field("cellularModuleEnabled").addEventListener("change", updateModuleFields);
         field("cellularPinToggle").addEventListener("click", togglePinVisibility);
@@ -921,6 +958,8 @@
 
         field("cellularRefreshButton").removeEventListener("click", handleRefreshClick);
         field("cellularConfigForm").removeEventListener("submit", applyConfig);
+        field("cellularConfigForm").removeEventListener("input", onConfigDraftChanged);
+        field("cellularConfigForm").removeEventListener("change", onConfigDraftChanged);
         field("cellularResetButton").removeEventListener("click", resetConfig);
         field("cellularModuleEnabled").removeEventListener("change", updateModuleFields);
         field("cellularPinToggle").removeEventListener("click", togglePinVisibility);

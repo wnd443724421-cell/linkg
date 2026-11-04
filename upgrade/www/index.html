@@ -10,6 +10,7 @@
     <meta http-equiv="Expires" content="0">
 
     <title>LinkG 管理系统</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
 
     <!-- Web版本和基础样式加载完成前隐藏页面，避免无样式闪烁。 -->
     <style>
@@ -25,6 +26,8 @@
         <!-- 顶部状态栏 -->
         <header class="app-header">
             <div class="header-brand">
+                <button id="appMobileNavToggle" class="app-mobile-nav-toggle" type="button"
+                    aria-controls="appSidebar" aria-expanded="false" aria-label="打开导航菜单">导航</button>
                 <span class="brand-name">LinkG</span>
             </div>
 
@@ -38,6 +41,8 @@
         <div class="app-body">
 
             <!-- 左侧导航 -->
+            <button id="appMobileNavBackdrop" class="app-mobile-nav-backdrop" type="button"
+                aria-label="关闭导航菜单" hidden></button>
             <aside id="appSidebar" class="app-sidebar">
                 <nav class="menu-box">
 

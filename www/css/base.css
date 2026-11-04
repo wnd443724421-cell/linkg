@@ -46,7 +46,7 @@ html {
 }
 
 body {
-    min-width: 960px;
+    min-width: 0;
     overflow: hidden;
 
     font-family: var(--linkg-font-family);

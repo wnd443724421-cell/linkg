@@ -274,6 +274,33 @@ failed:
 }
 
 /**
+ * @brief 安装失败时保存原始失败阶段和错误码，不影响稳定槽位恢复。
+ */
+static void _linkg_upgrade_record_failure(linkg_upgrade_stage_t stage, int error_code)
+{
+    const char *const stages[] = {"none", "archive_verify", "manifest_verify", "target_prepare", "app_install",
+                                  "web_install", "kernel_compare", "kernel_write", "kernel_verify", "system_install",
+                                  "supervisor_prepare"};
+    linkg_release_failure_t failure;
+    int                     ret;
+
+    memset(&failure, 0, sizeof(failure));
+    failure.candidate  = 1U - g_upgrade.transaction.state.stable;
+    failure.rollback   = g_upgrade.transaction.state.stable;
+    failure.error_code = error_code;
+    (void)snprintf(failure.failed_stage, sizeof(failure.failed_stage), "%s", "installation");
+    (void)snprintf(failure.failed_check, sizeof(failure.failed_check), "%s",
+                   stage >= LINKG_UPGRADE_STAGE_NONE && (size_t)stage < sizeof(stages) / sizeof(stages[0]) ?
+                   stages[stage] : "unknown");
+    (void)snprintf(failure.failure_reason, sizeof(failure.failure_reason), "升级包安装或提交失败，error=%d", error_code);
+    ret = linkg_release_failure_save(upgrade_commit_state_path(), &failure);
+    if (ret != 0)
+    {
+        fprintf(stderr, "UPGRADE: failure diagnostics persist error=%d original=%d\n", ret, error_code);
+    }
+}
+
+/**
  * @brief 执行升级包校验、App/Web安装、Kernel处理与可选系统文件安装。
  *
  * 安装完成后按JSON、ENV、重启顺序提交，任何失败都不宣称升级成功。
@@ -398,6 +425,7 @@ finish:
         {
             fprintf(stderr, "UPGRADE: failure recovery pending error=%d original=%d\n", result, ret);
         }
+        _linkg_upgrade_record_failure(failure_stage, ret);
     }
     upgrade_commit_end(&g_upgrade.transaction);
 

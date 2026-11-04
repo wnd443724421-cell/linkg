@@ -53,9 +53,11 @@ int _linkg_web_handler_upgrade_status_get(const cJSON *param, char **response)
 {
     linkg_release_state_t state;
     linkg_upgrade_status_t worker;
+    linkg_release_failure_t failure;
     const char           *path;
     char                  message[128];
     cJSON                *data;
+    cJSON                *detail;
     int                   ret;
 
     (void)param;
@@ -87,5 +89,34 @@ int _linkg_web_handler_upgrade_status_get(const cJSON *param, char **response)
             return -ENOMEM;
         }
     }
+    // 诊断文件独立于版本事务。读取失败不影响主升级状态查询。
+    if (state.upgrade == LINKG_UPGRADE_PHASE_ROLLING_BACK ||
+        state.upgrade == LINKG_UPGRADE_PHASE_ROLLED_BACK ||
+        state.upgrade == LINKG_UPGRADE_PHASE_FAILED)
+    {
+        ret = linkg_release_failure_load(path, &failure);
+        if (ret == 0)
+        {
+            detail = cJSON_AddObjectToObject(data, "failure");
+            if (detail == NULL ||
+                cJSON_AddStringToObject(detail, "candidate_release", linkg_release_name(failure.candidate)) == NULL ||
+                cJSON_AddStringToObject(detail, "rollback_release", linkg_release_name(failure.rollback)) == NULL ||
+                cJSON_AddStringToObject(detail, "failed_stage", failure.failed_stage) == NULL ||
+                cJSON_AddStringToObject(detail, "failed_check", failure.failed_check) == NULL ||
+                cJSON_AddNumberToObject(detail, "error_code", failure.error_code) == NULL ||
+                cJSON_AddStringToObject(detail, "failure_time", failure.failure_time) == NULL ||
+                cJSON_AddStringToObject(detail, "failure_reason", failure.failure_reason) == NULL)
+            {
+                cJSON_Delete(data);
+                return -ENOMEM;
+            }
+        }
+        else if (ret != -ENOENT && cJSON_AddNumberToObject(data, "failure_record_error", ret) == NULL)
+        {
+            cJSON_Delete(data);
+            return -ENOMEM;
+        }
+    }
+
     return _linkg_web_response_success(LINKG_WEB_CMD_UPGRADE_STATUS_GET, data, NULL, response);
 }

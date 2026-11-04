@@ -216,6 +216,7 @@
         const installComplete = verifyStates.includes(currentPhase);
         const showVerify = verifyStates.includes(currentPhase);
         const failed = currentPhase === "failed" || currentPhase === "rolled_back";
+        const failure = data.failure && typeof data.failure === "object" ? data.failure : null;
         let verifyText;
         let verifyHint;
         let verifyKind;
@@ -304,13 +305,20 @@
         {
             field("ErrorTitle").textContent = currentPhase === "rolled_back" ?
                 "候选版本验证失败，已恢复稳定版本" : "升级安装或事务提交失败";
-            field("ErrorText").textContent =
-                typeof data.message === "string" && data.message.length > 0 ?
-                data.message : phaseHints[currentPhase];
-            field("ErrorCode").hidden = !(Number.isInteger(data.error_code) && data.error_code !== 0);
-            field("ErrorCode").textContent =
-                Number.isInteger(data.error_code) && data.error_code !== 0 ?
-                "错误码：" + data.error_code : "";
+            field("ErrorText").textContent = failure && failure.failure_reason ?
+                failure.failure_reason :
+                (typeof data.message === "string" && data.message.length > 0 ? data.message : phaseHints[currentPhase]);
+            const errorCode = failure && Number.isInteger(failure.error_code) ? failure.error_code : data.error_code;
+            field("ErrorCode").hidden = !(Number.isInteger(errorCode) && errorCode !== 0);
+            field("ErrorCode").textContent = Number.isInteger(errorCode) && errorCode !== 0 ?
+                "错误码：" + errorCode : "";
+            field("ErrorDetail").textContent = failure ?
+                "候选槽位：" + (failure.candidate_release || "—") +
+                " · 回滚槽位：" + (failure.rollback_release || "—") +
+                " · 失败阶段：" + (failure.failed_stage || "—") +
+                " · 检查项：" + (failure.failed_check || "—") +
+                " · 时间：" + (failure.failure_time || "—") :
+                (data.failure_record_error ? "失败诊断文件读取异常：" + data.failure_record_error : "暂无持久化失败详情");
         }
     }
 
@@ -333,8 +341,9 @@
         field("StableSlot").textContent = data.stable_release_partition || "—";
 
         setNotice(
-            typeof data.message === "string" && data.message.length > 0 ?
-                data.message : phaseHints[currentPhase],
+            data.failure && typeof data.failure.failure_reason === "string" && data.failure.failure_reason ?
+                data.failure.failure_reason :
+                (typeof data.message === "string" && data.message.length > 0 ? data.message : phaseHints[currentPhase]),
             kind
         );
     }

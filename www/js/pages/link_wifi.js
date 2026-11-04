@@ -492,9 +492,44 @@
         }
     }
 
+    /**
+     * 与后端读取的规范化快照比较，输入无效时仍视为有修改以保留校验反馈。
+     */
+    function hasConfigChanges()
+    {
+        let draft;
+
+        if (configData == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            draft = collectConfig();
+        }
+        catch (error)
+        {
+            return true;
+        }
+
+        return JSON.stringify(draft) !== JSON.stringify({
+            path_enabled: configData.path_enabled,
+            wifi: configData.wifi
+        });
+    }
+
+    /**
+     * 配置变更时刷新操作按钮，恢复原值后自动清除Dirty状态。
+     */
+    function onConfigDraftChanged()
+    {
+        updateSaveButtons();
+    }
+
     function updateSaveButtons()
     {
-        const disabled = configData == null || saving;
+        const disabled = configData == null || saving || !hasConfigChanges();
 
         field("wifiSaveButton").disabled = disabled;
         field("wifiResetButton").disabled = disabled;
@@ -860,7 +895,7 @@
 
         event.preventDefault();
 
-        if (!mounted || configData == null || saving)
+        if (!mounted || configData == null || saving || !hasConfigChanges())
         {
             return;
         }
@@ -1052,6 +1087,8 @@
 
         field("wifiRefreshButton").addEventListener("click", handleRefreshClick);
         field("wifiConfigForm").addEventListener("submit", saveConfig);
+        field("wifiConfigForm").addEventListener("input", onConfigDraftChanged);
+        field("wifiConfigForm").addEventListener("change", onConfigDraftChanged);
         field("wifiResetButton").addEventListener("click", resetConfig);
         field("wifiConfigWorkMode").addEventListener("change", updateModeFields);
         field("wifiWideBandwidth").addEventListener("change", updateBandwidthAndProtocol);
@@ -1078,6 +1115,8 @@
 
         field("wifiRefreshButton").removeEventListener("click", handleRefreshClick);
         field("wifiConfigForm").removeEventListener("submit", saveConfig);
+        field("wifiConfigForm").removeEventListener("input", onConfigDraftChanged);
+        field("wifiConfigForm").removeEventListener("change", onConfigDraftChanged);
         field("wifiResetButton").removeEventListener("click", resetConfig);
         field("wifiConfigWorkMode").removeEventListener("change", updateModeFields);
         field("wifiWideBandwidth").removeEventListener("change", updateBandwidthAndProtocol);
