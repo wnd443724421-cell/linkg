@@ -461,7 +461,7 @@
 
         field("UploadProgress").hidden = false;
         field("UploadBytes").textContent = formatBytes(loaded) + " / " + formatBytes(totalBytes);
-        updateProgress("Upload", percent, lengthComputable !== true, "");
+        updateProgress("Upload", percent, lengthComputable !== true, "", lengthComputable !== true ? "正在上传" : null);
     }
 
     async function upload()
@@ -478,7 +478,7 @@
 
         field("UploadProgress").hidden = false;
         field("UploadBytes").textContent = "0 B / " + formatBytes(selected.size);
-        updateProgress("Upload", 0, true, "");
+        updateProgress("Upload", 0, true, "", "正在上传");
         setUploadNotice("正在上传升级包，请勿关闭页面或切换网络。", "");
         renderFlow(phase || "idle");
 
@@ -538,6 +538,9 @@
             file = null;
             active = true;
             phase = "verifying";
+            field("Phase").textContent = phases[phase];
+            field("Phase").classList.remove("is-success", "is-error", "is-warning");
+            field("PhaseDot").className = "upgrade-status-dot";
             field("File").value = "";
             field("FileInfo").textContent = "升级任务已接管上传文件。";
             field("Confirm").checked = false;
