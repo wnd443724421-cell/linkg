@@ -18,7 +18,7 @@
 /****************************** 模块常量 ******************************/
 
 #define TUN_DRIVER_MODULE_NAME      "tun"                              // TUN内核模块名称
-#define TUN_DRIVER_MODULE_PATH      "/app/current/drivers/tun.ko"      // 当前LinkG版本的TUN驱动路径
+#define TUN_DRIVER_MODULE_PATH      "/app/current/modules/tun.ko"      // 当前LinkG版本的TUN驱动路径
 #define TUN_DRIVER_MODULE_LINE_MAX  256U                               // /proc/modules单行缓冲区长度
 #define TUN_DRIVER_LOG_TAG          "TUN-DRIVER"                       // 驱动管理日志标签
 

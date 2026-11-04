@@ -2,6 +2,8 @@
     "use strict";
 
     const MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
+    const ACTIVE_POLL_INTERVAL_MS = 1000;
+    const IDLE_POLL_INTERVAL_MS = 2000;
     const phases = {
         idle: "尚未升级",
         verifying: "正在校验升级包",
@@ -422,7 +424,8 @@
             {
                 polling = false;
                 controls();
-                timer = setTimeout(function () { poll(run); }, 2000);
+                timer = setTimeout(function () { poll(run); }, active ? ACTIVE_POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS
+                );
             }
         }
     }

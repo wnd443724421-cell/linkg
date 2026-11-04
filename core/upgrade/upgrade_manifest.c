@@ -507,8 +507,15 @@ int upgrade_manifest_verify(const char *upgrade_dir)
 {
     static const char *required[] =
     {
-        "app/bin/linkg", "www/index.html", "www/cgi-bin/cmain",
-        "www/cgi-bin/upgrade", "www/version.json"
+        "app/bin/linkg",
+        "app/modules/linkg_fast_nat.ko",
+        "app/modules/plat_1105.ko",
+        "app/modules/tun.ko",
+        "app/modules/wifi_1105.ko",
+        "www/index.html",
+        "www/cgi-bin/cmain",
+        "www/cgi-bin/upgrade",
+        "www/version.json"
     };
 
     struct stat info;

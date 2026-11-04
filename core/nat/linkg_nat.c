@@ -26,7 +26,7 @@
 /****************************** 模块常量 ******************************/
 
 #define LINKG_NAT_DRIVER_MODULE_NAME               "linkg_fast_nat"                                                   // Fast NAT内核模块名称
-#define LINKG_NAT_DRIVER_MODULE_DIRECTORY          "/app/current/drivers"                                             // Fast NAT内核模块目录
+#define LINKG_NAT_DRIVER_MODULE_DIRECTORY          "/app/current/modules"                                            // Fast NAT内核模块目录
 #define LINKG_NAT_DRIVER_MODULE_FILE               "linkg_fast_nat.ko"                                                // Fast NAT内核模块文件名
 #define LINKG_NAT_DRIVER_MODULE_PATH               LINKG_NAT_DRIVER_MODULE_DIRECTORY "/" LINKG_NAT_DRIVER_MODULE_FILE // Fast NAT内核模块完整路径
 #define LINKG_NAT_DRIVER_MODULE_LINE_MAX           256U                                                               // proc/modules单行缓冲区长度

@@ -28,6 +28,10 @@ outdir = root / "output"
 archive_path = outdir / ("linkg-upgrade-" + package_version + ".tar.gz")
 required = (
     "app/bin/linkg",
+    "app/modules/linkg_fast_nat.ko",
+    "app/modules/plat_1105.ko",
+    "app/modules/tun.ko",
+    "app/modules/wifi_1105.ko",
     "www/index.html",
     "www/cgi-bin/cmain",
     "www/cgi-bin/upgrade",
@@ -82,6 +86,20 @@ def check_tree(staging):
     return entries
 
 
+def normalize_flat_group(directory, file_mode, required_suffix=None):
+    if directory.is_symlink() or not directory.is_dir():
+        raise SystemExit("缺少必需普通目录: " + str(directory))
+
+    directory.chmod(0o755)
+    for path in directory.iterdir():
+        relative = path.relative_to(directory).as_posix()
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit("目录只允许一级普通文件: " + str(directory / relative))
+        if required_suffix is not None and path.suffix != required_suffix:
+            raise SystemExit("modules目录只允许.ko文件: " + str(directory / relative))
+        path.chmod(file_mode)
+
+
 with tempfile.TemporaryDirectory(prefix="linkg-upgrade-build-") as temp_dir:
     staging = Path(temp_dir) / "package"
     staging.mkdir()
@@ -90,6 +108,9 @@ with tempfile.TemporaryDirectory(prefix="linkg-upgrade-build-") as temp_dir:
         if not source.is_dir():
             raise SystemExit("缺少必需目录: " + str(source))
         shutil.copytree(source, staging / section, symlinks=True)
+
+    normalize_flat_group(staging / "app" / "bin", 0o755)
+    normalize_flat_group(staging / "app" / "modules", 0o644, ".ko")
 
     kernel_image = root / "kernel" / "boot.img"
     if kernel_image.exists():

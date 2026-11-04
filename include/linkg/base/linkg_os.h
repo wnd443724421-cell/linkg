@@ -33,6 +33,7 @@ int  linkg_os_shellf(const char *format, ...) LINKG_OS_PRINTF(1, 2);
 /****************************** 系统管理 ******************************/
 
 int linkg_os_set_user_password(const char *username, const char *password);
+int linkg_os_set_ssh_enable(bool enable);
 
 /****************************** 进程管理 ******************************/
 
