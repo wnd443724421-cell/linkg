@@ -273,46 +273,64 @@ static int _upgrade_install_remove_group(const char *target_dir)
 }
 
 /**
- * @brief 比较清单目录组，并补充检查源目录和目标目录自身的权限。
+ * @brief 先判断目录存在性和权限，再按已验证清单比较文件内容。
+ *
+ * 升级包未包含某目录组时允许源目录不存在，对应目标目录也必须不存在才能跳过。
+ * 目录权限以升级包实际权限为准，不额外规定固定值。
  */
-static int _upgrade_install_group_equal(const char *upgrade_dir, const char *manifest_prefix, const char *source_dir, const char *target_dir, bool *same)
+static int _upgrade_install_group_equal(const char *upgrade_dir, const char *manifest_prefix, const char *source_dir, const char *target_dir, bool *same, bool *source_exists)
 {
     struct stat source_info;
     struct stat target_info;
-    int         ret;
 
-    ret = upgrade_manifest_group_equal(upgrade_dir, manifest_prefix, target_dir, same);
-    if (ret != 0 || !*same)
+    if (same == NULL || source_exists == NULL)
     {
-        return ret;
+        return -EINVAL;
     }
+
+    *same          = false;
+    *source_exists = false;
 
     if (lstat(source_dir, &source_info) != 0)
     {
-        return -errno;
+        if (errno != ENOENT)
+        {
+            return -errno;
+        }
+
+        // 源目录不存在时，目标也不存在则无需任何处理。
+        if (lstat(target_dir, &target_info) != 0)
+        {
+            if (errno == ENOENT || errno == ENOTDIR)
+            {
+                *same = true;
+                return 0;
+            }
+
+            return -errno;
+        }
+
+        return 0;
     }
+
     if (!S_ISDIR(source_info.st_mode))
     {
         return -ENOTDIR;
     }
 
+    *source_exists = true;
     if (lstat(target_dir, &target_info) != 0)
     {
-        if (errno == ENOENT)
-        {
-            *same = false;
-            return 0;
-        }
-        return -errno;
+        return errno == ENOENT || errno == ENOTDIR ? 0 : -errno;
     }
 
     if (!S_ISDIR(target_info.st_mode) ||
         (source_info.st_mode & 07777U) != (target_info.st_mode & 07777U))
     {
-        *same = false;
+        return 0;
     }
 
-    return 0;
+    return upgrade_manifest_group_equal(upgrade_dir, manifest_prefix, target_dir, same);
 }
 
 /**
@@ -426,9 +444,9 @@ static int _upgrade_install_copy_app(const char *source_dir, const char *target_
 }
 
 /**
- * @brief 替换一个不一致的目录组，删除旧目录后从升级包完整复制。
+ * @brief 替换不一致的目录组，若清单中没有该组则只移除旧目录。
  */
-static int _upgrade_install_replace_group(const char *source_dir, const char *target_release_dir, const char *target_dir)
+static int _upgrade_install_replace_group(const char *source_dir, const char *target_release_dir, const char *target_dir, bool source_exists)
 {
     int ret;
 
@@ -438,7 +456,7 @@ static int _upgrade_install_replace_group(const char *source_dir, const char *ta
         return ret;
     }
 
-    return _upgrade_install_copy_path(source_dir, target_release_dir);
+    return source_exists ? _upgrade_install_copy_path(source_dir, target_release_dir) : 0;
 }
 
 /**
@@ -484,8 +502,10 @@ int upgrade_install_release(const char *upgrade_dir, char *installed_release, si
     char        group_source[PATH_MAX];
     char        group_destination[PATH_MAX];
     int         target_fd[2] = {-1, -1};
-    bool        bin_same = false;
-    bool        modules_same = false;
+    bool        bin_same              = false;
+    bool        modules_same          = false;
+    bool        bin_source_exists     = false;
+    bool        modules_source_exists = false;
     int         ret;
     int         index;
 
@@ -500,14 +520,6 @@ int upgrade_install_release(const char *upgrade_dir, char *installed_release, si
     if (ret == 0)
     {
         ret = _upgrade_install_check_source(upgrade_dir, "www");
-    }
-    if (ret == 0)
-    {
-        ret = _upgrade_install_check_source(upgrade_dir, "app/bin");
-    }
-    if (ret == 0)
-    {
-        ret = _upgrade_install_check_source(upgrade_dir, "app/modules");
     }
     if (ret != 0)
     {
@@ -584,7 +596,7 @@ int upgrade_install_release(const char *upgrade_dir, char *installed_release, si
     }
 
     // 两个目录组必须在任何清理操作前完成比较。
-    ret = _upgrade_install_group_equal(upgrade_dir, "app/bin/", group_source, group_destination, &bin_same);
+    ret = _upgrade_install_group_equal(upgrade_dir, "app/bin/", group_source, group_destination, &bin_same, &bin_source_exists);
     if (ret != 0)
     {
         goto finish;
@@ -604,7 +616,7 @@ int upgrade_install_release(const char *upgrade_dir, char *installed_release, si
         goto finish;
     }
 
-    ret = _upgrade_install_group_equal(upgrade_dir, "app/modules/", group_source, group_destination, &modules_same);
+    ret = _upgrade_install_group_equal(upgrade_dir, "app/modules/", group_source, group_destination, &modules_same, &modules_source_exists);
     if (ret != 0)
     {
         goto finish;
@@ -648,7 +660,7 @@ int upgrade_install_release(const char *upgrade_dir, char *installed_release, si
             goto finish;
         }
 
-        ret = _upgrade_install_replace_group(group_source, app_destination, group_destination);
+        ret = _upgrade_install_replace_group(group_source, app_destination, group_destination, bin_source_exists);
         if (ret != 0)
         {
             goto finish;
@@ -671,7 +683,7 @@ int upgrade_install_release(const char *upgrade_dir, char *installed_release, si
             goto finish;
         }
 
-        ret = _upgrade_install_replace_group(group_source, app_destination, group_destination);
+        ret = _upgrade_install_replace_group(group_source, app_destination, group_destination, modules_source_exists);
         if (ret != 0)
         {
             goto finish;

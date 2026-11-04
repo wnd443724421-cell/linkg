@@ -544,15 +544,6 @@ static int _upgrade_manifest_scan(const char *root, const char *relative, char *
  */
 int upgrade_manifest_verify(const char *upgrade_dir)
 {
-    static const char *required[] =
-    {
-        "app/bin/linkg",
-        "www/index.html",
-        "www/cgi-bin/cmain",
-        "www/cgi-bin/upgrade",
-        "www/version.json"
-    };
-
     struct stat info;
     char        manifest_path[PATH_MAX];
     char       *root;
@@ -655,19 +646,6 @@ int upgrade_manifest_verify(const char *upgrade_dir)
 
     if (ret == 0)
     {
-        for (i = 0U; i < sizeof(required) / sizeof(required[0]); ++i)
-        {
-            const char *name = required[i];
-            if (bsearch(&name, names, count, sizeof(*names), _upgrade_manifest_compare) == NULL)
-            {
-                ret = -EBADMSG;
-                break;
-            }
-        }
-    }
-
-    if (ret == 0)
-    {
         seen = 0U;
         ret  = _upgrade_manifest_scan(root, "", names, count, &seen, 0U);
         if (ret == 0 && seen != count)
@@ -740,9 +718,9 @@ static bool _upgrade_manifest_group_has_child(const upgrade_manifest_group_entry
 }
 
 /**
- * @brief 比较目标目录中的单个文件或软链接与清单记录。
+ * @brief 检查目标文件或软链接的元数据，需要时再校验SHA-256。
  */
-static int _upgrade_manifest_group_check_entry(const char *target_dir, const upgrade_manifest_group_entry_t *entry, bool *matches)
+static int _upgrade_manifest_group_check_entry(const char *target_dir, const upgrade_manifest_group_entry_t *entry, bool verify_sha256, bool *matches)
 {
     char        relative[PATH_MAX];
     char        full_path[PATH_MAX];
@@ -814,14 +792,17 @@ static int _upgrade_manifest_group_check_entry(const char *target_dir, const upg
             return 0;
         }
 
-        ret = _upgrade_manifest_sha256(full_path, NULL, 0U, entry->sha256);
-        if (ret == -EBADMSG)
+        if (verify_sha256)
         {
-            return 0;
-        }
-        if (ret != 0)
-        {
-            return ret;
+            ret = _upgrade_manifest_sha256(full_path, NULL, 0U, entry->sha256);
+            if (ret == -EBADMSG)
+            {
+                return 0;
+            }
+            if (ret != 0)
+            {
+                return ret;
+            }
         }
     }
     else if (entry->type == 'L')
@@ -848,14 +829,17 @@ static int _upgrade_manifest_group_check_entry(const char *target_dir, const upg
             return 0;
         }
 
-        ret = _upgrade_manifest_sha256(NULL, entry->target, (size_t)entry->size, entry->sha256);
-        if (ret == -EBADMSG)
+        if (verify_sha256)
         {
-            return 0;
-        }
-        if (ret != 0)
-        {
-            return ret;
+            ret = _upgrade_manifest_sha256(NULL, entry->target, (size_t)entry->size, entry->sha256);
+            if (ret == -EBADMSG)
+            {
+                return 0;
+            }
+            if (ret != 0)
+            {
+                return ret;
+            }
         }
     }
     else
@@ -868,11 +852,11 @@ static int _upgrade_manifest_group_check_entry(const char *target_dir, const upg
 }
 
 /**
- * @brief 递归检查目标目录不存在清单之外的文件、目录或特殊类型。
+ * @brief 递归统计目标文件数量，或检查文件名称与目录结构。
  */
 static int _upgrade_manifest_group_scan_target(const char *target_dir, const char *relative,
                                                const upgrade_manifest_group_entry_t *entries, size_t count,
-                                               size_t *seen, bool *matches, unsigned int depth)
+                                               size_t *seen, bool *matches, bool check_names, unsigned int depth)
 {
     DIR           *directory;
     struct dirent *entry;
@@ -956,13 +940,13 @@ static int _upgrade_manifest_group_scan_target(const char *target_dir, const cha
 
         if (S_ISDIR(info.st_mode))
         {
-            if (!_upgrade_manifest_group_has_child(entries, count, name))
+            if (check_names && !_upgrade_manifest_group_has_child(entries, count, name))
             {
                 *matches = false;
                 break;
             }
 
-            ret = _upgrade_manifest_group_scan_target(target_dir, name, entries, count, seen, matches, depth + 1U);
+            ret = _upgrade_manifest_group_scan_target(target_dir, name, entries, count, seen, matches, check_names, depth + 1U);
             if (ret != 0 || !*matches)
             {
                 break;
@@ -970,11 +954,14 @@ static int _upgrade_manifest_group_scan_target(const char *target_dir, const cha
         }
         else if (S_ISREG(info.st_mode) || S_ISLNK(info.st_mode))
         {
-            lookup = name;
-            if (bsearch(&lookup, entries, count, sizeof(*entries), _upgrade_manifest_group_lookup_compare) == NULL)
+            if (check_names)
             {
-                *matches = false;
-                break;
+                lookup = name;
+                if (bsearch(&lookup, entries, count, sizeof(*entries), _upgrade_manifest_group_lookup_compare) == NULL)
+                {
+                    *matches = false;
+                    break;
+                }
             }
 
             ++*seen;
@@ -1194,12 +1181,7 @@ int upgrade_manifest_group_equal(const char *upgrade_dir, const char *manifest_p
         goto finish;
     }
 
-    if (count == 0U)
-    {
-        ret = -EBADMSG;
-        goto finish;
-    }
-
+    // 目录组允许为空，是否存在文件完全以已验证的FILES.txt为准。
     qsort(entries, count, sizeof(*entries), _upgrade_manifest_group_compare);
     for (index = 1U; index < count; ++index)
     {
@@ -1210,22 +1192,44 @@ int upgrade_manifest_group_equal(const char *upgrade_dir, const char *manifest_p
         }
     }
 
+    // 第一阶段：先统计目标目录内文件数量，不计算文件哈希。
     matches = true;
+    seen    = 0U;
+    ret     = _upgrade_manifest_group_scan_target(target_dir, "", entries, count, &seen, &matches, false, 0U);
+    if (ret != 0 || !matches || seen != count)
+    {
+        goto finish;
+    }
+
+    // 第二阶段：校验名称集合及目录结构，发现额外空目录也必须替换。
+    seen = 0U;
+    ret  = _upgrade_manifest_group_scan_target(target_dir, "", entries, count, &seen, &matches, true, 0U);
+    if (ret != 0 || !matches || seen != count)
+    {
+        goto finish;
+    }
+
+    // 第三阶段：先检查全部文件类型、大小、权限与软链接目标。
     for (index = 0U; index < count; ++index)
     {
-        ret = _upgrade_manifest_group_check_entry(target_dir, &entries[index], &matches);
+        ret = _upgrade_manifest_group_check_entry(target_dir, &entries[index], false, &matches);
         if (ret != 0 || !matches)
         {
             goto finish;
         }
     }
 
-    seen = 0U;
-    ret  = _upgrade_manifest_group_scan_target(target_dir, "", entries, count, &seen, &matches, 0U);
-    if (ret == 0 && matches && seen == count)
+    // 第四阶段：全部元数据一致后才计算SHA-256。
+    for (index = 0U; index < count; ++index)
     {
-        *same = true;
+        ret = _upgrade_manifest_group_check_entry(target_dir, &entries[index], true, &matches);
+        if (ret != 0 || !matches)
+        {
+            goto finish;
+        }
     }
+
+    *same = true;
 
 finish:
     for (index = 0U; index < UPGRADE_MANIFEST_MAX_ENTRIES; ++index)
@@ -1238,4 +1242,3 @@ finish:
     free(root);
     return ret;
 }
-
