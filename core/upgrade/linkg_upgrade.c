@@ -388,6 +388,7 @@ finish:
     if (ret == 0 && committed)
     {
         _linkg_upgrade_set_progress(LINKG_UPGRADE_STATE_REBOOT_PENDING, failure_stage, 100U, "候选已提交，正在重启，等待Supervisor验证");
+        
         ret = upgrade_commit_reboot();
     }
     if (ret != 0)
