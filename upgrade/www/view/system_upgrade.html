@@ -1,25 +1,173 @@
 <div class="page upgrade-page" id="systemUpgrade">
-    <div class="page-header">
-        <div><h2 class="page-title">固件升级</h2><p class="page-description">上传升级包，安装到备用版本，并在重启后检查运行状态。</p></div>
+    <div class="page-header upgrade-page-header">
+        <div>
+            <span class="upgrade-eyebrow">SYSTEM UPDATE</span>
+            <h2 class="page-title">固件升级</h2>
+            <p class="page-description">上传 LinkG 升级包，安装到备用版本，并在重启后完成健康验证。</p>
+        </div>
     </div>
-    <section class="page-card upgrade-card">
-        <h3>版本与升级状态</h3>
+
+    <section class="page-card upgrade-summary" aria-label="当前升级状态">
+        <div class="upgrade-summary-main">
+            <div>
+                <span class="upgrade-section-kicker">当前升级状态</span>
+                <div class="upgrade-phase-line">
+                    <span class="upgrade-status-dot" id="upgradePhaseDot" aria-hidden="true"></span>
+                    <strong class="upgrade-phase-value" id="upgradePhase" aria-live="polite">正在读取…</strong>
+                </div>
+            </div>
+            <p class="upgrade-notice" id="upgradeStatus" role="status" aria-live="polite">正在连接设备…</p>
+        </div>
+
         <dl class="upgrade-facts">
-            <div><dt>当前软件版本</dt><dd id="upgradeVersion">正在读取…</dd></div>
-            <div><dt>升级状态</dt><dd id="upgradePhase" aria-live="polite">正在读取…</dd></div>
-            <div><dt>目标 / 稳定槽位</dt><dd id="upgradeSlots">—</dd></div>
+            <div>
+                <dt>当前软件版本</dt>
+                <dd id="upgradeVersion">正在读取…</dd>
+            </div>
+            <div>
+                <dt>目标槽位</dt>
+                <dd id="upgradeTargetSlot">—</dd>
+            </div>
+            <div>
+                <dt>稳定槽位</dt>
+                <dd id="upgradeStableSlot">—</dd>
+            </div>
         </dl>
-        <p class="upgrade-notice" id="upgradeStatus" role="status">正在连接设备…</p>
     </section>
+
+    <section class="page-card upgrade-flow-card" aria-label="升级流程">
+        <div class="upgrade-card-heading">
+            <div>
+                <h3>升级流程</h3>
+                <p>升级分为上传、备用版本安装和重启验证三个阶段。</p>
+            </div>
+        </div>
+
+        <ol class="upgrade-steps">
+            <li class="upgrade-step is-active" data-upgrade-step="upload">
+                <span class="upgrade-step-index">01</span>
+                <div class="upgrade-step-copy">
+                    <strong>上传升级包</strong>
+                    <small id="upgradeStepUploadText">等待选择文件</small>
+                </div>
+            </li>
+            <li class="upgrade-step" data-upgrade-step="install">
+                <span class="upgrade-step-index">02</span>
+                <div class="upgrade-step-copy">
+                    <strong>安装备用版本</strong>
+                    <small id="upgradeStepInstallText">等待上传完成</small>
+                </div>
+            </li>
+            <li class="upgrade-step" data-upgrade-step="verify">
+                <span class="upgrade-step-index">03</span>
+                <div class="upgrade-step-copy">
+                    <strong>重启与健康验证</strong>
+                    <small id="upgradeStepVerifyText">等待安装完成</small>
+                </div>
+            </li>
+        </ol>
+    </section>
+
     <section class="page-card upgrade-card">
-        <h3>上传与安装</h3>
-        <p>选择 LinkG 的 .tar.gz 升级包，最大 64 MiB。上传完成后，还需确认开始升级。</p>
-        <label class="upgrade-file-label" for="upgradeFile">升级包</label>
-        <input type="file" id="upgradeFile" accept=".tar.gz,application/gzip">
-        <p id="upgradeFileInfo" class="upgrade-file-info">尚未选择文件</p>
-        <button type="button" class="btn" id="upgradeUpload" disabled>上传升级包</button>
-        <p id="upgradeUploadStatus" aria-live="polite">上传成功只表示文件已保存。</p>
-        <label class="upgrade-confirm"><input type="checkbox" id="upgradeConfirm" disabled>我已确认开始安装；安装后设备将重启，连接会暂时中断。</label>
-        <button type="button" class="btn btn-primary" id="upgradeStart" disabled>开始升级</button>
+        <div class="upgrade-card-heading">
+            <div>
+                <h3>上传升级包</h3>
+                <p>选择设备对应的 LinkG .tar.gz 升级包。上传完成后，需要再次确认才会开始安装。</p>
+            </div>
+            <span class="upgrade-limit">最大 64 MiB</span>
+        </div>
+
+        <label class="upgrade-file-picker" id="upgradeFilePicker" for="upgradeFile">
+            <input type="file" id="upgradeFile" accept=".tar.gz,application/gzip,application/x-gzip">
+            <span class="upgrade-file-icon" aria-hidden="true">+</span>
+            <span class="upgrade-file-copy">
+                <strong>选择升级包</strong>
+                <small>仅支持 .tar.gz 文件，请确认升级包与设备型号匹配</small>
+            </span>
+            <span class="upgrade-file-action">浏览文件</span>
+        </label>
+
+        <p class="upgrade-file-info" id="upgradeFileInfo">尚未选择文件</p>
+
+        <div class="upgrade-progress-block" id="upgradeUploadProgress" hidden>
+            <div class="upgrade-progress-heading">
+                <div>
+                    <strong>上传进度</strong>
+                    <span id="upgradeUploadBytes">0 B</span>
+                </div>
+                <strong class="upgrade-progress-percent" id="upgradeUploadPercent">0%</strong>
+            </div>
+            <div class="upgrade-progress-track" id="upgradeUploadTrack" role="progressbar"
+                aria-label="升级包上传进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="upgrade-progress-fill" id="upgradeUploadBar"></div>
+            </div>
+        </div>
+
+        <div class="upgrade-upload-actions">
+            <button type="button" class="btn btn-primary" id="upgradeUpload" disabled>上传升级包</button>
+        </div>
+        <p class="upgrade-inline-status" id="upgradeUploadStatus" role="status" aria-live="polite">
+            上传成功只表示升级包已保存到设备，尚未开始安装。
+        </p>
+
+        <div class="upgrade-confirm-panel" id="upgradeConfirmPanel" hidden>
+            <div class="upgrade-confirm-copy">
+                <label class="upgrade-confirm" for="upgradeConfirm">
+                    <input type="checkbox" id="upgradeConfirm" disabled>
+                    <span>我已确认开始安装。</span>
+                </label>
+                <p>安装期间请保持设备供电。候选版本提交后设备将自动重启，Web 连接会暂时中断。</p>
+            </div>
+            <button type="button" class="btn btn-primary" id="upgradeStart" disabled>确认并开始升级</button>
+        </div>
+    </section>
+
+    <section class="page-card upgrade-card upgrade-install-card" id="upgradeInstallPanel" hidden>
+        <div class="upgrade-card-heading">
+            <div>
+                <h3>安装与验证</h3>
+                <p>安装进度来自设备端升级任务；重启后的健康验证由 Supervisor 完成。</p>
+            </div>
+        </div>
+
+        <div class="upgrade-install-grid">
+            <div class="upgrade-progress-panel">
+                <div class="upgrade-progress-heading">
+                    <div>
+                        <strong>备用版本安装</strong>
+                        <span id="upgradeInstallMessage">等待升级任务</span>
+                    </div>
+                    <strong class="upgrade-progress-percent" id="upgradeInstallPercent">0%</strong>
+                </div>
+                <div class="upgrade-progress-track" id="upgradeInstallTrack" role="progressbar"
+                    aria-label="备用版本安装进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <div class="upgrade-progress-fill" id="upgradeInstallBar"></div>
+                </div>
+                <p class="upgrade-progress-hint" id="upgradeInstallHint">升级任务开始后，将显示设备端上报的安装阶段和进度。</p>
+            </div>
+
+            <div class="upgrade-verify-panel" id="upgradeVerifyPanel" hidden>
+                <div class="upgrade-verify-heading">
+                    <div>
+                        <strong>重启与健康验证</strong>
+                        <span id="upgradeVerifyState">等待设备重启</span>
+                    </div>
+                    <span class="upgrade-verify-badge" id="upgradeVerifyBadge">等待中</span>
+                </div>
+                <div class="upgrade-progress-track" id="upgradeVerifyTrack" role="progressbar"
+                    aria-label="重启与健康验证状态" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <div class="upgrade-progress-fill" id="upgradeVerifyBar"></div>
+                </div>
+                <p class="upgrade-progress-hint" id="upgradeVerifyHint">
+                    候选版本提交后，设备将重启并由 Supervisor 执行健康检查。
+                </p>
+            </div>
+        </div>
+
+        <div class="upgrade-error-panel" id="upgradeErrorPanel" role="alert" hidden>
+            <strong id="upgradeErrorTitle">升级未完成</strong>
+            <p id="upgradeErrorText">请检查设备状态和系统日志。</p>
+            <small id="upgradeErrorCode" hidden></small>
+        </div>
     </section>
 </div>
