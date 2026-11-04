@@ -109,6 +109,34 @@ static int _upgrade_manifest_parse_fields(const char *size_text, const char *sha
 }
 
 /**
+ * @brief 解析清单普通文件的四位八进制权限字段。
+ */
+static int _upgrade_manifest_parse_mode(const char *mode_text, mode_t *mode)
+{
+    mode_t       parsed;
+    unsigned int index;
+
+    if (mode_text == NULL || mode == NULL || strlen(mode_text) != 4U)
+    {
+        return -EBADMSG;
+    }
+
+    parsed = 0;
+    for (index = 0U; index < 4U; ++index)
+    {
+        if (mode_text[index] < '0' || mode_text[index] > '7')
+        {
+            return -EBADMSG;
+        }
+
+        parsed = (mode_t)((parsed << 3) | (mode_t)(mode_text[index] - '0'));
+    }
+
+    *mode = parsed;
+    return 0;
+}
+
+/**
  * @brief 调用BusyBox sha256sum，对文件或内存字节流计算摘要。
  */
 static int _upgrade_manifest_sha256(const char *file, const char *bytes, size_t size, const char *expected)
@@ -254,7 +282,7 @@ static int _upgrade_manifest_sha256(const char *file, const char *bytes, size_t 
     }
     else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
     {
-        ret = WIFEXITED(status) && WEXITSTATUS(status) == 127 ? -ENOSYS : -EBADMSG;
+        ret = WIFEXITED(status) && WEXITSTATUS(status) == 127 ? -ENOSYS : -EIO;
     }
     else if (ret == 0)
     {
@@ -276,12 +304,15 @@ static int _upgrade_manifest_check_entry(const char *root, char *line, char **na
 {
     char       *fields[6];
     char       *cursor;
+    const char *entry_path;
     char        full_path[PATH_MAX];
     char        resolved[PATH_MAX];
     char        area[PATH_MAX];
     char        target[PATH_MAX];
     struct stat info;
     uint64_t    size;
+    mode_t      expected_mode;
+    bool        regular_file;
     unsigned int count;
     ssize_t     target_size;
     int         length;
@@ -294,15 +325,21 @@ static int _upgrade_manifest_check_entry(const char *root, char *line, char **na
         fields[count++] = strsep(&cursor, "\t");
     }
 
-    if (cursor != NULL || !((count == 4U && strcmp(fields[0], "F") == 0) ||
-                            (count == 5U && strcmp(fields[0], "L") == 0)) ||
-        !_upgrade_manifest_valid_path(fields[3]) ||
+    if (cursor != NULL || count != 5U ||
+        !(strcmp(fields[0], "F") == 0 || strcmp(fields[0], "L") == 0) ||
         _upgrade_manifest_parse_fields(fields[1], fields[2], &size) != 0)
     {
         return -EBADMSG;
     }
 
-    length = snprintf(full_path, sizeof(full_path), "%s/%s", root, fields[3]);
+    regular_file = strcmp(fields[0], "F") == 0;
+    entry_path   = fields[regular_file ? 4U : 3U];
+    if (!_upgrade_manifest_valid_path(entry_path))
+    {
+        return -EBADMSG;
+    }
+
+    length = snprintf(full_path, sizeof(full_path), "%s/%s", root, entry_path);
     if (length < 0 || (size_t)length >= sizeof(full_path))
     {
         return -ENAMETOOLONG;
@@ -313,19 +350,21 @@ static int _upgrade_manifest_check_entry(const char *root, char *line, char **na
         return -errno;
     }
 
-    if (count == 5U && (strcmp(fields[3], "app/bin/linkg") == 0 ||
-                        strcmp(fields[3], "www/index.html") == 0 ||
-                        strcmp(fields[3], "www/cgi-bin/cmain") == 0 ||
-                        strcmp(fields[3], "www/cgi-bin/upgrade") == 0 ||
-                        strcmp(fields[3], "www/version.json") == 0))
+    if (!regular_file && (strcmp(entry_path, "app/bin/linkg") == 0 ||
+                          strcmp(entry_path, "www/index.html") == 0 ||
+                          strcmp(entry_path, "www/cgi-bin/cmain") == 0 ||
+                          strcmp(entry_path, "www/cgi-bin/upgrade") == 0 ||
+                          strcmp(entry_path, "www/version.json") == 0))
     {
         return -EBADMSG;
     }
 
-    if (count == 4U)
+    if (regular_file)
     {
         if (!S_ISREG(info.st_mode) || info.st_nlink != 1 || info.st_size < 0 ||
-            (uint64_t)info.st_size != size || size > UPGRADE_MANIFEST_MAX_DATA - *total_size)
+            (uint64_t)info.st_size != size || size > UPGRADE_MANIFEST_MAX_DATA - *total_size ||
+            _upgrade_manifest_parse_mode(fields[3], &expected_mode) != 0 ||
+            (info.st_mode & 07777U) != expected_mode)
         {
             return -EBADMSG;
         }
@@ -382,7 +421,7 @@ static int _upgrade_manifest_check_entry(const char *root, char *line, char **na
         return ret;
     }
 
-    *name = strdup(fields[3]);
+    *name = strdup(entry_path);
     return *name == NULL ? -ENOMEM : 0;
 }
 
@@ -508,10 +547,6 @@ int upgrade_manifest_verify(const char *upgrade_dir)
     static const char *required[] =
     {
         "app/bin/linkg",
-        "app/modules/linkg_fast_nat.ko",
-        "app/modules/plat_1105.ko",
-        "app/modules/tun.ko",
-        "app/modules/wifi_1105.ko",
         "www/index.html",
         "www/cgi-bin/cmain",
         "www/cgi-bin/upgrade",
@@ -650,3 +685,557 @@ int upgrade_manifest_verify(const char *upgrade_dir)
     free(root);
     return ret;
 }
+/****************************** 目录比较 ******************************/
+
+typedef struct
+{
+    char     *path;       // 相对清单目录前缀的文件路径
+    char      type;       // F普通文件或L软链接
+    uint64_t  size;       // 文件大小或软链接目标长度
+    mode_t    mode;       // 普通文件权限
+    char      sha256[65]; // 文件或软链接目标SHA-256
+    char     *target;     // 软链接目标内容
+} upgrade_manifest_group_entry_t;
+
+/**
+ * @brief 按相对路径排序目录清单记录。
+ */
+static int _upgrade_manifest_group_compare(const void *left, const void *right)
+{
+    const upgrade_manifest_group_entry_t *left_entry  = left;
+    const upgrade_manifest_group_entry_t *right_entry = right;
+
+    return strcmp(left_entry->path, right_entry->path);
+}
+
+/**
+ * @brief 根据相对路径查找目录清单记录。
+ */
+static int _upgrade_manifest_group_lookup_compare(const void *key, const void *element)
+{
+    const char                            *path  = *(const char *const *)key;
+    const upgrade_manifest_group_entry_t *entry = element;
+
+    return strcmp(path, entry->path);
+}
+
+/**
+ * @brief 判断目录是否为清单中某个文件的父目录。
+ */
+static bool _upgrade_manifest_group_has_child(const upgrade_manifest_group_entry_t *entries, size_t count, const char *directory)
+{
+    size_t index;
+    size_t length;
+
+    length = strlen(directory);
+    for (index = 0U; index < count; ++index)
+    {
+        if (strncmp(entries[index].path, directory, length) == 0 && entries[index].path[length] == '/')
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @brief 比较目标目录中的单个文件或软链接与清单记录。
+ */
+static int _upgrade_manifest_group_check_entry(const char *target_dir, const upgrade_manifest_group_entry_t *entry, bool *matches)
+{
+    char        relative[PATH_MAX];
+    char        full_path[PATH_MAX];
+    char        link_target[PATH_MAX];
+    const char *separator;
+    struct stat info;
+    ssize_t     target_size;
+    size_t      parent_length;
+    int         length;
+    int         ret;
+
+    *matches = false;
+    separator = strchr(entry->path, '/');
+    while (separator != NULL)
+    {
+        parent_length = (size_t)(separator - entry->path);
+        if (parent_length == 0U || parent_length >= sizeof(relative))
+        {
+            return -EBADMSG;
+        }
+
+        memcpy(relative, entry->path, parent_length);
+        relative[parent_length] = '\0';
+        length = snprintf(full_path, sizeof(full_path), "%s/%s", target_dir, relative);
+        if (length < 0 || (size_t)length >= sizeof(full_path))
+        {
+            return -ENAMETOOLONG;
+        }
+
+        if (lstat(full_path, &info) != 0)
+        {
+            if (errno == ENOENT || errno == ENOTDIR)
+            {
+                return 0;
+            }
+
+            return -errno;
+        }
+
+        if (!S_ISDIR(info.st_mode))
+        {
+            return 0;
+        }
+
+        separator = strchr(separator + 1, '/');
+    }
+
+    length = snprintf(full_path, sizeof(full_path), "%s/%s", target_dir, entry->path);
+    if (length < 0 || (size_t)length >= sizeof(full_path))
+    {
+        return -ENAMETOOLONG;
+    }
+
+    if (lstat(full_path, &info) != 0)
+    {
+        if (errno == ENOENT || errno == ENOTDIR)
+        {
+            return 0;
+        }
+
+        return -errno;
+    }
+
+    if (entry->type == 'F')
+    {
+        if (!S_ISREG(info.st_mode) || info.st_nlink != 1 || info.st_size < 0 ||
+            (uint64_t)info.st_size != entry->size || (info.st_mode & 07777U) != entry->mode)
+        {
+            return 0;
+        }
+
+        ret = _upgrade_manifest_sha256(full_path, NULL, 0U, entry->sha256);
+        if (ret == -EBADMSG)
+        {
+            return 0;
+        }
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+    else if (entry->type == 'L')
+    {
+        if (!S_ISLNK(info.st_mode) || entry->size >= sizeof(link_target))
+        {
+            return 0;
+        }
+
+        target_size = readlink(full_path, link_target, sizeof(link_target));
+        if (target_size < 0)
+        {
+            if (errno == ENOENT || errno == ENOTDIR)
+            {
+                return 0;
+            }
+
+            return -errno;
+        }
+
+        if ((uint64_t)target_size != entry->size ||
+            memcmp(link_target, entry->target, (size_t)target_size) != 0)
+        {
+            return 0;
+        }
+
+        ret = _upgrade_manifest_sha256(NULL, entry->target, (size_t)entry->size, entry->sha256);
+        if (ret == -EBADMSG)
+        {
+            return 0;
+        }
+        if (ret != 0)
+        {
+            return ret;
+        }
+    }
+    else
+    {
+        return -EBADMSG;
+    }
+
+    *matches = true;
+    return 0;
+}
+
+/**
+ * @brief 递归检查目标目录不存在清单之外的文件、目录或特殊类型。
+ */
+static int _upgrade_manifest_group_scan_target(const char *target_dir, const char *relative,
+                                               const upgrade_manifest_group_entry_t *entries, size_t count,
+                                               size_t *seen, bool *matches, unsigned int depth)
+{
+    DIR           *directory;
+    struct dirent *entry;
+    struct stat    info;
+    char           folder[PATH_MAX];
+    char           name[PATH_MAX];
+    char           absolute[PATH_MAX];
+    const char    *lookup;
+    int            length;
+    int            ret;
+
+    if (depth > UPGRADE_MANIFEST_MAX_DEPTH)
+    {
+        *matches = false;
+        return 0;
+    }
+
+    length = snprintf(folder, sizeof(folder), "%s%s%s", target_dir, relative[0] != '\0' ? "/" : "", relative);
+    if (length < 0 || (size_t)length >= sizeof(folder))
+    {
+        return -ENAMETOOLONG;
+    }
+
+    directory = opendir(folder);
+    if (directory == NULL)
+    {
+        if (errno == ENOENT || errno == ENOTDIR)
+        {
+            *matches = false;
+            return 0;
+        }
+
+        return -errno;
+    }
+
+    ret = 0;
+    while (true)
+    {
+        errno = 0;
+        entry = readdir(directory);
+        if (entry == NULL)
+        {
+            if (errno != 0)
+            {
+                ret = -errno;
+            }
+            break;
+        }
+
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        {
+            continue;
+        }
+
+        length = snprintf(name, sizeof(name), "%s%s%s", relative,
+                          relative[0] != '\0' ? "/" : "", entry->d_name);
+        if (length < 0 || (size_t)length >= sizeof(name))
+        {
+            ret = -ENAMETOOLONG;
+            break;
+        }
+
+        length = snprintf(absolute, sizeof(absolute), "%s/%s", target_dir, name);
+        if (length < 0 || (size_t)length >= sizeof(absolute))
+        {
+            ret = -ENAMETOOLONG;
+            break;
+        }
+
+        if (lstat(absolute, &info) != 0)
+        {
+            if (errno == ENOENT || errno == ENOTDIR)
+            {
+                *matches = false;
+                break;
+            }
+
+            ret = -errno;
+            break;
+        }
+
+        if (S_ISDIR(info.st_mode))
+        {
+            if (!_upgrade_manifest_group_has_child(entries, count, name))
+            {
+                *matches = false;
+                break;
+            }
+
+            ret = _upgrade_manifest_group_scan_target(target_dir, name, entries, count, seen, matches, depth + 1U);
+            if (ret != 0 || !*matches)
+            {
+                break;
+            }
+        }
+        else if (S_ISREG(info.st_mode) || S_ISLNK(info.st_mode))
+        {
+            lookup = name;
+            if (bsearch(&lookup, entries, count, sizeof(*entries), _upgrade_manifest_group_lookup_compare) == NULL)
+            {
+                *matches = false;
+                break;
+            }
+
+            ++*seen;
+        }
+        else
+        {
+            *matches = false;
+            break;
+        }
+    }
+
+    closedir(directory);
+    return ret;
+}
+
+/**
+ * @brief 比较升级清单指定目录组与目标Release目录是否完全一致。
+ *
+ * 仅支持app/bin/和app/modules/。调用前必须已经通过upgrade_manifest_verify()校验。
+ * 目标目录不存在、文件不一致或存在额外内容时返回成功且same为false；真实I/O错误返回负错误码。
+ */
+int upgrade_manifest_group_equal(const char *upgrade_dir, const char *manifest_prefix, const char *target_dir, bool *same)
+{
+    struct stat                     info;
+    upgrade_manifest_group_entry_t *entries;
+    char                            manifest_path[PATH_MAX];
+    char                           *root;
+    char                           *line;
+    char                           *cursor;
+    char                           *fields[6];
+    const char                     *entry_path;
+    const char                     *relative_path;
+    FILE                           *stream;
+    uint64_t                        size;
+    size_t                          capacity;
+    size_t                          count;
+    size_t                          index;
+    size_t                          seen;
+    ssize_t                         line_length;
+    unsigned int                    field_count;
+    mode_t                          mode;
+    bool                            matches;
+    int                             length;
+    int                             ret;
+
+    if (same == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *same = false;
+    if (upgrade_dir == NULL || upgrade_dir[0] == '\0' || manifest_prefix == NULL || target_dir == NULL || target_dir[0] == '\0' ||
+        (strcmp(manifest_prefix, "app/bin/") != 0 && strcmp(manifest_prefix, "app/modules/") != 0))
+    {
+        return -EINVAL;
+    }
+
+    if (lstat(target_dir, &info) != 0)
+    {
+        return errno == ENOENT || errno == ENOTDIR ? 0 : -errno;
+    }
+
+    if (!S_ISDIR(info.st_mode))
+    {
+        return 0;
+    }
+
+    root = realpath(upgrade_dir, NULL);
+    if (root == NULL)
+    {
+        return -errno;
+    }
+
+    length = snprintf(manifest_path, sizeof(manifest_path), "%s/%s", root, UPGRADE_MANIFEST_FILENAME);
+    if (length < 0 || (size_t)length >= sizeof(manifest_path))
+    {
+        free(root);
+        return -ENAMETOOLONG;
+    }
+
+    if (lstat(manifest_path, &info) != 0)
+    {
+        ret = -errno;
+        free(root);
+        return ret;
+    }
+
+    if (!S_ISREG(info.st_mode) || info.st_nlink != 1 ||
+        info.st_size <= 0 || info.st_size > (off_t)UPGRADE_MANIFEST_MAX_SIZE)
+    {
+        free(root);
+        return -EBADMSG;
+    }
+
+    stream = fopen(manifest_path, "r");
+    if (stream == NULL)
+    {
+        ret = -errno;
+        free(root);
+        return ret;
+    }
+
+    entries = calloc(UPGRADE_MANIFEST_MAX_ENTRIES, sizeof(*entries));
+    if (entries == NULL)
+    {
+        fclose(stream);
+        free(root);
+        return -ENOMEM;
+    }
+
+    line     = NULL;
+    capacity = 0U;
+    count    = 0U;
+    ret      = 0;
+    while ((line_length = getline(&line, &capacity, stream)) >= 0)
+    {
+        if (line_length < 2 || line_length > (ssize_t)(PATH_MAX * 2U + 160U) ||
+            line[line_length - 1] != '\n' || memchr(line, '\0', (size_t)line_length) != NULL ||
+            memchr(line, '\r', (size_t)line_length) != NULL)
+        {
+            ret = -EBADMSG;
+            break;
+        }
+
+        line[line_length - 1] = '\0';
+        field_count = 0U;
+        cursor      = line;
+        while (cursor != NULL && field_count < 6U)
+        {
+            fields[field_count++] = strsep(&cursor, "\t");
+        }
+
+        if (cursor != NULL || field_count != 5U ||
+            !(strcmp(fields[0], "F") == 0 || strcmp(fields[0], "L") == 0))
+        {
+            ret = -EBADMSG;
+            break;
+        }
+
+        entry_path = strcmp(fields[0], "F") == 0 ? fields[4] : fields[3];
+        if (!_upgrade_manifest_valid_path(entry_path))
+        {
+            ret = -EBADMSG;
+            break;
+        }
+
+        if (strncmp(entry_path, manifest_prefix, strlen(manifest_prefix)) != 0)
+        {
+            continue;
+        }
+
+        if (count >= UPGRADE_MANIFEST_MAX_ENTRIES || _upgrade_manifest_parse_fields(fields[1], fields[2], &size) != 0)
+        {
+            ret = -EBADMSG;
+            break;
+        }
+
+        relative_path = entry_path + strlen(manifest_prefix);
+        if (relative_path[0] == '\0')
+        {
+            ret = -EBADMSG;
+            break;
+        }
+
+        entries[count].path = strdup(relative_path);
+        if (entries[count].path == NULL)
+        {
+            ret = -ENOMEM;
+            break;
+        }
+
+        entries[count].type = fields[0][0];
+        entries[count].size = size;
+        memcpy(entries[count].sha256, fields[2], sizeof(entries[count].sha256));
+
+        if (entries[count].type == 'F')
+        {
+            ret = _upgrade_manifest_parse_mode(fields[3], &mode);
+            if (ret != 0)
+            {
+                ret = -EBADMSG;
+                break;
+            }
+
+            entries[count].mode = mode;
+        }
+        else
+        {
+            if (size >= PATH_MAX || fields[4][0] == '/' || strpbrk(fields[4], "\r\n\t") != NULL ||
+                strlen(fields[4]) != (size_t)size)
+            {
+                ret = -EBADMSG;
+                break;
+            }
+
+            entries[count].target = strdup(fields[4]);
+            if (entries[count].target == NULL)
+            {
+                ret = -ENOMEM;
+                break;
+            }
+        }
+
+        ++count;
+    }
+
+    if (ret == 0 && ferror(stream))
+    {
+        ret = -EIO;
+    }
+
+    free(line);
+    fclose(stream);
+
+    if (ret != 0)
+    {
+        goto finish;
+    }
+
+    if (count == 0U)
+    {
+        ret = -EBADMSG;
+        goto finish;
+    }
+
+    qsort(entries, count, sizeof(*entries), _upgrade_manifest_group_compare);
+    for (index = 1U; index < count; ++index)
+    {
+        if (strcmp(entries[index - 1U].path, entries[index].path) == 0)
+        {
+            ret = -EBADMSG;
+            goto finish;
+        }
+    }
+
+    matches = true;
+    for (index = 0U; index < count; ++index)
+    {
+        ret = _upgrade_manifest_group_check_entry(target_dir, &entries[index], &matches);
+        if (ret != 0 || !matches)
+        {
+            goto finish;
+        }
+    }
+
+    seen = 0U;
+    ret  = _upgrade_manifest_group_scan_target(target_dir, "", entries, count, &seen, &matches, 0U);
+    if (ret == 0 && matches && seen == count)
+    {
+        *same = true;
+    }
+
+finish:
+    for (index = 0U; index < UPGRADE_MANIFEST_MAX_ENTRIES; ++index)
+    {
+        free(entries[index].path);
+        free(entries[index].target);
+    }
+
+    free(entries);
+    free(root);
+    return ret;
+}
+

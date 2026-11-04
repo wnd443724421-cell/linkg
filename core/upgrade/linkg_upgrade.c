@@ -30,6 +30,7 @@
 
 #include "linkg_release_state.h"
 #include "linkg_thread.h"
+#include "linkg_time.h"
 
 #include "upgrade_archive.h"
 #include "upgrade_manifest.h"

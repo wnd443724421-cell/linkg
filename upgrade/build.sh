@@ -206,9 +206,12 @@ with tempfile.TemporaryDirectory(prefix="linkg-upgrade-build-") as temp_dir:
             manifest_lines.append("L\t{}\t{}\t{}\t{}".format(
                 len(data), hashlib.sha256(data).hexdigest(), relative, target))
         elif path.is_file():
-            size = path.stat().st_size
+            info = path.stat()
+            size = info.st_size
+            mode = stat.S_IMODE(info.st_mode)
             total_bytes += size
-            manifest_lines.append("F\t{}\t{}\t{}".format(size, hash_file(path), relative))
+            manifest_lines.append("F\t{}\t{}\t{:04o}\t{}".format(
+                size, hash_file(path), mode, relative))
     if total_bytes > 128 * 1024 * 1024:
         raise SystemExit("安装文件总大小超过 128 MiB 限制")
 
