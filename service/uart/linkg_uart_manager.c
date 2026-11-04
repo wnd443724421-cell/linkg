@@ -27,8 +27,8 @@
 linkg_uart_manager_context_t g_uart_manager =
 {
     .life_lock         = PTHREAD_MUTEX_INITIALIZER,      // 生命周期锁
-    .state             = LINKG_UART_LIFE_UNINITIALIZED, // 尚未初始化
-    .sbus_target_level = LINKG_UART_SBUS_WIFI_LEVEL     // Wi-Fi模式默认目标水位
+    .state             = LINKG_UART_LIFE_UNINITIALIZED,  // 尚未初始化
+    .sbus_target_level = LINKG_UART_SBUS_WIFI_LEVEL      // Wi-Fi模式默认目标水位
 };
 
 /****************************** 内部清理 ******************************/

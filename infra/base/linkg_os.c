@@ -766,6 +766,36 @@ int linkg_os_set_user_password(const char *username, const char *password)
     return 0;
 }
 
+/****************************** SSH服务管理 ******************************/
+
+/**
+ * @brief 设置SSH远程维护服务状态。
+ */
+int linkg_os_set_ssh_enable(bool enable)
+{
+    int ret;
+
+    if (enable)
+    {
+        LINKG_LOG_INFO("OS: starting SSH service (dropbear)");
+        ret = linkg_os_run("/etc/init.d/dropbear", "start", NULL);
+    }
+    else
+    {
+        LINKG_LOG_INFO("OS: stopping SSH service (dropbear)");
+        ret = linkg_os_run("/etc/init.d/dropbear", "stop", NULL);
+    }
+
+    if (ret != 0)
+    {
+        LINKG_OS_ERROR("SSH service control failed, enable=%u, error=%d",
+                       enable ? 1U : 0U,
+                       ret);
+        return ret;
+    }
+
+    return 0;
+}
 
 /****************************** 进程管理 ******************************/
 

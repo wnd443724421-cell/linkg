@@ -40,6 +40,7 @@
 #include "linkg_uart_manager.h"
 #include "linkg_udhcp.h"
 #include "linkg_web.h"
+#include "linkg_platform_config.h"
 
 /****************************** 应用资源 ******************************/
 
@@ -1165,6 +1166,12 @@ int main(void)
         LINKG_LOG_ERROR("initialize system password failed: %d", ret);
         linkg_log_deinit();
         return EXIT_FAILURE;
+    }
+
+    ret = linkg_os_set_ssh_enable(LINKG_PLATFORM_SSH_ENABLE != 0U);
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("apply SSH service policy failed, enable=%u, error=%d", (unsigned int)LINKG_PLATFORM_SSH_ENABLE, ret);
     }
 
     ret = linkg_lifecycle_init();
