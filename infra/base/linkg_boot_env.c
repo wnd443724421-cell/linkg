@@ -34,7 +34,11 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_BOOT_OUTPUT_SIZE 4096U // ENV及cmdline读取上限
+#define LINKG_BOOT_OUTPUT_SIZE                  4096U                      // ENV及cmdline读取上限
+#define LINKG_BOOT_ENV_PRIMARY_DEVICE           "/dev/by-name/env"         // U-Boot主ENV设备
+#define LINKG_BOOT_ENV_REDUNDANT_DEVICE         "/dev/by-name/env-redund"  // U-Boot冗余ENV设备
+#define LINKG_BOOT_ENV_DEVICE_WAIT_MS           5000U                      // ENV设备最大就绪等待时间
+#define LINKG_BOOT_ENV_DEVICE_POLL_MS           100U                       // ENV设备就绪检查间隔
 
 /****************************** 内部类型 ******************************/
 
@@ -104,6 +108,166 @@ static void _linkg_boot_pause(void)
         delay.tv_nsec = (long)LINKG_BOOT_ENV_POLL_MS * 1000000L;
         nanosleep(&delay, NULL);
     }
+}
+
+/**
+ * @brief 等待U-Boot ENV主、备设备节点及其软链接目标就绪。
+ */
+static int _linkg_boot_wait_env_devices(void)
+{
+#if defined(LINKG_SUPERVISOR_TEST_BUILD) || \
+    defined(LINKG_SUPERVISOR_TEST_IO) || \
+    defined(LINKG_OTA_TEST_IO)
+
+    /*
+     * 测试构建使用fw_printenv替身，不依赖真实MTD设备节点。
+     */
+    return 0;
+
+#else
+
+    static const char *device_paths[] =
+    {
+        LINKG_BOOT_ENV_PRIMARY_DEVICE,
+        LINKG_BOOT_ENV_REDUNDANT_DEVICE
+    };
+
+    struct timespec delay;
+    struct timespec remaining;
+    uint64_t        started_ms;
+    uint64_t        now_ms;
+    size_t          index;
+    int             descriptor;
+    int             saved_errno;
+    bool            warned;
+
+    started_ms = _linkg_boot_now();
+    if (started_ms == 0U)
+    {
+        return -EIO;
+    }
+
+    warned = false;
+
+    for (;;)
+    {
+        /*
+         * 等待期间持续检查Supervisor健康状态。
+         */
+        int ret = linkg_boot_checkpoint();
+        if (ret != 0)
+        {
+            return ret;
+        }
+
+        saved_errno = 0;
+        index       = 0U;
+
+        /*
+         * 检查主、备ENV设备是否都能够实际打开。
+         */
+        for (index = 0U;
+             index < sizeof(device_paths) / sizeof(device_paths[0]);
+             index++)
+        {
+            do
+            {
+                descriptor = open(device_paths[index], O_RDONLY | O_CLOEXEC);
+            }
+            while (descriptor < 0 && errno == EINTR);
+
+            if (descriptor < 0)
+            {
+                saved_errno = errno;
+                break;
+            }
+
+            (void)close(descriptor);
+        }
+
+        /*
+         * 两个设备均已就绪。
+         */
+        if (saved_errno == 0)
+        {
+            if (warned)
+            {
+                now_ms = _linkg_boot_now();
+
+                if (now_ms >= started_ms && now_ms != 0U)
+                {
+                    fprintf(stderr,
+                            "Supervisor INFO ENV devices ready elapsed_ms=%llu\n",
+                            (unsigned long long)(now_ms - started_ms));
+                }
+            }
+
+            return 0;
+        }
+
+        /*
+         * 只允许启动期间可能出现的暂态设备未就绪错误重试。
+         */
+        if (saved_errno != ENOENT &&
+            saved_errno != ENXIO &&
+            saved_errno != ENODEV)
+        {
+            fprintf(stderr,
+                    "Supervisor ERROR ENV device open failed path=%s errno=%d(%s)\n",
+                    device_paths[index], saved_errno, strerror(saved_errno));
+
+            return -saved_errno;
+        }
+
+        now_ms = _linkg_boot_now();
+        if (now_ms == 0U || now_ms < started_ms)
+        {
+            return -EIO;
+        }
+
+        /*
+         * 首次发现设备未就绪时记录一次告警。
+         */
+        if (!warned)
+        {
+            fprintf(stderr,
+                    "Supervisor WARN ENV device not ready path=%s errno=%d(%s)\n",
+                    device_paths[index], saved_errno, strerror(saved_errno));
+
+            warned = true;
+        }
+
+        /*
+         * 超过最大等待期限仍未就绪。
+         */
+        if (now_ms - started_ms >= LINKG_BOOT_ENV_DEVICE_WAIT_MS)
+        {
+            fprintf(stderr,
+                    "Supervisor ERROR ENV devices timeout elapsed_ms=%llu path=%s errno=%d(%s)\n",
+                    (unsigned long long)(now_ms - started_ms),
+                    device_paths[index], saved_errno, strerror(saved_errno));
+
+            return -ETIMEDOUT;
+        }
+
+        /*
+         * 等待100ms后重新检查。
+         */
+        delay.tv_sec  = 0;
+        delay.tv_nsec = (long)LINKG_BOOT_ENV_DEVICE_POLL_MS * 1000000L;
+
+        while (nanosleep(&delay, &remaining) != 0)
+        {
+            if (errno != EINTR)
+            {
+                return -errno;
+            }
+
+            delay = remaining;
+        }
+    }
+
+#endif
 }
 
 /**
@@ -526,6 +690,12 @@ static int _linkg_boot_read(linkg_boot_env_t *environment, int lock_fd)
     unsigned int  found;
     unsigned long limit;
     int           ret;
+
+    ret = _linkg_boot_wait_env_devices();
+    if (ret != 0)
+    {
+        return ret;
+    }
 
     arguments[0] = (char *)_linkg_boot_path("LINKG_SUPERVISOR_TEST_PRINTENV", "/usr/sbin/fw_printenv");
     ret = _linkg_boot_command(arguments, LINKG_BOOT_READ, lock_fd, output, sizeof(output));

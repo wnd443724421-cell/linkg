@@ -736,6 +736,13 @@ static int _wifi_hostapd_apply_radio_config(const linkg_wifi_config_t *config)
 
     narrow = &config->wideband.narrow_params;
 
+    /* AP VAP就绪后初始化窄带功率表，仅在服务启动时执行。 */
+    ret = wifi_driver_refresh_narrow_power_table();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     ret = wifi_driver_set_narrow_bandwidth(true, narrow->bandwidth);
     if (ret != 0)
     {

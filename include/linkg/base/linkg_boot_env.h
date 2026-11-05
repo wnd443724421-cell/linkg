@@ -11,7 +11,7 @@
 /****************************** 模块常量 ******************************/
 
 #define LINKG_BOOT_ENV_LOCK_FILE     "/var/run/linkg-supervisor-env.lock" // 全部ENV事务共用，写工具继承锁
-#define LINKG_BOOT_ENV_READ_MS       1000U                                // 读取硬超时，单位毫秒
+#define LINKG_BOOT_ENV_READ_MS       3000U                                // 读取硬超时，单位毫秒
 #define LINKG_BOOT_ENV_WRITE_WARN_MS 1000U                                // 写入只告警，禁止超时强杀
 #define LINKG_BOOT_ENV_WAIT_LOG_MS   30000U                               // 持续等待告警间隔
 #define LINKG_BOOT_ENV_POLL_MS       50U                                  // 等待及健康检查周期

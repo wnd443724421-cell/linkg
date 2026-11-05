@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include "linkg_release_state.h"
+#include "linkg_log.h"
 #include "upgrade_manifest.h"
 
 /****************************** 模块常量 ******************************/
@@ -155,21 +156,44 @@ static int _upgrade_install_remove_file(const char *path, const struct stat *inf
 }
 
 /**
- * @brief 递归删除一个目录树，包含根目录本身，不跟随符号链接。
+ * @brief 递归清理目录组，保留根目录，允许保留无法删除的子目录。
  */
 static int _upgrade_install_remove_tree(const char *path, const struct stat *information, int type, struct FTW *context)
 {
+    int saved_errno;
+
     (void)information;
-    (void)context;
 
     if (type == FTW_D)
     {
         return 0;
     }
+
     if (type == FTW_DP)
     {
-        return rmdir(path);
+        // bin/modules根目录需要保留，后续直接复制新文件。
+        if (context->level == 0)
+        {
+            return 0;
+        }
+
+        if (rmdir(path) == 0)
+        {
+            return 0;
+        }
+
+        saved_errno = errno;
+        if (saved_errno == EIO)
+        {
+            LINKG_LOG_WARN("UPGRADE: keep undeletable directory, path=%s errno=%d(%s)",
+                           path, saved_errno, strerror(saved_errno));
+            return 0;
+        }
+
+        errno = saved_errno;
+        return -1;
     }
+
     if (type == FTW_F || type == FTW_SL || type == FTW_SLN)
     {
         return unlink(path);
@@ -444,11 +468,12 @@ static int _upgrade_install_copy_app(const char *source_dir, const char *target_
 }
 
 /**
- * @brief 替换不一致的目录组，若清单中没有该组则只移除旧目录。
+ * @brief 替换不一致的目录组，保留已有目录并复制新内容。
  */
 static int _upgrade_install_replace_group(const char *source_dir, const char *target_release_dir, const char *target_dir, bool source_exists)
 {
-    int ret;
+    struct stat information;
+    int         ret;
 
     ret = _upgrade_install_remove_group(target_dir);
     if (ret != 0)
@@ -456,7 +481,29 @@ static int _upgrade_install_replace_group(const char *source_dir, const char *ta
         return ret;
     }
 
-    return source_exists ? _upgrade_install_copy_path(source_dir, target_release_dir) : 0;
+    if (!source_exists)
+    {
+        return 0;
+    }
+
+    // 目标目录仍存在时，直接复制源目录中的内容。
+    if (lstat(target_dir, &information) == 0)
+    {
+        if (!S_ISDIR(information.st_mode))
+        {
+            return -ENOTDIR;
+        }
+
+        return _upgrade_install_copy(source_dir, target_dir);
+    }
+
+    if (errno != ENOENT)
+    {
+        return -errno;
+    }
+
+    // 目标目录原本不存在时，复制整个目录组。
+    return _upgrade_install_copy_path(source_dir, target_release_dir);
 }
 
 /**
