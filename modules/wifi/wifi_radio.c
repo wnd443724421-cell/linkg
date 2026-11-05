@@ -53,10 +53,7 @@ typedef struct
     wifi_runtime_link_state_t last_link_state;                                      // 上次同步的STA连接状态
     wifi_radio_state_t        state;                                                // 当前无线参数维护状态
     uint64_t                  next_check_ms;                                        // 下一次维护动作期限
-    uint8_t                   ap_peer_count;                                        // 上次观察到的AP对端数量
-    uint8_t                   ap_peer_macs[LINKG_WIFI_AP_PEER_MAX][LINKG_WIFI_MAC_LENGTH]; // AP对端MAC集合
     uint8_t                   mismatch_count;                                       // 连续固定速率不一致次数
-    uint8_t                   peer_refresh_failure_count;                           // 连续功率表刷新失败次数
     uint8_t                   rate_repair_failure_count;                            // 连续固定速率恢复失败次数
     bool                      initialized;                                          // 模块是否已经初始化
     bool                      started;                                              // 模块是否已经启动
@@ -277,134 +274,6 @@ static int _wifi_radio_get_current_rate(const wifi_status_info_t *info, uint16_t
     return 0;
 }
 
-/****************************** AP对端维护 ******************************/
-
-/**
- * @brief 判断指定AP对端是否已经存在于上次状态快照。
- */
-static bool _wifi_radio_ap_peer_is_known(const uint8_t mac[LINKG_WIFI_MAC_LENGTH])
-{
-    uint8_t index;
-
-    for (index = 0U; index < g_wifi_radio.ap_peer_count; index++)
-    {
-        if (memcmp(g_wifi_radio.ap_peer_macs[index],
-                   mac,
-                   LINKG_WIFI_MAC_LENGTH) == 0)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-/**
- * @brief 保存当前AP对端集合。
- */
-static void _wifi_radio_store_ap_peers(const linkg_wifi_ap_status_t *ap)
-{
-    uint8_t peer_count;
-    uint8_t index;
-
-    memset(g_wifi_radio.ap_peer_macs, 0, sizeof(g_wifi_radio.ap_peer_macs));
-
-    peer_count = ap->peer_count;
-    if (peer_count > LINKG_WIFI_AP_PEER_MAX)
-    {
-        peer_count = LINKG_WIFI_AP_PEER_MAX;
-    }
-
-    for (index = 0U; index < peer_count; index++)
-    {
-        if (ap->peers[index].valid)
-        {
-            memcpy(g_wifi_radio.ap_peer_macs[index],
-                   ap->peers[index].mac,
-                   LINKG_WIFI_MAC_LENGTH);
-        }
-    }
-
-    g_wifi_radio.ap_peer_count = peer_count;
-}
-
-/**
- * @brief 同步AP对端集合，并在发现新对端时刷新窄带功率表。
- * @return 1表示发现新对端并刷新成功，0表示无新对端，负errno表示刷新失败
- */
-static int _wifi_radio_sync_ap_peers(const wifi_status_info_t *info)
-{
-    const linkg_wifi_ap_status_t *ap;
-    uint8_t                       peer_count;
-    uint8_t                       index;
-    bool                          new_peer_found;
-    int                           ret;
-
-    if (info == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if (g_wifi_radio.config.role != LINKG_DEVICE_ROLE_AP)
-    {
-        return 0;
-    }
-
-    ap = &info->snapshot.role.ap;
-
-    peer_count = ap->peer_count;
-    if (peer_count > LINKG_WIFI_AP_PEER_MAX)
-    {
-        peer_count = LINKG_WIFI_AP_PEER_MAX;
-    }
-
-    new_peer_found = false;
-
-    for (index = 0U; index < peer_count; index++)
-    {
-        if (ap->peers[index].valid &&
-            !_wifi_radio_ap_peer_is_known(ap->peers[index].mac))
-        {
-            new_peer_found = true;
-            break;
-        }
-    }
-
-    if (new_peer_found)
-    {
-        ret = wifi_driver_refresh_narrow_power_table();
-        if (ret != 0)
-        {
-            if (g_wifi_radio.peer_refresh_failure_count < UINT8_MAX)
-            {
-                g_wifi_radio.peer_refresh_failure_count++;
-            }
-
-            if (g_wifi_radio.peer_refresh_failure_count == 1U)
-            {
-                WIFI_WARN("refresh narrow power table for new AP peer failed, error=%d",
-                          ret);
-            }
-            else
-            {
-                WIFI_DEBUG("refresh narrow power table still failing, consecutive=%u, error=%d",
-                           (unsigned int)g_wifi_radio.peer_refresh_failure_count,
-                           ret);
-            }
-
-            return ret;
-        }
-
-        g_wifi_radio.peer_refresh_failure_count = 0U;
-        WIFI_DEBUG("narrow power table refreshed for new AP peer, peers=%u",
-                   (unsigned int)peer_count);
-    }
-
-    _wifi_radio_store_ap_peers(ap);
-
-    return new_peer_found ? 1 : 0;
-}
-
 /****************************** 固定速率维护 ******************************/
 
 /**
@@ -594,13 +463,9 @@ int wifi_radio_start(const wifi_runtime_t *runtime, uint64_t now_ms)
     g_wifi_radio.started                   = true;
     g_wifi_radio.state                     = WIFI_RADIO_STATE_IDLE;
     g_wifi_radio.next_check_ms             = 0U;
-    g_wifi_radio.ap_peer_count             = 0U;
     g_wifi_radio.mismatch_count            = 0U;
-    g_wifi_radio.peer_refresh_failure_count = 0U;
     g_wifi_radio.rate_repair_failure_count  = 0U;
     g_wifi_radio.last_link_state            = WIFI_RUNTIME_LINK_NOT_APPLICABLE;
-
-    memset(g_wifi_radio.ap_peer_macs, 0, sizeof(g_wifi_radio.ap_peer_macs));
 
     if (!_wifi_radio_narrow_enabled())
     {
@@ -880,13 +745,6 @@ void wifi_radio_notify_reapplied(const wifi_runtime_t *runtime, uint64_t now_ms)
     }
 
     g_wifi_radio.mismatch_count            = 0U;
-    g_wifi_radio.peer_refresh_failure_count = 0U;
-
-    if (g_wifi_radio.config.role == LINKG_DEVICE_ROLE_AP)
-    {
-        g_wifi_radio.ap_peer_count = 0U;
-        memset(g_wifi_radio.ap_peer_macs, 0, sizeof(g_wifi_radio.ap_peer_macs));
-    }
 
     if (g_wifi_radio.config.role == LINKG_DEVICE_ROLE_STA &&
         runtime->link_state == WIFI_RUNTIME_LINK_DISCONNECTED)
@@ -924,7 +782,6 @@ uint64_t wifi_radio_get_deadline(void)
 int wifi_radio_process(const wifi_runtime_t *runtime, uint64_t now_ms)
 {
     wifi_status_info_t info;
-    int                peer_sync_ret;
     int                ret;
 
     if (!g_wifi_radio.initialized || !g_wifi_radio.started)
@@ -1019,52 +876,15 @@ int wifi_radio_process(const wifi_runtime_t *runtime, uint64_t now_ms)
         return ret;
     }
 
-    if (g_wifi_radio.config.role == LINKG_DEVICE_ROLE_AP)
+    if (g_wifi_radio.config.role == LINKG_DEVICE_ROLE_AP &&
+        g_wifi_radio.state == WIFI_RADIO_STATE_COOLDOWN)
     {
-        peer_sync_ret = _wifi_radio_sync_ap_peers(&info);
-        if (peer_sync_ret < 0)
-        {
-            _wifi_radio_schedule(now_ms, WIFI_RADIO_CHECK_INTERVAL_MS);
-            return peer_sync_ret;
-        }
+        g_wifi_radio.state = _wifi_radio_fixed_enabled()
+            ? WIFI_RADIO_STATE_FIXED
+            : WIFI_RADIO_STATE_IDLE;
 
-        if (peer_sync_ret > 0 && _wifi_radio_fixed_enabled())
-        {
-            ret = _wifi_radio_apply_fixed_rate();
-            if (ret != 0)
-            {
-                _wifi_radio_record_rate_failure(ret);
-                _wifi_radio_schedule(now_ms, WIFI_RADIO_CHECK_INTERVAL_MS);
-                return ret;
-            }
-
-            g_wifi_radio.rate_repair_failure_count = 0U;
-            g_wifi_radio.state                     = WIFI_RADIO_STATE_COOLDOWN;
-            _wifi_radio_schedule(now_ms, WIFI_RADIO_REAPPLY_COOLDOWN_MS);
-
-            WIFI_INFO("AP narrow maintenance completed, trigger=new_peer, rate_mode=fixed, target=%u",
-                      (unsigned int)g_wifi_radio.config.target_rate_level);
-            return 0;
-        }
-
-        if (peer_sync_ret > 0)
-        {
-            g_wifi_radio.state = WIFI_RADIO_STATE_COOLDOWN;
-            _wifi_radio_schedule(now_ms, WIFI_RADIO_REAPPLY_COOLDOWN_MS);
-
-            WIFI_INFO("AP narrow maintenance completed, trigger=new_peer, rate_mode=auto");
-            return 0;
-        }
-
-        if (g_wifi_radio.state == WIFI_RADIO_STATE_COOLDOWN)
-        {
-            g_wifi_radio.state = _wifi_radio_fixed_enabled()
-                ? WIFI_RADIO_STATE_FIXED
-                : WIFI_RADIO_STATE_IDLE;
-
-            _wifi_radio_schedule(now_ms, WIFI_RADIO_CHECK_INTERVAL_MS);
-            return 0;
-        }
+        _wifi_radio_schedule(now_ms, WIFI_RADIO_CHECK_INTERVAL_MS);
+        return 0;
     }
 
     if (_wifi_radio_fixed_enabled())

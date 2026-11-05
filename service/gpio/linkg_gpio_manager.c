@@ -392,7 +392,7 @@ static bool _linkg_gpio_peer_has_rssi(const linkg_wifi_peer_status_t *peer, uint
            peer->statistics_valid &&
            _linkg_gpio_is_fresh(peer->statistics_updated_ms, now_ms, LINKG_GPIO_WIFI_MAX_AGE_MS) &&
            peer->rssi_dbm > -127 &&
-           peer->rssi_dbm < 0;
+           peer->rssi_dbm <= 0;
 }
 
 /****************************** Wi-Fi状态 ******************************/

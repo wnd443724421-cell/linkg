@@ -760,7 +760,6 @@ static int _wifi_hostapd_apply_radio_config(const linkg_wifi_config_t *config)
             return -EINVAL;
     }
 }
-
 /****************************** 服务控制 ******************************/
 
 /**

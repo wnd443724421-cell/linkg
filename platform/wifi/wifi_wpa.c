@@ -476,12 +476,6 @@ static int _wifi_wpa_prepare_sta_radio(const linkg_wifi_config_t *config)
 
     narrow = &config->wideband.narrow_params;
 
-    ret = wifi_driver_refresh_narrow_power_table();
-    if (ret != 0)
-    {
-        return ret;
-    }
-
     ret = wifi_driver_set_narrow_bandwidth(true, narrow->bandwidth);
     if (ret != 0)
     {
