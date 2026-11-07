@@ -24,7 +24,7 @@
 #define LINKG_TRANSPORT_REORDER_WINDOW_MASK      63U             // 64槽窗口索引掩码
 #define LINKG_TRANSPORT_REORDER_REALTIME_WAIT_US 15000ULL        // REALTIME最大缺口等待时间
 #define LINKG_TRANSPORT_REORDER_VIDEO_WAIT_US    60000ULL        // VIDEO最大缺口等待时间
-#define LINKG_TRANSPORT_REORDER_DATA_WAIT_US     800000ULL       // DATA最大缺口等待时间
+#define LINKG_TRANSPORT_REORDER_DATA_WAIT_US     80000ULL        // DATA最大缺口等待时间
 
 _Static_assert((LINKG_TRANSPORT_REORDER_WINDOW_SIZE & (LINKG_TRANSPORT_REORDER_WINDOW_SIZE - 1U)) == 0U, "reorder window size must be power of two");
 _Static_assert(LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX <= UINT8_MAX, "reorder group index must fit uint8_t");

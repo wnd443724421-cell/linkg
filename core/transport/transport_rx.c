@@ -29,6 +29,8 @@
 #define LINKG_TRANSPORT_RX_SOURCE_GROUP_INVALID         UINT32_MAX // 无效物理来源分组索引
 #define LINKG_TRANSPORT_RX_SOURCE_GROUP_LOG_INTERVAL_MS 1000ULL    // 物理来源分组溢出日志最小间隔
 
+#define LINKG_TRANSPORT_RX_REORDER_READY_MAX (LINKG_TRANSPORT_PEER_MAX * LINKG_TRANSPORT_CLASS_COUNT)
+
 typedef enum
 {
     LINKG_TRANSPORT_RX_STAGE_INVALID = 0,        // 初始状态，尚未完成有效解析
@@ -42,6 +44,13 @@ typedef enum
     LINKG_TRANSPORT_RX_STAGE_DISPATCH_READY,     // 所需处理全部完成，可以进入最终分发
     LINKG_TRANSPORT_RX_STAGE_DROPPED             // 已终止处理，不再向下传递
 } linkg_transport_rx_stage_t;
+
+typedef struct
+{
+    linkg_transport_reorder_frame_t frames[LINKG_TRANSPORT_RX_REORDER_READY_MAX]; // 只保存每Peer/Class一帧的元数据
+    uint32_t                        count;                                        // 待确认READY的Peer/Class数量
+} linkg_transport_rx_reorder_ready_t;
+
 
 /****************************** 本机交付 ******************************/
 
@@ -118,15 +127,98 @@ typedef struct
     uint64_t stale_epoch_frames;  // Peer重置期间拒绝的Transport帧数量
 } linkg_transport_rx_batch_stats_t;
 
-/****************************** Reorder READY完成记录 ******************************/
+/****************************** 内部辅助 ******************************/
 
-#define LINKG_TRANSPORT_RX_REORDER_READY_MAX (LINKG_TRANSPORT_PEER_MAX * LINKG_TRANSPORT_CLASS_COUNT)
-
-typedef struct
+/**
+ * @brief 判断两个物理路径端点是否相同。
+ */
+static bool _linkg_transport_rx_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right)
 {
-    linkg_transport_reorder_frame_t frames[LINKG_TRANSPORT_RX_REORDER_READY_MAX]; // 只保存每Peer/Class一帧的元数据
-    uint32_t                        count;                                        // 待确认READY的Peer/Class数量
-} linkg_transport_rx_reorder_ready_t;
+    const struct sockaddr_in6 *left6;
+    const struct sockaddr_in6 *right6;
+    const struct sockaddr_in  *left4;
+    const struct sockaddr_in  *right4;
+
+    if (left == NULL || right == NULL)
+    {
+        return false;
+    }
+
+    if (left->length != right->length || left->address.ss_family != right->address.ss_family)
+    {
+        return false;
+    }
+
+    if (left->address.ss_family == AF_INET)
+    {
+        left4  = (const struct sockaddr_in *)&left->address;
+        right4 = (const struct sockaddr_in *)&right->address;
+
+        return left4->sin_addr.s_addr == right4->sin_addr.s_addr && left4->sin_port == right4->sin_port;
+    }
+
+    if (left->address.ss_family == AF_INET6)
+    {
+        left6  = (const struct sockaddr_in6 *)&left->address;
+        right6 = (const struct sockaddr_in6 *)&right->address;
+
+        return memcmp(&left6->sin6_addr, &right6->sin6_addr, sizeof(left6->sin6_addr)) == 0 && left6->sin6_port == right6->sin6_port && left6->sin6_scope_id == right6->sin6_scope_id;
+    }
+
+    return false;
+}
+
+/**
+ * @brief 从Link Packet业务标志恢复Transport业务类别。
+ */
+static linkg_transport_class_t _linkg_transport_rx_packet_class(const linkg_packet_t *packet)
+{
+    if (linkg_packet_is_realtime(packet))
+    {
+        return LINKG_TRANSPORT_CLASS_REALTIME;
+    }
+
+    if (linkg_packet_is_video(packet))
+    {
+        return LINKG_TRANSPORT_CLASS_VIDEO;
+    }
+
+    return LINKG_TRANSPORT_CLASS_DATA;
+}
+
+/**
+ * @brief 判断sequence是否位于当前最高序列号之前。
+ */
+static bool _linkg_transport_rx_sequence_before(uint32_t sequence, uint32_t highest_sequence)
+{
+    return (int32_t)(sequence - highest_sequence) < 0;
+}
+
+/**
+ * @brief 批量归并Transport全局异常统计。
+ *
+ * @note 正常高速路径三个计数均为0时不获取g_transport.lock。
+ */
+static void _linkg_transport_rx_record_batch_stats(const linkg_transport_rx_batch_stats_t *stats)
+{
+    if (stats == NULL ||
+        (stats->invalid_frames == 0U &&
+         stats->unattributed_frames == 0U &&
+         stats->stale_epoch_frames == 0U))
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&g_transport.lock);
+
+    g_transport.stats.rx_invalid_frames      += stats->invalid_frames;
+    g_transport.stats.rx_unattributed_frames += stats->unattributed_frames;
+    g_transport.stats.rx_stale_epoch_frames  += stats->stale_epoch_frames;
+
+    pthread_mutex_unlock(&g_transport.lock);
+}
+
+/****************************** Reorder READY完成记录 ******************************/
 
 /**
  * @brief 保存READY对应的Peer/Class完成标记，不额外持有Packet引用。
@@ -265,97 +357,6 @@ static void _linkg_transport_rx_prepare_window_start_locked(linkg_transport_rx_w
     window->highest_sequence = earliest_sequence - 1U;
     window->tracked_count    = 0U;
     window->initialized      = true;
-}
-
-/****************************** 内部辅助 ******************************/
-
-/**
- * @brief 判断两个物理路径端点是否相同。
- */
-static bool _linkg_transport_rx_endpoint_equal(const linkg_path_endpoint_t *left, const linkg_path_endpoint_t *right)
-{
-    const struct sockaddr_in6 *left6;
-    const struct sockaddr_in6 *right6;
-    const struct sockaddr_in  *left4;
-    const struct sockaddr_in  *right4;
-
-    if (left == NULL || right == NULL)
-    {
-        return false;
-    }
-
-    if (left->length != right->length || left->address.ss_family != right->address.ss_family)
-    {
-        return false;
-    }
-
-    if (left->address.ss_family == AF_INET)
-    {
-        left4  = (const struct sockaddr_in *)&left->address;
-        right4 = (const struct sockaddr_in *)&right->address;
-
-        return left4->sin_addr.s_addr == right4->sin_addr.s_addr && left4->sin_port == right4->sin_port;
-    }
-
-    if (left->address.ss_family == AF_INET6)
-    {
-        left6  = (const struct sockaddr_in6 *)&left->address;
-        right6 = (const struct sockaddr_in6 *)&right->address;
-
-        return memcmp(&left6->sin6_addr, &right6->sin6_addr, sizeof(left6->sin6_addr)) == 0 && left6->sin6_port == right6->sin6_port && left6->sin6_scope_id == right6->sin6_scope_id;
-    }
-
-    return false;
-}
-
-/**
- * @brief 从Link Packet业务标志恢复Transport业务类别。
- */
-static linkg_transport_class_t _linkg_transport_rx_packet_class(const linkg_packet_t *packet)
-{
-    if (linkg_packet_is_realtime(packet))
-    {
-        return LINKG_TRANSPORT_CLASS_REALTIME;
-    }
-
-    if (linkg_packet_is_video(packet))
-    {
-        return LINKG_TRANSPORT_CLASS_VIDEO;
-    }
-
-    return LINKG_TRANSPORT_CLASS_DATA;
-}
-
-/**
- * @brief 判断sequence是否位于当前最高序列号之前。
- */
-static bool _linkg_transport_rx_sequence_before(uint32_t sequence, uint32_t highest_sequence)
-{
-    return (int32_t)(sequence - highest_sequence) < 0;
-}
-
-/**
- * @brief 批量归并Transport全局异常统计。
- *
- * @note 正常高速路径三个计数均为0时不获取g_transport.lock。
- */
-static void _linkg_transport_rx_record_batch_stats(const linkg_transport_rx_batch_stats_t *stats)
-{
-    if (stats == NULL ||
-        (stats->invalid_frames == 0U &&
-         stats->unattributed_frames == 0U &&
-         stats->stale_epoch_frames == 0U))
-    {
-        return;
-    }
-
-    pthread_mutex_lock(&g_transport.lock);
-
-    g_transport.stats.rx_invalid_frames      += stats->invalid_frames;
-    g_transport.stats.rx_unattributed_frames += stats->unattributed_frames;
-    g_transport.stats.rx_stale_epoch_frames  += stats->stale_epoch_frames;
-
-    pthread_mutex_unlock(&g_transport.lock);
 }
 
 /****************************** 本机交付 ******************************/
