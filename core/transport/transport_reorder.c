@@ -39,13 +39,14 @@ typedef struct
 
 typedef struct
 {
-    linkg_transport_reorder_slot_t slots[LINKG_TRANSPORT_REORDER_WINDOW_SIZE]; // 64槽Sequence缓存
-    uint32_t                       expected_sequence;                          // 下一个应处理的Wire Sequence
-    uint32_t                       slot_count;                                 // 当前缓存数量
-    uint32_t                       peer_epoch;                                 // Peer生命周期代际
-    uint8_t                        peer_node_id;                               // 直接Peer节点编号
-    bool                           expected_initialized;                       // 接收基线是否有效
-    bool                           delivery_in_progress;                       // 同Peer/Class交付是否正在进行
+    linkg_transport_reorder_slot_t  slots[LINKG_TRANSPORT_REORDER_WINDOW_SIZE]; // 64槽Sequence缓存
+    pthread_t                       delivery_thread;                            // 当前交付线程，仅delivery_in_progress时有效
+    uint32_t                        expected_sequence;                          // 下一个应处理的Wire Sequence
+    uint32_t                        slot_count;                                 // 当前缓存数量
+    uint32_t                        peer_epoch;                                 // Peer生命周期代际
+    uint8_t                         peer_node_id;                               // 直接Peer节点编号
+    bool                            expected_initialized;                       // 接收基线是否有效
+    bool                            delivery_in_progress;                       // 同Peer/Class交付是否正在进行
 } linkg_transport_reorder_class_t;
 
 typedef struct
@@ -534,6 +535,7 @@ static void _linkg_transport_reorder_take_contiguous_locked(linkg_transport_reor
         current->slot_count--;
         current->expected_sequence++;
         current->delivery_in_progress = true;
+        current->delivery_thread      = pthread_self();
     }
 }
 
@@ -599,6 +601,7 @@ static void _linkg_transport_reorder_process_group_locked(const linkg_transport_
 
         current->expected_sequence    = next_sequence;
         current->delivery_in_progress = true;
+        current->delivery_thread      = pthread_self();
 
         _linkg_transport_reorder_cache_group_locked(current, group, order, frames, results, now_us, worker_wakeup);
         return;
@@ -804,6 +807,7 @@ static uint32_t _linkg_transport_reorder_take_worker_class_locked(linkg_transpor
     if (count > 0U)
     {
         current->delivery_in_progress = true;
+        current->delivery_thread      = pthread_self();
     }
 
     return count;
@@ -1088,6 +1092,57 @@ int linkg_transport_reorder_runtime_deinit(void)
 }
 
 /**
+ * @brief 检查当前线程是否正在交付指定Peer的数据。
+ *
+ * @return 0表示允许继续生命周期操作，-EDEADLK表示当前线程会等待自身交付。
+ *
+ * @note 只负责自等待检测，不修改Peer生命周期或Reorder状态。
+ */
+int linkg_transport_reorder_check_reset_context(uint8_t peer_node_id)
+{
+    linkg_transport_reorder_class_t *current;
+    uint32_t                        peer_index;
+    uint32_t                        class_index;
+    int                             ret;
+
+    if (!g_reorder.initialized)
+    {
+        return -ENODEV;
+    }
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
+    {
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            current = &g_reorder.classes[peer_index][class_index];
+
+            if (!current->expected_initialized ||
+                current->peer_node_id != peer_node_id ||
+                !current->delivery_in_progress)
+            {
+                continue;
+            }
+
+            if (pthread_equal(current->delivery_thread, pthread_self()) != 0)
+            {
+                pthread_mutex_unlock(&g_reorder.lock);
+                return -EDEADLK;
+            }
+        }
+    }
+
+    ret = pthread_mutex_unlock(&g_reorder.lock);
+
+    return ret == 0 ? 0 : -ret;
+}
+
+/**
  * @brief 等待指定Peer交付结束，清理全部业务缓存及Sequence状态。
  */
 int linkg_transport_reorder_reset_peer(uint8_t peer_node_id)
@@ -1126,6 +1181,13 @@ int linkg_transport_reorder_reset_peer(uint8_t peer_node_id)
 
                 if (current->expected_initialized && current->peer_node_id == peer_node_id && current->delivery_in_progress)
                 {
+                    // 当前线程不能等待自己尚未完成的交付。
+                    if (pthread_equal(current->delivery_thread, pthread_self()) != 0)
+                    {
+                        pthread_mutex_unlock(&g_reorder.lock);
+                        return -EDEADLK;
+                    }
+
                     delivering = true;
                     break;
                 }

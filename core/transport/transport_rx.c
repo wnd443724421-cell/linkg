@@ -1677,7 +1677,8 @@ static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_it
  * @brief Link Base统一批量接收回调。
  *
  * @note USER_DATA由Reorder按Peer/Class统一处理Sequence。
- *       READY在当前RX Handler完成交付后才解除Reorder交付占用。
+ *       每个Chunk完成本机Handler交付后立即解除READY占用，
+ *       防止大批次连续帧因64槽缓存耗尽而丢弃。
  */
 void linkg_transport_receive_batch(linkg_link_t *link, linkg_link_rx_item_t *items, uint32_t count, void *user_data)
 {
@@ -1719,14 +1720,17 @@ void linkg_transport_receive_batch(linkg_link_t *link, linkg_link_rx_item_t *ite
 
         _linkg_transport_rx_process_chunk(link_id, &items[offset], chunk_count, delivery_batches, forward_batches, &pending);
 
+        // 当前Chunk的本机数据必须先完成Handler交付。
+        _linkg_transport_rx_flush_deliveries(delivery_batches);
+
+        // Handler返回后立即解除本Chunk的READY交付占用。
+        _linkg_transport_rx_complete_reorder_ready(&pending);
+
+        // 下一Chunk重新收集需要确认的Peer/Class。
+        pending.count = 0U;
+
         offset += chunk_count;
     }
-
-    // 当前RX所有READY数据完成本机Handler交付。
-    _linkg_transport_rx_flush_deliveries(delivery_batches);
-
-    // Handler返回后，解除对应Peer/Class的交付占用。
-    _linkg_transport_rx_complete_reorder_ready(&pending);
 
     // 中继数据维持原有独立交付流程。
     _linkg_transport_rx_flush_forwards(forward_batches);

@@ -742,6 +742,13 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
         return -EINVAL;
     }
 
+    // 禁止当前交付线程同步Reset自身正在交付的Peer。
+    ret = linkg_transport_reorder_check_reset_context(peer_node_id);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     ret = pthread_mutex_lock(&g_transport.lock);
     if (ret != 0)
     {
@@ -822,6 +829,13 @@ int linkg_transport_unregister_peer(uint8_t peer_node_id)
     if (!_linkg_transport_node_id_valid(peer_node_id))
     {
         return -EINVAL;
+    }
+
+    // 禁止Handler注销当前线程尚未完成交付的Peer。
+    ret = linkg_transport_reorder_check_reset_context(peer_node_id);
+    if (ret != 0)
+    {
+        return ret;
     }
 
     ret = pthread_mutex_lock(&g_transport.lock);

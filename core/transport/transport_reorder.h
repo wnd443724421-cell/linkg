@@ -50,6 +50,7 @@ typedef void (*linkg_transport_reorder_emit_func_t)(const linkg_transport_reorde
 int  linkg_transport_reorder_runtime_init(linkg_transport_reorder_emit_func_t emit);
 int  linkg_transport_reorder_runtime_deinit(void);
 int  linkg_transport_reorder_reset_peer(uint8_t peer_node_id);
+int  linkg_transport_reorder_check_reset_context(uint8_t peer_node_id);
 bool linkg_transport_reorder_is_worker_thread(void);
 
 /****************************** 批量接收 ******************************/
