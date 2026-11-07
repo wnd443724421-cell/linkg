@@ -35,6 +35,7 @@ typedef enum
     LINKG_TRANSPORT_RX_STAGE_DECODED,            // Transport协议解析成功
     LINKG_TRANSPORT_RX_STAGE_WINDOW_ACCEPTED,    // RX Window接受，已完成去重
     LINKG_TRANSPORT_RX_STAGE_REORDER_PENDING,    // 已进入Reorder缓存，等待前序序列
+    LINKG_TRANSPORT_RX_STAGE_EMITTED,            // 已通过Reorder Emit回调完成交付
     LINKG_TRANSPORT_RX_STAGE_REORDER_READY,      // 已通过顺序处理，可以进入下一阶段
     LINKG_TRANSPORT_RX_STAGE_REASSEMBLY_PENDING, // 分片重组尚未完成，等待完整数据包
     LINKG_TRANSPORT_RX_STAGE_REASSEMBLY_READY,   // 分片重组完成，完整Payload Packet已生成
@@ -116,6 +117,86 @@ typedef struct
     uint64_t unattributed_frames; // 无法归属直接Peer帧数量
     uint64_t stale_epoch_frames;  // Peer重置期间拒绝的Transport帧数量
 } linkg_transport_rx_batch_stats_t;
+
+/****************************** Reorder READY完成记录 ******************************/
+
+#define LINKG_TRANSPORT_RX_REORDER_READY_MAX (LINKG_TRANSPORT_PEER_MAX * LINKG_TRANSPORT_CLASS_COUNT)
+
+typedef struct
+{
+    linkg_transport_reorder_frame_t frames[LINKG_TRANSPORT_RX_REORDER_READY_MAX]; // 只保存每Peer/Class一帧的元数据
+    uint32_t                        count;                                        // 待确认READY的Peer/Class数量
+} linkg_transport_rx_reorder_ready_t;
+
+/**
+ * @brief 保存READY对应的Peer/Class完成标记，不额外持有Packet引用。
+ *
+ * @note READY实际交付仍属于当前linkg_transport_receive_batch()调用；
+ *       帧内Packet指针仅用于复制描述符，完成操作不解引用Packet。
+ */
+static void _linkg_transport_rx_record_reorder_ready(linkg_transport_rx_reorder_ready_t *pending, const linkg_transport_reorder_frame_t *frame)
+{
+    const linkg_transport_reorder_frame_t *saved;
+    uint32_t                               index;
+
+    for (index = 0U; index < pending->count; index++)
+    {
+        saved = &pending->frames[index];
+
+        if (saved->peer == frame->peer &&
+            saved->traffic_class == frame->traffic_class)
+        {
+            return;
+        }
+    }
+
+    // 一个RX调用最多有LINKG_TRANSPORT_PEER_MAX * CLASS_COUNT种独立交付域。
+    if (pending->count >= LINKG_TRANSPORT_RX_REORDER_READY_MAX)
+    {
+        LINKG_LOG_ERROR("transport RX reorder READY tracking overflow, peer=%u, class=%u",
+                        frame->peer_node_id, (unsigned int)frame->traffic_class);
+        return;
+    }
+
+    pending->frames[pending->count++] = *frame;
+}
+
+/**
+ * @brief 当前RX调用已完成Handler交付，解除所有READY的Peer/Class交付占用。
+ */
+static void _linkg_transport_rx_complete_reorder_ready(const linkg_transport_rx_reorder_ready_t *pending)
+{
+    linkg_transport_reorder_result_t results[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
+    uint32_t                         batch_count;
+    uint32_t                         offset;
+    uint32_t                         index;
+    int                              ret;
+
+    for (index = 0U; index < LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX; index++)
+    {
+        results[index] = LINKG_TRANSPORT_REORDER_RESULT_READY;
+    }
+
+    offset = 0U;
+
+    while (offset < pending->count)
+    {
+        batch_count = pending->count - offset;
+
+        if (batch_count > LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX)
+        {
+            batch_count = LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX;
+        }
+
+        ret = linkg_transport_reorder_complete_batch(&pending->frames[offset], results, batch_count);
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("transport RX reorder READY completion failed, count=%u, error=%d", batch_count, ret);
+        }
+
+        offset += batch_count;
+    }
+}
 
 /****************************** 内部辅助 ******************************/
 
@@ -967,14 +1048,16 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
 /****************************** 分片重组 ******************************/
 
 /**
- * @brief 批量处理目标为本机的已接受分片。
+ * @brief 批量重组目标为本机的Transport分片。
  *
- * @note 重组Key包含直接Peer和业务Class，因此Wi-Fi/Cellular同一Peer/Class的两片可以跨物理Link完成重组。
+ * @note USER_DATA必须经过Reorder，其他Transport类型保留RX Window接收路径。
+ *       重组结果统一转换为RX Stage，不在RX状态中保存底层返回值。
  */
 static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_rx_batch_stats_t *stats)
 {
     linkg_transport_reassembly_submit_item_t reassembly_items[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
     uint32_t                                 state_indices[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
+    linkg_transport_rx_state_t              *state;
     uint32_t                                 reassembly_count;
     uint32_t                                 state_index;
     uint32_t                                 index;
@@ -982,22 +1065,32 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
 
     reassembly_count = 0U;
 
+    // 收集已经通过接收顺序管理、目标为本机的分片。
     for (index = 0U; index < count; index++)
     {
-        if (states[index].window_result != LINKG_TRANSPORT_WINDOW_ACCEPT || !states[index].fragmented || states[index].header.destination_node_id != g_transport.local_node_id)
+        state = &states[index];
+
+        if (state->stage != LINKG_TRANSPORT_RX_STAGE_WINDOW_ACCEPTED &&
+            state->stage != LINKG_TRANSPORT_RX_STAGE_REORDER_READY)
         {
             continue;
         }
 
-        reassembly_items[reassembly_count].header           = &states[index].header;
-        reassembly_items[reassembly_count].fragment_header  = &states[index].fragment_header;
+        if (!state->fragmented ||
+            state->header.destination_node_id != g_transport.local_node_id)
+        {
+            continue;
+        }
+
+        reassembly_items[reassembly_count].header           = &state->header;
+        reassembly_items[reassembly_count].fragment_header  = &state->fragment_header;
         reassembly_items[reassembly_count].packet           = items[index].packet;
         reassembly_items[reassembly_count].completed_packet = NULL;
-        reassembly_items[reassembly_count].peer             = states[index].peer;
-        reassembly_items[reassembly_count].peer_epoch       = states[index].peer_epoch;
-        reassembly_items[reassembly_count].traffic_class    = states[index].traffic_class;
+        reassembly_items[reassembly_count].peer             = state->peer;
+        reassembly_items[reassembly_count].peer_epoch       = state->peer_epoch;
+        reassembly_items[reassembly_count].traffic_class    = state->traffic_class;
         reassembly_items[reassembly_count].result           = -EINPROGRESS;
-        reassembly_items[reassembly_count].peer_node_id     = states[index].peer_node_id;
+        reassembly_items[reassembly_count].peer_node_id     = state->peer_node_id;
 
         state_indices[reassembly_count] = index;
         reassembly_count++;
@@ -1008,40 +1101,24 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
         return;
     }
 
+    // 批量提交分片重组。
     ret = linkg_transport_reassembly_submit_batch(reassembly_items, reassembly_count);
     if (ret != 0)
     {
+        // 批次级失败，所有提交帧终止后续处理。
         for (index = 0U; index < reassembly_count; index++)
         {
-            state_index                           = state_indices[index];
-            states[state_index].reassembly_result = ret;
-            stats->invalid_frames++;
+            state_index = state_indices[index];
+            state       = &states[state_index];
+
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
 
             if (reassembly_items[index].completed_packet != NULL)
             {
                 linkg_packet_release(reassembly_items[index].completed_packet);
             }
-        }
 
-        return;
-    }
-
-    for (index = 0U; index < reassembly_count; index++)
-    {
-        state_index = state_indices[index];
-
-        states[state_index].reassembly_result = reassembly_items[index].result;
-        states[state_index].completed_packet  = reassembly_items[index].completed_packet;
-
-        if (states[state_index].reassembly_result < 0)
-        {
-            if (states[state_index].completed_packet != NULL)
-            {
-                linkg_packet_release(states[state_index].completed_packet);
-                states[state_index].completed_packet = NULL;
-            }
-
-            if (states[state_index].reassembly_result == -ESTALE)
+            if (ret == -ESTALE)
             {
                 stats->stale_epoch_frames++;
             }
@@ -1050,7 +1127,46 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
                 stats->invalid_frames++;
             }
         }
-        else if (states[state_index].reassembly_result == 1 && states[state_index].completed_packet == NULL)
+
+        return;
+    }
+
+    // 将逐帧重组结果统一转换为RX Stage。
+    for (index = 0U; index < reassembly_count; index++)
+    {
+        state_index = state_indices[index];
+        state       = &states[state_index];
+
+        if (reassembly_items[index].result == 0 &&
+            reassembly_items[index].completed_packet == NULL)
+        {
+            // 分片已接受，但逻辑Packet尚未完整。
+            state->stage = LINKG_TRANSPORT_RX_STAGE_REASSEMBLY_PENDING;
+            continue;
+        }
+
+        if (reassembly_items[index].result == 1 &&
+            reassembly_items[index].completed_packet != NULL)
+        {
+            // 重组完成，完整Packet交由后续分发阶段接管。
+            state->completed_packet = reassembly_items[index].completed_packet;
+            state->stage            = LINKG_TRANSPORT_RX_STAGE_REASSEMBLY_READY;
+            continue;
+        }
+
+        // 重组失败或结果不一致。
+        state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+
+        if (reassembly_items[index].completed_packet != NULL)
+        {
+            linkg_packet_release(reassembly_items[index].completed_packet);
+        }
+
+        if (reassembly_items[index].result == -ESTALE)
+        {
+            stats->stale_epoch_frames++;
+        }
+        else
         {
             stats->invalid_frames++;
         }
@@ -1059,14 +1175,18 @@ static void _linkg_transport_rx_reassemble_batch(linkg_link_rx_item_t *items, li
 
 /****************************** 数据分发 ******************************/
 
+/****************************** 数据分发 ******************************/
+
 /**
- * @brief 按接收顺序分发已经通过Peer/Class窗口的数据。
+ * @brief 根据RX Stage分发已就绪Transport数据。
  *
- * @note 本机数据按Transport Type进入本机Handler；只有AP的非本机数据进入中继路径，中继批次严格按照traffic_class隔离。
+ * @note 本机数据按Transport Type交付，中继数据仅由AP按业务Class转发。
+ *       USER_DATA必须经过Reorder，已完成的本机分片通过completed_packet交付。
  */
 static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_delivery_batch_t *delivery_batches, linkg_transport_forward_batch_t *forward_batches, linkg_transport_rx_batch_stats_t *stats)
 {
     linkg_transport_forward_item_t pair_items[LINKG_TRANSPORT_FRAGMENT_COUNT_MAX];
+    linkg_transport_rx_state_t    *state;
     linkg_transport_type_t         type;
     uint32_t                       pair_count;
     uint32_t                       pair_index;
@@ -1075,64 +1195,119 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
 
     for (index = 0U; index < count; index++)
     {
-        if (states[index].window_result != LINKG_TRANSPORT_WINDOW_ACCEPT)
+        state = &states[index];
+
+        // 第一阶段：只有完成前置处理的数据才能进入分发。
+        if (state->stage != LINKG_TRANSPORT_RX_STAGE_WINDOW_ACCEPTED &&
+            state->stage != LINKG_TRANSPORT_RX_STAGE_REORDER_READY &&
+            state->stage != LINKG_TRANSPORT_RX_STAGE_REASSEMBLY_READY)
         {
             continue;
         }
 
-        // RX Window通过后Peer仍可能被重置；不允许旧代际继续进入交付或中继。
-        if (!linkg_transport_peer_epoch_matches(states[index].peer, states[index].peer_epoch))
+        // 第二阶段：确认Peer生命周期，禁止旧会话继续交付。
+        if (!linkg_transport_peer_epoch_matches(state->peer, state->peer_epoch))
         {
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
             stats->stale_epoch_frames++;
 
-            if (states[index].completed_packet != NULL)
+            if (state->completed_packet != NULL)
             {
-                linkg_packet_release(states[index].completed_packet);
-                states[index].completed_packet = NULL;
+                linkg_packet_release(state->completed_packet);
+                state->completed_packet = NULL;
             }
 
             continue;
         }
 
-        type = (linkg_transport_type_t)states[index].header.type;
+        type = (linkg_transport_type_t)state->header.type;
 
-        if (states[index].header.destination_node_id == g_transport.local_node_id)
+        // 第三阶段：目标为本机，执行本机Transport交付。
+        if (state->header.destination_node_id == g_transport.local_node_id)
         {
-            if (states[index].fragmented)
+            // 分支一：已完成重组的本机分片。
+            if (state->fragmented)
             {
-                if (states[index].reassembly_result == 1 && states[index].completed_packet != NULL)
+                if (state->stage != LINKG_TRANSPORT_RX_STAGE_REASSEMBLY_READY ||
+                    state->completed_packet == NULL)
                 {
-                    _linkg_transport_rx_append_reassembled_delivery(&states[index], states[index].completed_packet, &delivery_batches[type]);
-                    states[index].completed_packet = NULL;
+                    state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+                    stats->invalid_frames++;
+                    continue;
                 }
+
+                // 完整Packet引用转交Delivery Batch管理。
+                _linkg_transport_rx_append_reassembled_delivery(state, state->completed_packet, &delivery_batches[type]);
+
+                state->completed_packet = NULL;
+                state->stage            = LINKG_TRANSPORT_RX_STAGE_DISPATCH_READY;
 
                 continue;
             }
 
-            ret = _linkg_transport_rx_append_normal_delivery(&states[index], &items[index], &delivery_batches[type]);
-            if (ret != 0)
+            // 分支二：非分片USER_DATA必须已经通过Reorder。
+            if (type == LINKG_TRANSPORT_TYPE_USER_DATA)
             {
-                stats->invalid_frames++;
+                if (state->stage != LINKG_TRANSPORT_RX_STAGE_REORDER_READY)
+                {
+                    state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+                    stats->invalid_frames++;
+                    continue;
+                }
+            }
+            else
+            {
+                // 其他Transport类型沿用RX Window接收路径。
+                if (state->stage != LINKG_TRANSPORT_RX_STAGE_WINDOW_ACCEPTED)
+                {
+                    state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+                    stats->invalid_frames++;
+                    continue;
+                }
             }
 
+            ret = _linkg_transport_rx_append_normal_delivery(state, &items[index], &delivery_batches[type]);
+            if (ret != 0)
+            {
+                state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+                stats->invalid_frames++;
+                continue;
+            }
+
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DISPATCH_READY;
             continue;
         }
 
-        if (g_transport.local_role != LINKG_DEVICE_ROLE_AP || forward_batches == NULL)
+        // 第四阶段：非本机数据仅允许AP执行中继。
+        if (g_transport.local_role != LINKG_DEVICE_ROLE_AP ||
+            forward_batches == NULL)
         {
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
             continue;
         }
 
-        if (!states[index].fragmented)
+        // 中继数据不经过本机Reorder和Reassembly。
+        if (state->stage != LINKG_TRANSPORT_RX_STAGE_WINDOW_ACCEPTED)
         {
-            _linkg_transport_rx_append_forward(&states[index], &items[index], &forward_batches[states[index].traffic_class]);
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+            stats->invalid_frames++;
             continue;
         }
 
+        // 分支三：非分片数据直接加入Class中继批次。
+        if (!state->fragmented)
+        {
+            _linkg_transport_rx_append_forward(state, &items[index], &forward_batches[state->traffic_class]);
+
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DISPATCH_READY;
+            continue;
+        }
+
+        // 分支四：分片中继沿用FIRST/LAST配对机制。
         memset(pair_items, 0, sizeof(pair_items));
         pair_count = 0U;
 
-        ret = linkg_transport_forward_pair_submit(states[index].peer, states[index].peer_epoch, states[index].traffic_class, states[index].peer_node_id, &states[index].header, &states[index].fragment_header, items[index].packet, states[index].payload_length, pair_items, &pair_count);
+        ret = linkg_transport_forward_pair_submit(state->peer, state->peer_epoch, state->traffic_class, state->peer_node_id, &state->header, &state->fragment_header, items[index].packet, state->payload_length, pair_items, &pair_count);
         if (ret != 0)
         {
             for (pair_index = 0U; pair_index < pair_count; pair_index++)
@@ -1142,6 +1317,8 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
                     linkg_packet_release(pair_items[pair_index].packet);
                 }
             }
+
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
 
             if (ret == -ESTALE)
             {
@@ -1153,17 +1330,21 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
             }
             else
             {
-                LINKG_LOG_ERROR("transport forward fragment pair failed, class=%d, peer=%u, error=%d", (int)states[index].traffic_class, states[index].peer_node_id, ret);
+                LINKG_LOG_ERROR("transport forward fragment pair failed, class=%d, peer=%u, error=%d",
+                                (int)state->traffic_class, state->peer_node_id, ret);
             }
 
             continue;
         }
 
+        // FIRST/LAST尚未配对完成，等待后续分片。
         if (pair_count == 0U)
         {
+            state->stage = LINKG_TRANSPORT_RX_STAGE_REASSEMBLY_PENDING;
             continue;
         }
 
+        // 中继配对必须产生完整的固定两片。
         if (pair_count != LINKG_TRANSPORT_FRAGMENT_COUNT_MAX)
         {
             for (pair_index = 0U; pair_index < pair_count; pair_index++)
@@ -1174,20 +1355,25 @@ static void _linkg_transport_rx_dispatch_batch(linkg_link_rx_item_t *items, link
                 }
             }
 
+            state->stage = LINKG_TRANSPORT_RX_STAGE_DROPPED;
             stats->invalid_frames++;
             continue;
         }
 
-        _linkg_transport_rx_append_forward_pair(states[index].traffic_class, pair_items, states[index].peer, states[index].peer_epoch, &forward_batches[states[index].traffic_class]);
+        // 完整FIRST/LAST配对加入Class中继批次。
+        _linkg_transport_rx_append_forward_pair(state->traffic_class, pair_items, state->peer, state->peer_epoch, &forward_batches[state->traffic_class]);
+
+        state->stage = LINKG_TRANSPORT_RX_STAGE_DISPATCH_READY;
     }
 }
 
 /****************************** Reorder交付 ******************************/
 
 /**
- * @brief 由全局Reorder Worker串行交付已就绪USER_DATA Wire Frame。
+ * @brief Reorder同步交付已就绪USER_DATA Wire Frame。
  *
- * @note 输入帧借用Worker持有的Packet引用，分片重组和Handler按现有规则处理引用。
+ * @note 可能由当前RX线程补齐缺口后同步调用，也可能由Reorder Worker调用。
+ *       输入Packet引用由Reorder持有；本函数不释放输入Wire Packet。
  */
 void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *frames, uint32_t count)
 {
@@ -1207,12 +1393,13 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
     memset(items, 0, sizeof(items));
     memset(&stats, 0, sizeof(stats));
 
+    // 默认全部不可进入后续阶段，逐帧核验后才设置就绪。
     for (index = 0U; index < count; index++)
     {
+        states[index].stage         = LINKG_TRANSPORT_RX_STAGE_DROPPED;
         states[index].window_result = LINKG_TRANSPORT_WINDOW_INVALID;
     }
 
-    // 恢复Worker输出的Wire Frame接收状态。
     for (index = 0U; index < count; index++)
     {
         if (frames[index].packet == NULL || frames[index].peer == NULL)
@@ -1221,7 +1408,6 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
             continue;
         }
 
-        // Peer生命周期发生变化时，禁止交付旧会话数据。
         if (!linkg_transport_peer_epoch_matches(frames[index].peer, frames[index].peer_epoch))
         {
             stats.stale_epoch_frames++;
@@ -1239,72 +1425,133 @@ void linkg_transport_rx_emit_reordered(const linkg_transport_reorder_frame_t *fr
         states[index].traffic_class     = frames[index].traffic_class;
         states[index].fragmented        = (frames[index].header.flags & LINKG_TRANSPORT_FLAG_FRAGMENT) != 0U;
         states[index].window_result     = LINKG_TRANSPORT_WINDOW_ACCEPT;
-        states[index].reassembly_result = -EINPROGRESS;
+        states[index].stage             = LINKG_TRANSPORT_RX_STAGE_REORDER_READY;
     }
 
-    // 已排序的Wire Frame进入本机分片重组。
+    // Reorder已经管理Sequence，此处只执行原有分片重组和本机分发。
     _linkg_transport_rx_reassemble_batch(items, states, count, &stats);
-
-    // 按现有规则完成本机数据分发。
     _linkg_transport_rx_dispatch_batch(items, states, count, delivery_batches, NULL, &stats);
-
-    // 同步交付本机Handler。
     _linkg_transport_rx_flush_deliveries(delivery_batches);
-
     _linkg_transport_rx_record_batch_stats(&stats);
 }
 
-
 /**
- * @brief 将通过Peer/Class接收窗口的本机USER_DATA统一提交到Reorder。
+ * @brief 将通过接收窗口的本机USER_DATA批量提交Reorder。
  *
- * @note 所有业务类别和发送模式统一执行重排，提交后禁止普通RX路径重复处理。
+ * @note READY保留原RX快速交付，CACHED和EMITTED禁止重复进入下游。
+ *       READY完成标记由最外层RX在Handler返回后统一确认。
  */
-static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count)
+static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_rx_item_t *items, linkg_transport_rx_state_t *states, uint32_t count, linkg_transport_rx_reorder_ready_t *pending)
 {
+    linkg_transport_reorder_frame_t  frames[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
+    linkg_transport_reorder_result_t results[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
+    uint32_t                         state_indices[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
     linkg_transport_rx_state_t      *state;
-    linkg_transport_reorder_frame_t frame;
-    uint32_t                        index;
-    int                             ret;
+    uint32_t                         frame_count;
+    uint32_t                         index;
+    int                              ret;
 
+    frame_count = 0U;
+
+    // 每次调用仅处理一个Transport RX Chunk，Chunk容量不超过32。
     for (index = 0U; index < count; index++)
     {
         state = &states[index];
 
-        // 仅处理RX Window接受且目标为本机的USER_DATA。
-        if (state->window_result != LINKG_TRANSPORT_WINDOW_ACCEPT ||
+        if (state->stage != LINKG_TRANSPORT_RX_STAGE_WINDOW_ACCEPTED ||
+            state->window_result != LINKG_TRANSPORT_WINDOW_ACCEPT ||
             state->header.type != LINKG_TRANSPORT_TYPE_USER_DATA ||
             state->header.destination_node_id != g_transport.local_node_id)
         {
             continue;
         }
 
-        // 构造Reorder缓存帧描述。
-        memset(&frame, 0, sizeof(frame));
+        frames[frame_count].packet          = items[index].packet;
+        frames[frame_count].peer            = state->peer;
+        frames[frame_count].header          = state->header;
+        frames[frame_count].fragment_header = state->fragment_header;
+        frames[frame_count].ingress_link_id = link_id;
+        frames[frame_count].peer_epoch      = state->peer_epoch;
+        frames[frame_count].traffic_class   = state->traffic_class;
+        frames[frame_count].peer_node_id    = state->peer_node_id;
 
-        frame.packet          = items[index].packet;
-        frame.peer            = state->peer;
-        frame.header          = state->header;
-        frame.fragment_header = state->fragment_header;
-        frame.traffic_class   = state->traffic_class;
-        frame.ingress_link_id = link_id;
-        frame.peer_epoch      = state->peer_epoch;
-        frame.peer_node_id    = state->peer_node_id;
+        state_indices[frame_count] = index;
+        frame_count++;
+    }
 
-        // 统一提交Reorder，不区分SINGLE和REDUNDANT。
-        ret = linkg_transport_reorder_submit(&frame);
+    if (frame_count == 0U)
+    {
+        return;
+    }
 
-        // 无论提交是否成功，都禁止普通RX路径再次交付。
-        state->window_result = LINKG_TRANSPORT_WINDOW_INVALID;
-
-        if (ret != 0 && ret != -ERANGE && ret != -EALREADY && ret != -ESTALE)
+    ret = linkg_transport_reorder_submit_batch(frames, frame_count, results);
+    if (ret != 0)
+    {
+        for (index = 0U; index < frame_count; index++)
         {
-            LINKG_LOG_WARN("transport reorder submit failed, peer=%u, class=%u, seq=%u, error=%d",
-                           frame.peer_node_id, (unsigned int)frame.traffic_class, frame.header.sequence, ret);
+            state                = &states[state_indices[index]];
+            state->stage         = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+            state->window_result = LINKG_TRANSPORT_WINDOW_INVALID;
+        }
+
+        LINKG_LOG_ERROR("transport reorder submit batch failed, count=%u, error=%d", frame_count, ret);
+        return;
+    }
+
+    // stage与window_result必须同时更新，适配现有下游接收条件。
+    for (index = 0U; index < frame_count; index++)
+    {
+        state = &states[state_indices[index]];
+
+        switch (results[index])
+        {
+            case LINKG_TRANSPORT_REORDER_RESULT_READY:
+            {
+                state->stage         = LINKG_TRANSPORT_RX_STAGE_REORDER_READY;
+                state->window_result = LINKG_TRANSPORT_WINDOW_ACCEPT;
+                _linkg_transport_rx_record_reorder_ready(pending, &frames[index]);
+                break;
+            }
+
+            case LINKG_TRANSPORT_REORDER_RESULT_CACHED:
+            {
+                state->stage         = LINKG_TRANSPORT_RX_STAGE_REORDER_PENDING;
+                state->window_result = LINKG_TRANSPORT_WINDOW_INVALID;
+                break;
+            }
+
+            case LINKG_TRANSPORT_REORDER_RESULT_EMITTED:
+            {
+                state->stage         = LINKG_TRANSPORT_RX_STAGE_EMITTED;
+                state->window_result = LINKG_TRANSPORT_WINDOW_INVALID;
+                break;
+            }
+
+            case LINKG_TRANSPORT_REORDER_RESULT_TOO_OLD:
+            case LINKG_TRANSPORT_REORDER_RESULT_STALE:
+            case LINKG_TRANSPORT_REORDER_RESULT_OUT_OF_WINDOW:
+            {
+                state->stage         = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+                state->window_result = LINKG_TRANSPORT_WINDOW_INVALID;
+                break;
+            }
+
+            case LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED:
+            default:
+            {
+                state->stage         = LINKG_TRANSPORT_RX_STAGE_DROPPED;
+                state->window_result = LINKG_TRANSPORT_WINDOW_INVALID;
+
+                LINKG_LOG_ERROR("transport reorder invalid result, peer=%u, class=%u, seq=%u, result=%d",
+                                frames[index].peer_node_id,
+                                (unsigned int)frames[index].traffic_class,
+                                frames[index].header.sequence,
+                                (int)results[index]);
+                break;
+            }
         }
     }
 }
-
 
 /****************************** 内部批次 ******************************/
 
@@ -1313,7 +1560,7 @@ static void _linkg_transport_rx_stage_user_reorder(uint32_t link_id, linkg_link_
  *
  * @note 流水线固定为Path归属、协议解析、Peer/Class窗口、本机重组和本机/中继分流。
  */
-static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_item_t *items, uint32_t count, linkg_transport_delivery_batch_t *delivery_batches, linkg_transport_forward_batch_t *forward_batches)
+static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_item_t *items, uint32_t count, linkg_transport_delivery_batch_t *delivery_batches, linkg_transport_forward_batch_t *forward_batches, linkg_transport_rx_reorder_ready_t *pending)
 {
     linkg_transport_rx_source_group_t groups[LINKG_RESOURCE_NETWORK_STA_MAX];
     linkg_transport_rx_state_t        states[LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE];
@@ -1345,7 +1592,7 @@ static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_it
         return;
     }
 
-    _linkg_transport_rx_stage_user_reorder(link_id, items, states, count);
+    _linkg_transport_rx_stage_user_reorder(link_id, items, states, count, pending);
     _linkg_transport_rx_reassemble_batch(items, states, count, &stats);
     _linkg_transport_rx_dispatch_batch(items, states, count, delivery_batches, forward_batches, &stats);
     _linkg_transport_rx_record_batch_stats(&stats);
@@ -1356,16 +1603,17 @@ static void _linkg_transport_rx_process_chunk(uint32_t link_id, linkg_link_rx_it
 /**
  * @brief Link Base统一批量接收回调。
  *
- * @note Wi-Fi和Cellular分别完成物理Path归属统计，但Transport去重、乱序和重组统一使用直接Peer+traffic_class协议域。
- *       本机数据直接按Transport Type交付；AP中继数据严格按REALTIME、VIDEO、DATA独立批次交给Scheduler回调。
+ * @note USER_DATA由Reorder按Peer/Class统一处理Sequence。
+ *       READY在当前RX Handler完成交付后才解除Reorder交付占用。
  */
 void linkg_transport_receive_batch(linkg_link_t *link, linkg_link_rx_item_t *items, uint32_t count, void *user_data)
 {
-    linkg_transport_delivery_batch_t delivery_batches[LINKG_TRANSPORT_TYPE_COUNT];
-    linkg_transport_forward_batch_t  forward_batches[LINKG_TRANSPORT_CLASS_COUNT];
-    uint32_t                         chunk_count;
-    uint32_t                         link_id;
-    uint32_t                         offset;
+    linkg_transport_delivery_batch_t   delivery_batches[LINKG_TRANSPORT_TYPE_COUNT];
+    linkg_transport_forward_batch_t    forward_batches[LINKG_TRANSPORT_CLASS_COUNT];
+    linkg_transport_rx_reorder_ready_t pending;
+    uint32_t                           chunk_count;
+    uint32_t                           link_id;
+    uint32_t                           offset;
 
     (void)user_data;
 
@@ -1382,9 +1630,11 @@ void linkg_transport_receive_batch(linkg_link_t *link, linkg_link_rx_item_t *ite
 
     memset(delivery_batches, 0, sizeof(delivery_batches));
     memset(forward_batches, 0, sizeof(forward_batches));
+    memset(&pending, 0, sizeof(pending));
 
     offset = 0U;
 
+    // 按固定Chunk执行Transport接收流水线。
     while (offset < count)
     {
         chunk_count = count - offset;
@@ -1394,10 +1644,17 @@ void linkg_transport_receive_batch(linkg_link_t *link, linkg_link_rx_item_t *ite
             chunk_count = LINKG_TRANSPORT_RX_BATCH_CHUNK_SIZE;
         }
 
-        _linkg_transport_rx_process_chunk(link_id, &items[offset], chunk_count, delivery_batches, forward_batches);
+        _linkg_transport_rx_process_chunk(link_id, &items[offset], chunk_count, delivery_batches, forward_batches, &pending);
+
         offset += chunk_count;
     }
 
+    // 当前RX所有READY数据完成本机Handler交付。
     _linkg_transport_rx_flush_deliveries(delivery_batches);
+
+    // Handler返回后，解除对应Peer/Class的交付占用。
+    _linkg_transport_rx_complete_reorder_ready(&pending);
+
+    // 中继数据维持原有独立交付流程。
     _linkg_transport_rx_flush_forwards(forward_batches);
 }

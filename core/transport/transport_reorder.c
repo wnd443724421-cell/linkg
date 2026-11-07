@@ -1,4 +1,3 @@
-
 /**
  * @file transport_reorder.c
  * @brief LinkG本机USER_DATA接收顺序管理实现
@@ -13,76 +12,60 @@
 #include <string.h>
 #include <time.h>
 
+#include "linkg_log.h"
 #include "linkg_packet_pool.h"
 #include "linkg_thread.h"
 #include "linkg_time.h"
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_TRANSPORT_REORDER_THREAD_NAME          "trans-reorder" // Reorder工作线程名称
-#define LINKG_TRANSPORT_REORDER_WINDOW_SIZE          64U             // 每个Peer/Class的Sequence窗口大小
-#define LINKG_TRANSPORT_REORDER_WINDOW_MASK          (LINKG_TRANSPORT_REORDER_WINDOW_SIZE - 1U) // 窗口索引掩码
-#define LINKG_TRANSPORT_REORDER_WAIT_REALTIME_US     15000ULL        // REALTIME乱序最大等待时间
-#define LINKG_TRANSPORT_REORDER_WAIT_VIDEO_US        60000ULL        // VIDEO乱序最大等待时间
-#define LINKG_TRANSPORT_REORDER_WAIT_DATA_US         100000ULL       // DATA乱序最大等待时间
+#define LINKG_TRANSPORT_REORDER_THREAD_NAME      "trans-reorder" // Reorder工作线程名称
+#define LINKG_TRANSPORT_REORDER_WINDOW_SIZE      64U             // 每Peer/Class独立缓存窗口
+#define LINKG_TRANSPORT_REORDER_WINDOW_MASK      63U             // 64槽窗口索引掩码
+#define LINKG_TRANSPORT_REORDER_REALTIME_WAIT_US 15000ULL        // REALTIME最大缺口等待时间
+#define LINKG_TRANSPORT_REORDER_VIDEO_WAIT_US    60000ULL        // VIDEO最大缺口等待时间
+#define LINKG_TRANSPORT_REORDER_DATA_WAIT_US     800000ULL       // DATA最大缺口等待时间
 
-_Static_assert((LINKG_TRANSPORT_REORDER_WINDOW_SIZE &
-                (LINKG_TRANSPORT_REORDER_WINDOW_SIZE - 1U)) == 0U,
-               "reorder window size must be power of two");
+_Static_assert((LINKG_TRANSPORT_REORDER_WINDOW_SIZE & (LINKG_TRANSPORT_REORDER_WINDOW_SIZE - 1U)) == 0U, "reorder window size must be power of two");
+_Static_assert(LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX <= UINT8_MAX, "reorder group index must fit uint8_t");
 
 /****************************** 内部类型 ******************************/
 
-/**
- * @brief Reorder窗口缓存槽。
- */
 typedef struct
 {
-    linkg_transport_reorder_frame_t frame;        // 缓存Wire Frame，Reorder持有一个Packet引用
-    uint64_t                        expires_at_us; // 当前缓存帧的固定过期时间
+    linkg_transport_reorder_frame_t frame;         // 缓存Wire Frame，Reorder持有独立Packet引用
+    uint64_t                        expires_at_us; // 当前缓存帧的最晚释放判定时间
 } linkg_transport_reorder_slot_t;
 
-/**
- * @brief 单个Peer/Class的Reorder状态。
- */
 typedef struct
 {
-    linkg_transport_reorder_slot_t slots[LINKG_TRANSPORT_REORDER_WINDOW_SIZE]; // 64个Sequence缓存槽
-
-    uint32_t expected_sequence;       // 下一个应当交付的Sequence
-    uint32_t ready_first_sequence;    // 当前快速交付批次的首个Sequence
-    uint32_t ready_count;             // 当前快速交付批次的帧数量
-    uint32_t slot_count;              // 当前缓存帧数量
-    uint32_t peer_epoch;              // 当前Peer生命周期代际
-
-    uint8_t peer_node_id;             // 当前直接Peer节点编号
-
-    bool initialized;                 // 当前Peer/Class状态是否初始化
-    bool expected_initialized;        // expected_sequence是否有效
-    bool delivery_in_progress;        // 是否存在尚未完成的快速交付批次
-
+    linkg_transport_reorder_slot_t slots[LINKG_TRANSPORT_REORDER_WINDOW_SIZE]; // 64槽Sequence缓存
+    uint32_t                       expected_sequence;                          // 下一个应处理的Wire Sequence
+    uint32_t                       slot_count;                                 // 当前缓存数量
+    uint32_t                       peer_epoch;                                 // Peer生命周期代际
+    uint8_t                        peer_node_id;                               // 直接Peer节点编号
+    bool                           expected_initialized;                       // 接收基线是否有效
+    bool                           delivery_in_progress;                       // 同Peer/Class交付是否正在进行
 } linkg_transport_reorder_class_t;
 
-/**
- * @brief Reorder模块全局运行状态。
- */
 typedef struct
 {
-    pthread_mutex_t lock;                                                                           // Reorder状态保护锁
-    pthread_cond_t condition;                                                                       // Worker唤醒条件
-    linkg_thread_t thread;                                                                          // Reorder工作线程
+    uint8_t                 indices[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX]; // 原始输入帧索引
+    uint32_t                peer_index;                                        // Transport固定Peer槽位
+    uint32_t                count;                                             // 分组内帧数
+    linkg_transport_class_t traffic_class;                                     // 单一业务类别
+} linkg_transport_reorder_group_t;
 
-    linkg_transport_reorder_class_t classes[LINKG_TRANSPORT_PEER_MAX][LINKG_TRANSPORT_CLASS_COUNT]; // Peer/Class独立状态
-
-    linkg_transport_reorder_emit_func_t emit;                           // 有序帧异步交付回调
-
-    uint32_t next_peer_index[LINKG_TRANSPORT_CLASS_COUNT];              // 各Class下一次扫描Peer位置
-
-    uint8_t processing_peer_node_id;                                    // 当前Worker正在交付的Peer
-
-    bool worker_processing;                                             // Worker是否正在执行交付回调
-    bool initialized;                                                   // 模块是否已经初始化
-    bool running;                                                       // Worker是否继续运行
-
+typedef struct
+{
+    pthread_mutex_t                     lock;                                                           // Reorder状态保护锁
+    pthread_cond_t                      condition;                                                      // Worker唤醒和交付完成通知
+    linkg_thread_t                      thread;                                                         // 单一超时Worker
+    linkg_transport_reorder_class_t     classes[LINKG_TRANSPORT_PEER_MAX][LINKG_TRANSPORT_CLASS_COUNT]; // 每Peer/Class独立状态
+    linkg_transport_reorder_emit_func_t emit;                                                           // 锁外同步交付回调
+    uint32_t                            worker_cursor;                                                  // Worker公平扫描起点
+    bool                                initialized;                                                    // 运行资源已初始化
+    bool                                running;                                                        // Worker运行许可
 } linkg_transport_reorder_runtime_t;
 
 /****************************** 模块状态 ******************************/
@@ -91,74 +74,1082 @@ static linkg_transport_reorder_runtime_t g_reorder;
 
 /****************************** 内部辅助 ******************************/
 
-static bool _linkg_transport_reorder_sequence_before(uint32_t left, uint32_t right);
+/**
+ * @brief 获取Peer在Transport固定数组中的槽位索引。
+ */
+static int _linkg_transport_reorder_peer_index(const linkg_transport_peer_t *peer)
+{
+    uint32_t peer_index;
 
-static int _linkg_transport_reorder_peer_index(const linkg_transport_peer_t *peer);
+    if (peer == NULL)
+    {
+        return -EINVAL;
+    }
 
-static uint64_t _linkg_transport_reorder_get_timeout_us(linkg_transport_class_t traffic_class);
+    for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
+    {
+        if (peer == &g_transport.peers[peer_index])
+        {
+            return (int)peer_index;
+        }
+    }
 
-static bool _linkg_transport_reorder_frame_is_fragmented(const linkg_transport_reorder_frame_t *frame);
+    return -EINVAL;
+}
 
-static void _linkg_transport_reorder_release_frame(linkg_transport_reorder_frame_t *frame);
+/**
+ * @brief 判断Sequence是否早于另一个Sequence，允许uint32_t自然回绕。
+ */
+static bool _linkg_transport_reorder_sequence_before(uint32_t left, uint32_t right)
+{
+    return (int32_t)(left - right) < 0;
+}
 
-static void _linkg_transport_reorder_clear_class(linkg_transport_reorder_class_t *current);
+/**
+ * @brief 获取当前业务的乱序等待时间。
+ */
+static uint64_t _linkg_transport_reorder_wait_us(linkg_transport_class_t traffic_class)
+{
+    switch (traffic_class)
+    {
+        case LINKG_TRANSPORT_CLASS_REALTIME:
+            return LINKG_TRANSPORT_REORDER_REALTIME_WAIT_US;
 
-static void _linkg_transport_reorder_clear_peer(uint8_t peer_node_id);
+        case LINKG_TRANSPORT_CLASS_VIDEO:
+            return LINKG_TRANSPORT_REORDER_VIDEO_WAIT_US;
 
-static linkg_transport_reorder_slot_t *_linkg_transport_reorder_find_slot(linkg_transport_reorder_class_t *current, uint32_t sequence);
+        case LINKG_TRANSPORT_CLASS_DATA:
+        default:
+            return LINKG_TRANSPORT_REORDER_DATA_WAIT_US;
+    }
+}
 
-static uint32_t _linkg_transport_reorder_drain_class(linkg_transport_reorder_class_t *current,
-                                                      linkg_transport_reorder_frame_t *output,
-                                                      uint32_t capacity,
-                                                      uint64_t now_us,
-                                                      uint64_t *deadline_us);
+/**
+ * @brief 释放单个缓存槽持有的Packet引用。
+ */
+static void _linkg_transport_reorder_clear_slot(linkg_transport_reorder_slot_t *slot)
+{
+    if (slot->frame.packet != NULL)
+    {
+        linkg_packet_release(slot->frame.packet);
+    }
 
-static uint32_t _linkg_transport_reorder_take_ready(linkg_transport_reorder_frame_t *output,
-                                                     uint32_t capacity,
-                                                     uint8_t *peer_node_id,
-                                                     uint64_t *deadline_us);
+    memset(slot, 0, sizeof(*slot));
+}
 
-static void _linkg_transport_reorder_wait_locked(uint64_t deadline_us);
+/**
+ * @brief 清空Peer/Class缓存和全部Sequence状态。
+ */
+static void _linkg_transport_reorder_clear_class(linkg_transport_reorder_class_t *current)
+{
+    uint32_t index;
+
+    for (index = 0U; index < LINKG_TRANSPORT_REORDER_WINDOW_SIZE; index++)
+    {
+        _linkg_transport_reorder_clear_slot(&current->slots[index]);
+    }
+
+    memset(current, 0, sizeof(*current));
+}
+
+/**
+ * @brief 按Peer/Class归并当前批次的输入帧索引。
+ */
+static uint32_t _linkg_transport_reorder_build_groups(const linkg_transport_reorder_frame_t *frames, uint32_t count, const uint32_t *peer_indices, linkg_transport_reorder_group_t *groups)
+{
+    linkg_transport_reorder_group_t *group;
+    uint32_t                        group_count;
+    uint32_t                        group_index;
+    uint32_t                        index;
+
+    group_count = 0U;
+
+    for (index = 0U; index < count; index++)
+    {
+        for (group_index = 0U; group_index < group_count; group_index++)
+        {
+            if (groups[group_index].peer_index == peer_indices[index] &&
+                groups[group_index].traffic_class == frames[index].traffic_class)
+            {
+                break;
+            }
+        }
+
+        if (group_index == group_count)
+        {
+            group = &groups[group_count++];
+            memset(group, 0, sizeof(*group));
+
+            group->peer_index    = peer_indices[index];
+            group->traffic_class = frames[index].traffic_class;
+        }
+
+        group = &groups[group_index];
+        group->indices[group->count++] = (uint8_t)index;
+    }
+
+    return group_count;
+}
+
+/**
+ * @brief 按Sequence排列分组索引，不移动输入Frame或Packet。
+ */
+static void _linkg_transport_reorder_sort_group(const linkg_transport_reorder_group_t *group, const linkg_transport_reorder_frame_t *frames, uint8_t *order)
+{
+    uint32_t position;
+    uint32_t compare;
+    uint8_t  frame_index;
+    bool     sorted;
+
+    memcpy(order, group->indices, group->count * sizeof(order[0]));
+
+    sorted = true;
+
+    for (position = 1U; position < group->count; position++)
+    {
+        if (_linkg_transport_reorder_sequence_before(frames[order[position]].header.sequence, frames[order[position - 1U]].header.sequence))
+        {
+            sorted = false;
+            break;
+        }
+    }
+
+    if (sorted)
+    {
+        return;
+    }
+
+    for (position = 1U; position < group->count; position++)
+    {
+        frame_index = order[position];
+        compare     = position;
+
+        while (compare > 0U &&
+               _linkg_transport_reorder_sequence_before(frames[frame_index].header.sequence, frames[order[compare - 1U]].header.sequence))
+        {
+            order[compare] = order[compare - 1U];
+            compare--;
+        }
+
+        order[compare] = frame_index;
+    }
+}
+
+/**
+ * @brief 校验Peer代际并建立首次Sequence基线。
+ */
+static bool _linkg_transport_reorder_prepare_group_locked(linkg_transport_reorder_class_t *current, const linkg_transport_reorder_group_t *group, const uint8_t *order, const linkg_transport_reorder_frame_t *frames, linkg_transport_reorder_result_t *results)
+{
+    const linkg_transport_reorder_frame_t *frame;
+    uint32_t                               position;
+    uint32_t                               index;
+    bool                                   valid;
+
+    valid = false;
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+        frame = &frames[index];
+
+        if (!linkg_transport_peer_epoch_matches(frame->peer, frame->peer_epoch) ||
+            (current->expected_initialized &&
+             (current->peer_epoch != frame->peer_epoch || current->peer_node_id != frame->peer_node_id)))
+        {
+            results[index] = LINKG_TRANSPORT_REORDER_RESULT_STALE;
+            continue;
+        }
+
+        valid = true;
+    }
+
+    if (!valid)
+    {
+        return false;
+    }
+
+    if (current->expected_initialized)
+    {
+        return true;
+    }
+
+    if (current->slot_count != 0U || current->delivery_in_progress)
+    {
+        for (position = 0U; position < group->count; position++)
+        {
+            results[order[position]] = LINKG_TRANSPORT_REORDER_RESULT_STALE;
+        }
+
+        return false;
+    }
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+
+        if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED)
+        {
+            continue;
+        }
+
+        current->expected_sequence    = frames[index].header.sequence;
+        current->peer_epoch           = frames[index].peer_epoch;
+        current->peer_node_id         = frames[index].peer_node_id;
+        current->expected_initialized = true;
+        break;
+    }
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+
+        if (results[index] == LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED &&
+            (frames[index].peer_epoch != current->peer_epoch || frames[index].peer_node_id != current->peer_node_id))
+        {
+            results[index] = LINKG_TRANSPORT_REORDER_RESULT_STALE;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * @brief 空窗口遇到全部前向超窗新帧时，重建接收基线以恢复业务。
+ * @note 不在有缓存或交付占用时提前跳过缺口。
+ */
+static void _linkg_transport_reorder_rebase_empty_locked(linkg_transport_reorder_class_t *current, const linkg_transport_reorder_group_t *group, const uint8_t *order, const linkg_transport_reorder_frame_t *frames, const linkg_transport_reorder_result_t *results)
+{
+    uint32_t position;
+    uint32_t index;
+
+    if (current->delivery_in_progress || current->slot_count != 0U)
+    {
+        return;
+    }
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+
+        if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED)
+        {
+            continue;
+        }
+
+        if (!_linkg_transport_reorder_sequence_before(frames[index].header.sequence, current->expected_sequence) &&
+            (frames[index].header.sequence - current->expected_sequence) < LINKG_TRANSPORT_REORDER_WINDOW_SIZE)
+        {
+            return;
+        }
+    }
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+
+        if (results[index] == LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED &&
+            _linkg_transport_reorder_sequence_before(current->expected_sequence, frames[index].header.sequence))
+        {
+            current->expected_sequence = frames[index].header.sequence;
+            return;
+        }
+    }
+}
+
+/**
+ * @brief 标记已过期、重复或超窗的新输入帧。
+ */
+static void _linkg_transport_reorder_filter_group_locked(linkg_transport_reorder_class_t *current, const linkg_transport_reorder_group_t *group, const uint8_t *order, const linkg_transport_reorder_frame_t *frames, linkg_transport_reorder_result_t *results)
+{
+    linkg_transport_reorder_slot_t *slot;
+    uint32_t                        sequence;
+    uint32_t                        position;
+    uint32_t                        previous;
+    uint32_t                        index;
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+
+        if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED)
+        {
+            continue;
+        }
+
+        sequence = frames[index].header.sequence;
+
+        if (_linkg_transport_reorder_sequence_before(sequence, current->expected_sequence))
+        {
+            results[index] = LINKG_TRANSPORT_REORDER_RESULT_TOO_OLD;
+            continue;
+        }
+
+        if ((sequence - current->expected_sequence) >= LINKG_TRANSPORT_REORDER_WINDOW_SIZE)
+        {
+            results[index] = LINKG_TRANSPORT_REORDER_RESULT_OUT_OF_WINDOW;
+            continue;
+        }
+
+        slot = &current->slots[sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
+
+        if (slot->frame.packet != NULL)
+        {
+            results[index] = slot->frame.header.sequence == sequence ? LINKG_TRANSPORT_REORDER_RESULT_TOO_OLD : LINKG_TRANSPORT_REORDER_RESULT_OUT_OF_WINDOW;
+            continue;
+        }
+
+        for (previous = 0U; previous < position; previous++)
+        {
+            if (results[order[previous]] == LINKG_TRANSPORT_REORDER_RESULT_STALE)
+            {
+                continue;
+            }
+
+            if (frames[order[previous]].header.sequence == sequence)
+            {
+                results[index] = LINKG_TRANSPORT_REORDER_RESULT_TOO_OLD;
+                break;
+            }
+        }
+    }
+}
+
+/**
+ * @brief 计算从expected_sequence开始的输入连续前缀及原始输入顺序。
+ */
+static uint32_t _linkg_transport_reorder_ready_prefix_locked(const linkg_transport_reorder_class_t *current, const linkg_transport_reorder_group_t *group, const uint8_t *order, const linkg_transport_reorder_frame_t *frames, const linkg_transport_reorder_result_t *results, bool *input_in_order)
+{
+    uint32_t expected_sequence;
+    uint32_t previous_index;
+    uint32_t prefix_count;
+    uint32_t position;
+    uint32_t index;
+
+    expected_sequence = current->expected_sequence;
+    previous_index    = 0U;
+    prefix_count      = 0U;
+    *input_in_order   = true;
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+
+        if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED)
+        {
+            continue;
+        }
+
+        if (frames[index].header.sequence != expected_sequence)
+        {
+            break;
+        }
+
+        if (prefix_count > 0U && index < previous_index)
+        {
+            *input_in_order = false;
+        }
+
+        previous_index = index;
+        expected_sequence++;
+        prefix_count++;
+    }
+
+    return prefix_count;
+}
+
+/**
+ * @brief 缓存分组中未处理的输入帧，取得Packet独立引用。
+ */
+static void _linkg_transport_reorder_cache_group_locked(linkg_transport_reorder_class_t *current, const linkg_transport_reorder_group_t *group, const uint8_t *order, const linkg_transport_reorder_frame_t *frames, linkg_transport_reorder_result_t *results, uint64_t now_us, bool *worker_wakeup)
+{
+    linkg_transport_reorder_slot_t *slot;
+    uint64_t                        wait_us;
+    uint32_t                        sequence;
+    uint32_t                        position;
+    uint32_t                        index;
+
+    wait_us = _linkg_transport_reorder_wait_us(group->traffic_class);
+
+    for (position = 0U; position < group->count; position++)
+    {
+        index = order[position];
+
+        if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED)
+        {
+            continue;
+        }
+
+        sequence = frames[index].header.sequence;
+        slot     = &current->slots[sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
+
+        linkg_packet_retain(frames[index].packet);
+
+        slot->frame         = frames[index];
+        slot->expires_at_us = now_us + wait_us;
+        current->slot_count++;
+
+        results[index] = LINKG_TRANSPORT_REORDER_RESULT_CACHED;
+        *worker_wakeup = true;
+    }
+}
+
+/**
+ * @brief 将从expected_sequence开始的连续缓存移入同步Emit输出。
+ * @note 输出每个Frame均携带Reorder持有的Packet引用，回调后统一释放。
+ */
+static void _linkg_transport_reorder_take_contiguous_locked(linkg_transport_reorder_class_t *current, const linkg_transport_reorder_group_t *group, const linkg_transport_reorder_frame_t *frames, linkg_transport_reorder_result_t *results, linkg_transport_reorder_frame_t *emit_frames, bool *emit_owned, uint32_t *emit_count)
+{
+    linkg_transport_reorder_slot_t *slot;
+    uint32_t                        sequence;
+    uint32_t                        position;
+    uint32_t                        index;
+
+    while (*emit_count < LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX)
+    {
+        sequence = current->expected_sequence;
+        slot     = &current->slots[sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
+
+        if (slot->frame.packet == NULL || slot->frame.header.sequence != sequence)
+        {
+            break;
+        }
+
+        emit_frames[*emit_count] = slot->frame;
+        emit_owned[*emit_count]  = true;
+        (*emit_count)++;
+
+        for (position = 0U; position < group->count; position++)
+        {
+            index = group->indices[position];
+
+            if (results[index] == LINKG_TRANSPORT_REORDER_RESULT_CACHED &&
+                frames[index].header.sequence == sequence)
+            {
+                results[index] = LINKG_TRANSPORT_REORDER_RESULT_EMITTED;
+                break;
+            }
+        }
+
+        memset(slot, 0, sizeof(*slot));
+        current->slot_count--;
+        current->expected_sequence++;
+        current->delivery_in_progress = true;
+    }
+}
+
+/**
+ * @brief 根据状态为单个Peer/Class选择互斥交付路径。
+ */
+static void _linkg_transport_reorder_process_group_locked(const linkg_transport_reorder_group_t *group, const linkg_transport_reorder_frame_t *frames, linkg_transport_reorder_result_t *results, linkg_transport_reorder_frame_t *emit_frames, bool *emit_owned, uint32_t *emit_count, uint64_t now_us, bool *worker_wakeup)
+{
+    linkg_transport_reorder_class_t *current;
+    linkg_transport_reorder_slot_t  *next_slot;
+    uint8_t                          order[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
+    uint32_t                         prefix_count;
+    uint32_t                         next_sequence;
+    uint32_t                         position;
+    uint32_t                         ready_count;
+    uint32_t                         index;
+    bool                             input_in_order;
+    bool                             cached_next;
+
+    current = &g_reorder.classes[group->peer_index][group->traffic_class];
+    _linkg_transport_reorder_sort_group(group, frames, order);
+
+    // 分支一：失效生命周期不可修改旧Peer/Class缓存。
+    if (!_linkg_transport_reorder_prepare_group_locked(current, group, order, frames, results))
+    {
+        return;
+    }
+
+    // 分支二：同Peer/Class上一批交付未结束，本组新帧只能缓存。
+    if (current->delivery_in_progress)
+    {
+        _linkg_transport_reorder_filter_group_locked(current, group, order, frames, results);
+        _linkg_transport_reorder_cache_group_locked(current, group, order, frames, results, now_us, worker_wakeup);
+        return;
+    }
+
+    // 分支三：没有缓存和交付占用时允许对远端Sequence重新建立窗口基线。
+    _linkg_transport_reorder_rebase_empty_locked(current, group, order, frames, results);
+    _linkg_transport_reorder_filter_group_locked(current, group, order, frames, results);
+
+    prefix_count = _linkg_transport_reorder_ready_prefix_locked(current, group, order, frames, results, &input_in_order);
+    next_sequence = current->expected_sequence + prefix_count;
+    next_slot     = &current->slots[next_sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
+    cached_next   = next_slot->frame.packet != NULL && next_slot->frame.header.sequence == next_sequence;
+
+    // 分支四：原始RX中存在有序连续前缀，无需衔接缓存，直接READY。
+    if (prefix_count > 0U && input_in_order && !cached_next)
+    {
+        ready_count = 0U;
+
+        for (position = 0U; position < group->count && ready_count < prefix_count; position++)
+        {
+            index = order[position];
+
+            if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED)
+            {
+                continue;
+            }
+
+            results[index] = LINKG_TRANSPORT_REORDER_RESULT_READY;
+            ready_count++;
+        }
+
+        current->expected_sequence    = next_sequence;
+        current->delivery_in_progress = true;
+
+        _linkg_transport_reorder_cache_group_locked(current, group, order, frames, results, now_us, worker_wakeup);
+        return;
+    }
+
+    // 分支五：批内乱序或补齐历史缓存，缓存后抽取有序前缀同步Emit。
+    _linkg_transport_reorder_cache_group_locked(current, group, order, frames, results, now_us, worker_wakeup);
+    _linkg_transport_reorder_take_contiguous_locked(current, group, frames, results, emit_frames, emit_owned, emit_count);
+}
+
+/**
+ * @brief 按Peer/Class整理批次并分别作出交付决策。
+ */
+static void _linkg_transport_reorder_process_batch_locked(const linkg_transport_reorder_frame_t *frames, uint32_t count, const uint32_t *peer_indices, linkg_transport_reorder_result_t *results, linkg_transport_reorder_frame_t *emit_frames, bool *emit_owned, uint32_t *emit_count, bool *worker_wakeup)
+{
+    linkg_transport_reorder_group_t groups[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
+    uint32_t                        group_count;
+    uint32_t                        group_index;
+    uint64_t                        now_us;
+
+    group_count = _linkg_transport_reorder_build_groups(frames, count, peer_indices, groups);
+    now_us      = linkg_time_monotonic_us();
+
+    for (group_index = 0U; group_index < group_count; group_index++)
+    {
+        _linkg_transport_reorder_process_group_locked(&groups[group_index], frames, results, emit_frames, emit_owned, emit_count, now_us, worker_wakeup);
+    }
+}
+
+/**
+ * @brief 在完成同步Emit后，释放相应Peer/Class的交付占用并唤醒等待者。
+ */
+static void _linkg_transport_reorder_complete_emit_locked(const linkg_transport_reorder_frame_t *frames, uint32_t count)
+{
+    linkg_transport_reorder_class_t *current;
+    uint32_t                        peer_index;
+    uint32_t                        class_index;
+    uint32_t                        index;
+    int                             slot_index;
+    bool                            changed;
+
+    changed = false;
+
+    for (index = 0U; index < count; index++)
+    {
+        slot_index = _linkg_transport_reorder_peer_index(frames[index].peer);
+        if (slot_index < 0)
+        {
+            continue;
+        }
+
+        peer_index  = (uint32_t)slot_index;
+        class_index = (uint32_t)frames[index].traffic_class;
+        current     = &g_reorder.classes[peer_index][class_index];
+
+        if (current->expected_initialized &&
+            current->peer_epoch == frames[index].peer_epoch &&
+            current->peer_node_id == frames[index].peer_node_id &&
+            current->delivery_in_progress)
+        {
+            current->delivery_in_progress = false;
+            changed = true;
+        }
+    }
+
+    if (changed)
+    {
+        pthread_cond_broadcast(&g_reorder.condition);
+    }
+}
+
+/**
+ * @brief 在Reorder锁外同步回调，之后释放全部输出引用和交付占用。
+ */
+static void _linkg_transport_reorder_emit_batch(linkg_transport_reorder_emit_func_t emit, const linkg_transport_reorder_frame_t *frames, const bool *owned, uint32_t count)
+{
+    uint32_t index;
+    int      ret;
+
+    if (count == 0U)
+    {
+        return;
+    }
+
+    emit(frames, count);
+
+    for (index = 0U; index < count; index++)
+    {
+        if (owned[index])
+        {
+            linkg_packet_release(frames[index].packet);
+        }
+    }
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("transport reorder emit completion lock failed, error=%d", ret);
+        return;
+    }
+
+    _linkg_transport_reorder_complete_emit_locked(frames, count);
+    pthread_mutex_unlock(&g_reorder.lock);
+}
 
 /****************************** Worker ******************************/
 
 /**
- * @brief Reorder统一工作线程。
+ * @brief 从一个Peer/Class窗口提取可交付帧，或计算其最早缺口截止时间。
+ */
+static uint32_t _linkg_transport_reorder_take_worker_class_locked(linkg_transport_reorder_class_t *current, linkg_transport_reorder_frame_t *output, uint32_t capacity, uint64_t now_us, uint64_t *deadline_us)
+{
+    linkg_transport_reorder_slot_t *slot;
+    uint32_t                        nearest_sequence;
+    uint32_t                        nearest_distance;
+    uint32_t                        distance;
+    uint32_t                        slot_index;
+    uint32_t                        count;
+    bool                            found;
+
+    if (!current->expected_initialized || current->delivery_in_progress || current->slot_count == 0U)
+    {
+        return 0U;
+    }
+
+    found            = false;
+    nearest_distance = LINKG_TRANSPORT_REORDER_WINDOW_SIZE;
+    nearest_sequence = 0U;
+
+    // 选择距离expected最近的已缓存Sequence，避免跨越尚未到期的前序缓存。
+    for (slot_index = 0U; slot_index < LINKG_TRANSPORT_REORDER_WINDOW_SIZE; slot_index++)
+    {
+        slot = &current->slots[slot_index];
+
+        if (slot->frame.packet == NULL)
+        {
+            continue;
+        }
+
+        distance = slot->frame.header.sequence - current->expected_sequence;
+
+        if (distance < nearest_distance)
+        {
+            nearest_sequence = slot->frame.header.sequence;
+            nearest_distance = distance;
+            found            = true;
+        }
+    }
+
+    if (!found)
+    {
+        return 0U;
+    }
+
+    slot = &current->slots[nearest_sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
+
+    if (nearest_distance != 0U)
+    {
+        if (slot->expires_at_us > now_us)
+        {
+            if (*deadline_us == 0ULL || slot->expires_at_us < *deadline_us)
+            {
+                *deadline_us = slot->expires_at_us;
+            }
+
+            return 0U;
+        }
+
+        // 最早可用的缓存帧已经超时，跳过缺失的前序Sequence。
+        current->expected_sequence = nearest_sequence;
+    }
+
+    count = 0U;
+
+    while (count < capacity)
+    {
+        slot = &current->slots[current->expected_sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
+
+        if (slot->frame.packet == NULL || slot->frame.header.sequence != current->expected_sequence)
+        {
+            break;
+        }
+
+        output[count++] = slot->frame;
+        memset(slot, 0, sizeof(*slot));
+
+        current->slot_count--;
+        current->expected_sequence++;
+    }
+
+    if (count > 0U)
+    {
+        current->delivery_in_progress = true;
+    }
+
+    return count;
+}
+
+/**
+ * @brief 逐Peer/Class扫描可交付的Worker帧，并计算最近超时期限。
+ */
+static uint32_t _linkg_transport_reorder_take_worker_locked(linkg_transport_reorder_frame_t *output, uint32_t capacity, uint64_t now_us, uint64_t *deadline_us)
+{
+    linkg_transport_reorder_class_t *current;
+    uint32_t                        peer_index;
+    uint32_t                        class_index;
+    uint32_t                        flat_index;
+    uint32_t                        total;
+    uint32_t                        offset;
+    uint32_t                        count;
+
+    total = LINKG_TRANSPORT_PEER_MAX * LINKG_TRANSPORT_CLASS_COUNT;
+
+    for (offset = 0U; offset < total; offset++)
+    {
+        flat_index  = (g_reorder.worker_cursor + offset) % total;
+        peer_index  = flat_index / LINKG_TRANSPORT_CLASS_COUNT;
+        class_index = flat_index % LINKG_TRANSPORT_CLASS_COUNT;
+        current     = &g_reorder.classes[peer_index][class_index];
+
+        if (current->expected_initialized &&
+            !linkg_transport_peer_epoch_matches(&g_transport.peers[peer_index], current->peer_epoch) &&
+            !current->delivery_in_progress)
+        {
+            _linkg_transport_reorder_clear_class(current);
+            continue;
+        }
+
+        count = _linkg_transport_reorder_take_worker_class_locked(current, output, capacity, now_us, deadline_us);
+        if (count > 0U)
+        {
+            g_reorder.worker_cursor = (flat_index + 1U) % total;
+            return count;
+        }
+    }
+
+    return 0U;
+}
+
+/**
+ * @brief Reorder统一超时及缓存交付线程。
  */
 static void _linkg_transport_reorder_worker(linkg_thread_t *thread, void *user_data)
 {
-    (void)thread;
+    linkg_transport_reorder_frame_t frames[LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX];
+    bool                            owned[LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX];
+    struct timespec                 timeout;
+    uint64_t                        deadline_us;
+    uint64_t                        now_us;
+    uint32_t                        count;
+    uint32_t                        index;
+    int                             ret;
+
     (void)user_data;
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        return;
+    }
+
+    while (g_reorder.running && linkg_thread_is_running(thread))
+    {
+        deadline_us = 0ULL;
+        now_us      = linkg_time_monotonic_us();
+
+        count = _linkg_transport_reorder_take_worker_locked(frames, LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX, now_us, &deadline_us);
+
+        if (count > 0U)
+        {
+            // 一次只交付一个Peer/Class，交付期间不持有Reorder锁。
+            pthread_mutex_unlock(&g_reorder.lock);
+
+            for (index = 0U; index < count; index++)
+            {
+                owned[index] = true;
+            }
+
+            _linkg_transport_reorder_emit_batch(g_reorder.emit, frames, owned, count);
+
+            ret = pthread_mutex_lock(&g_reorder.lock);
+            if (ret != 0)
+            {
+                return;
+            }
+
+            continue;
+        }
+
+        if (deadline_us == 0ULL)
+        {
+            ret = pthread_cond_wait(&g_reorder.condition, &g_reorder.lock);
+        }
+        else
+        {
+            timeout.tv_sec  = (time_t)(deadline_us / 1000000ULL);
+            timeout.tv_nsec = (long)((deadline_us % 1000000ULL) * 1000ULL);
+            ret = pthread_cond_timedwait(&g_reorder.condition, &g_reorder.lock, &timeout);
+        }
+
+        if (ret != 0 && ret != ETIMEDOUT)
+        {
+            LINKG_LOG_ERROR("transport reorder worker condition wait failed, error=%d", ret);
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&g_reorder.lock);
 }
 
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 初始化Reorder运行环境。
+ * @brief 初始化Reorder运行资源。
  */
 int linkg_transport_reorder_runtime_init(linkg_transport_reorder_emit_func_t emit)
 {
-    (void)emit;
+    pthread_condattr_t attributes;
+    int                ret;
 
-    return -ENOSYS;
+    if (emit == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (g_reorder.initialized)
+    {
+        return -EALREADY;
+    }
+
+    memset(&g_reorder, 0, sizeof(g_reorder));
+
+    ret = pthread_mutex_init(&g_reorder.lock, NULL);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    ret = pthread_condattr_init(&attributes);
+    if (ret != 0)
+    {
+        pthread_mutex_destroy(&g_reorder.lock);
+        return -ret;
+    }
+
+    ret = pthread_condattr_setclock(&attributes, CLOCK_MONOTONIC);
+    if (ret == 0)
+    {
+        ret = pthread_cond_init(&g_reorder.condition, &attributes);
+    }
+
+    pthread_condattr_destroy(&attributes);
+
+    if (ret != 0)
+    {
+        pthread_mutex_destroy(&g_reorder.lock);
+        return -ret;
+    }
+
+    ret = linkg_thread_init(&g_reorder.thread, LINKG_TRANSPORT_REORDER_THREAD_NAME, _linkg_transport_reorder_worker, NULL);
+    if (ret != 0)
+    {
+        pthread_cond_destroy(&g_reorder.condition);
+        pthread_mutex_destroy(&g_reorder.lock);
+        return ret;
+    }
+
+    g_reorder.emit        = emit;
+    g_reorder.running     = true;
+    g_reorder.initialized = true;
+
+    ret = linkg_thread_start(&g_reorder.thread);
+    if (ret != 0)
+    {
+        g_reorder.running     = false;
+        g_reorder.initialized = false;
+        g_reorder.emit        = NULL;
+
+        linkg_thread_deinit(&g_reorder.thread);
+        pthread_cond_destroy(&g_reorder.condition);
+        pthread_mutex_destroy(&g_reorder.lock);
+        return ret;
+    }
+
+    return 0;
 }
 
 /**
- * @brief 停止Reorder并释放全部缓存资源。
+ * @brief 等待已有交付结束，停止Worker并释放所有缓存资源。
  */
 int linkg_transport_reorder_runtime_deinit(void)
 {
-    return -ENOSYS;
+    uint32_t peer_index;
+    uint32_t class_index;
+    bool     delivering;
+    int      ret;
+
+    if (!g_reorder.initialized)
+    {
+        return 0;
+    }
+
+    if (linkg_transport_reorder_is_worker_thread())
+    {
+        return -EDEADLK;
+    }
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    g_reorder.running = false;
+    pthread_cond_broadcast(&g_reorder.condition);
+    pthread_mutex_unlock(&g_reorder.lock);
+
+    ret = linkg_thread_stop(&g_reorder.thread);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    // Link Manager已停止接收回调，此时只需等待正在进行的同步Emit或READY。
+    for (;;)
+    {
+        delivering = false;
+
+        for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX && !delivering; peer_index++)
+        {
+            for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+            {
+                if (g_reorder.classes[peer_index][class_index].delivery_in_progress)
+                {
+                    delivering = true;
+                    break;
+                }
+            }
+        }
+
+        if (!delivering)
+        {
+            break;
+        }
+
+        ret = pthread_cond_wait(&g_reorder.condition, &g_reorder.lock);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&g_reorder.lock);
+            return -ret;
+        }
+    }
+
+    for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
+    {
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            _linkg_transport_reorder_clear_class(&g_reorder.classes[peer_index][class_index]);
+        }
+    }
+
+    pthread_mutex_unlock(&g_reorder.lock);
+    linkg_thread_deinit(&g_reorder.thread);
+    pthread_cond_destroy(&g_reorder.condition);
+    pthread_mutex_destroy(&g_reorder.lock);
+    memset(&g_reorder, 0, sizeof(g_reorder));
+
+    return 0;
 }
 
 /**
- * @brief 清理指定Peer的全部Class状态。
+ * @brief 等待指定Peer交付结束，清理全部业务缓存及Sequence状态。
  */
 int linkg_transport_reorder_reset_peer(uint8_t peer_node_id)
 {
-    (void)peer_node_id;
+    linkg_transport_reorder_class_t *current;
+    uint32_t                        peer_index;
+    uint32_t                        class_index;
+    bool                            delivering;
+    int                             ret;
 
-    return -ENOSYS;
+    if (!g_reorder.initialized)
+    {
+        return -ENODEV;
+    }
+
+    if (linkg_transport_reorder_is_worker_thread())
+    {
+        return -EDEADLK;
+    }
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    for (;;)
+    {
+        delivering = false;
+
+        for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX && !delivering; peer_index++)
+        {
+            for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+            {
+                current = &g_reorder.classes[peer_index][class_index];
+
+                if (current->expected_initialized && current->peer_node_id == peer_node_id && current->delivery_in_progress)
+                {
+                    delivering = true;
+                    break;
+                }
+            }
+        }
+
+        if (!delivering)
+        {
+            break;
+        }
+
+        ret = pthread_cond_wait(&g_reorder.condition, &g_reorder.lock);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&g_reorder.lock);
+            return -ret;
+        }
+    }
+
+    for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
+    {
+        for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+        {
+            current = &g_reorder.classes[peer_index][class_index];
+
+            if (current->expected_initialized && current->peer_node_id == peer_node_id)
+            {
+                _linkg_transport_reorder_clear_class(current);
+            }
+        }
+    }
+
+    pthread_cond_broadcast(&g_reorder.condition);
+    pthread_mutex_unlock(&g_reorder.lock);
+
+    return 0;
 }
 
 /**
@@ -166,33 +1157,171 @@ int linkg_transport_reorder_reset_peer(uint8_t peer_node_id)
  */
 bool linkg_transport_reorder_is_worker_thread(void)
 {
-    return false;
+    if (!g_reorder.initialized || !linkg_thread_is_started(&g_reorder.thread))
+    {
+        return false;
+    }
+
+    return pthread_equal(pthread_self(), g_reorder.thread.tid) != 0;
 }
 
-/****************************** 批量接收 ******************************/
+/****************************** 数据接收 ******************************/
 
 /**
  * @brief 批量提交USER_DATA Wire Frame并返回逐帧处理结果。
  */
 int linkg_transport_reorder_submit_batch(const linkg_transport_reorder_frame_t *frames, uint32_t count, linkg_transport_reorder_result_t *results)
 {
-    (void)frames;
-    (void)count;
-    (void)results;
+    linkg_transport_reorder_frame_t     emit_frames[LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX];
+    linkg_transport_reorder_emit_func_t emit;
+    uint32_t                            peer_indices[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
+    bool                                emit_owned[LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX];
+    uint32_t                            emit_count;
+    uint32_t                            index;
+    bool                                worker_wakeup;
+    int                                 peer_index;
+    int                                 ret;
 
-    return -ENOSYS;
+    if (count == 0U)
+    {
+        return 0;
+    }
+
+    if (frames == NULL || results == NULL || count > LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX)
+    {
+        return -EINVAL;
+    }
+
+    for (index = 0U; index < count; index++)
+    {
+        results[index] = LINKG_TRANSPORT_REORDER_RESULT_UNPROCESSED;
+    }
+
+    for (index = 0U; index < count; index++)
+    {
+        if (frames[index].packet == NULL ||
+            frames[index].peer == NULL ||
+            (uint32_t)frames[index].traffic_class >= LINKG_TRANSPORT_CLASS_COUNT)
+        {
+            return -EINVAL;
+        }
+
+        peer_index = _linkg_transport_reorder_peer_index(frames[index].peer);
+        if (peer_index < 0)
+        {
+            return -EINVAL;
+        }
+
+        peer_indices[index] = (uint32_t)peer_index;
+    }
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    if (!g_reorder.initialized || !g_reorder.running)
+    {
+        pthread_mutex_unlock(&g_reorder.lock);
+        return -ENODEV;
+    }
+
+    emit_count    = 0U;
+    worker_wakeup = false;
+    emit          = g_reorder.emit;
+
+    memset(emit_owned, 0, sizeof(emit_owned));
+
+    _linkg_transport_reorder_process_batch_locked(frames, count, peer_indices, results, emit_frames, emit_owned, &emit_count, &worker_wakeup);
+
+    if (worker_wakeup)
+    {
+        pthread_cond_broadcast(&g_reorder.condition);
+    }
+
+    pthread_mutex_unlock(&g_reorder.lock);
+
+    if (emit_count > 0U)
+    {
+        _linkg_transport_reorder_emit_batch(emit, emit_frames, emit_owned, emit_count);
+    }
+
+    return 0;
 }
 
-/****************************** 批量完成 ******************************/
+/****************************** 交付完成 ******************************/
 
 /**
- * @brief 完成当前RX批次的READY快速交付并释放交付占用。
+ * @brief RX Handler交付所有READY帧后解除相应Peer/Class交付占用。
  */
 int linkg_transport_reorder_complete_batch(const linkg_transport_reorder_frame_t *frames, const linkg_transport_reorder_result_t *results, uint32_t count)
 {
-    (void)frames;
-    (void)results;
-    (void)count;
+    linkg_transport_reorder_class_t *current;
+    uint32_t                        class_index;
+    uint32_t                        peer_index;
+    uint32_t                        index;
+    int                             slot_index;
+    bool                            changed;
+    int                             ret;
 
-    return -ENOSYS;
+    if (count == 0U)
+    {
+        return 0;
+    }
+
+    if (frames == NULL || results == NULL || count > LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX)
+    {
+        return -EINVAL;
+    }
+
+    ret = pthread_mutex_lock(&g_reorder.lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+
+    changed = false;
+
+    for (index = 0U; index < count; index++)
+    {
+        if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_READY)
+        {
+            continue;
+        }
+
+        slot_index = _linkg_transport_reorder_peer_index(frames[index].peer);
+        if (slot_index < 0)
+        {
+            continue;
+        }
+
+        peer_index  = (uint32_t)slot_index;
+        class_index = (uint32_t)frames[index].traffic_class;
+
+        if (class_index >= LINKG_TRANSPORT_CLASS_COUNT)
+        {
+            continue;
+        }
+
+        current = &g_reorder.classes[peer_index][class_index];
+
+        if (current->expected_initialized &&
+            current->peer_epoch == frames[index].peer_epoch &&
+            current->peer_node_id == frames[index].peer_node_id &&
+            current->delivery_in_progress)
+        {
+            current->delivery_in_progress = false;
+            changed = true;
+        }
+    }
+
+    if (changed)
+    {
+        pthread_cond_broadcast(&g_reorder.condition);
+    }
+
+    pthread_mutex_unlock(&g_reorder.lock);
+
+    return 0;
 }
