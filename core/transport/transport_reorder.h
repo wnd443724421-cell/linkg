@@ -12,6 +12,7 @@
 
 #define LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX 32U // 单次最大输入帧数
 #define LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX   32U // 单次最大回调输出帧数
+#define LINKG_TRANSPORT_REORDER_WINDOW_SIZE      64U // 每Peer/Class独立Sequence窗口
 
 /****************************** Reorder帧 ******************************/
 

@@ -707,28 +707,36 @@ static void _linkg_transport_reorder_emit_batch(linkg_transport_reorder_emit_fun
 /****************************** Worker ******************************/
 
 /**
- * @brief 从一个Peer/Class窗口提取可交付帧，或计算其最早缺口截止时间。
+ * @brief 按全窗口最早到期时间推进Peer/Class缓存并提取可交付帧。
+ *
+ * @note 任意缓存帧到期时，推进到最远的已到期Sequence。
+ *       推进区间内已有帧按序输出，缺失Sequence直接跳过。
+ *       超时推进完成后，继续输出紧邻的连续缓存帧。
  */
 static uint32_t _linkg_transport_reorder_take_worker_class_locked(linkg_transport_reorder_class_t *current, linkg_transport_reorder_frame_t *output, uint32_t capacity, uint64_t now_us, uint64_t *deadline_us)
 {
     linkg_transport_reorder_slot_t *slot;
-    uint32_t                        nearest_sequence;
-    uint32_t                        nearest_distance;
+    uint64_t                        earliest_deadline;
+    uint32_t                        farthest_expired_distance;
+    uint32_t                        sequence;
     uint32_t                        distance;
     uint32_t                        slot_index;
     uint32_t                        count;
-    bool                            found;
+    bool                            expired;
 
-    if (!current->expected_initialized || current->delivery_in_progress || current->slot_count == 0U)
+    if (!current->expected_initialized ||
+        current->delivery_in_progress ||
+        current->slot_count == 0U ||
+        capacity == 0U)
     {
         return 0U;
     }
 
-    found            = false;
-    nearest_distance = LINKG_TRANSPORT_REORDER_WINDOW_SIZE;
-    nearest_sequence = 0U;
+    earliest_deadline         = 0ULL;
+    farthest_expired_distance = 0U;
+    expired                   = false;
 
-    // 选择距离expected最近的已缓存Sequence，避免跨越尚未到期的前序缓存。
+    // 扫描全部缓存，取得最早截止时间以及最远的已到期Sequence。
     for (slot_index = 0U; slot_index < LINKG_TRANSPORT_REORDER_WINDOW_SIZE; slot_index++)
     {
         slot = &current->slots[slot_index];
@@ -740,48 +748,52 @@ static uint32_t _linkg_transport_reorder_take_worker_class_locked(linkg_transpor
 
         distance = slot->frame.header.sequence - current->expected_sequence;
 
-        if (distance < nearest_distance)
+        if (distance >= LINKG_TRANSPORT_REORDER_WINDOW_SIZE)
         {
-            nearest_sequence = slot->frame.header.sequence;
-            nearest_distance = distance;
-            found            = true;
+            continue;
+        }
+
+        if (earliest_deadline == 0ULL || slot->expires_at_us < earliest_deadline)
+        {
+            earliest_deadline = slot->expires_at_us;
+        }
+
+        if (slot->expires_at_us <= now_us &&
+            (!expired || distance > farthest_expired_distance))
+        {
+            farthest_expired_distance = distance;
+            expired                   = true;
         }
     }
 
-    if (!found)
+    // Worker等待全窗口的最早截止时间，不受更近Sequence影响。
+    if (earliest_deadline != 0ULL &&
+        (*deadline_us == 0ULL || earliest_deadline < *deadline_us))
     {
-        return 0U;
-    }
-
-    slot = &current->slots[nearest_sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
-
-    if (nearest_distance != 0U)
-    {
-        if (slot->expires_at_us > now_us)
-        {
-            if (*deadline_us == 0ULL || slot->expires_at_us < *deadline_us)
-            {
-                *deadline_us = slot->expires_at_us;
-            }
-
-            return 0U;
-        }
-
-        // 最早可用的缓存帧已经超时，跳过缺失的前序Sequence。
-        current->expected_sequence = nearest_sequence;
+        *deadline_us = earliest_deadline;
     }
 
     count = 0U;
 
-    while (count < capacity)
+    // 按Sequence向前推进，超时范围内缺失的Sequence直接跳过。
+    for (distance = 0U; distance < LINKG_TRANSPORT_REORDER_WINDOW_SIZE && count < capacity; distance++)
     {
-        slot = &current->slots[current->expected_sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
+        sequence = current->expected_sequence;
+        slot     = &current->slots[sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
 
-        if (slot->frame.packet == NULL || slot->frame.header.sequence != current->expected_sequence)
+        if (slot->frame.packet == NULL || slot->frame.header.sequence != sequence)
         {
-            break;
+            // 没有超时，或者已越过超时边界时，不能跳过新的缺口。
+            if (!expired || distance > farthest_expired_distance)
+            {
+                break;
+            }
+
+            current->expected_sequence++;
+            continue;
         }
 
+        // 已缓存的帧按Sequence顺序交付。
         output[count++] = slot->frame;
         memset(slot, 0, sizeof(*slot));
 

@@ -198,6 +198,75 @@ static void _linkg_transport_rx_complete_reorder_ready(const linkg_transport_rx_
     }
 }
 
+/**
+ * @brief 为尚未初始化的RX Window选择当前Chunk内最早的Sequence。
+ *
+ * @note 只处理同一Peer/Class及相同USER_DATA/CONTROL序列域。
+ *       已经初始化的接收窗口不受影响。
+ *       调用方必须持有g_transport.lock。
+ */
+static void _linkg_transport_rx_prepare_window_start_locked(linkg_transport_rx_window_t *window, const linkg_transport_rx_state_t *states, uint32_t count, uint32_t first_index, linkg_transport_peer_t *peer, linkg_transport_peer_t *const *group_peers, uint32_t group_count)
+{
+    const linkg_transport_rx_state_t *first;
+    const linkg_transport_rx_state_t *candidate;
+    uint32_t                          original_sequence;
+    uint32_t                          earliest_sequence;
+    uint32_t                          candidate_sequence;
+    uint32_t                          group_index;
+    uint32_t                          index;
+    bool                              user_data;
+
+    if (window->initialized)
+    {
+        return;
+    }
+
+    first             = &states[first_index];
+    original_sequence = first->header.sequence;
+    earliest_sequence = original_sequence;
+    user_data         = first->header.type == LINKG_TRANSPORT_TYPE_USER_DATA;
+
+    // 只扫描同一Peer/Class、相同接收序列域的有效帧。
+    for (index = 0U; index < count; index++)
+    {
+        candidate = &states[index];
+
+        if (candidate->stage != LINKG_TRANSPORT_RX_STAGE_DECODED ||
+            candidate->traffic_class != first->traffic_class ||
+            (candidate->header.type == LINKG_TRANSPORT_TYPE_USER_DATA) != user_data)
+        {
+            continue;
+        }
+
+        group_index = candidate->source_group_index;
+
+        if (group_index >= group_count || group_peers[group_index] != peer)
+        {
+            continue;
+        }
+
+        candidate_sequence = candidate->header.sequence;
+
+        if (_linkg_transport_rx_sequence_before(candidate_sequence, earliest_sequence) &&
+            (original_sequence - candidate_sequence) < LINKG_TRANSPORT_REORDER_WINDOW_SIZE)
+        {
+            earliest_sequence = candidate_sequence;
+        }
+    }
+
+    if (earliest_sequence == original_sequence)
+    {
+        return;
+    }
+
+    // 预设最早Sequence之前的位置，后续仍调用原RX Window去重接口。
+    memset(window->received_bitmap, 0, sizeof(window->received_bitmap));
+
+    window->highest_sequence = earliest_sequence - 1U;
+    window->tracked_count    = 0U;
+    window->initialized      = true;
+}
+
 /****************************** 内部辅助 ******************************/
 
 /**
@@ -983,6 +1052,9 @@ static int _linkg_transport_rx_accept_batch(linkg_transport_rx_state_t *states, 
         {
             rx_window = &peer_class->rx_control_window;
         }
+
+        // 首次接收时，允许同一Chunk内的有效乱序帧共同建立基线。
+        _linkg_transport_rx_prepare_window_start_locked(rx_window, states, count, index, peer, group_peers, group_count);
 
         // 记录当前序列号是否早于接收窗口最高序列号。
         out_of_order = rx_window->initialized && _linkg_transport_rx_sequence_before(states[index].header.sequence, rx_window->highest_sequence);
