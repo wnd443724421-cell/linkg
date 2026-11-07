@@ -743,7 +743,7 @@ int linkg_transport_reset_peer(uint8_t peer_node_id, bool clear_stats)
     }
 
     // 禁止当前交付线程同步Reset自身正在交付的Peer。
-    ret = linkg_transport_reorder_check_reset_context(peer_node_id);
+    ret = linkg_transport_reorder_check_lifecycle_context();
     if (ret != 0)
     {
         return ret;
@@ -832,7 +832,7 @@ int linkg_transport_unregister_peer(uint8_t peer_node_id)
     }
 
     // 禁止Handler注销当前线程尚未完成交付的Peer。
-    ret = linkg_transport_reorder_check_reset_context(peer_node_id);
+    ret = linkg_transport_reorder_check_lifecycle_context();
     if (ret != 0)
     {
         return ret;

@@ -1092,13 +1092,14 @@ int linkg_transport_reorder_runtime_deinit(void)
 }
 
 /**
- * @brief 检查当前线程是否正在交付指定Peer的数据。
+ * @brief 检查当前线程是否正在执行Reorder交付。
  *
- * @return 0表示允许继续生命周期操作，-EDEADLK表示当前线程会等待自身交付。
+ * @return 0表示允许同步生命周期操作，-EDEADLK表示当前线程持有交付占用。
  *
- * @note 只负责自等待检测，不修改Peer生命周期或Reorder状态。
+ * @note 当前线程交付任意Peer/Class期间，禁止同步Reset或注销任何Peer。
+ *       只负责检查，不修改Peer生命周期和Reorder状态。
  */
-int linkg_transport_reorder_check_reset_context(uint8_t peer_node_id)
+int linkg_transport_reorder_check_lifecycle_context(void)
 {
     linkg_transport_reorder_class_t *current;
     uint32_t                        peer_index;
@@ -1122,9 +1123,7 @@ int linkg_transport_reorder_check_reset_context(uint8_t peer_node_id)
         {
             current = &g_reorder.classes[peer_index][class_index];
 
-            if (!current->expected_initialized ||
-                current->peer_node_id != peer_node_id ||
-                !current->delivery_in_progress)
+            if (!current->delivery_in_progress)
             {
                 continue;
             }
@@ -1161,6 +1160,12 @@ int linkg_transport_reorder_reset_peer(uint8_t peer_node_id)
     if (linkg_transport_reorder_is_worker_thread())
     {
         return -EDEADLK;
+    }
+
+    ret = linkg_transport_reorder_check_lifecycle_context();
+    if (ret != 0)
+    {
+        return ret;
     }
 
     ret = pthread_mutex_lock(&g_reorder.lock);
