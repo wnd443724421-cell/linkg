@@ -24,7 +24,7 @@
 
 /****************************** 事务参数 ******************************/
 
-#define LINKG_SWITCH_OPERATION_LOAD_DURATION_US         1000000ULL  // LOAD冗余ACK后1秒迁移
+#define LINKG_SWITCH_OPERATION_LOAD_DURATION_US         100000ULL   // LOAD冗余ACK后100毫秒迁移
 #define LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US     10000000ULL  // 迁出Wi-Fi后最少等待10秒
 #define LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US       15000000ULL  // 恢复失败后延迟15秒重试
 #define LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US       2000000ULL  // 协议终态失败后重同步间隔

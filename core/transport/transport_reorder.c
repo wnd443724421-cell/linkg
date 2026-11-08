@@ -495,6 +495,17 @@ static void _linkg_transport_reorder_cache_group_locked(linkg_transport_reorder_
 }
 
 /**
+ * @brief 标记当前Peer/Class的同步交付占用。
+ *
+ * @note 调用方必须持有g_reorder.lock。
+ */
+static void _linkg_transport_reorder_begin_delivery_locked(linkg_transport_reorder_class_t *current)
+{
+    current->delivery_in_progress = true;
+    current->delivery_thread      = pthread_self();
+}
+
+/**
  * @brief 将从expected_sequence开始的连续缓存移入同步Emit输出。
  * @note 输出每个Frame均携带Reorder持有的Packet引用，回调后统一释放。
  */
@@ -534,8 +545,7 @@ static void _linkg_transport_reorder_take_contiguous_locked(linkg_transport_reor
         memset(slot, 0, sizeof(*slot));
         current->slot_count--;
         current->expected_sequence++;
-        current->delivery_in_progress = true;
-        current->delivery_thread      = pthread_self();
+        _linkg_transport_reorder_begin_delivery_locked(current);
     }
 }
 
@@ -608,8 +618,7 @@ static uint32_t _linkg_transport_reorder_take_pressure_locked(linkg_transport_re
 
     if (count > 0U)
     {
-        current->delivery_in_progress = true;
-        current->delivery_thread      = pthread_self();
+        _linkg_transport_reorder_begin_delivery_locked(current);
     }
 
     return count;
@@ -652,7 +661,7 @@ static void _linkg_transport_reorder_process_group_locked(const linkg_transport_
     _linkg_transport_reorder_rebase_empty_locked(current, group, order, frames, results);
     _linkg_transport_reorder_filter_group_locked(current, group, order, frames, results);
 
-    prefix_count = _linkg_transport_reorder_ready_prefix_locked(current, group, order, frames, results, &input_in_order);
+    prefix_count  = _linkg_transport_reorder_ready_prefix_locked(current, group, order, frames, results, &input_in_order);
     next_sequence = current->expected_sequence + prefix_count;
     next_slot     = &current->slots[next_sequence & LINKG_TRANSPORT_REORDER_WINDOW_MASK];
     cached_next   = next_slot->frame.packet != NULL && next_slot->frame.header.sequence == next_sequence;
@@ -676,8 +685,7 @@ static void _linkg_transport_reorder_process_group_locked(const linkg_transport_
         }
 
         current->expected_sequence    = next_sequence;
-        current->delivery_in_progress = true;
-        current->delivery_thread      = pthread_self();
+        _linkg_transport_reorder_begin_delivery_locked(current);
 
         _linkg_transport_reorder_cache_group_locked(current, group, order, frames, results, now_us, worker_wakeup);
         return;
@@ -691,14 +699,11 @@ static void _linkg_transport_reorder_process_group_locked(const linkg_transport_
 /**
  * @brief 按Peer/Class整理批次并分别作出交付决策。
  */
-static void _linkg_transport_reorder_process_batch_locked(const linkg_transport_reorder_frame_t *frames, uint32_t count, const uint32_t *peer_indices, linkg_transport_reorder_result_t *results, linkg_transport_reorder_frame_t *emit_frames, bool *emit_owned, uint32_t *emit_count, bool *worker_wakeup)
+static void _linkg_transport_reorder_process_batch_locked(const linkg_transport_reorder_group_t *groups, uint32_t group_count, const linkg_transport_reorder_frame_t *frames, linkg_transport_reorder_result_t *results, linkg_transport_reorder_frame_t *emit_frames, bool *emit_owned, uint32_t *emit_count, bool *worker_wakeup)
 {
-    linkg_transport_reorder_group_t groups[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
-    uint32_t                        group_count;
     uint32_t                        group_index;
     uint64_t                        now_us;
 
-    group_count = _linkg_transport_reorder_build_groups(frames, count, peer_indices, groups);
     now_us      = linkg_time_monotonic_us();
 
     for (group_index = 0U; group_index < group_count; group_index++)
@@ -708,37 +713,46 @@ static void _linkg_transport_reorder_process_batch_locked(const linkg_transport_
 }
 
 /**
+ * @brief 校验交付代际并释放单个Peer/Class的交付占用。
+ *
+ * @note 调用方必须持有g_reorder.lock。
+ */
+static bool _linkg_transport_reorder_complete_class_locked(const linkg_transport_reorder_frame_t *frame)
+{
+    linkg_transport_reorder_class_t *current;
+    int                              peer_index;
+
+    peer_index = _linkg_transport_reorder_peer_index(frame->peer);
+    if (peer_index < 0 || (uint32_t)frame->traffic_class >= LINKG_TRANSPORT_CLASS_COUNT)
+    {
+        return false;
+    }
+
+    current = &g_reorder.classes[(uint32_t)peer_index][(uint32_t)frame->traffic_class];
+    if (!current->expected_initialized || current->peer_epoch != frame->peer_epoch ||
+        current->peer_node_id != frame->peer_node_id || !current->delivery_in_progress)
+    {
+        return false;
+    }
+
+    current->delivery_in_progress = false;
+    return true;
+}
+
+/**
  * @brief 在完成同步Emit后，释放相应Peer/Class的交付占用并唤醒等待者。
  */
 static void _linkg_transport_reorder_complete_emit_locked(const linkg_transport_reorder_frame_t *frames, uint32_t count)
 {
-    linkg_transport_reorder_class_t *current;
-    uint32_t                        peer_index;
-    uint32_t                        class_index;
-    uint32_t                        index;
-    int                             slot_index;
-    bool                            changed;
+    uint32_t index;
+    bool     changed;
 
     changed = false;
 
     for (index = 0U; index < count; index++)
     {
-        slot_index = _linkg_transport_reorder_peer_index(frames[index].peer);
-        if (slot_index < 0)
+        if (_linkg_transport_reorder_complete_class_locked(&frames[index]))
         {
-            continue;
-        }
-
-        peer_index  = (uint32_t)slot_index;
-        class_index = (uint32_t)frames[index].traffic_class;
-        current     = &g_reorder.classes[peer_index][class_index];
-
-        if (current->expected_initialized &&
-            current->peer_epoch == frames[index].peer_epoch &&
-            current->peer_node_id == frames[index].peer_node_id &&
-            current->delivery_in_progress)
-        {
-            current->delivery_in_progress = false;
             changed = true;
         }
     }
@@ -829,8 +843,8 @@ static bool _linkg_transport_reorder_group_needs_pressure_locked(const linkg_tra
 static bool _linkg_transport_reorder_self_delivering_locked(void)
 {
     linkg_transport_reorder_class_t *current;
-    uint32_t                        peer_index;
-    uint32_t                        class_index;
+    uint32_t                         peer_index;
+    uint32_t                         class_index;
 
     for (peer_index = 0U; peer_index < LINKG_TRANSPORT_PEER_MAX; peer_index++)
     {
@@ -884,9 +898,9 @@ static int _linkg_transport_reorder_emit_and_relock(linkg_transport_reorder_emit
  */
 static int _linkg_transport_reorder_process_pressure_group_locked(const linkg_transport_reorder_group_t *group, const linkg_transport_reorder_frame_t *frames, linkg_transport_reorder_result_t *results, linkg_transport_reorder_emit_func_t emit, bool *worker_wakeup, bool *lock_held)
 {
-    linkg_transport_reorder_frame_t  emit_frames[LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX];
-    linkg_transport_reorder_class_t *current;
-    linkg_transport_reorder_group_t  partial;
+    linkg_transport_reorder_frame_t   emit_frames[LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX];
+    linkg_transport_reorder_class_t  *current;
+    linkg_transport_reorder_group_t   partial;
     uint8_t                           order[LINKG_TRANSPORT_REORDER_SUBMIT_BATCH_MAX];
     bool                              emit_owned[LINKG_TRANSPORT_REORDER_EMIT_BATCH_MAX];
     uint32_t                          emit_count;
@@ -1138,8 +1152,7 @@ static uint32_t _linkg_transport_reorder_take_worker_class_locked(linkg_transpor
 
     if (count > 0U)
     {
-        current->delivery_in_progress = true;
-        current->delivery_thread      = pthread_self();
+        _linkg_transport_reorder_begin_delivery_locked(current);
     }
 
     return count;
@@ -1151,12 +1164,12 @@ static uint32_t _linkg_transport_reorder_take_worker_class_locked(linkg_transpor
 static uint32_t _linkg_transport_reorder_take_worker_locked(linkg_transport_reorder_frame_t *output, uint32_t capacity, uint64_t now_us, uint64_t *deadline_us)
 {
     linkg_transport_reorder_class_t *current;
-    uint32_t                        peer_index;
-    uint32_t                        class_index;
-    uint32_t                        flat_index;
-    uint32_t                        total;
-    uint32_t                        offset;
-    uint32_t                        count;
+    uint32_t                         peer_index;
+    uint32_t                         class_index;
+    uint32_t                         flat_index;
+    uint32_t                         total;
+    uint32_t                         offset;
+    uint32_t                         count;
 
     total = LINKG_TRANSPORT_PEER_MAX * LINKG_TRANSPORT_CLASS_COUNT;
 
@@ -1479,10 +1492,10 @@ int linkg_transport_reorder_check_lifecycle_context(void)
 int linkg_transport_reorder_reset_peer(uint8_t peer_node_id)
 {
     linkg_transport_reorder_class_t *current;
-    uint32_t                        peer_index;
-    uint32_t                        class_index;
-    bool                            delivering;
-    int                             ret;
+    uint32_t                         peer_index;
+    uint32_t                         class_index;
+    bool                             delivering;
+    int                              ret;
 
     if (!g_reorder.initialized)
     {
@@ -1664,7 +1677,7 @@ int linkg_transport_reorder_submit_batch(const linkg_transport_reorder_frame_t *
 
     if (!pressure)
     {
-        _linkg_transport_reorder_process_batch_locked(frames, count, peer_indices, results, emit_frames, emit_owned, &emit_count, &worker_wakeup);
+        _linkg_transport_reorder_process_batch_locked(groups, group_count, frames, results, emit_frames, emit_owned, &emit_count, &worker_wakeup);
     }
     else
     {
@@ -1730,13 +1743,9 @@ int linkg_transport_reorder_submit_batch(const linkg_transport_reorder_frame_t *
  */
 int linkg_transport_reorder_complete_batch(const linkg_transport_reorder_frame_t *frames, const linkg_transport_reorder_result_t *results, uint32_t count)
 {
-    linkg_transport_reorder_class_t *current;
-    uint32_t                        class_index;
-    uint32_t                        peer_index;
-    uint32_t                        index;
-    int                             slot_index;
-    bool                            changed;
-    int                             ret;
+    uint32_t index;
+    bool     changed;
+    int      ret;
 
     if (count == 0U)
     {
@@ -1755,36 +1764,11 @@ int linkg_transport_reorder_complete_batch(const linkg_transport_reorder_frame_t
     }
 
     changed = false;
-
     for (index = 0U; index < count; index++)
     {
-        if (results[index] != LINKG_TRANSPORT_REORDER_RESULT_READY)
+        if (results[index] == LINKG_TRANSPORT_REORDER_RESULT_READY &&
+            _linkg_transport_reorder_complete_class_locked(&frames[index]))
         {
-            continue;
-        }
-
-        slot_index = _linkg_transport_reorder_peer_index(frames[index].peer);
-        if (slot_index < 0)
-        {
-            continue;
-        }
-
-        peer_index  = (uint32_t)slot_index;
-        class_index = (uint32_t)frames[index].traffic_class;
-
-        if (class_index >= LINKG_TRANSPORT_CLASS_COUNT)
-        {
-            continue;
-        }
-
-        current = &g_reorder.classes[peer_index][class_index];
-
-        if (current->expected_initialized &&
-            current->peer_epoch == frames[index].peer_epoch &&
-            current->peer_node_id == frames[index].peer_node_id &&
-            current->delivery_in_progress)
-        {
-            current->delivery_in_progress = false;
             changed = true;
         }
     }
@@ -1795,6 +1779,5 @@ int linkg_transport_reorder_complete_batch(const linkg_transport_reorder_frame_t
     }
 
     pthread_mutex_unlock(&g_reorder.lock);
-
     return 0;
 }
