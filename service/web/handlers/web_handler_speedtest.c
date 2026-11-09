@@ -1,6 +1,6 @@
 /**
  * @file web_handler_speedtest.c
- * @brief Web 5G网络测速请求接口
+ * @brief Web网络吞吐量客户端与服务端诊断接口
  * @author Dawn
  * @version 1.0.0
  * @date 2026-11-09
@@ -18,6 +18,9 @@
 
 /****************************** 参数检查 ******************************/
 
+/**
+ * @brief 校验请求字段白名单和重复字段。
+ */
 static bool _linkg_web_speedtest_has_keys(const cJSON *object, const char *const *keys, size_t key_count)
 {
     const cJSON *item;
@@ -91,6 +94,7 @@ static const char *_linkg_web_speedtest_state_name(linkg_web_speedtest_state_t s
         case LINKG_WEB_SPEEDTEST_IDLE:      return "idle";
         case LINKG_WEB_SPEEDTEST_STARTING:  return "starting";
         case LINKG_WEB_SPEEDTEST_RUNNING:   return "running";
+        case LINKG_WEB_SPEEDTEST_LISTENING: return "listening";
         case LINKG_WEB_SPEEDTEST_COMPLETED: return "completed";
         case LINKG_WEB_SPEEDTEST_FAILED:    return "failed";
         case LINKG_WEB_SPEEDTEST_CANCELLED: return "cancelled";
@@ -100,13 +104,18 @@ static const char *_linkg_web_speedtest_state_name(linkg_web_speedtest_state_t s
 
 /****************************** 请求处理 ******************************/
 
+/**
+ * @brief 启动客户端测速或在本机172.28地址上启动iperf3服务端。
+ */
 int _linkg_web_handler_speedtest_start(const cJSON *param, char **response)
 {
-    static const char *const keys[] =
+    static const char *const client_keys[] =
     {
-        "server", "port", "protocol", "direction", "duration_sec", "bandwidth_mbps", "packet_length"
+        "mode", "server", "port", "auto_port", "protocol", "direction", "duration_sec", "bandwidth_mbps", "packet_length"
     };
+    static const char *const server_keys[] = {"mode", "port"};
     linkg_web_speedtest_params_t params;
+    const cJSON                *mode;
     const cJSON                *server;
     const cJSON                *protocol;
     const cJSON                *direction;
@@ -121,107 +130,148 @@ int _linkg_web_handler_speedtest_start(const cJSON *param, char **response)
         return -EINVAL;
     }
     *response = NULL;
-
-    if (!_linkg_web_speedtest_has_keys(param, keys, sizeof(keys) / sizeof(keys[0])))
+    if (!cJSON_IsObject(param))
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "测速参数格式无效", response);
     }
 
     memset(&params, 0, sizeof(params));
-    server    = cJSON_GetObjectItemCaseSensitive(param, "server");
-    protocol  = cJSON_GetObjectItemCaseSensitive(param, "protocol");
-    direction = cJSON_GetObjectItemCaseSensitive(param, "direction");
-
-    if (!cJSON_IsString(server) || server->valuestring == NULL ||
-        strlen(server->valuestring) >= sizeof(params.server))
+    mode = cJSON_GetObjectItemCaseSensitive(param, "mode");
+    if (mode == NULL || (cJSON_IsString(mode) && mode->valuestring != NULL &&
+                         strcmp(mode->valuestring, "client") == 0))
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "服务器IP或域名无效", response);
+        params.mode = LINKG_WEB_SPEEDTEST_MODE_CLIENT;
     }
-    snprintf(params.server, sizeof(params.server), "%s", server->valuestring);
-
-    item = cJSON_GetObjectItemCaseSensitive(param, "port");
-    if (!_linkg_web_speedtest_get_uint32(item, &number) || number < 1U || number > 65535U)
+    else if (cJSON_IsString(mode) && mode->valuestring != NULL &&
+             strcmp(mode->valuestring, "server") == 0)
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "端口必须在1至65535之间", response);
-    }
-    params.port = (uint16_t)number;
-
-    item = cJSON_GetObjectItemCaseSensitive(param, "duration_sec");
-    if (!_linkg_web_speedtest_get_uint32(item, &number) || number < 5U || number > 60U)
-    {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "测速时间必须为5至60秒", response);
-    }
-    params.duration_sec = number;
-
-    if (!cJSON_IsString(protocol) || protocol->valuestring == NULL)
-    {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "未选择测速协议", response);
-    }
-    if (strcmp(protocol->valuestring, "tcp") == 0)
-    {
-        params.protocol = LINKG_WEB_SPEEDTEST_TCP;
-    }
-    else if (strcmp(protocol->valuestring, "udp") == 0)
-    {
-        params.protocol = LINKG_WEB_SPEEDTEST_UDP;
+        params.mode = LINKG_WEB_SPEEDTEST_MODE_SERVER;
     }
     else
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "不支持的测速协议", response);
+        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "不支持的测速模式", response);
     }
 
-    if (!cJSON_IsString(direction) || direction->valuestring == NULL)
+    if (params.mode == LINKG_WEB_SPEEDTEST_MODE_SERVER)
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "未选择测速方向", response);
-    }
-    if (strcmp(direction->valuestring, "upload") == 0)
-    {
-        params.direction = LINKG_WEB_SPEEDTEST_UPLOAD;
-    }
-    else if (strcmp(direction->valuestring, "download") == 0)
-    {
-        params.direction = LINKG_WEB_SPEEDTEST_DOWNLOAD;
+        if (!_linkg_web_speedtest_has_keys(param, server_keys, sizeof(server_keys) / sizeof(server_keys[0])))
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START,
+                                             "服务器模式只接受mode和port", response);
+        }
+        item = cJSON_GetObjectItemCaseSensitive(param, "port");
+        if (!_linkg_web_speedtest_get_uint32(item, &number) || number == 0U || number > 65535U)
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "监听端口必须为1至65535", response);
+        }
+        params.port = (uint16_t)number;
     }
     else
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "不支持的测速方向", response);
-    }
-
-    if (params.protocol == LINKG_WEB_SPEEDTEST_UDP)
-    {
-        item = cJSON_GetObjectItemCaseSensitive(param, "bandwidth_mbps");
-        if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
-            item->valuedouble < 0.1 || item->valuedouble > 200.0)
+        if (!_linkg_web_speedtest_has_keys(param, client_keys, sizeof(client_keys) / sizeof(client_keys[0])))
         {
-            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "UDP目标带宽必须在0.1至200Mbps之间", response);
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "客户端测速参数格式无效", response);
         }
-        params.bandwidth_mbps = item->valuedouble;
-
-        item = cJSON_GetObjectItemCaseSensitive(param, "packet_length");
-        if (!_linkg_web_speedtest_get_uint32(item, &params.packet_length) ||
-            params.packet_length < 200U || params.packet_length > 1400U)
+        server = cJSON_GetObjectItemCaseSensitive(param, "server");
+        protocol = cJSON_GetObjectItemCaseSensitive(param, "protocol");
+        direction = cJSON_GetObjectItemCaseSensitive(param, "direction");
+        if (!cJSON_IsString(server) || server->valuestring == NULL ||
+            strlen(server->valuestring) >= sizeof(params.server))
         {
-            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "UDP数据长度必须在200至1400字节之间", response);
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "服务器地址无效", response);
         }
-    }
-    else if (cJSON_GetObjectItemCaseSensitive(param, "bandwidth_mbps") != NULL ||
-             cJSON_GetObjectItemCaseSensitive(param, "packet_length") != NULL)
-    {
-        return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "TCP测速不接受UDP参数", response);
+        snprintf(params.server, sizeof(params.server), "%s", server->valuestring);
+
+        item = cJSON_GetObjectItemCaseSensitive(param, "port");
+        if (!_linkg_web_speedtest_get_uint32(item, &number) || number == 0U || number > 65535U)
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "连接端口必须为1至65535", response);
+        }
+        params.port = (uint16_t)number;
+
+        item = cJSON_GetObjectItemCaseSensitive(param, "auto_port");
+        if (item != NULL && !cJSON_IsBool(item))
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "自动端口选项无效", response);
+        }
+        params.auto_port = cJSON_IsTrue(item);
+
+        item = cJSON_GetObjectItemCaseSensitive(param, "duration_sec");
+        if (!_linkg_web_speedtest_get_uint32(item, &number) || number < 5U || number > 60U)
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "测速时长必须为5至60秒", response);
+        }
+        params.duration_sec = number;
+
+        if (!cJSON_IsString(protocol) || protocol->valuestring == NULL)
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "缺少测速协议", response);
+        }
+        if (strcmp(protocol->valuestring, "tcp") == 0)
+        {
+            params.protocol = LINKG_WEB_SPEEDTEST_TCP;
+        }
+        else if (strcmp(protocol->valuestring, "udp") == 0)
+        {
+            params.protocol = LINKG_WEB_SPEEDTEST_UDP;
+        }
+        else
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "不支持的测试协议", response);
+        }
+
+        if (!cJSON_IsString(direction) || direction->valuestring == NULL)
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "缺少测速方向", response);
+        }
+        if (strcmp(direction->valuestring, "upload") == 0)
+        {
+            params.direction = LINKG_WEB_SPEEDTEST_UPLOAD;
+        }
+        else if (strcmp(direction->valuestring, "download") == 0)
+        {
+            params.direction = LINKG_WEB_SPEEDTEST_DOWNLOAD;
+        }
+        else
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "不支持的测试方向", response);
+        }
+
+        if (params.protocol == LINKG_WEB_SPEEDTEST_UDP)
+        {
+            item = cJSON_GetObjectItemCaseSensitive(param, "bandwidth_mbps");
+            if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
+                item->valuedouble < 0.1 || item->valuedouble > 200.0)
+            {
+                return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START,
+                                                 "UDP目标带宽必须为0.1至200Mbps", response);
+            }
+            params.bandwidth_mbps = item->valuedouble;
+            item = cJSON_GetObjectItemCaseSensitive(param, "packet_length");
+            if (!_linkg_web_speedtest_get_uint32(item, &params.packet_length) ||
+                params.packet_length < 200U || params.packet_length > 1472U)
+            {
+                return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START,
+                                                 "UDP数据长度必须为200至1472字节", response);
+            }
+        }
+        else if (cJSON_GetObjectItemCaseSensitive(param, "bandwidth_mbps") != NULL ||
+                 cJSON_GetObjectItemCaseSensitive(param, "packet_length") != NULL)
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "TCP测速不接受UDP参数", response);
+        }
     }
 
     ret = _linkg_web_speedtest_submit(&params, &job_id);
     if (ret != 0)
     {
         return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START,
-                                         ret == -EBUSY ? "已有测速任务运行中" :
-                                         ret == -EINVAL ? "测速参数不合法" : "启动测速任务失败", response);
+                                         ret == -EBUSY ? "已有测速任务或服务器正在运行" :
+                                         ret == -EINVAL ? "测速参数不合法" : "启动网络测速任务失败", response);
     }
-
     data = cJSON_CreateObject();
     if (data == NULL)
     {
-        // 任务已经启动，交由后续状态查询处理，不回滚在执行的任务。
         return -ENOMEM;
     }
     if (cJSON_AddNumberToObject(data, "job_id", job_id) == NULL ||
@@ -230,7 +280,9 @@ int _linkg_web_handler_speedtest_start(const cJSON *param, char **response)
         cJSON_Delete(data);
         return -ENOMEM;
     }
-    return _linkg_web_response_success(LINKG_WEB_CMD_SPEEDTEST_START, data, "测速任务已启动", response);
+    return _linkg_web_response_success(LINKG_WEB_CMD_SPEEDTEST_START, data,
+                                       params.mode == LINKG_WEB_SPEEDTEST_MODE_SERVER ?
+                                       "正在启动组网测速服务器" : "测速任务已启动", response);
 }
 
 /**
@@ -242,7 +294,10 @@ int _linkg_web_handler_speedtest_get(const cJSON *param, char **response)
     linkg_web_speedtest_status_t status;
     const cJSON                *item;
     cJSON                      *data;
+    cJSON                      *samples;
+    cJSON                      *sample;
     uint32_t                    job_id;
+    uint32_t                    index;
     int                         ret;
 
     if (response == NULL)
@@ -278,15 +333,21 @@ int _linkg_web_handler_speedtest_get(const cJSON *param, char **response)
     }
     if (cJSON_AddNumberToObject(data, "job_id", status.job_id) == NULL ||
         cJSON_AddStringToObject(data, "state", _linkg_web_speedtest_state_name(status.state)) == NULL ||
+        cJSON_AddStringToObject(data, "mode", status.params.mode == LINKG_WEB_SPEEDTEST_MODE_SERVER ? "server" : "client") == NULL ||
         cJSON_AddStringToObject(data, "server", status.params.server) == NULL ||
+        cJSON_AddStringToObject(data, "bind_address", status.bind_address) == NULL ||
         cJSON_AddNumberToObject(data, "port", status.params.port) == NULL ||
+        cJSON_AddBoolToObject(data, "auto_port", status.params.auto_port) == NULL ||
         cJSON_AddStringToObject(data, "protocol", status.params.protocol == LINKG_WEB_SPEEDTEST_UDP ? "udp" : "tcp") == NULL ||
         cJSON_AddStringToObject(data, "direction", status.params.direction == LINKG_WEB_SPEEDTEST_DOWNLOAD ? "download" : "upload") == NULL ||
-        cJSON_AddStringToObject(data, "rate_type", status.params.direction == LINKG_WEB_SPEEDTEST_UPLOAD ? "sender" : "receiver") == NULL ||
+        cJSON_AddBoolToObject(data, "rate_is_sender", status.rate_is_sender) == NULL ||
+        cJSON_AddBoolToObject(data, "average_is_sender", status.average_is_sender) == NULL ||
         cJSON_AddNumberToObject(data, "duration_sec", status.params.duration_sec) == NULL ||
         cJSON_AddNumberToObject(data, "current_mbps", status.current_mbps) == NULL ||
         cJSON_AddNumberToObject(data, "average_mbps", status.average_mbps) == NULL ||
         cJSON_AddNumberToObject(data, "interval_count", status.interval_count) == NULL ||
+        cJSON_AddNumberToObject(data, "session_id", status.session_id) == NULL ||
+        cJSON_AddBoolToObject(data, "server_connected", status.server_connected) == NULL ||
         cJSON_AddNumberToObject(data, "elapsed_ms", (double)status.elapsed_ms) == NULL ||
         cJSON_AddBoolToObject(data, "average_valid", status.average_valid) == NULL ||
         cJSON_AddBoolToObject(data, "packet_loss_valid", status.packet_loss_valid) == NULL ||
@@ -296,6 +357,30 @@ int _linkg_web_handler_speedtest_get(const cJSON *param, char **response)
     {
         cJSON_Delete(data);
         return -ENOMEM;
+    }
+
+    samples = cJSON_AddArrayToObject(data, "samples");
+    if (samples == NULL)
+    {
+        cJSON_Delete(data);
+        return -ENOMEM;
+    }
+    for (index = 0U; index < status.sample_count && index < LINKG_WEB_SPEEDTEST_SAMPLE_MAX; index++)
+    {
+        sample = cJSON_CreateObject();
+        if (sample == NULL)
+        {
+            cJSON_Delete(data);
+            return -ENOMEM;
+        }
+        if (cJSON_AddNumberToObject(sample, "sec", status.samples[index].second) == NULL ||
+            cJSON_AddNumberToObject(sample, "mbps", status.samples[index].mbps) == NULL ||
+            !cJSON_AddItemToArray(samples, sample))
+        {
+            cJSON_Delete(sample);
+            cJSON_Delete(data);
+            return -ENOMEM;
+        }
     }
 
     return _linkg_web_response_success(LINKG_WEB_CMD_SPEEDTEST_GET, data, NULL, response);

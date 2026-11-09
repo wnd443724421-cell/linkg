@@ -1,113 +1,161 @@
 <div id="speedtestPage" class="page speedtest-page">
     <div class="page-header speedtest-header">
         <div>
-            <h1 class="page-title">5G 网络测速</h1>
-            <p class="page-description">使用 iperf3 测量蜂窝网络的上下行实际吞吐量，支持公共节点或自定义服务器。</p>
+            <h1 class="page-title">链路性能测试</h1>
+            <p class="page-description">测量 LinkG 组网、远端节点或公网路径的实际吞吐量，支持客户端发起和组网服务端监听。</p>
         </div>
-        <span class="speedtest-tag">网络诊断</span>
+        <span class="speedtest-tag">链路诊断</span>
     </div>
 
     <section class="page-card speedtest-notice">
         <div class="speedtest-notice-symbol">!</div>
         <div>
             <strong>测试注意事项</strong>
-            <p>测速将消耗 SIM 卡流量并可能影响视频及遥测业务；请在安全的维护时段执行。公共服务器不保证长期可用，测速结果仅代表当前设备到目标服务器的端到端性能。</p>
+            <p>性能测试可能影响视频与遥测业务，并消耗蜂窝流量。以 172.28.x.x 为目标时走 LinkG 组网路径，实际承载链路由当前策略决定；公网结果同时包含运营商和目标服务器的路径瓶颈。</p>
         </div>
     </section>
 
     <div class="speedtest-grid">
-        <section class="page-card">
+        <section class="page-card speedtest-control-card">
             <div class="page-card-header">
-                <h2 class="page-card-title">测速配置</h2>
-                <span class="speedtest-card-hint">单次测试 · 单任务</span>
+                <h2 class="page-card-title">测试配置</h2>
+                <span class="speedtest-card-hint">单任务 · 参数配置</span>
             </div>
             <div class="page-card-body speedtest-fields">
-                <div class="speedtest-field">
-                    <label for="speedtestServerMode">测速服务器</label>
-                    <select id="speedtestServerMode">
-                        <option value="public">公共节点 · 成都电信（参考）</option>
-                        <option value="custom">自定义 iperf3 服务器</option>
-                    </select>
+                <div class="speedtest-mode-tabs" role="group" aria-label="测试角色">
+                    <button id="speedtestModeClient" class="speedtest-mode-tab is-selected" type="button" aria-pressed="true">客户端测速</button>
+                    <button id="speedtestModeServer" class="speedtest-mode-tab" type="button" aria-pressed="false">组网服务端</button>
                 </div>
-                <div class="speedtest-fields-row">
-                    <div class="speedtest-field speedtest-grow">
-                        <label for="speedtestServer">IP 地址或域名</label>
-                        <input id="speedtestServer" type="text" maxlength="127" autocomplete="off" value="116.169.118.91" disabled>
-                    </div>
-                    <div class="speedtest-field speedtest-port">
-                        <label for="speedtestPort">端口</label>
-                        <input id="speedtestPort" type="number" min="1" max="65535" step="1" value="5201" disabled>
-                    </div>
-                </div>
-                <div class="speedtest-fields-row">
-                    <div class="speedtest-field speedtest-grow">
-                        <label for="speedtestProtocol">测试协议</label>
-                        <select id="speedtestProtocol">
-                            <option value="tcp">TCP · 自动拥塞控制</option>
-                            <option value="udp">UDP · 指定发送速率</option>
+
+                <div id="speedtestClientSettings">
+                    <div class="speedtest-field">
+                        <label for="speedtestServerMode">目标服务器</label>
+                        <select id="speedtestServerMode">
+                            <option value="public">公共节点 · 成都电信（参考）</option>
+                            <option value="custom">自定义服务器 / 远端 LinkG</option>
                         </select>
                     </div>
-                    <div class="speedtest-field speedtest-grow">
-                        <label for="speedtestDirection">测试方向</label>
-                        <select id="speedtestDirection">
-                            <option value="download">下行（服务器 → 设备）</option>
-                            <option value="upload">上行（设备 → 服务器）</option>
-                        </select>
+                    <div class="speedtest-fields-row">
+                        <div class="speedtest-field speedtest-grow">
+                            <label for="speedtestServer">IP 地址或域名</label>
+                            <input id="speedtestServer" type="text" maxlength="127" autocomplete="off" value="116.169.118.91" disabled>
+                        </div>
+                        <div class="speedtest-field speedtest-port">
+                            <label for="speedtestPort">端口</label>
+                            <input id="speedtestPort" type="number" min="1" max="65535" step="1" value="5201" disabled>
+                        </div>
+                    </div>
+                    <p id="speedtestPortHint" class="speedtest-field-note">默认公共节点端口繁忙时自动尝试 5202–5220，正在使用的端口会同步显示。</p>
+                    <div class="speedtest-fields-row">
+                        <div class="speedtest-field speedtest-grow">
+                            <label for="speedtestProtocol">测试协议</label>
+                            <select id="speedtestProtocol">
+                                <option value="tcp">TCP · 自动拥塞控制</option>
+                                <option value="udp">UDP · 指定发送速率</option>
+                            </select>
+                        </div>
+                        <div class="speedtest-field speedtest-grow">
+                            <label for="speedtestDirection">测试方向</label>
+                            <select id="speedtestDirection">
+                                <option value="download">下行（服务器 → 本机）</option>
+                                <option value="upload">上行（本机 → 服务器）</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="speedtest-fields-row">
+                        <div class="speedtest-field speedtest-grow">
+                            <label for="speedtestDuration">测试时长</label>
+                            <select id="speedtestDuration">
+                                <option value="5">5 秒</option>
+                                <option value="10" selected>10 秒</option>
+                                <option value="20">20 秒</option>
+                                <option value="30">30 秒</option>
+                                <option value="60">60 秒</option>
+                            </select>
+                        </div>
+                        <div id="speedtestBandwidthField" class="speedtest-field speedtest-grow" hidden>
+                            <label for="speedtestBandwidth">UDP 目标速率（Mbps）</label>
+                            <input id="speedtestBandwidth" type="number" min="0.1" max="200" step="0.1" value="20">
+                        </div>
+                    </div>
+                    <div id="speedtestPacketField" class="speedtest-field" hidden>
+                        <label for="speedtestPacket">UDP 数据长度（字节）</label>
+                        <input id="speedtestPacket" type="number" min="200" max="1472" step="1" value="1300">
+                        <small>建议 1300 字节。过大报文可能触发路径分片。</small>
                     </div>
                 </div>
-                <div class="speedtest-fields-row">
-                    <div class="speedtest-field speedtest-grow">
-                        <label for="speedtestDuration">测试时长</label>
-                        <select id="speedtestDuration">
-                            <option value="5">5 秒</option>
-                            <option value="10" selected>10 秒</option>
-                            <option value="20">20 秒</option>
-                            <option value="30">30 秒</option>
-                            <option value="60">60 秒</option>
-                        </select>
+
+                <div id="speedtestServerSettings" hidden>
+                    <div class="speedtest-server-info">
+                        <strong>仅监听本机 LinkG 虚拟组网地址</strong>
+                        <p>后端自动选择本机可用的 172.28.x.x 地址，不需要填写 IP。启动后，另一台 LinkG 通过该地址和端口运行 iperf3 客户端。</p>
                     </div>
-                    <div id="speedtestBandwidthField" class="speedtest-field speedtest-grow" hidden>
-                        <label for="speedtestBandwidth">UDP 目标速率（Mbps）</label>
-                        <input id="speedtestBandwidth" type="number" min="0.1" max="200" step="0.1" value="20">
+                    <div class="speedtest-field">
+                        <label for="speedtestListenPort">监听端口</label>
+                        <input id="speedtestListenPort" type="number" min="1" max="65535" step="1" value="5600">
                     </div>
+                    <div class="speedtest-server-endpoint">
+                        <span>当前监听地址</span>
+                        <strong id="speedtestListenAddress">启动后自动获取</strong>
+                    </div>
+                    <p class="speedtest-field-note">服务器持续运行并接受后续测速连接，停止监听前会保留最近一轮的结果。</p>
                 </div>
-                <div id="speedtestPacketField" class="speedtest-field" hidden>
-                    <label for="speedtestPacket">UDP 数据长度（字节）</label>
-                    <input id="speedtestPacket" type="number" min="200" max="1400" step="1" value="1300">
-                    <small>推荐先使用 1300 字节，较大数据报可能触发路径分片。</small>
+
+                <div class="speedtest-control-footer">
+                    <div class="speedtest-actions">
+                        <button id="speedtestStart" class="speedtest-btn speedtest-btn-primary" type="button">开始测速</button>
+                        <button id="speedtestStop" class="speedtest-btn speedtest-btn-secondary" type="button" disabled>停止任务</button>
+                    </div>
+                    <p id="speedtestMessage" class="speedtest-message" role="status" aria-live="polite">尚未执行测试</p>
                 </div>
-                <div class="speedtest-actions">
-                    <button id="speedtestStart" class="speedtest-btn speedtest-btn-primary" type="button">开始测速</button>
-                    <button id="speedtestStop" class="speedtest-btn speedtest-btn-secondary" type="button" disabled>取消测速</button>
-                </div>
-                <p id="speedtestMessage" class="speedtest-message" role="status" aria-live="polite">尚未执行测试</p>
             </div>
         </section>
 
         <section class="page-card speedtest-result-card">
             <div class="page-card-header">
-                <h2 class="page-card-title">测速结果</h2>
+                <h2 class="page-card-title">实时测试结果</h2>
                 <span id="speedtestState" class="speedtest-state">尚未执行</span>
             </div>
             <div class="page-card-body">
                 <div class="speedtest-rate-box">
-                    <span id="speedtestCurrentLabel">当前速率</span>
+                    <span id="speedtestCurrentLabel">当前区间速率</span>
                     <div class="speedtest-rate-value">
                         <strong id="speedtestCurrent">—</strong>
                         <span>Mbps</span>
                     </div>
-                    <small id="speedtestRateHint">每秒刷新最新有效统计</small>
+                    <small id="speedtestRateHint">运行时每秒更新一次</small>
                 </div>
-                <div class="speedtest-progress-heading">
-                    <span>测试进度</span>
-                    <span id="speedtestProgressText">0 / 0 秒</span>
+
+                <div class="speedtest-chart-panel">
+                    <div class="speedtest-chart-heading">
+                        <strong>吞吐量趋势</strong>
+                        <span id="speedtestChartCount">暂无统计样本</span>
+                    </div>
+                    <div class="speedtest-chart-container">
+                        <svg id="speedtestChart" viewBox="0 0 640 204" preserveAspectRatio="none" role="img" aria-label="每秒带宽趋势曲线">
+                            <g id="speedtestChartGrid"></g>
+                            <path id="speedtestChartArea" class="speedtest-chart-area" d=""></path>
+                            <path id="speedtestChartLine" class="speedtest-chart-line" d=""></path>
+                            <g id="speedtestChartDots"></g>
+                        </svg>
+                        <span id="speedtestChartEmpty" class="speedtest-chart-empty">等待测速数据…</span>
+                    </div>
+                    <div class="speedtest-chart-axis"><span id="speedtestAxisStart">0 秒</span><span id="speedtestAxisEnd">时间 / 秒</span></div>
                 </div>
-                <div class="speedtest-progress-track" role="progressbar" id="speedtestProgress" aria-label="测速进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-                    <div id="speedtestProgressBar"></div>
+
+                <div id="speedtestProgressWrap">
+                    <div class="speedtest-progress-heading">
+                        <span>测试进度</span>
+                        <span id="speedtestProgressText">0 / 0 秒</span>
+                    </div>
+                    <div class="speedtest-progress-track" role="progressbar" id="speedtestProgress" aria-label="测速进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <div id="speedtestProgressBar"></div>
+                    </div>
                 </div>
+
                 <div class="speedtest-summary">
                     <div>
-                        <span>最终平均接收带宽</span>
+                        <span id="speedtestAverageLabel">最终平均接收带宽</span>
                         <strong id="speedtestAverage">— <small>Mbps</small></strong>
                     </div>
                     <div id="speedtestLossRow" hidden>
@@ -115,11 +163,15 @@
                         <strong id="speedtestLoss">—</strong>
                     </div>
                     <div>
-                        <span>测试任务</span>
+                        <span id="speedtestJobLabel">测试任务</span>
                         <strong id="speedtestJob">—</strong>
                     </div>
+                    <div>
+                        <span>当前连接端口</span>
+                        <strong id="speedtestActualPort">—</strong>
+                    </div>
                 </div>
-                <p id="speedtestResultHint" class="speedtest-result-hint">UDP 上行的实时数值为本机发送速率；最终平均值采用服务器实际接收统计。</p>
+                <p id="speedtestResultHint" class="speedtest-result-hint">最终平均值采用接收端汇总；实时曲线表示本地1秒区间速率。</p>
             </div>
         </section>
     </div>
