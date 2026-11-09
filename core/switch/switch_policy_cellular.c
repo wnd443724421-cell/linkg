@@ -27,27 +27,31 @@
 
 /****************************** Cellular主链路策略 ******************************/
 
+
 /**
  * @brief 检测Cellular单发业务的Wi-Fi恢复候选。
  *
- * LOSS恢复沿用RSSI+4dB和Wire积分验证；LOAD恢复要求RSSI不低于迁出基线，
- * 进入冗余3秒确认Wi-Fi队列不再溢出，不要求额外负载统计或RSSI提升。
- * WIFI_DOWN/UNKNOWN/NONE保持原有强RSSI直接恢复。
- * 恢复候选按原始迁出原因分组，避免在同一Verify中混用判决算法。
+ * 所有迁移原因统一按照REALTIME、VIDEO、DATA优先级恢复。
+ * 更高优先级业务仍在Cellular且不满足恢复条件时，禁止低优先级抢先恢复。
+ * 同一迁移原因且连续满足条件的业务允许整组恢复。
+ * LOSS和LOAD分别保留原有质量验证，非质量迁移保留直接恢复。
  * 本函数只生成策略事件；PlanSync及ACK由Operation负责。
  */
 int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *input, uint64_t now_us)
 {
-    linkg_switch_policy_event_t            event;
-    linkg_switch_peer_runtime_t           *peer;
-    const linkg_switch_policy_operation_t *operation;
-    const linkg_class_send_plan_t         *current;
-    uint32_t                               loss_mask;
-    uint32_t                               load_mask;
-    uint32_t                               direct_mask;
-    uint32_t                               class_mask;
-    uint32_t                               index;
-    int32_t                                baseline;
+    linkg_switch_policy_event_t             event;
+    linkg_switch_peer_runtime_t            *peer;
+    const linkg_switch_policy_operation_t  *operation;
+    const linkg_class_send_plan_t          *current;
+    const linkg_switch_probe_observation_t *probe;
+    linkg_switch_policy_migration_reason_t  group_reason;
+    linkg_switch_policy_event_type_t        event_type;
+    uint32_t                                class_mask;
+    uint32_t                                index;
+    uint32_t                                probe_index;
+    int32_t                                 baseline;
+    bool                                    recovery_ready;
+    bool                                    probe_recovered;
 
     if (input == NULL || now_us == 0U)
     {
@@ -69,9 +73,9 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
 
     /****************************** 获取当前Peer ******************************/
 
-    loss_mask   = 0U;
-    load_mask   = 0U;
-    direct_mask = 0U;
+    class_mask   = 0U;
+    group_reason = LINKG_SWITCH_POLICY_MIGRATION_NONE;
+    event_type   = LINKG_SWITCH_POLICY_EVENT_NONE;
 
     pthread_mutex_lock(&g_switch.lock);
 
@@ -89,136 +93,165 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
         return 0;
     }
 
-    /****************************** 遍历Cellular主发业务 ******************************/
+    /****************************** 按业务优先级生成恢复候选 ******************************/
 
+    // 严格按照REALTIME、VIDEO、DATA顺序检查。
+    // 低优先级业务必须等待更高优先级的Cellular业务先满足恢复资格。
     for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
         current   = &input->plan.classes[index];
         operation = &peer->role.sta.policy.operations[index];
 
-        /****************************** 公共恢复资格 ******************************/
+        /****************************** 一、检查当前业务链路 ******************************/
 
-        // 业务必须处于空闲状态，且未处于恢复冷却期。
-        if (operation->phase != LINKG_SWITCH_POLICY_PHASE_IDLE ||
-            (operation->recovery.recovery_after_us != 0U &&
-             now_us < operation->recovery.recovery_after_us))
+        // 未启用业务不参与恢复优先级约束。
+        if (current->mode == LINKG_SEND_MODE_NONE)
         {
             continue;
         }
 
-        // 只允许Cellular单发、Wi-Fi备用的业务参与恢复。
+        // 已经在Wi-Fi单发的高优先级业务不阻挡后续业务。
+        if (current->mode == LINKG_SEND_MODE_SINGLE &&
+            current->primary_link_id == input->observation.wifi.link_id)
+        {
+            continue;
+        }
+
+        // 当前业务尚未处于可恢复的Cellular单发状态。
+        // 停止检查更低优先级业务，防止恢复顺序反转。
         if (current->mode != LINKG_SEND_MODE_SINGLE ||
             current->primary_link_id != input->observation.cellular.link_id ||
             current->secondary_link_id != input->observation.wifi.link_id)
         {
-            continue;
+            break;
         }
 
-        /****************************** LOSS无线质量恢复 ******************************/
+        /****************************** 二、检查恢复原因分组 ******************************/
+
+        // 已选择恢复组后，低优先级业务必须具有相同迁移原因。
+        // 不同原因使用不同恢复判决，不能混入当前事务。
+        if (class_mask != 0U &&
+            operation->migration_reason != group_reason)
+        {
+            break;
+        }
+
+        /****************************** 三、检查公共恢复资格 ******************************/
+
+        // 当前业务尚有活动事务或未结束冷却期时，停止向下选择。
+        // 即使低优先级业务已经满足条件，也不能绕过当前业务。
+        if (operation->phase != LINKG_SWITCH_POLICY_PHASE_IDLE ||
+            (operation->recovery.recovery_after_us != 0U &&
+             now_us < operation->recovery.recovery_after_us))
+        {
+            break;
+        }
+
+        recovery_ready = false;
+
+        /****************************** 四、LOSS无线质量恢复 ******************************/
 
         if (operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS)
         {
-            if (!operation->recovery.rssi_valid)
+            if (operation->recovery.rssi_valid)
             {
-                continue;
+                baseline = operation->recovery.rssi_dbm;
+
+                // 保留原有LOSS RSSI恢复门槛。
+                if ((int64_t)input->observation.wifi.radio.rssi_dbm - baseline >=
+                    LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB)
+                {
+                    recovery_ready = true;
+                }
             }
-
-            baseline = operation->recovery.rssi_dbm;
-
-            if ((int64_t)input->observation.wifi.radio.rssi_dbm - baseline >=
-                LINKG_SWITCH_POLICY_RECOVERY_RSSI_HYSTERESIS_DB)
-            {
-                loss_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
-            }
-
-            continue;
         }
 
-        /****************************** LOAD队列溢出恢复 ******************************/
+        /****************************** 五、LOAD队列溢出恢复 ******************************/
 
-        if (operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+        else if (operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
         {
-            if (!operation->recovery.rssi_valid)
+            if (operation->recovery.rssi_valid)
             {
-                continue;
+                baseline = operation->recovery.rssi_dbm;
+
+                // LOAD恢复要求RSSI不低于迁出基线。
+                if ((int64_t)input->observation.wifi.radio.rssi_dbm - baseline >=
+                    LINKG_SWITCH_POLICY_LOAD_RECOVERY_RSSI_HYSTERESIS_DB)
+                {
+                    recovery_ready = true;
+                }
             }
-
-            baseline = operation->recovery.rssi_dbm;
-
-            // LOAD恢复要求RSSI较迁出时提高至少2dB，满足后进入冗余验证。
-            if ((int64_t)input->observation.wifi.radio.rssi_dbm - baseline >=
-                LINKG_SWITCH_POLICY_LOAD_RECOVERY_RSSI_HYSTERESIS_DB)
-            {
-                load_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
-            }
-
-            continue;
         }
 
-        /****************************** 非质量迁移直接恢复 ******************************/
+        /****************************** 六、非质量迁移直接恢复 ******************************/
 
-        // 只有已知的非质量迁移原因才允许使用强RSSI直接恢复。
-        if (operation->migration_reason != LINKG_SWITCH_POLICY_MIGRATION_WIFI_DOWN &&
-            operation->migration_reason != LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN &&
-            operation->migration_reason != LINKG_SWITCH_POLICY_MIGRATION_NONE)
+        else if (operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_WIFI_DOWN ||
+                 operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN ||
+                 operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_NONE)
         {
-            continue;
-        }
-
-        // Probe黑洞迁出期间，即使RSSI很强也不得直接回切。
-        // 必须先确认三类业务的Wi-Fi Probe均已重新响应。
-        if (peer->role.sta.policy.wifi_probe.blackhole_latched)
-        {
-            bool     probe_recovered;
-            uint32_t probe_index;
-
             probe_recovered = true;
 
-            for (probe_index = 0U; probe_index < LINKG_TRANSPORT_CLASS_COUNT; probe_index++)
+            // Probe黑洞迁出期间，必须先确认三类Wi-Fi Probe均恢复。
+            if (peer->role.sta.policy.wifi_probe.blackhole_latched)
             {
-                const linkg_switch_probe_observation_t *probe;
-
-                probe = &input->observation.wifi.probe[probe_index];
-                if (!probe->valid || !probe->reachable || probe->updated_us == 0U ||
-                    probe->updated_us > input->observation.collected_us ||
-                    input->observation.collected_us - probe->updated_us > 2500000ULL)
+                for (probe_index = 0U; probe_index < LINKG_TRANSPORT_CLASS_COUNT; probe_index++)
                 {
-                    probe_recovered = false;
-                    break;
+                    probe = &input->observation.wifi.probe[probe_index];
+
+                    if (!probe->valid || !probe->reachable || probe->updated_us == 0U ||
+                        probe->updated_us > input->observation.collected_us ||
+                        input->observation.collected_us - probe->updated_us > 2500000ULL)
+                    {
+                        probe_recovered = false;
+                        break;
+                    }
                 }
             }
 
-            if (!probe_recovered)
+            // 非质量迁移保持原有强RSSI直接恢复条件。
+            if (probe_recovered &&
+                input->observation.wifi.radio.rssi_dbm >= LINKG_SWITCH_POLICY_DIRECT_RECOVERY_RSSI_DBM)
             {
-                continue;
+                recovery_ready = true;
             }
         }
 
-        // 无需旧RSSI基线；Wi-Fi信号足够强即可提交单发切换。
-        if (input->observation.wifi.radio.rssi_dbm >= LINKG_SWITCH_POLICY_DIRECT_RECOVERY_RSSI_DBM)
+        /****************************** 七、检查严格恢复顺序 ******************************/
+
+        // 高优先级业务未满足恢复条件时，不能继续选择低优先级业务。
+        // 已经选中的高优先级业务仍然可以作为本轮恢复组提交。
+        if (!recovery_ready)
         {
-            direct_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
+            break;
         }
+
+        /****************************** 八、建立本轮恢复组 ******************************/
+
+        if (class_mask == 0U)
+        {
+            // 首个满足条件的业务决定本轮恢复原因和事件类型。
+            group_reason = operation->migration_reason;
+
+            if (group_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS ||
+                group_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+            {
+                event_type = LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY;
+            }
+            else
+            {
+                event_type = LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY;
+            }
+        }
+
+        // 同原因且满足条件的低优先级业务一起加入本轮恢复组。
+        class_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
     }
 
     pthread_mutex_unlock(&g_switch.lock);
 
-    /****************************** 选择本轮恢复事件 ******************************/
+    /****************************** 检查本轮恢复候选 ******************************/
 
-    // 不同原始迁移原因不得进入同一Verify；每轮只提交一组。
-    if (loss_mask != 0U)
-    {
-        class_mask = loss_mask;
-    }
-    else if (load_mask != 0U)
-    {
-        class_mask = load_mask;
-    }
-    else if (direct_mask != 0U)
-    {
-        class_mask = direct_mask;
-    }
-    else
+    if (class_mask == 0U)
     {
         return 0;
     }
@@ -228,9 +261,7 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
     // 仅生成初始事件，不在Policy中直接修改发送计划。
     memset(&event, 0, sizeof(event));
 
-    event.type                              = loss_mask != 0U || load_mask != 0U ?
-                                              LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY :
-                                              LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY;
+    event.type                              = event_type;
     event.peer_node_id                      = input->peer_node_id;
     event.peer_generation                   = input->peer_generation;
     event.occurred_us                       = now_us;

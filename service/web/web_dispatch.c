@@ -48,6 +48,9 @@ static const linkg_web_command_entry_t g_web_commands[] =
     {LINKG_WEB_CMD_UART_DIAG_START,       _linkg_web_handler_uart_diagnostic_start},
     {LINKG_WEB_CMD_UART_DIAG_GET,         _linkg_web_handler_uart_diagnostic_get},
     {LINKG_WEB_CMD_UART_DIAG_STOP,        _linkg_web_handler_uart_diagnostic_stop},
+    {LINKG_WEB_CMD_SPEEDTEST_START,       _linkg_web_handler_speedtest_start},
+    {LINKG_WEB_CMD_SPEEDTEST_GET,         _linkg_web_handler_speedtest_get},
+    {LINKG_WEB_CMD_SPEEDTEST_STOP,        _linkg_web_handler_speedtest_stop},
     {LINKG_WEB_CMD_NETWORK_BASIC_GET,     _linkg_web_handler_network_basic_get},
     {LINKG_WEB_CMD_NETWORK_BASIC_SET,     _linkg_web_handler_network_basic_set},
     {LINKG_WEB_CMD_NETWORK_BASIC_RESTART, _linkg_web_handler_network_basic_restart},
@@ -188,7 +191,7 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
          cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART ||
          cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART ||
          cmd == LINKG_WEB_CMD_SYSTEM_REBOOT || cmd == LINKG_WEB_CMD_SYSTEM_FACTORY_RESET ||
-         cmd == LINKG_WEB_CMD_UART_DIAG_START))
+         cmd == LINKG_WEB_CMD_UART_DIAG_START || cmd == LINKG_WEB_CMD_SPEEDTEST_START))
     {
         cJSON_Delete(root);
         ret = _linkg_web_response_error(cmd, "服务正在停止或重启，请稍后重新连接", response);

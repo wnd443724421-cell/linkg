@@ -48,7 +48,10 @@ typedef enum
     LINKG_WEB_CMD_SYSTEM_FACTORY_RESET  = 1024, // 手动恢复出厂配置并整机重启
     LINKG_WEB_CMD_UART_DIAG_START       = 1025, // 启动UART硬件诊断
     LINKG_WEB_CMD_UART_DIAG_GET         = 1026, // 获取UART硬件诊断状态及结果
-    LINKG_WEB_CMD_UART_DIAG_STOP        = 1027  // 请求取消UART硬件诊断
+    LINKG_WEB_CMD_UART_DIAG_STOP        = 1027, // 请求取消UART硬件诊断
+    LINKG_WEB_CMD_SPEEDTEST_START       = 1028, // 启动5G测速任务
+    LINKG_WEB_CMD_SPEEDTEST_GET         = 1029, // 查询5G测速任务
+    LINKG_WEB_CMD_SPEEDTEST_STOP        = 1030  // 取消5G测速任务
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -98,6 +101,9 @@ int  _linkg_web_handler_uart_status_get(const cJSON *param, char **response);
 int  _linkg_web_handler_uart_diagnostic_start(const cJSON *param, char **response);
 int  _linkg_web_handler_uart_diagnostic_get(const cJSON *param, char **response);
 int  _linkg_web_handler_uart_diagnostic_stop(const cJSON *param, char **response);
+int  _linkg_web_handler_speedtest_start(const cJSON *param, char **response);
+int  _linkg_web_handler_speedtest_get(const cJSON *param, char **response);
+int  _linkg_web_handler_speedtest_stop(const cJSON *param, char **response);
 
 int  _linkg_web_handler_traffic_config_get(const cJSON *param, char **response);
 int  _linkg_web_handler_traffic_config_set(const cJSON *param, char **response);

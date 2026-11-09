@@ -10,6 +10,7 @@
 
 #include "linkg_log.h"
 #include "web_internal.h"
+#include "web_speedtest.h"
 
 /****************************** 生命周期 ******************************/
 
@@ -34,9 +35,16 @@ int linkg_web_init(void)
 
     _linkg_web_system_init();
 
+    ret = _linkg_web_speedtest_init();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     ret = _linkg_web_server_init();
     if (ret != 0)
     {
+        _linkg_web_speedtest_deinit();
         return ret;
     }
 
@@ -52,9 +60,16 @@ int linkg_web_start(void)
 {
     int ret;
 
+    ret = _linkg_web_speedtest_start();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
     ret = _linkg_web_server_start();
     if (ret != 0)
     {
+        _linkg_web_speedtest_stop();
         return ret;
     }
 
@@ -73,6 +88,13 @@ int linkg_web_stop(void)
     ret = _linkg_web_server_stop();
     if (ret != 0)
     {
+        _linkg_web_speedtest_stop();
+        return ret;
+    }
+
+    ret = _linkg_web_speedtest_stop();
+    if (ret != 0)
+    {
         return ret;
     }
 
@@ -89,6 +111,7 @@ int linkg_web_deinit(void)
     int ret;
 
     ret = _linkg_web_server_deinit();
+    _linkg_web_speedtest_deinit();
     if (ret != 0)
     {
         return ret;

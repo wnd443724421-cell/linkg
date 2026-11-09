@@ -1,0 +1,51 @@
+/* 5G测速页面：复用LinkG卡片、排版与主题色。 */
+
+.speedtest-page [hidden] { display: none !important; }
+.speedtest-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.speedtest-tag { padding: 5px 10px; border: 1px solid #d7e4f8; background: #f4f8ff; color: #2864c5; border-radius: 5px; font-size: 12px; white-space: nowrap; }
+.speedtest-notice { display: flex; gap: 12px; padding: 15px 18px; margin-bottom: 16px; border-color: #d8e5f7; background: #f5f8fd; }
+.speedtest-notice-symbol { display: flex; flex: none; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 50%; background: var(--linkg-color-primary); color: #fff; font-weight: 700; }
+.speedtest-notice strong { display: block; margin-bottom: 4px; font-size: 13px; font-weight: 600; }
+.speedtest-notice p { margin: 0; font-size: 12px; line-height: 1.7; color: var(--linkg-color-text-secondary); }
+.speedtest-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.speedtest-card-hint { font-size: 12px; color: var(--linkg-color-text-muted); }
+.speedtest-fields { display: flex; flex-direction: column; gap: 17px; }
+.speedtest-fields-row { display: flex; gap: 12px; align-items: flex-start; }
+.speedtest-field { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.speedtest-grow { flex: 1 1 0; }
+.speedtest-port { flex: 0 0 105px; }
+.speedtest-field label { color: #39465b; font-size: 12px; font-weight: 600; }
+.speedtest-field input, .speedtest-field select { height: 38px; min-width: 0; width: 100%; padding: 0 11px; border: 1px solid #d6dfe9; border-radius: 5px; outline: none; background: #fff; color: var(--linkg-color-text); font-size: 13px; }
+.speedtest-field input:focus, .speedtest-field select:focus { border-color: var(--linkg-color-primary); box-shadow: 0 0 0 2px #2864c515; }
+.speedtest-field input:disabled, .speedtest-field select:disabled { background: #f5f7fa; color: #667085; }
+.speedtest-field small { font-size: 11px; color: var(--linkg-color-text-secondary); }
+.speedtest-actions { display: flex; gap: 10px; margin-top: 3px; }
+.speedtest-btn { height: 38px; padding: 0 16px; border-radius: 5px; font-weight: 600; font-size: 13px; cursor: pointer; transition: background .15s ease; }
+.speedtest-btn:disabled { opacity: .5; cursor: not-allowed; }
+.speedtest-btn-primary { color: #fff; background: var(--linkg-color-primary); }
+.speedtest-btn-primary:hover:not(:disabled) { background: var(--linkg-color-primary-hover); }
+.speedtest-btn-secondary { border: 1px solid #d6dfe9; color: #4b5563; background: #fff; }
+.speedtest-btn-secondary:hover:not(:disabled) { background: #f4f6f9; }
+.speedtest-message { min-height: 18px; margin: 0; font-size: 12px; color: var(--linkg-color-text-secondary); overflow-wrap: anywhere; }
+.speedtest-message.is-error { color: var(--linkg-color-danger); }
+.speedtest-rate-box { padding: 23px 14px 20px; text-align: center; background: #f7f9fc; border: 1px solid #e7ecf3; border-radius: 6px; }
+.speedtest-rate-box > span { color: var(--linkg-color-text-secondary); font-size: 13px; }
+.speedtest-rate-value { display: flex; align-items: baseline; justify-content: center; gap: 7px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+.speedtest-rate-value strong { color: #1d4e97; font-size: clamp(32px, 4vw, 46px); font-weight: 650; line-height: 1.15; }
+.speedtest-rate-value span { color: var(--linkg-color-text-secondary); font-size: 14px; }
+.speedtest-rate-box small { font-size: 11px; color: var(--linkg-color-text-muted); }
+.speedtest-progress-heading { display: flex; justify-content: space-between; margin: 23px 0 7px; color: var(--linkg-color-text-secondary); font-size: 12px; }
+.speedtest-progress-track { height: 7px; overflow: hidden; border-radius: 7px; background: #e7ecf3; }
+.speedtest-progress-track > div { height: 100%; width: 0%; background: var(--linkg-color-primary); border-radius: 7px; transition: width .35s ease; }
+.speedtest-summary { margin-top: 22px; }
+.speedtest-summary > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 12px 0; border-bottom: 1px solid #eef0f3; }
+.speedtest-summary > div > span { color: var(--linkg-color-text-secondary); font-size: 12px; }
+.speedtest-summary strong { font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 650; color: var(--linkg-color-text); }
+.speedtest-summary strong small { font-size: 11px; font-weight: 400; color: var(--linkg-color-text-secondary); }
+.speedtest-state { padding: 3px 8px; border-radius: 4px; background: #eff2f6; color: #64748b; font-size: 12px; }
+.speedtest-state.is-active { background: #eaf2ff; color: #2864c5; }
+.speedtest-state.is-success { background: #e8f6ed; color: #238457; }
+.speedtest-state.is-error { background: #fff0ee; color: #c93636; }
+.speedtest-result-hint { margin: 17px 0 0; font-size: 11px; line-height: 1.65; color: var(--linkg-color-text-muted); }
+@media (max-width: 900px) { .speedtest-grid { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .speedtest-header { flex-wrap: wrap; } .speedtest-fields-row { flex-direction: column; } .speedtest-fields-row > * { width: 100%; flex: auto; } .speedtest-port { flex: auto; } .speedtest-actions .speedtest-btn { flex: 1; } }

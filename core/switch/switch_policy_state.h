@@ -21,7 +21,7 @@ typedef enum
 {
     LINKG_SWITCH_POLICY_REASON_NONE = 0, // 当前没有切换事务
     LINKG_SWITCH_POLICY_REASON_LOSS,     // Wi-Fi丢包异常，触发冗余质量验证
-    LINKG_SWITCH_POLICY_REASON_LOAD,     // Wi-Fi队列溢出，触发冗余定时迁移
+    LINKG_SWITCH_POLICY_REASON_LOAD,     // Wi-Fi负载溢出，直接迁移到Cellular
     LINKG_SWITCH_POLICY_REASON_RECOVERY, // Cellular业务尝试恢复到Wi-Fi
     LINKG_SWITCH_POLICY_REASON_WIFI_DOWN // Wi-Fi明确硬故障，直接迁移
 } linkg_switch_policy_reason_t;
@@ -34,7 +34,6 @@ typedef enum
     LINKG_SWITCH_POLICY_PHASE_PENDING_ENTER,  // 已创建进入冗余事务，等待提交Plan
     LINKG_SWITCH_POLICY_PHASE_WAIT_ENTER_ACK, // 本地冗余生效，等待AP确认
     LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY,    // 冗余已确认，等待质量验证结果
-    LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER,     // 冗余已确认，等待负载迁移计时到期
     LINKG_SWITCH_POLICY_PHASE_PENDING_EXIT,   // 已决定退出冗余，等待提交单发Plan
     LINKG_SWITCH_POLICY_PHASE_WAIT_EXIT_ACK,  // 本地单发生效，等待AP确认
     LINKG_SWITCH_POLICY_PHASE_UNCERTAIN       // 同步终态不确定，等待有限重同步
@@ -91,8 +90,8 @@ typedef struct
     linkg_switch_policy_migration_reason_t migration_reason;   // 最近一次完成迁出Wi-Fi的原因
 
     uint64_t                               phase_entered_us;   // 当前阶段开始时间
-    uint64_t                               started_us;         // 冗余ACK确认后开始验证或计时的时间
-    uint64_t                               deadline_us;        // 当前阶段截止时间，0表示无截止
+    uint64_t                               started_us;         // 冗余ACK确认后开始验证的时间
+    uint64_t                               deadline_us;        // 当前验证阶段截止时间，0表示无截止
 
     linkg_switch_policy_recovery_t         recovery;           // 按业务保存的迁移历史及恢复基线
 } linkg_switch_policy_operation_t;
@@ -131,7 +130,7 @@ typedef struct
     linkg_switch_policy_reason_t        group_reason;                                   // 当前组LOSS/LOAD/RECOVERY/WIFI_DOWN触发原因
     linkg_switch_policy_phase_t         group_phase;                                    // 当前组统一的事务阶段
     linkg_switch_policy_target_t        group_target;                                   // 统一退出目标，MIXED时为NONE
-    uint64_t                            next_action_us;                                 // LOAD到期或同步恢复的下一动作时间
+    uint64_t                            next_action_us;                                 // 验证或同步恢复的下一动作时间
     uint8_t                             recovery_count;                                 // 当前组的追加重同步次数
 
     int32_t                             group_rssi_dbm;                                 // 事务建立时的Wi-Fi RSSI基线

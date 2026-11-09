@@ -38,7 +38,6 @@ typedef enum
     LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY, // 非质量迁移后直接恢复Wi-Fi单发
 
     // 后续事件：仅推进已存在的逻辑事务
-    LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT,         // LOAD冗余计时到期
     LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE,          // LOSS/RECOVERY质量验证完成
 
     LINKG_SWITCH_POLICY_EVENT_COUNT                 // 策略事件类型数量
@@ -79,11 +78,6 @@ typedef struct
         {
             uint32_t class_mask; // 本轮满足恢复候选条件的业务集合
         } recovery_ready;
-
-        struct
-        {
-            uint32_t operation_id; // 计时到期对应的LOAD逻辑事务
-        } load_timeout;
 
         struct
         {

@@ -296,7 +296,7 @@ static void _linkg_switch_runtime_process_plan(uint64_t now_us)
 }
 
 /**
- * @brief 先消费PlanSync终态，再推进Verification、LOAD计时与后台同步修复。
+ * @brief 先消费PlanSync终态，再推进Verification与后台同步修复。
  *
  * 与Observation刷新独立；采样失败不能使已确认的事务停止推进。
  */
@@ -445,8 +445,8 @@ static bool _linkg_switch_runtime_regular_due_locked(uint64_t now_us)
             policy = &peer->role.sta.policy;
             operation_deadline_us = 0U;
 
-            // Operation的NextDeadline会将已过期截止时间向后推迟重试。
-            // 这里必须检查真实截止时间，否则纯Fast分支可能跳过刚到期的Verify或LOAD Timer。
+            // Operation的NextDeadline会将已过期截止时间向后推迟重试；
+            // 这里必须检查真实截止时间，避免纯Fast分支跳过刚到期的Verify。
             if (policy->group_mask != 0U)
             {
                 if (policy->group_phase == LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY &&
@@ -454,10 +454,6 @@ static bool _linkg_switch_runtime_regular_due_locked(uint64_t now_us)
                 {
                     operation_deadline_us = peer->role.sta.verify.active ?
                                             peer->role.sta.verify.deadline_us : policy->next_action_us;
-                }
-                else if (policy->group_phase == LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER)
-                {
-                    operation_deadline_us = policy->next_action_us;
                 }
             }
             else if (policy->sync_repair_pending && policy->sync_repair_after_us != 0U &&

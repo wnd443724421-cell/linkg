@@ -24,7 +24,6 @@
 
 /****************************** 事务参数 ******************************/
 
-#define LINKG_SWITCH_OPERATION_LOAD_DURATION_US         100000ULL   // LOAD冗余ACK后100毫秒迁移
 #define LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US     10000000ULL  // 迁出Wi-Fi后最少等待10秒
 #define LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US       15000000ULL  // 恢复失败后延迟15秒重试
 #define LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US       2000000ULL  // 协议终态失败后重同步间隔
@@ -403,8 +402,8 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
 
             /****************************** 二、构建QoS迁移集合 ******************************/
 
-            // 迁移选中业务及所有优先级更低的Wi-Fi单发业务。
-            // 低优先级业务即使暂时没有流量，也应同步迁往Cellular。
+            // 将选中业务及所有优先级更低的Wi-Fi单发业务直接迁往Cellular。
+            // 低优先级业务即使暂时没有流量，也应同步更新最终单发计划。
             for (class_index = selected_class; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
             {
                 item = &next->classes[class_index];
@@ -417,7 +416,9 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
                     continue;
                 }
 
-                item->mode = LINKG_SEND_MODE_REDUNDANT;
+                item->mode              = LINKG_SEND_MODE_SINGLE;
+                item->primary_link_id   = observation->cellular.link_id;
+                item->secondary_link_id = observation->wifi.link_id;
 
                 mask |= LINKG_SWITCH_POLICY_CLASS_BIT(class_index);
             }
@@ -478,7 +479,7 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
  * @brief 记录已成功提交PlanSync的组级切换事务。
  *
  * 保存本次事务原因、目标链路、观测基线及业务Operation ID。
- * Wi-Fi硬故障和Wi-Fi直接恢复等待最终单发ACK，其余事件等待进入冗余ACK。
+ * Wi-Fi硬故障、负载溢出和直接恢复等待最终单发ACK，其余事件等待进入冗余ACK。
  * 调用方必须持有g_switch.lock。
  */
 static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *peer, const linkg_switch_policy_event_t *event, const linkg_send_plan_t *previous, uint32_t mask, uint32_t sync_id, uint64_t now_us)
@@ -521,8 +522,9 @@ static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *pe
 
     /****************************** 事务目标与初始阶段 ******************************/
 
-    // Wi-Fi硬故障直接迁移到Cellular，不进入冗余。
-    if (event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN)
+    // Wi-Fi硬故障和负载溢出直接迁移到Cellular，不进入冗余。
+    if (event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_DOWN ||
+        event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD)
     {
         policy->group_target = LINKG_SWITCH_POLICY_TARGET_CELLULAR;
         phase                = LINKG_SWITCH_POLICY_PHASE_WAIT_EXIT_ACK;
@@ -535,7 +537,7 @@ static void _linkg_switch_operation_start_locked(linkg_switch_peer_runtime_t *pe
     }
     else
     {
-        // LOSS、LOAD及原RECOVERY_READY仍先进入冗余阶段。
+        // LOSS及RECOVERY_READY仍先进入冗余验证阶段。
         policy->group_target = LINKG_SWITCH_POLICY_TARGET_NONE;
         phase                = LINKG_SWITCH_POLICY_PHASE_WAIT_ENTER_ACK;
     }
@@ -756,10 +758,10 @@ static int _linkg_switch_operation_start(const linkg_switch_policy_event_t *even
 
 
 /**
- * @brief 处理VERIFY_DONE或LOAD_TIMEOUT，提交最终单发计划。
+ * @brief 处理VERIFY_DONE，提交最终单发计划。
  *
  * 验证当前Operation身份、事务阶段及冗余计划一致性。
- * 根据质量验证结果或LOAD计时选择最终发送链路。
+ * 根据质量验证结果选择最终发送链路。
  * 提交完整PlanSync后进入WAIT_EXIT_ACK，等待AP确认。
  *
  * 调用方不得持有g_switch.lock。
@@ -798,9 +800,7 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     policy = &peer->role.sta.policy;
 
-    if (policy->group_mask == 0U ||
-        (policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY &&
-         policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER))
+    if (policy->group_mask == 0U || policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
@@ -818,17 +818,8 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
 
     expected_id = policy->operations[index].operation_id;
 
-    if (event->type == LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE &&
-        (policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY ||
-         event->payload.verify_done.operation_id != expected_id))
-    {
-        pthread_mutex_unlock(&g_switch.lock);
-        return 0;
-    }
-
-    if (event->type == LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT &&
-        (policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER ||
-         event->payload.load_timeout.operation_id != expected_id))
+    if (event->type != LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE ||
+        event->payload.verify_done.operation_id != expected_id)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
@@ -849,56 +840,48 @@ static int _linkg_switch_operation_exit(const linkg_switch_policy_event_t *event
     wifi_target_mask     = 0U;
     cellular_target_mask = 0U;
 
-    if (event->type == LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT)
+    switch (event->payload.verify_done.result)
     {
-        // LOAD计时到期，默认迁出整个参与业务集合。
-        cellular_target_mask = mask;
+        case LINKG_SWITCH_POLICY_VERIFY_WIFI:
+            wifi_target_mask = mask;
+            break;
+
+        case LINKG_SWITCH_POLICY_VERIFY_CELLULAR:
+            cellular_target_mask = mask;
+            break;
+
+        case LINKG_SWITCH_POLICY_VERIFY_MIXED:
+            wifi_target_mask     = event->payload.verify_done.wifi_target_mask;
+            cellular_target_mask = event->payload.verify_done.cellular_target_mask;
+
+            // 必须互斥、非空并严格覆盖参与业务，非法结果按不确定回退。
+            if (wifi_target_mask == 0U ||
+                cellular_target_mask == 0U ||
+                (wifi_target_mask & cellular_target_mask) != 0U ||
+                (wifi_target_mask | cellular_target_mask) != mask)
+            {
+                wifi_target_mask     = 0U;
+                cellular_target_mask = 0U;
+            }
+            break;
+
+        case LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE:
+        case LINKG_SWITCH_POLICY_VERIFY_NONE:
+        default:
+            // 不确定时不采纳分类结果，只使用事务开始前的主链路。
+            break;
     }
-    else
+
+    if (wifi_target_mask == 0U && cellular_target_mask == 0U)
     {
-        switch (event->payload.verify_done.result)
+        // LOSS回退到Wi-Fi，RECOVERY回退到Cellular。
+        if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
         {
-            case LINKG_SWITCH_POLICY_VERIFY_WIFI:
-                wifi_target_mask = mask;
-                break;
-
-            case LINKG_SWITCH_POLICY_VERIFY_CELLULAR:
-                cellular_target_mask = mask;
-                break;
-
-            case LINKG_SWITCH_POLICY_VERIFY_MIXED:
-                wifi_target_mask     = event->payload.verify_done.wifi_target_mask;
-                cellular_target_mask = event->payload.verify_done.cellular_target_mask;
-
-                // 必须互斥、非空并严格覆盖参与业务，非法结果按不确定回退。
-                if (wifi_target_mask == 0U ||
-                    cellular_target_mask == 0U ||
-                    (wifi_target_mask & cellular_target_mask) != 0U ||
-                    (wifi_target_mask | cellular_target_mask) != mask)
-                {
-                    wifi_target_mask     = 0U;
-                    cellular_target_mask = 0U;
-                }
-                break;
-
-            case LINKG_SWITCH_POLICY_VERIFY_INCONCLUSIVE:
-            case LINKG_SWITCH_POLICY_VERIFY_NONE:
-            default:
-                // 不确定时不采纳分类结果，只使用事务开始前的主链路。
-                break;
+            cellular_target_mask = mask;
         }
-
-        if (wifi_target_mask == 0U && cellular_target_mask == 0U)
+        else
         {
-            // LOSS回退到Wi-Fi，RECOVERY回退到Cellular。
-            if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
-            {
-                cellular_target_mask = mask;
-            }
-            else
-            {
-                wifi_target_mask = mask;
-            }
+            wifi_target_mask = mask;
         }
     }
 
@@ -1081,7 +1064,6 @@ int linkg_switch_policy_operation_process_event(const linkg_switch_policy_event_
             return _linkg_switch_operation_start(event, now_us);
 
         case LINKG_SWITCH_POLICY_EVENT_VERIFY_DONE:
-        case LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT:
             return _linkg_switch_operation_exit(event, now_us);
 
         default:
@@ -1206,7 +1188,7 @@ static void _linkg_switch_operation_abandon_uncertain_locked(linkg_switch_peer_r
  *
  * 无活动事务时处理后台PlanSync修复结果。
  * 有活动事务时校验sync_id，并根据同步结果推进或终止事务。
- * 进入冗余ACK成功后启动LOAD计时或Verify质量验证。
+ * 进入冗余ACK成功后启动LOSS/RECOVERY质量验证。
  * 最终单发ACK成功后确认迁移历史并结束Operation。
  *
  * 调用方不得持有g_switch.lock。
@@ -1392,7 +1374,7 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
 
     /****************************** 进入冗余ACK确认 ******************************/
 
-    // 成功ACK只有在WAIT_ENTER_ACK阶段才需要启动后续验证或计时。
+    // 成功ACK只有在WAIT_ENTER_ACK阶段才需要启动后续质量验证。
     if (policy->group_phase != LINKG_SWITCH_POLICY_PHASE_WAIT_ENTER_ACK)
     {
         pthread_mutex_unlock(&g_switch.lock);
@@ -1414,97 +1396,83 @@ int linkg_switch_policy_operation_on_plan_result(const linkg_switch_plan_sync_re
 
     mask = policy->group_mask;
 
-    /****************************** LOAD迁移计时 ******************************/
-
-    if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOAD)
+    // 只有LOSS和RECOVERY允许进入冗余验证阶段；其余原因属于失效事务。
+    if (policy->group_reason != LINKG_SWITCH_POLICY_REASON_LOSS &&
+        policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY)
     {
-        // 冗余ACK确认后开始1秒迁移计时。
-        policy->next_action_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_LOAD_DURATION_US);
-        _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER, now_us);
-
-        // 记录本组参与业务的计时起点和截止时间。
-        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
-        {
-            if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
-            {
-                continue;
-            }
-
-            policy->operations[index].started_us  = now_us;
-            policy->operations[index].deadline_us = policy->next_action_us;
-        }
+        _linkg_switch_operation_clear_group_locked(peer);
+        pthread_mutex_unlock(&g_switch.lock);
+        return 0;
     }
+
     /****************************** LOSS及RECOVERY质量验证 ******************************/
-    else if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_LOSS ||
-             policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY)
+
+    /****************************** 固化参与业务及原始迁出原因 ******************************/
+
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
     {
-        /****************************** 固化参与业务及原始迁出原因 ******************************/
-
-        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
         {
-            if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
-            {
-                continue;
-            }
-
-            operation_ids[index] = policy->operations[index].operation_id;
-
-            if (policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY)
-            {
-                continue;
-            }
-
-            // Cellular已按原因生成独立候选组；这里以第一个参与业务为本组基线。
-            if (recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_NONE)
-            {
-                recovery_reason = policy->operations[index].migration_reason;
-            }
-            else if (recovery_reason != policy->operations[index].migration_reason)
-            {
-                // 外部原因发生变化时不允许混合判决，Verify安全失败后回到Cellular。
-                recovery_reason = LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
-            }
+            continue;
         }
 
-        // 组装Verify启动参数，保持Operation与Verify接口一致。
-        memset(&verify_params, 0, sizeof(verify_params));
+        operation_ids[index] = policy->operations[index].operation_id;
 
-        verify_params.peer_node_id    = peer->peer_node_id;
-        verify_params.peer_generation = peer->generation;
-
-        memcpy(verify_params.operation_ids, operation_ids, sizeof(verify_params.operation_ids));
-
-        verify_params.class_mask      = mask;
-        verify_params.reason          = policy->group_reason;
-        verify_params.recovery_reason = recovery_reason;
-        verify_params.observation     = &peer->role.sta.observation;
-        verify_params.now_us          = now_us;
-
-        // Operation与Verify统一使用按原因确定的验证持续时间。
-        verify_duration_us = linkg_switch_policy_verify_duration_us(
-            verify_params.reason, verify_params.recovery_reason);
-
-        ret = linkg_switch_policy_verify_begin(&peer->role.sta.verify, &verify_params);
-
-        // 无论Verify是否启动成功，都进入对应的3秒或5秒验证窗口。
-        _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY, now_us);
-        policy->next_action_us = _linkg_switch_operation_add_us(now_us, verify_duration_us);
-
-        // 记录本组参与业务的验证起点和截止时间。
-        for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+        if (policy->group_reason != LINKG_SWITCH_POLICY_REASON_RECOVERY)
         {
-            if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
-            {
-                continue;
-            }
-
-            policy->operations[index].started_us  = now_us;
-            policy->operations[index].deadline_us = policy->next_action_us;
+            continue;
         }
 
-        // Verify启动失败时，由Operation在对应验证窗口结束后输出INCONCLUSIVE。
-        (void)ret;
+        // Cellular已按原因生成独立候选组；这里以第一个参与业务为本组基线。
+        if (recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_NONE)
+        {
+            recovery_reason = policy->operations[index].migration_reason;
+        }
+        else if (recovery_reason != policy->operations[index].migration_reason)
+        {
+            // 外部原因发生变化时不允许混合判决，Verify安全失败后回到Cellular。
+            recovery_reason = LINKG_SWITCH_POLICY_MIGRATION_UNKNOWN;
+        }
     }
+
+    // 组装Verify启动参数，保持Operation与Verify接口一致。
+    memset(&verify_params, 0, sizeof(verify_params));
+
+    verify_params.peer_node_id    = peer->peer_node_id;
+    verify_params.peer_generation = peer->generation;
+
+    memcpy(verify_params.operation_ids, operation_ids, sizeof(verify_params.operation_ids));
+
+    verify_params.class_mask      = mask;
+    verify_params.reason          = policy->group_reason;
+    verify_params.recovery_reason = recovery_reason;
+    verify_params.observation     = &peer->role.sta.observation;
+    verify_params.now_us          = now_us;
+
+    // Operation与Verify统一使用按原因确定的验证持续时间。
+    verify_duration_us = linkg_switch_policy_verify_duration_us(
+        verify_params.reason, verify_params.recovery_reason);
+
+    ret = linkg_switch_policy_verify_begin(&peer->role.sta.verify, &verify_params);
+
+    // 无论Verify是否启动成功，都进入对应的3秒或5秒验证窗口。
+    _linkg_switch_operation_set_phase_locked(peer, LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY, now_us);
+    policy->next_action_us = _linkg_switch_operation_add_us(now_us, verify_duration_us);
+
+    // 记录本组参与业务的验证起点和截止时间。
+    for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
+    {
+        if ((mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) == 0U)
+        {
+            continue;
+        }
+
+        policy->operations[index].started_us  = now_us;
+        policy->operations[index].deadline_us = policy->next_action_us;
+    }
+
+    // Verify启动失败时，由Operation在对应验证窗口结束后输出INCONCLUSIVE。
+    (void)ret;
 
     pthread_mutex_unlock(&g_switch.lock);
     return 0;
@@ -1776,7 +1744,7 @@ static void _linkg_switch_operation_track_external_locked(linkg_switch_peer_runt
 /**
  * @brief 在Switch Worker中推进当前Operation切换事务。
  *
- * 处理后台PlanSync修复、冗余质量验证、LOAD计时及有限协议重同步。
+ * 处理后台PlanSync修复、冗余质量验证及有限协议重同步。
  * 外部Plan覆盖当前事务时，清理旧Operation，禁止旧结果修改新Plan。
  *
  * 调用方不得持有g_switch.lock。
@@ -1929,9 +1897,8 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
         return 0;
     }
 
-    // 验证或LOAD计时期间，要求当前Plan仍与本组冗余计划一致。
-    if (policy->group_phase == LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY ||
-        policy->group_phase == LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER)
+    // 质量验证期间，要求当前Plan仍与本组冗余计划一致。
+    if (policy->group_phase == LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY)
     {
         if (!_linkg_switch_operation_group_plan_matches_locked(peer, false))
         {
@@ -2002,32 +1969,6 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
             break;
         }
 
-        case LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER:
-        {
-            // LOAD进入冗余后的1秒计时尚未到期。
-            if (now_us < policy->next_action_us)
-            {
-                break;
-            }
-
-            // 使用本组第一个参与业务的Operation ID标识超时事件。
-            for (index = 0U; index < LINKG_TRANSPORT_CLASS_COUNT; index++)
-            {
-                if ((policy->group_mask & LINKG_SWITCH_POLICY_CLASS_BIT(index)) != 0U)
-                {
-                    break;
-                }
-            }
-
-            event.type                              = LINKG_SWITCH_POLICY_EVENT_LOAD_TIMEOUT;
-            event.peer_node_id                      = peer_node_id;
-            event.peer_generation                   = peer_generation;
-            event.occurred_us                       = now_us;
-            event.payload.load_timeout.operation_id = policy->operations[index].operation_id;
-            event_ready = true;
-            break;
-        }
-
         case LINKG_SWITCH_POLICY_PHASE_UNCERTAIN:
         {
             // 追加重同步必须达到截止时间，且不能超过最大次数。
@@ -2054,7 +1995,7 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
 
     /****************************** 交付事务事件 ******************************/
 
-    // Verify完成或LOAD计时到期，交给Operation事件入口执行最终Plan构建。
+    // Verify完成后，交给Operation事件入口执行最终Plan构建。
     if (event_ready)
     {
         return linkg_switch_policy_operation_process_event(&event, now_us);
@@ -2113,7 +2054,7 @@ int linkg_switch_policy_operation_process(uint64_t now_us)
  * @brief 获取当前Operation最早需要处理的截止时间。
  *
  * 无活动事务时检查后台PlanSync修复时间。
- * 有活动事务时根据阶段检查Verify、LOAD计时或协议重同步时间。
+ * 有活动事务时根据阶段检查Verify或协议重同步时间。
  * 调用方必须持有g_switch.lock。
  *
  * @return 下一次截止时间，UINT64_MAX表示没有待调度的截止时间。
@@ -2191,11 +2132,6 @@ uint64_t linkg_switch_policy_operation_next_deadline_locked(void)
                         // Verify未启动时使用Operation的后备截止时间。
                         candidate_us = policy->next_action_us;
                     }
-                    break;
-
-                case LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER:
-                    // LOAD进入冗余后的1秒迁移计时。
-                    candidate_us = policy->next_action_us;
                     break;
 
                 case LINKG_SWITCH_POLICY_PHASE_UNCERTAIN:
