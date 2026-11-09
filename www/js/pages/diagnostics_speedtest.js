@@ -21,6 +21,7 @@
     let activeJobId = 0;
     let selectedMode = "client";
     let statusBusy = false;
+    let statusRequest = 0;
     let actionBusy = false;
     let lastStatus = null;
     let lastChartKey = "";
@@ -234,7 +235,41 @@
     }
 
     /**
-     * 根据后端快照刷新当前带宽、图表、监听地址和最终结果。
+     * 恢复后端当前客户端任务的实际配置。
+     */
+    function restoreClientSettings(status)
+    {
+        field("speedtestServerMode").value = status.auto_port ? "public" : "custom";
+        field("speedtestServer").value = status.server || "";
+        field("speedtestPort").value = String(status.port);
+        field("speedtestProtocol").value = status.protocol;
+        field("speedtestDirection").value = status.direction;
+
+        const duration = Number(status.duration_sec);
+        const durationField = field("speedtestDuration");
+        if (Number.isInteger(duration) && duration >= 5 && duration <= 60)
+        {
+            if (!Array.from(durationField.options).some(option => Number(option.value) === duration))
+            {
+                const option = document.createElement("option");
+                option.value = String(duration);
+                option.textContent = duration + " 秒";
+                durationField.appendChild(option);
+            }
+            durationField.value = String(duration);
+        }
+        if (Number.isFinite(Number(status.bandwidth_mbps)) && Number(status.bandwidth_mbps) >= 0.1)
+        {
+            field("speedtestBandwidth").value = String(status.bandwidth_mbps);
+        }
+        if (Number.isInteger(Number(status.packet_length)) && Number(status.packet_length) >= 200)
+        {
+            field("speedtestPacket").value = String(status.packet_length);
+        }
+    }
+
+    /**
+     * 同步设备状态，首次进入或发现新运行任务时恢复实际参数。
      */
     function showStatus(status)
     {
@@ -246,8 +281,13 @@
         const hasSamples = Array.isArray(status.samples) && status.samples.length > 0;
         const state = field("speedtestState");
 
+        const restore = !loadedInitially || (running && (!lastStatus || lastStatus.job_id !== status.job_id));
         lastStatus = status;
         activeJobId = Number(status.job_id) || 0;
+        if (activeJobId > 0 && !server && restore)
+        {
+            restoreClientSettings(status);
+        }
         // 进入页面首次同步上一任务；用户手动切换模式后不被历史任务强行覆盖。
         if (activeJobId > 0 && selectedMode !== status.mode &&
             (!loadedInitially || running))
@@ -265,7 +305,8 @@
             (status.rate_is_sender ? "当前发送速率" : "当前接收速率");
         field("speedtestCurrent").textContent = hasSamples ? formatMbps(status.current_mbps) : "—";
         field("speedtestRateHint").textContent = server ?
-            (status.server_connected ? "客户端已接入，展示本机每秒区间统计" : "等待组网客户端连接") :
+            (!running ? "服务端已停止，保留最近会话统计" :
+                status.server_connected ? "客户端已接入，展示本机每秒区间统计" : "等待组网客户端连接") :
             (status.rate_is_sender ? "本机每秒发送统计，非远端实时接收速率" : "每秒更新本机接收区间统计");
         field("speedtestProgressText").textContent = seconds + " / " + duration + " 秒";
         field("speedtestProgressBar").style.width = (status.state === "completed" ? 100 : progress) + "%";
@@ -354,41 +395,35 @@
     /**
      * 按最近任务ID查询设备状态；页面离开后不再轮询。
      */
-    async function refresh(token)
+    function scheduleRefresh(token)
     {
-        if (!root || token !== session || statusBusy)
+        if (!root || token !== session)
         {
             return;
         }
-        statusBusy = true;
-        try
+        clearTimeout(timer);
+        timer = setTimeout(function () { refresh(token); }, REFRESH_INTERVAL_MS);
+    }
+
+    /**
+     * 作废操作前仍在途的状态读取，防止旧结果覆盖新任务。
+     */
+    function invalidateStatus()
+    {
+        statusRequest++;
+        statusBusy = false;
+        clearTimeout(timer);
+        timer = null;
+    }
+
+    /**
+     * 周期读取由当前页面会话独立管理。
+     */
+    async function refresh(token)
+    {
+        if (root && token === session && !statusBusy)
         {
-            const result = await LinkGSpeedtestApi.getStatus(activeJobId);
-            if (root && token === session && result.data)
-            {
-                showStatus(result.data);
-            }
-        }
-        catch (error)
-        {
-            if (root && token === session)
-            {
-                // 设备重启或旧job被覆盖时，允许回退读取最近任务。
-                if (activeJobId > 0)
-                {
-                    activeJobId = 0;
-                }
-                setMessage(error.message || "读取测速任务失败", true);
-            }
-        }
-        finally
-        {
-            statusBusy = false;
-            if (root && token === session)
-            {
-                clearTimeout(timer);
-                timer = setTimeout(function () { refresh(token); }, REFRESH_INTERVAL_MS);
-            }
+            await refreshOnce(token);
         }
     }
 
@@ -401,10 +436,33 @@
         {
             return;
         }
-        const result = await LinkGSpeedtestApi.getStatus(activeJobId);
-        if (root && token === session && result.data)
+        const request = ++statusRequest;
+        statusBusy = true;
+        clearTimeout(timer);
+        timer = null;
+        try
         {
-            showStatus(result.data);
+            const result = await LinkGSpeedtestApi.getStatus(activeJobId);
+            if (root && token === session && request === statusRequest && result.data)
+            {
+                showStatus(result.data);
+            }
+        }
+        catch (error)
+        {
+            if (root && token === session && request === statusRequest)
+            {
+                activeJobId = 0;
+                setMessage(error.message || "读取测速任务失败", true);
+            }
+        }
+        finally
+        {
+            if (root && token === session && request === statusRequest)
+            {
+                statusBusy = false;
+                scheduleRefresh(token);
+            }
         }
     }
 
@@ -429,6 +487,7 @@
             return;
         }
         actionBusy = true;
+        invalidateStatus();
         updateControls();
         setMessage(params.mode === "server" ? "正在启动组网iperf3服务器…" : "正在建立测速连接…", false);
         try
@@ -452,10 +511,14 @@
         }
         finally
         {
-            actionBusy = false;
             if (root && token === session)
             {
+                actionBusy = false;
                 updateControls();
+                if (!statusBusy)
+                {
+                    scheduleRefresh(token);
+                }
             }
         }
     }
@@ -471,6 +534,7 @@
             return;
         }
         actionBusy = true;
+        invalidateStatus();
         updateControls();
         setMessage("正在停止网络诊断任务…", false);
         try
@@ -491,10 +555,14 @@
         }
         finally
         {
-            actionBusy = false;
             if (root && token === session)
             {
+                actionBusy = false;
                 updateControls();
+                if (!statusBusy)
+                {
+                    scheduleRefresh(token);
+                }
             }
         }
     }
@@ -528,6 +596,7 @@
             return;
         }
         session++;
+        invalidateStatus();
         activeJobId = 0;
         actionBusy = false;
         lastStatus = null;
@@ -584,8 +653,8 @@
         field("speedtestStart").removeEventListener("click", startTest);
         field("speedtestStop").removeEventListener("click", stopTest);
         session++;
-        clearTimeout(timer);
-        timer = null;
+        invalidateStatus();
+        actionBusy = false;
         root = null;
         lastStatus = null;
     }

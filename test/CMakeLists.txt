@@ -145,3 +145,14 @@ add_linkg_logic_test(test_config
     "${LINKG_ROOT}/modules/wifi/linkg_wifi_ops.c"
     "${LINKG_ROOT}/third_party/cjson/cJSON.c"
 )
+
+add_executable(fake_iperf3 unit/fake_iperf3.c)
+set_target_properties(fake_iperf3 PROPERTIES OUTPUT_NAME iperf3 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/fake-bin")
+add_linkg_logic_test(test_web_speedtest
+    unit/test_web_speedtest.c
+    "${LINKG_ROOT}/infra/base/linkg_thread.c"
+    "${LINKG_ROOT}/infra/base/linkg_time.c"
+)
+target_include_directories(test_web_speedtest PRIVATE "${LINKG_ROOT}/service/web/speedtest")
+add_dependencies(test_web_speedtest fake_iperf3)
+set_tests_properties(test_web_speedtest PROPERTIES TIMEOUT 40 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1;PATH=${CMAKE_BINARY_DIR}/fake-bin:$ENV{PATH}")

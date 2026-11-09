@@ -6,9 +6,9 @@
  * @date 2026-11-09
  */
 
-#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE                       200809L          // POSIX.1-2008接口
 #ifndef _DEFAULT_SOURCE
-#define _DEFAULT_SOURCE 1
+#define _DEFAULT_SOURCE                       1                // 默认系统接口
 #endif
 
 #include "web_speedtest.h"
@@ -38,33 +38,33 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_WEB_SPEEDTEST_THREAD_NAME        "web-speedtest"   // 线程名
-#define LINKG_WEB_SPEEDTEST_POLL_MS            200               // 子进程轮询周期，单位毫秒
-#define LINKG_WEB_SPEEDTEST_CONNECT_EXTRA_MS   20000ULL          // 测试连接及收尾额外超时
-#define LINKG_WEB_SPEEDTEST_KILL_GRACE_MS      1500ULL           // 终止后等待强制退出的时间
-#define LINKG_WEB_SPEEDTEST_LINE_SIZE          512U              // 单行输出最大缓冲长度
+#define LINKG_WEB_SPEEDTEST_THREAD_NAME       "web-speedtest"  // 线程名
+#define LINKG_WEB_SPEEDTEST_POLL_MS           200              // 子进程轮询周期，单位毫秒
+#define LINKG_WEB_SPEEDTEST_CONNECT_EXTRA_MS  20000ULL         // 测试连接及收尾额外超时
+#define LINKG_WEB_SPEEDTEST_KILL_GRACE_MS     1500ULL          // 终止后等待强制退出的时间
+#define LINKG_WEB_SPEEDTEST_LINE_SIZE         512U             // 单行输出最大缓冲长度
 
-#define LINKG_WEB_SPEEDTEST_PUBLIC_SERVER      "116.169.118.91"  // 默认公共节点IP
-#define LINKG_WEB_SPEEDTEST_PUBLIC_PORT_FIRST  5201U             // 公共端口范围起始
-#define LINKG_WEB_SPEEDTEST_PUBLIC_PORT_LAST   5220U             // 公共端口范围终点
-#define LINKG_WEB_SPEEDTEST_RETRY_DELAY_MS     300               // 端口轮换间隔毫秒
+#define LINKG_WEB_SPEEDTEST_PUBLIC_SERVER     "116.169.118.91" // 默认公共节点IP
+#define LINKG_WEB_SPEEDTEST_PUBLIC_PORT_FIRST 5201U            // 公共端口范围起始
+#define LINKG_WEB_SPEEDTEST_PUBLIC_PORT_LAST  5220U            // 公共端口范围终点
+#define LINKG_WEB_SPEEDTEST_RETRY_DELAY_MS    300              // 端口轮换间隔毫秒
 
 /****************************** 内部类型 ******************************/
 
 typedef struct
 {
-    pthread_mutex_t                 lock;              // 保护任务状态和参数
-    linkg_thread_t                  worker;            // 常驻测速Worker线程
-    bool                            initialized;       // 线程资源是否完成初始化
-    bool                            started;           // Web测速模块是否已启动
-    bool                            stopping;          // Web测速模块正在停止
-    bool                            pending;           // 是否存在尚未执行的任务
-    bool                            server_busy;       // 当前公网端口是否明确报告繁忙
-    bool                            last_interval_sum; // 当前秒是否已采用SUM汇总
-    uint64_t                        started_ms;        // 当前测速开始时刻
-    uint32_t                        next_job_id;       // 下一个任务编号
-    linkg_web_speedtest_params_t    pending_params;    // 即将执行的参数副本
-    linkg_web_speedtest_status_t    status;            // 最近任务状态快照
+    pthread_mutex_t              lock;             // 保护任务状态和参数
+    linkg_thread_t               worker;           // 常驻测速Worker线程
+    bool                         initialized;      // 线程资源是否完成初始化
+    bool                         started;          // Web测速模块是否已启动
+    bool                         stopping;         // Web测速模块正在停止
+    bool                         pending;          // 是否存在尚未执行的任务
+    bool                         server_busy;      // 当前公网端口是否明确报告繁忙
+    bool                         last_summary_sum; // 当前最终统计是否已采用SUM汇总
+    uint64_t                     started_ms;       // 当前测速开始时刻
+    uint32_t                     next_job_id;      // 下一个任务编号
+    linkg_web_speedtest_params_t pending_params;   // 即将执行的参数副本
+    linkg_web_speedtest_status_t status;           // 最近任务状态快照
 } linkg_web_speedtest_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -239,6 +239,7 @@ static void _linkg_web_speedtest_parse_line(const char *line)
     bool        sender;
     bool        is_sum;
     bool        server_mode;
+    bool        summary_accepted;
     int         fields;
 
     if (strncmp(line, "iperf3: error", 13U) == 0)
@@ -280,9 +281,10 @@ static void _linkg_web_speedtest_parse_line(const char *line)
             g_web_speedtest.status.packet_loss_percent = 0.0;
             g_web_speedtest.status.average_valid       = false;
             g_web_speedtest.status.packet_loss_valid   = false;
+            g_web_speedtest.status.average_is_sender   = false;
             g_web_speedtest.status.sample_count        = 0U;
             g_web_speedtest.status.interval_count      = 0U;
-            g_web_speedtest.last_interval_sum          = false;
+            g_web_speedtest.last_summary_sum           = false;
             snprintf(g_web_speedtest.status.message, sizeof(g_web_speedtest.status.message),
                      "%s", "客户端已连接，正在接收测试数据");
         }
@@ -339,15 +341,21 @@ static void _linkg_web_speedtest_parse_line(const char *line)
 
     if (receiver || sender)
     {
-        // 汇总以接收端优先；服务端的反向测试可能只有本机sender汇总。
-        if (receiver || (server_mode && !g_web_speedtest.status.average_valid))
+        // 接收端优先；同一方向的SUM优先于单流，服务端反向测试允许sender汇总。
+        summary_accepted = (receiver || server_mode) &&
+                           (!g_web_speedtest.status.average_valid ||
+                            (receiver && g_web_speedtest.status.average_is_sender) ||
+                            (sender == g_web_speedtest.status.average_is_sender &&
+                             (!g_web_speedtest.last_summary_sum || is_sum)));
+        if (summary_accepted)
         {
             g_web_speedtest.status.average_mbps      = mbps;
             g_web_speedtest.status.average_valid     = true;
             g_web_speedtest.status.average_is_sender = sender;
+            g_web_speedtest.last_summary_sum         = is_sum;
         }
 
-        if (receiver)
+        if (receiver && summary_accepted)
         {
             percent    = strchr(line, '%');
             open_paren = NULL;
@@ -390,10 +398,9 @@ static void _linkg_web_speedtest_parse_line(const char *line)
             // 多流场景[SUM]覆盖单流，普通流不再覆盖已收到的汇总。
             if (is_sum)
             {
-                index = g_web_speedtest.status.sample_count - 1U;
+                index                                      = g_web_speedtest.status.sample_count - 1U;
                 g_web_speedtest.status.samples[index].mbps = mbps;
                 g_web_speedtest.status.current_mbps        = mbps;
-                g_web_speedtest.last_interval_sum          = true;
             }
         }
         else
@@ -412,7 +419,6 @@ static void _linkg_web_speedtest_parse_line(const char *line)
             g_web_speedtest.status.samples[index].mbps   = mbps;
             g_web_speedtest.status.current_mbps          = mbps;
             g_web_speedtest.status.interval_count++;
-            g_web_speedtest.last_interval_sum            = is_sum;
         }
     }
 
@@ -430,13 +436,21 @@ static void _linkg_web_speedtest_consume_bytes(const char *bytes, size_t count, 
     {
         if (bytes[index] == '\n')
         {
-            line[*used] = '\0';
-            _linkg_web_speedtest_parse_line(line);
+            if (*used < LINKG_WEB_SPEEDTEST_LINE_SIZE)
+            {
+                line[*used] = '\0';
+                _linkg_web_speedtest_parse_line(line);
+            }
             *used = 0U;
             continue;
         }
 
         if (bytes[index] == '\r')
+        {
+            continue;
+        }
+
+        if (*used >= LINKG_WEB_SPEEDTEST_LINE_SIZE)
         {
             continue;
         }
@@ -447,8 +461,8 @@ static void _linkg_web_speedtest_consume_bytes(const char *bytes, size_t count, 
         }
         else
         {
-            // 单行超限时丢弃该行，避免错误解析截断的统计。
-            *used = 0U;
+            // 用越界哨兵丢弃整行，直到下一个换行符。
+            *used = LINKG_WEB_SPEEDTEST_LINE_SIZE;
         }
     }
 }
@@ -480,10 +494,10 @@ static int _linkg_web_speedtest_local_overlay(char *address, size_t size)
 {
     struct ifaddrs *list;
     struct ifaddrs *current;
-    struct in_addr selected;
-    uint32_t       value;
-    bool           found;
-    int            ret;
+    struct in_addr  selected;
+    uint32_t        value;
+    bool            found;
+    int             ret;
 
     if (getifaddrs(&list) != 0)
     {
@@ -503,13 +517,13 @@ static int _linkg_web_speedtest_local_overlay(char *address, size_t size)
             continue;
         }
         sockaddr_ipv4 = (const struct sockaddr_in *)current->ifa_addr;
-        value = ntohl(sockaddr_ipv4->sin_addr.s_addr);
+        value         = ntohl(sockaddr_ipv4->sin_addr.s_addr);
         if ((value & 0xFFFF0000U) != 0xAC1C0000U)
         {
             continue;
         }
         selected = sockaddr_ipv4->sin_addr;
-        found = true;
+        found    = true;
         if ((value & 0xFFU) == 1U)
         {
             break;
@@ -594,36 +608,36 @@ static int _linkg_web_speedtest_bind_address(const linkg_web_speedtest_params_t 
  */
 static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, const linkg_thread_t *thread)
 {
-    char           bind_address[INET6_ADDRSTRLEN];
-    char           port[8];
-    char           duration[8];
-    char           bandwidth[32];
-    char           packet_length[8];
-    char           line[LINKG_WEB_SPEEDTEST_LINE_SIZE];
-    char           chunk[512];
-    char          *argv[24];
-    const char    *family;
-    struct pollfd  descriptor;
-    uint64_t       start_ms;
-    uint64_t       terminate_ms;
-    uint64_t       reaped_ms;
-    pid_t          pid;
-    pid_t          waited;
-    size_t         used;
-    uint32_t       burst_level;
-    uint32_t       burst_count;
-    int            pipe_fd[2];
-    int            arg_count;
-    int            status;
-    int            ret;
-    int            count;
-    bool           reaped;
-    bool           eof;
-    bool           stopping;
-    bool           timed_out;
-    bool           sent_kill;
-    bool           server_busy;
-    bool           server_mode;
+    char          bind_address[INET6_ADDRSTRLEN];
+    char          port[8];
+    char          duration[8];
+    char          bandwidth[32];
+    char          packet_length[8];
+    char          line[LINKG_WEB_SPEEDTEST_LINE_SIZE];
+    char          chunk[512];
+    char         *argv[24];
+    const char   *family;
+    struct pollfd descriptor;
+    uint64_t      start_ms;
+    uint64_t      terminate_ms;
+    uint64_t      reaped_ms;
+    pid_t         pid;
+    pid_t         waited;
+    size_t        used;
+    uint32_t      burst_level;
+    uint32_t      burst_count;
+    int           pipe_fd[2];
+    int           arg_count;
+    int           status;
+    int           ret;
+    int           count;
+    bool          reaped;
+    bool          eof;
+    bool          stopping;
+    bool          timed_out;
+    bool          sent_kill;
+    bool          server_busy;
+    bool          server_mode;
 
     if (_linkg_web_speedtest_cancelled(thread))
     {
@@ -689,7 +703,7 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
         snprintf(bandwidth, sizeof(bandwidth), "%.3fM", params->bandwidth_mbps);
     }
 
-    arg_count         = 0;
+    arg_count = 0;
     argv[arg_count++] = "iperf3";
     argv[arg_count++] = server_mode ? "-s" : "-c";
     if (!server_mode)
@@ -792,7 +806,10 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
             timed_out    = !_linkg_web_speedtest_cancelled(thread);
             stopping     = true;
             terminate_ms = now_ms;
-            kill(pid, SIGTERM);
+            if (!reaped)
+            {
+                kill(pid, SIGTERM);
+            }
         }
         if (stopping && !reaped && !sent_kill &&
             now_ms - terminate_ms >= LINKG_WEB_SPEEDTEST_KILL_GRACE_MS)
@@ -803,7 +820,7 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
         if (!eof)
         {
             descriptor.revents = 0;
-            ret = poll(&descriptor, 1, LINKG_WEB_SPEEDTEST_POLL_MS);
+            ret                = poll(&descriptor, 1, LINKG_WEB_SPEEDTEST_POLL_MS);
             if (ret > 0 && (descriptor.revents & (POLLIN | POLLHUP | POLLERR)) != 0)
             {
                 count = (int)read(pipe_fd[0], chunk, sizeof(chunk));
@@ -840,7 +857,7 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
         }
     }
     close(pipe_fd[0]);
-    if (used != 0U)
+    if (used != 0U && used < LINKG_WEB_SPEEDTEST_LINE_SIZE)
     {
         line[used] = '\0';
         _linkg_web_speedtest_parse_line(line);
@@ -865,10 +882,18 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
     {
         pthread_mutex_lock(&g_web_speedtest.lock);
-        if (g_web_speedtest.status.message[0] == '\0')
+        if (strncmp(g_web_speedtest.status.message, "iperf3: error", 13U) != 0)
         {
-            snprintf(g_web_speedtest.status.message, sizeof(g_web_speedtest.status.message),
-                     "%s", "iperf3进程退出异常，检查服务器端口和客户端配置");
+            if (WIFSIGNALED(status))
+            {
+                snprintf(g_web_speedtest.status.message, sizeof(g_web_speedtest.status.message),
+                         "iperf3进程被信号%d终止", WTERMSIG(status));
+            }
+            else
+            {
+                snprintf(g_web_speedtest.status.message, sizeof(g_web_speedtest.status.message),
+                         "iperf3进程退出异常，状态码=%d", WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+            }
         }
         pthread_mutex_unlock(&g_web_speedtest.lock);
         return -EIO;
@@ -894,8 +919,8 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
 static int _linkg_web_speedtest_run_with_retry(const linkg_web_speedtest_params_t *params, const linkg_thread_t *thread)
 {
     linkg_web_speedtest_params_t attempt;
-    uint16_t                      previous_port;
-    int                           ret;
+    uint16_t                     previous_port;
+    int                          ret;
 
     attempt = *params;
     for (;;)
@@ -906,7 +931,7 @@ static int _linkg_web_speedtest_run_with_retry(const linkg_web_speedtest_params_
         }
         pthread_mutex_lock(&g_web_speedtest.lock);
         g_web_speedtest.server_busy                = false;
-        g_web_speedtest.last_interval_sum          = false;
+        g_web_speedtest.last_summary_sum           = false;
         g_web_speedtest.status.params.port         = attempt.port;
         g_web_speedtest.status.current_mbps        = 0.0;
         g_web_speedtest.status.average_mbps        = 0.0;
@@ -950,13 +975,16 @@ static int _linkg_web_speedtest_run_with_retry(const linkg_web_speedtest_params_
 
 /****************************** Worker线程 ******************************/
 
+/**
+ * @brief 执行常驻测速任务并汇总终态。
+ */
 static void _linkg_web_speedtest_worker(linkg_thread_t *thread, void *user_data)
 {
     linkg_web_speedtest_params_t params;
-    struct pollfd                 descriptor;
-    uint64_t                      start_ms;
-    int                           ret;
-    bool                          pending;
+    struct pollfd                descriptor;
+    uint64_t                     start_ms;
+    int                          ret;
+    bool                         pending;
 
     (void)user_data;
 
@@ -969,9 +997,9 @@ static void _linkg_web_speedtest_worker(linkg_thread_t *thread, void *user_data)
         pending = g_web_speedtest.pending;
         if (pending)
         {
-            params = g_web_speedtest.pending_params;
-            g_web_speedtest.pending       = false;
-            g_web_speedtest.started_ms    = linkg_time_elapsed_ms();
+            params                       = g_web_speedtest.pending_params;
+            g_web_speedtest.pending      = false;
+            g_web_speedtest.started_ms   = linkg_time_elapsed_ms();
             g_web_speedtest.status.state = LINKG_WEB_SPEEDTEST_RUNNING;
         }
         pthread_mutex_unlock(&g_web_speedtest.lock);
@@ -990,7 +1018,8 @@ static void _linkg_web_speedtest_worker(linkg_thread_t *thread, void *user_data)
         ret      = _linkg_web_speedtest_run_with_retry(&params, thread);
 
         pthread_mutex_lock(&g_web_speedtest.lock);
-        g_web_speedtest.status.elapsed_ms = linkg_time_elapsed_ms() - start_ms;
+        g_web_speedtest.status.elapsed_ms       = linkg_time_elapsed_ms() - start_ms;
+        g_web_speedtest.status.server_connected = false;
 
         if (ret == 0)
         {
@@ -1019,6 +1048,9 @@ static void _linkg_web_speedtest_worker(linkg_thread_t *thread, void *user_data)
 
 /****************************** 生命周期 ******************************/
 
+/**
+ * @brief 初始化测速线程及任务状态。
+ */
 int _linkg_web_speedtest_init(void)
 {
     int ret;
@@ -1039,8 +1071,13 @@ int _linkg_web_speedtest_init(void)
     }
 
     pthread_mutex_lock(&g_web_speedtest.lock);
-    g_web_speedtest.initialized = true;
-    g_web_speedtest.status.state = LINKG_WEB_SPEEDTEST_IDLE;
+    memset(&g_web_speedtest.status, 0, sizeof(g_web_speedtest.status));
+    g_web_speedtest.pending          = false;
+    g_web_speedtest.server_busy      = false;
+    g_web_speedtest.last_summary_sum = false;
+    g_web_speedtest.started_ms       = 0U;
+    g_web_speedtest.initialized      = true;
+    g_web_speedtest.status.state     = LINKG_WEB_SPEEDTEST_IDLE;
     pthread_mutex_unlock(&g_web_speedtest.lock);
 
     return 0;
@@ -1086,7 +1123,7 @@ int _linkg_web_speedtest_stop(void)
         pthread_mutex_unlock(&g_web_speedtest.lock);
         return 0;
     }
-    g_web_speedtest.stopping = true;
+    g_web_speedtest.stopping                = true;
     g_web_speedtest.status.cancel_requested = true;
     pthread_mutex_unlock(&g_web_speedtest.lock);
 
@@ -1130,6 +1167,9 @@ void _linkg_web_speedtest_deinit(void)
 
 /****************************** 任务控制 ******************************/
 
+/**
+ * @brief 校验参数并提交唯一测速任务。
+ */
 int _linkg_web_speedtest_submit(const linkg_web_speedtest_params_t *params, uint32_t *job_id)
 {
     int ret;
@@ -1159,7 +1199,7 @@ int _linkg_web_speedtest_submit(const linkg_web_speedtest_params_t *params, uint
     memset(&g_web_speedtest.status, 0, sizeof(g_web_speedtest.status));
     g_web_speedtest.status.job_id = g_web_speedtest.next_job_id;
     g_web_speedtest.status.state  = LINKG_WEB_SPEEDTEST_STARTING;
-    g_web_speedtest.status.params         = *params;
+    g_web_speedtest.status.params = *params;
     g_web_speedtest.status.rate_is_sender = params->mode == LINKG_WEB_SPEEDTEST_MODE_CLIENT &&
                                               params->direction == LINKG_WEB_SPEEDTEST_UPLOAD;
     g_web_speedtest.pending_params = *params;

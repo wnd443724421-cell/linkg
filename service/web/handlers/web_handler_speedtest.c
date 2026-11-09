@@ -115,15 +115,15 @@ int _linkg_web_handler_speedtest_start(const cJSON *param, char **response)
     };
     static const char *const server_keys[] = {"mode", "port"};
     linkg_web_speedtest_params_t params;
-    const cJSON                *mode;
-    const cJSON                *server;
-    const cJSON                *protocol;
-    const cJSON                *direction;
-    const cJSON                *item;
-    cJSON                      *data;
-    uint32_t                    number;
-    uint32_t                    job_id;
-    int                         ret;
+    const cJSON                 *mode;
+    const cJSON                 *server;
+    const cJSON                 *protocol;
+    const cJSON                 *direction;
+    const cJSON                 *item;
+    cJSON                       *data;
+    uint32_t                     number;
+    uint32_t                     job_id;
+    int                          ret;
 
     if (response == NULL)
     {
@@ -172,8 +172,8 @@ int _linkg_web_handler_speedtest_start(const cJSON *param, char **response)
         {
             return _linkg_web_response_error(LINKG_WEB_CMD_SPEEDTEST_START, "客户端测速参数格式无效", response);
         }
-        server = cJSON_GetObjectItemCaseSensitive(param, "server");
-        protocol = cJSON_GetObjectItemCaseSensitive(param, "protocol");
+        server    = cJSON_GetObjectItemCaseSensitive(param, "server");
+        protocol  = cJSON_GetObjectItemCaseSensitive(param, "protocol");
         direction = cJSON_GetObjectItemCaseSensitive(param, "direction");
         if (!cJSON_IsString(server) || server->valuestring == NULL ||
             strlen(server->valuestring) >= sizeof(params.server))
@@ -247,7 +247,7 @@ int _linkg_web_handler_speedtest_start(const cJSON *param, char **response)
                                                  "UDP目标带宽必须为0.1至200Mbps", response);
             }
             params.bandwidth_mbps = item->valuedouble;
-            item = cJSON_GetObjectItemCaseSensitive(param, "packet_length");
+            item                  = cJSON_GetObjectItemCaseSensitive(param, "packet_length");
             if (!_linkg_web_speedtest_get_uint32(item, &params.packet_length) ||
                 params.packet_length < 200U || params.packet_length > 1472U)
             {
@@ -292,13 +292,13 @@ int _linkg_web_handler_speedtest_get(const cJSON *param, char **response)
 {
     static const char *const keys[] = {"job_id"};
     linkg_web_speedtest_status_t status;
-    const cJSON                *item;
-    cJSON                      *data;
-    cJSON                      *samples;
-    cJSON                      *sample;
-    uint32_t                    job_id;
-    uint32_t                    index;
-    int                         ret;
+    const cJSON                 *item;
+    cJSON                       *data;
+    cJSON                       *samples;
+    cJSON                       *sample;
+    uint32_t                     job_id;
+    uint32_t                     index;
+    int                          ret;
 
     if (response == NULL)
     {
@@ -343,6 +343,8 @@ int _linkg_web_handler_speedtest_get(const cJSON *param, char **response)
         cJSON_AddBoolToObject(data, "rate_is_sender", status.rate_is_sender) == NULL ||
         cJSON_AddBoolToObject(data, "average_is_sender", status.average_is_sender) == NULL ||
         cJSON_AddNumberToObject(data, "duration_sec", status.params.duration_sec) == NULL ||
+        cJSON_AddNumberToObject(data, "bandwidth_mbps", status.params.bandwidth_mbps) == NULL ||
+        cJSON_AddNumberToObject(data, "packet_length", status.params.packet_length) == NULL ||
         cJSON_AddNumberToObject(data, "current_mbps", status.current_mbps) == NULL ||
         cJSON_AddNumberToObject(data, "average_mbps", status.average_mbps) == NULL ||
         cJSON_AddNumberToObject(data, "interval_count", status.interval_count) == NULL ||
@@ -392,10 +394,10 @@ int _linkg_web_handler_speedtest_get(const cJSON *param, char **response)
 int _linkg_web_handler_speedtest_stop(const cJSON *param, char **response)
 {
     static const char *const keys[] = {"job_id"};
-    const cJSON                *item;
-    cJSON                      *data;
-    uint32_t                    job_id;
-    int                         ret;
+    const cJSON *item;
+    cJSON       *data;
+    uint32_t     job_id;
+    int          ret;
 
     if (response == NULL)
     {
