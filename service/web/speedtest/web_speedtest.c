@@ -610,6 +610,8 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
     pid_t          pid;
     pid_t          waited;
     size_t         used;
+    uint32_t       burst_level;
+    uint32_t       burst_count;
     int            pipe_fd[2];
     int            arg_count;
     int            status;
@@ -657,7 +659,35 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
     snprintf(port, sizeof(port), "%u", (unsigned int)params->port);
     snprintf(duration, sizeof(duration), "%u", (unsigned int)params->duration_sec);
     snprintf(packet_length, sizeof(packet_length), "%u", (unsigned int)params->packet_length);
-    snprintf(bandwidth, sizeof(bandwidth), "%.3fM", params->bandwidth_mbps);
+    /****************************** UDP突发发送分档 ******************************/
+
+    // 50Mbps以内保持普通发送；超过50Mbps后，每26Mbps提高一个突发档位。
+    // 最大32档，超过180Mbps也不再增加突发长度。
+    burst_count = 0U;
+
+    if (!server_mode && params->protocol == LINKG_WEB_SPEEDTEST_UDP &&
+        params->bandwidth_mbps > 50.0)
+    {
+        burst_level = 1U;
+
+        while (burst_level < 5U &&
+               params->bandwidth_mbps > 50.0 + 26.0 * (double)burst_level)
+        {
+            burst_level++;
+        }
+
+        burst_count = 1U << burst_level;
+    }
+
+    if (burst_count != 0U)
+    {
+        snprintf(bandwidth, sizeof(bandwidth), "%.3fM/%u",
+                 params->bandwidth_mbps, (unsigned int)burst_count);
+    }
+    else
+    {
+        snprintf(bandwidth, sizeof(bandwidth), "%.3fM", params->bandwidth_mbps);
+    }
 
     arg_count         = 0;
     argv[arg_count++] = "iperf3";
