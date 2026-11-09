@@ -89,12 +89,15 @@ static int _linkg_switch_runtime_process_event(const linkg_switch_event_t *event
 /**
  * @brief 取出并处理当前待处理的Switch内部控制事件。
  */
-static void _linkg_switch_runtime_process_events(uint64_t now_us)
+static bool _linkg_switch_runtime_process_events(uint64_t now_us)
 {
     linkg_switch_event_t event;
     uint32_t             budget;
     bool                 available;
+    bool                 processed;
     int                  ret;
+
+    processed = false;
 
     for (budget = 0U; budget < LINKG_SWITCH_EVENT_QUEUE_CAPACITY; budget++)
     {
@@ -107,9 +110,12 @@ static void _linkg_switch_runtime_process_events(uint64_t now_us)
             break;
         }
 
-        ret = _linkg_switch_runtime_process_event(&event, now_us);
+        processed = true;
+        ret       = _linkg_switch_runtime_process_event(&event, now_us);
         _linkg_switch_runtime_log_error("control event", ret);
     }
+
+    return processed;
 }
 
 /**
@@ -395,10 +401,116 @@ static void _linkg_switch_runtime_process_reconcile(uint64_t now_us)
 }
 
 /**
- * @brief 执行当前所有已经到期的Switch周期任务。
+ * @brief 判断是否存在原有周期任务、控制事务或待消费的PlanSync结果。
+ *
+ * 不包含100ms LOAD Fast截止时间；调用方必须持有g_switch.lock。
+ * 只用于隔离纯Fast唤醒，不修改各模块自身的截止时间和状态机。
  */
-static void _linkg_switch_runtime_process_due(uint64_t now_us)
+static bool _linkg_switch_runtime_regular_due_locked(uint64_t now_us)
 {
+    const linkg_switch_peer_runtime_t   *peer;
+    const linkg_switch_policy_runtime_t *policy;
+    uint64_t                             operation_deadline_us;
+    uint32_t                             index;
+
+    if (!g_switch.initialized || !g_switch.running)
+    {
+        return false;
+    }
+
+    if (g_switch.role == LINKG_DEVICE_ROLE_STA)
+    {
+        if (g_switch.next_observation_us == 0U ||
+            now_us >= g_switch.next_observation_us ||
+            linkg_switch_plan_next_deadline_locked() <= now_us ||
+            linkg_switch_policy_operation_next_deadline_locked() <= now_us)
+        {
+            return true;
+        }
+
+        // PlanSync完成会单独唤醒Worker；不能只依赖超时或控制事件。
+        for (index = 0U; index < LINKG_SWITCH_PEER_MAX; index++)
+        {
+            peer = &g_switch.peers[index];
+            if (!peer->used)
+            {
+                continue;
+            }
+
+            if (peer->role.sta.plan_sync.result_pending)
+            {
+                return true;
+            }
+
+            policy = &peer->role.sta.policy;
+            operation_deadline_us = 0U;
+
+            // Operation的NextDeadline会将已过期截止时间向后推迟重试。
+            // 这里必须检查真实截止时间，否则纯Fast分支可能跳过刚到期的Verify或LOAD Timer。
+            if (policy->group_mask != 0U)
+            {
+                if (policy->group_phase == LINKG_SWITCH_POLICY_PHASE_WAIT_VERIFY &&
+                    (!peer->role.sta.verify.result_pending || !peer->role.sta.verify.active))
+                {
+                    operation_deadline_us = peer->role.sta.verify.active ?
+                                            peer->role.sta.verify.deadline_us : policy->next_action_us;
+                }
+                else if (policy->group_phase == LINKG_SWITCH_POLICY_PHASE_WAIT_TIMER)
+                {
+                    operation_deadline_us = policy->next_action_us;
+                }
+            }
+            else if (policy->sync_repair_pending && policy->sync_repair_after_us != 0U &&
+                     peer->role.sta.plan_sync.state != LINKG_SWITCH_PLAN_SYNC_WAIT_ACK &&
+                     peer->role.sta.plan_sync.state != LINKG_SWITCH_PLAN_SYNC_RETRY_WAIT)
+            {
+                operation_deadline_us = policy->sync_repair_after_us;
+            }
+
+            if (operation_deadline_us != 0U && now_us >= operation_deadline_us)
+            {
+                return true;
+            }
+        }
+    }
+    else if (g_switch.role == LINKG_DEVICE_ROLE_AP &&
+             linkg_switch_report_next_deadline_locked() <= now_us)
+    {
+        return true;
+    }
+
+    return linkg_switch_maintenance_next_deadline_locked() <= now_us ||
+           g_switch.next_reconcile_us == 0U ||
+           now_us >= g_switch.next_reconcile_us ||
+           g_switch.reconcile_pending ||
+           g_switch.event_queue.count != 0U;
+}
+
+/**
+ * @brief 区分100ms快速探测与原有任务唤醒，保持Operation和Observation的原有时序。
+ *
+ * 控制事件、PlanSync结果、Observation和原有事务截止时间仍进入完整处理链。
+ * 纯100ms Fast唤醒不能额外调用Operation/Verify消费异步ACK。
+ */
+static void _linkg_switch_runtime_process_due(uint64_t now_us, bool control_processed)
+{
+    bool regular_due;
+
+    pthread_mutex_lock(&g_switch.lock);
+    regular_due = _linkg_switch_runtime_regular_due_locked(now_us);
+    pthread_mutex_unlock(&g_switch.lock);
+
+    /****************************** 一、独立100ms快速检测 ******************************/
+
+    if (!regular_due && !control_processed)
+    {
+        // 同一Worker仅执行已到期的Fast，不推进250ms Observation和Recovery Verify。
+        _linkg_switch_runtime_process_quality_fast(now_us);
+        return;
+    }
+
+    /****************************** 二、原有完整策略与事务处理 ******************************/
+
     // 质量策略先于Reconcile处理，以免Wi-Fi断线时仅修改本地Plan而漏发AP同步。
     _linkg_switch_runtime_process_plan(now_us);
     _linkg_switch_runtime_process_sta(now_us);
@@ -522,6 +634,7 @@ void linkg_switch_worker(linkg_thread_t *thread, void *user_data)
     struct pollfd descriptor;
     uint64_t      now_us;
     bool          running;
+    bool          control_processed;
     int           timeout_ms;
     int           failure;
     int           ret;
@@ -559,11 +672,11 @@ void linkg_switch_worker(linkg_thread_t *thread, void *user_data)
 
         now_us = linkg_time_monotonic_us();
 
-        // 控制事务优先于周期质量任务处理。
-        _linkg_switch_runtime_process_events(now_us);
+        // 控制事务优先于周期质量任务处理；已处理事件仍需及时消费PlanSync终态。
+        control_processed = _linkg_switch_runtime_process_events(now_us);
 
         now_us = linkg_time_monotonic_us();
-        _linkg_switch_runtime_process_due(now_us);
+        _linkg_switch_runtime_process_due(now_us, control_processed);
 
         pthread_mutex_lock(&g_switch.lock);
 
