@@ -104,10 +104,11 @@ static void _linkg_switch_reset_runtime_locked(void)
 
     linkg_switch_event_reset_locked();
 
-    g_switch.next_observation_us = 0U;
-    g_switch.next_reconcile_us   = 0U;
-    g_switch.next_report_us      = 0U;
-    g_switch.reconcile_pending   = false;
+    g_switch.next_observation_us  = 0U;
+    g_switch.next_quality_fast_us = 0U;
+    g_switch.next_reconcile_us    = 0U;
+    g_switch.next_report_us       = 0U;
+    g_switch.reconcile_pending    = false;
 }
 
 /**
@@ -306,9 +307,10 @@ int linkg_switch_start(void)
 
     _linkg_switch_reset_runtime_locked();
 
-    g_switch.next_observation_us = now_us;
-    g_switch.next_reconcile_us   = now_us;
-    g_switch.next_report_us      = now_us;
+    g_switch.next_observation_us  = now_us;
+    g_switch.next_quality_fast_us = now_us;
+    g_switch.next_reconcile_us    = now_us;
+    g_switch.next_report_us       = now_us;
 
     token            = ++g_switch.run_token;
     g_switch.running = true;

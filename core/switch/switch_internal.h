@@ -33,6 +33,7 @@
 #define LINKG_SWITCH_PEER_MAX                   LINKG_RESOURCE_NETWORK_STA_MAX // 直接Peer运行槽位容量，由系统资源定义
 #define LINKG_SWITCH_PEER_GENERATION_INVALID    0U                             // 无效Peer运行代际
 #define LINKG_SWITCH_OBSERVATION_INTERVAL_US    250000ULL                      // STA观测快照刷新周期
+#define LINKG_SWITCH_QUALITY_FAST_INTERVAL_US   100000ULL                      // STA Wi-Fi Probe快速检测周期
 #define LINKG_SWITCH_PLAN_RECONCILE_INTERVAL_US 500000ULL                      // AP/STA发送计划校准周期
 
 /****************************** STA侧Peer运行状态 ******************************/
@@ -170,6 +171,7 @@ typedef struct
 
     // Worker周期调度
     uint64_t                                 next_observation_us;          // STA下一轮观测快照刷新时间
+    uint64_t                                 next_quality_fast_us;         // STA下一轮Wi-Fi Probe快速检测时间
     uint64_t                                 next_reconcile_us;            // AP/STA下一轮发送计划校准时间
     uint64_t                                 next_report_us;               // AP下一轮质量上报时间
     bool                                     reconcile_pending;            // AP/STA是否存在待处理的立即发送计划校准请求

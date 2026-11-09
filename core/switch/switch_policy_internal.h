@@ -39,10 +39,12 @@ typedef struct
 /****************************** 质量判断 ******************************/
 
 int linkg_switch_policy_quality_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_quality_state_t *quality_state);
+int linkg_switch_policy_quality_fast_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_quality_state_t *quality_state);
 
 /****************************** 主链路策略 ******************************/
 
 int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, uint64_t now_us);
+int linkg_switch_policy_wifi_fast_process(const linkg_switch_policy_input_t *input, uint64_t now_us);
 int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *input, uint64_t now_us);
 
 #endif

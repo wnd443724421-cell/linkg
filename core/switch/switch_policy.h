@@ -11,5 +11,6 @@
 /****************************** 策略处理 ******************************/
 
 int linkg_switch_policy_process(uint64_t now_us);
+int linkg_switch_policy_fast_process(uint64_t now_us);
 
 #endif

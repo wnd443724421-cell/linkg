@@ -364,9 +364,6 @@ static uint32_t _linkg_switch_operation_build_enter_locked(const linkg_switch_pe
 
         /****************************** Wi-Fi队列溢出 ******************************/
 
-
-        /****************************** Wi-Fi队列溢出 ******************************/
-
         case LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD:
 
             /****************************** 一、选择迁移起点 ******************************/

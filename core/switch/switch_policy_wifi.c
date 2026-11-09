@@ -167,8 +167,7 @@ static bool _linkg_switch_policy_wifi_probe_all_reachable(const linkg_switch_pol
  * 每个Probe结果只消费一次，成功响应清除对应类别的超时积分。
  * 检测状态由g_switch.lock保护，本函数不直接修改发送计划。
  */
-static int _linkg_switch_policy_wifi_probe_process(const linkg_switch_policy_input_t *input,
-                                                    bool *probe_down)
+static int _linkg_switch_policy_wifi_probe_process(const linkg_switch_policy_input_t *input, bool *probe_down)
 {
     const linkg_switch_traffic_observation_t *traffic;
     const linkg_switch_probe_observation_t   *probe;
@@ -492,4 +491,61 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
     }
 
     return 0;
+}
+
+/**
+ * @brief 独立100ms Wi-Fi负载Probe入口。
+ *
+ * 不执行硬故障、黑洞Probe、OVF、HCC或Wire LOSS检测；这些仍由250ms普通入口处理。
+ */
+int linkg_switch_policy_wifi_fast_process(const linkg_switch_policy_input_t *input, uint64_t now_us)
+{
+    linkg_switch_policy_quality_state_t quality_state;
+    int                                 ret;
+
+    if (input == NULL || now_us == 0U)
+    {
+        return -EINVAL;
+    }
+
+    if (!input->observation.valid ||
+        input->observation.peer_node_id != input->peer_node_id ||
+        input->observation.wifi.state != LINKG_SWITCH_OBSERVATION_USABLE)
+    {
+        return 0;
+    }
+
+    ret = linkg_switch_policy_quality_fast_process(input, now_us, &quality_state);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (quality_state != LINKG_SWITCH_POLICY_QUALITY_LOAD_BAD)
+    {
+        return 0;
+    }
+
+    if (input->wifi_blocked)
+    {
+        return 0;
+    }
+
+#if LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_ENABLED
+
+    if (!input->observation.wifi.radio.statistics_valid ||
+        input->observation.wifi.radio.rssi_dbm >= LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_DBM)
+    {
+        return 0;
+    }
+
+#endif
+
+    if (!_linkg_switch_policy_wifi_within_cellular_capacity(input) ||
+        !_linkg_switch_policy_wifi_has_candidate(input))
+    {
+        return 0;
+    }
+
+    return _linkg_switch_policy_wifi_raise(input, now_us, LINKG_SWITCH_POLICY_EVENT_WIFI_LOAD_BAD);
 }

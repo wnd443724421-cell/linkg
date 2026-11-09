@@ -113,12 +113,43 @@ static void _linkg_switch_runtime_process_events(uint64_t now_us)
 }
 
 /**
+ * @brief 执行STA当前到期的一轮100ms Wi-Fi Probe快速策略。
+ */
+static void _linkg_switch_runtime_process_quality_fast(uint64_t now_us)
+{
+    bool due;
+    int  ret;
+
+    pthread_mutex_lock(&g_switch.lock);
+
+    due = g_switch.initialized &&
+          g_switch.running &&
+          g_switch.role == LINKG_DEVICE_ROLE_STA &&
+          (g_switch.next_quality_fast_us == 0U ||
+           now_us >= g_switch.next_quality_fast_us);
+
+    if (due)
+    {
+        // 不补跑错过的历史周期，从本轮重新安排100ms截止时间。
+        g_switch.next_quality_fast_us = now_us + LINKG_SWITCH_QUALITY_FAST_INTERVAL_US;
+    }
+
+    pthread_mutex_unlock(&g_switch.lock);
+
+    if (!due)
+    {
+        return;
+    }
+
+    ret = linkg_switch_policy_fast_process(now_us);
+    _linkg_switch_runtime_log_error("quality fast check", ret);
+}
+
+/**
  * @brief 执行STA当前到期的一轮观测与策略处理。
  *
  * STA仅存在一个直接AP Peer。
- *
  * 仅由Observation的250ms周期驱动。
- *
  * 只有当前Peer成功刷新Observation后，才允许执行本轮Policy。
  */
 static void _linkg_switch_runtime_process_sta(uint64_t now_us)
@@ -371,7 +402,10 @@ static void _linkg_switch_runtime_process_due(uint64_t now_us)
     // 质量策略先于Reconcile处理，以免Wi-Fi断线时仅修改本地Plan而漏发AP同步。
     _linkg_switch_runtime_process_plan(now_us);
     _linkg_switch_runtime_process_sta(now_us);
-    
+
+    // 250ms Observation先更新HCC/OVF，再处理同一时刻到期的100ms Probe。
+    _linkg_switch_runtime_process_quality_fast(linkg_time_monotonic_us());
+
     // 避免Operation/Verify使用Observation刷新之前的时间。
     now_us = linkg_time_monotonic_us();
 
@@ -407,6 +441,12 @@ static int _linkg_switch_runtime_poll_timeout_locked(uint64_t now_us)
 
     if (g_switch.role == LINKG_DEVICE_ROLE_STA)
     {
+        if (g_switch.next_quality_fast_us != 0U &&
+            g_switch.next_quality_fast_us < deadline_us)
+        {
+            deadline_us = g_switch.next_quality_fast_us;
+        }
+
         if (g_switch.next_observation_us != 0U &&
             g_switch.next_observation_us < deadline_us)
         {
