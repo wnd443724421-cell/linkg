@@ -22,8 +22,8 @@
 /****************************** 容量保护参数 ******************************/
 
 #define LINKG_SWITCH_POLICY_CELLULAR_CAPACITY_MBPS 25U  // 蜂窝迁移准入固定阈值25Mbps
-#define LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_ENABLED 0U  // RSSI强信号保护：1开启，0关闭
-#define LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_DBM  (-70)  // RSSI不低于-65dBm时禁止软件质量迁移
+#define LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_ENABLED 1U  // RSSI强信号保护：1开启，0关闭
+#define LINKG_SWITCH_POLICY_WIFI_RSSI_GUARD_DBM  (-65)  // RSSI不低于-65dBm时禁止软件质量迁移
 
 /****************************** 内部辅助 ******************************/
 

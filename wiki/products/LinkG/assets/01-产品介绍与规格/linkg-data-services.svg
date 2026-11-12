@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="380" viewBox="0 0 1080 380" role="img" aria-labelledby="title desc">
+  <title id="title">LinkG 公网访问与设备间网络通信</title>
+  <desc id="desc">本地设备通过以太网连接本机 LinkG。公网访问经本机 4G/5G 蜂窝网络连接云平台或公网服务；设备间网络通信经 Wi-Fi 或蜂窝链路连接对端 LinkG，再通过以太网连接远端设备。两类用途具有不同的网络配置条件。</desc>
+  <defs>
+    <marker id="gray" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#64748b"/></marker>
+    <marker id="green" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#0f766e"/></marker>
+    <marker id="blue" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#2563eb"/></marker>
+  </defs>
+  <rect width="1080" height="380" rx="16" fill="#f8fafc"/>
+  <g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" text-anchor="middle">
+    <text x="540" y="35" font-size="21" font-weight="700" fill="#0f172a">公网访问与设备间网络通信</text>
+    <rect x="25" y="145" width="180" height="100" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="115" y="187" font-size="19" font-weight="700" fill="#0f172a">本地接入设备</text>
+    <text x="115" y="216" font-size="14" fill="#475569">电脑 / 控制器等</text>
+    <path d="M205 195H275" stroke="#64748b" stroke-width="2" marker-start="url(#gray)" marker-end="url(#gray)"/>
+    <text x="240" y="178" font-size="13" fill="#475569">以太网</text>
+    <rect x="275" y="145" width="180" height="100" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="365" y="187" font-size="22" font-weight="700" fill="#1e3a8a">本机 LinkG</text>
+    <text x="365" y="216" font-size="14" fill="#1d4ed8">接入与传输</text>
+    <path d="M455 170H485V100H700" fill="none" stroke="#0f766e" stroke-width="3" marker-start="url(#green)" marker-end="url(#green)"/>
+    <text x="588" y="67" font-size="17" font-weight="700" fill="#115e59">公网访问</text>
+    <text x="588" y="88" font-size="14" fill="#115e59">本机 4G/5G 蜂窝网络</text>
+    <rect x="700" y="62" width="345" height="82" rx="14" fill="#ecfdf5" stroke="#0f766e" stroke-width="2"/>
+    <text x="872" y="96" font-size="19" font-weight="700" fill="#115e59">互联网</text>
+    <text x="872" y="124" font-size="14" fill="#115e59">云平台 / 公网服务</text>
+    <path d="M455 220H485V280H700" fill="none" stroke="#2563eb" stroke-width="3" marker-start="url(#blue)" marker-end="url(#blue)"/>
+    <text x="588" y="242" font-size="17" font-weight="700" fill="#1d4ed8">设备间网络通信</text>
+    <text x="588" y="264" font-size="14" fill="#1d4ed8">Wi-Fi / 蜂窝链路</text>
+    <rect x="700" y="237" width="150" height="85" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="775" y="274" font-size="19" font-weight="700" fill="#1e3a8a">对端 LinkG</text>
+    <text x="775" y="302" font-size="14" fill="#1d4ed8">组网通信</text>
+    <path d="M850 280H905" stroke="#64748b" stroke-width="2" marker-start="url(#gray)" marker-end="url(#gray)"/>
+    <text x="877" y="261" font-size="13" fill="#475569">以太网</text>
+    <rect x="905" y="237" width="140" height="85" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="975" y="274" font-size="18" font-weight="700" fill="#0f172a">远端设备</text>
+    <text x="975" y="302" font-size="13" fill="#475569">摄像头 / 电脑等</text>
+    <text x="540" y="363" font-size="13" fill="#64748b">图示为以太网接入设备的两类网络用途；双向箭头表示可双向通信。</text>
+  </g>
+</svg>

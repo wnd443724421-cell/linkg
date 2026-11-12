@@ -2,14 +2,15 @@
  * @file linkg_ethernet.c
  * @brief LinkG Ethernet模块实现
  * @author Dawn
- * @version 1.0.0
- * @date 2026-09-16
+ * @version 1.1.0
+ * @date 2026-11-12
  */
 
 #include "linkg_ethernet.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
 #include <pthread.h>
@@ -19,7 +20,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "linkg_config.h"
 #include "linkg_file.h"
 #include "linkg_log.h"
 #include "linkg_network_ops.h"
@@ -39,11 +39,12 @@
 #define LINKG_ETHERNET_DEVICE_NAME_MAX           128U         // Ethernet平台设备名称缓冲区长度
 #define LINKG_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U          // IRQ affinity写入值缓冲区长度
 
-#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_0        0x02U        // 本地管理单播地址，bit0=0、bit1=1
-#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_1        0x4CU        // 'L'
-#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_2        0x47U        // 'G'
-#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_3        0x00U        // 固定前缀
-#define LINKG_ETHERNET_MAC_LOCAL_PREFIX_4        0x00U        // 固定前缀
+/* NVMEM文件的逻辑偏移0已经对应SID内部chipid，不要再次跳过0x200。 */
+#ifndef LINKG_ETHERNET_CHIPID_PATH
+#define LINKG_ETHERNET_CHIPID_PATH               "/sys/bus/nvmem/devices/sunxi-sid0/nvmem"
+#endif
+#define LINKG_ETHERNET_CHIPID_LENGTH             16U          // 完整T113 chipid字节数
+#define LINKG_ETHERNET_SHA256_LENGTH             32U          // SHA-256摘要字节数
 
 /****************************** 类型定义 ******************************/
 
@@ -105,31 +106,206 @@ static void _linkg_ethernet_set_lifecycle(linkg_ethernet_lifecycle_t lifecycle)
 /****************************** MAC配置 ******************************/
 
 /**
- * @brief 根据LinkG节点ID生成局部管理单播MAC地址。
- *
- * 同一二层广播域内要求node_id唯一。不同组网的相同node_id不能保证MAC唯一。
+ * @brief 读取完整T113 chipid；失败时不使用节点ID或随机地址回退。
  */
-static int _linkg_ethernet_build_mac(uint8_t node_id, uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
+static int _linkg_ethernet_read_chipid(uint8_t chipid[LINKG_ETHERNET_CHIPID_LENGTH])
 {
-    if (mac == NULL ||
-        node_id < LINKG_RESOURCE_NODE_ID_MIN ||
-        node_id > LINKG_RESOURCE_NODE_ID_MAX)
+    size_t  offset = 0U;
+    size_t  index;
+    ssize_t count;
+    bool    all_zero = true;
+    bool    all_ff   = true;
+    int     descriptor;
+    int     ret = 0;
+
+    if (chipid == NULL)
     {
         return -EINVAL;
     }
 
-    mac[0] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_0;
-    mac[1] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_1;
-    mac[2] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_2;
-    mac[3] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_3;
-    mac[4] = LINKG_ETHERNET_MAC_LOCAL_PREFIX_4;
-    mac[5] = node_id;
+    do
+    {
+        descriptor = open(LINKG_ETHERNET_CHIPID_PATH, O_RDONLY | O_CLOEXEC);
+    }
+    while (descriptor < 0 && errno == EINTR);
+
+    if (descriptor < 0)
+    {
+        return -errno;
+    }
+
+    while (offset < LINKG_ETHERNET_CHIPID_LENGTH)
+    {
+        count = read(descriptor, chipid + offset, LINKG_ETHERNET_CHIPID_LENGTH - offset);
+        if (count < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            ret = -errno;
+            break;
+        }
+
+        if (count == 0)
+        {
+            ret = -EIO;
+            break;
+        }
+
+        offset += (size_t)count;
+    }
+
+    if (close(descriptor) != 0 && ret == 0)
+    {
+        ret = -errno;
+    }
+
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    for (index = 0U; index < LINKG_ETHERNET_CHIPID_LENGTH; index++)
+    {
+        all_zero = all_zero && chipid[index] == 0U;
+        all_ff   = all_ff && chipid[index] == 0xFFU;
+    }
+
+    return all_zero || all_ff ? -ENODATA : 0;
+}
+
+/**
+ * @brief SHA-256使用的32位循环右移。
+ */
+static uint32_t _linkg_ethernet_rotr32(uint32_t value, unsigned int bits)
+{
+    return (value >> bits) | (value << (32U - bits));
+}
+
+/**
+ * @brief 对固定16字节chipid计算标准SHA-256，不是通用长度哈希接口。
+ *
+ * 16字节输入的填充结果恰好一个64字节分组：输入后接0x80，
+ * 最后8字节为大端位长度128。仅使用栈空间，不依赖外部程序或库。
+ */
+static void _linkg_ethernet_hash_chipid(const uint8_t chipid[LINKG_ETHERNET_CHIPID_LENGTH],
+                                       uint8_t digest[LINKG_ETHERNET_SHA256_LENGTH])
+{
+    static const uint32_t round_constants[64] =
+    {
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
+        0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
+        0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
+        0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U,
+        0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
+        0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U,
+        0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U,
+        0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
+        0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U
+    };
+    uint32_t state[8] =
+    {
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U
+    };
+    uint32_t words[64] = {0};
+    uint32_t a, b, c, d, e, f, g, h;
+    uint32_t s0, s1, choice, majority, temp1, temp2;
+    size_t   index;
+
+    for (index = 0U; index < LINKG_ETHERNET_CHIPID_LENGTH / 4U; index++)
+    {
+        words[index] = ((uint32_t)chipid[index * 4U] << 24U) |
+                       ((uint32_t)chipid[index * 4U + 1U] << 16U) |
+                       ((uint32_t)chipid[index * 4U + 2U] << 8U) |
+                       (uint32_t)chipid[index * 4U + 3U];
+    }
+
+    words[LINKG_ETHERNET_CHIPID_LENGTH / 4U] = 0x80000000U;
+    words[15] = LINKG_ETHERNET_CHIPID_LENGTH * 8U;
+
+    for (index = 16U; index < 64U; index++)
+    {
+        s0 = _linkg_ethernet_rotr32(words[index - 15U], 7U) ^
+             _linkg_ethernet_rotr32(words[index - 15U], 18U) ^ (words[index - 15U] >> 3U);
+        s1 = _linkg_ethernet_rotr32(words[index - 2U], 17U) ^
+             _linkg_ethernet_rotr32(words[index - 2U], 19U) ^ (words[index - 2U] >> 10U);
+        words[index] = words[index - 16U] + s0 + words[index - 7U] + s1;
+    }
+
+    a = state[0]; b = state[1]; c = state[2]; d = state[3];
+    e = state[4]; f = state[5]; g = state[6]; h = state[7];
+
+    for (index = 0U; index < 64U; index++)
+    {
+        s1 = _linkg_ethernet_rotr32(e, 6U) ^ _linkg_ethernet_rotr32(e, 11U) ^
+             _linkg_ethernet_rotr32(e, 25U);
+        choice = (e & f) ^ ((~e) & g);
+        temp1 = h + s1 + choice + round_constants[index] + words[index];
+        s0 = _linkg_ethernet_rotr32(a, 2U) ^ _linkg_ethernet_rotr32(a, 13U) ^
+             _linkg_ethernet_rotr32(a, 22U);
+        majority = (a & b) ^ (a & c) ^ (b & c);
+        temp2 = s0 + majority;
+
+        h = g; g = f; f = e; e = d + temp1;
+        d = c; c = b; b = a; a = temp1 + temp2;
+    }
+
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
+
+    for (index = 0U; index < 8U; index++)
+    {
+        digest[index * 4U]      = (uint8_t)(state[index] >> 24U);
+        digest[index * 4U + 1U] = (uint8_t)(state[index] >> 16U);
+        digest[index * 4U + 2U] = (uint8_t)(state[index] >> 8U);
+        digest[index * 4U + 3U] = (uint8_t)state[index];
+    }
+}
+
+/**
+ * @brief 根据完整chipid的SHA-256派生稳定的本地管理单播MAC。
+ *
+ * 哈希输入严格为NVMEM偏移0的16字节原始数据，不是十六进制文本，
+ * 不添加节点ID、时间或随机数；同一chipid始终得到同一MAC。
+ */
+static int _linkg_ethernet_build_mac(uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
+{
+    uint8_t chipid[LINKG_ETHERNET_CHIPID_LENGTH];
+    uint8_t digest[LINKG_ETHERNET_SHA256_LENGTH];
+    int     ret;
+
+    if (mac == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = _linkg_ethernet_read_chipid(chipid);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("Ethernet read chipid failed, path=%s, error=%d",
+                        LINKG_ETHERNET_CHIPID_PATH, ret);
+        return ret;
+    }
+
+    _linkg_ethernet_hash_chipid(chipid, digest);
+    memcpy(mac, digest, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
+    mac[0] = (uint8_t)((mac[0] & 0xFCU) | 0x02U);
 
     return 0;
 }
 
 /**
- * @brief 核对当前Ethernet MAC，不匹配时设置为当前节点的确定性MAC。
+ * @brief 核对当前Ethernet MAC，不匹配时设置为chipid派生的稳定MAC。
  *
  * 如果当前MAC匹配，则完全不触碰接口状态，避免影响现有SSH连接。
  * 如果MAC不匹配，则在必要时临时关闭接口，设置及复核MAC后恢复原UP状态。
@@ -137,23 +313,15 @@ static int _linkg_ethernet_build_mac(uint8_t node_id, uint8_t mac[LINKG_NETWORK_
  */
 static int _linkg_ethernet_prepare_mac(void)
 {
-    linkg_network_config_t config;
     uint8_t                expected[LINKG_NETWORK_MAC_ADDRESS_LENGTH];
     uint8_t                current[LINKG_NETWORK_MAC_ADDRESS_LENGTH];
     bool                   was_up;
     int                    restore_ret;
     int                    ret;
 
-    ret = linkg_config_get_network(&config);
+    ret = _linkg_ethernet_build_mac(expected);
     if (ret != 0)
     {
-        return ret;
-    }
-
-    ret = _linkg_ethernet_build_mac(config.node_id, expected);
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("Ethernet invalid node ID for MAC, node=%u, error=%d", (unsigned int)config.node_id, ret);
         return ret;
     }
 
@@ -208,13 +376,12 @@ static int _linkg_ethernet_prepare_mac(void)
 
     if (ret != 0)
     {
-        LINKG_LOG_ERROR("Ethernet set MAC failed, node=%u, error=%d", (unsigned int)config.node_id, ret);
+        LINKG_LOG_ERROR("Ethernet set chipid-derived MAC failed, error=%d", ret);
         return ret;
     }
 
-    LINKG_LOG_INFO("Ethernet MAC updated, interface=%s, node=%u, mac=%02x:%02x:%02x:%02x:%02x:%02x",
+    LINKG_LOG_INFO("Ethernet MAC updated, interface=%s, source=chipid-sha256, mac=%02x:%02x:%02x:%02x:%02x:%02x",
                    LINKG_RESOURCE_INTERFACE_ETHERNET,
-                   (unsigned int)config.node_id,
                    (unsigned int)expected[0], (unsigned int)expected[1],
                    (unsigned int)expected[2], (unsigned int)expected[3],
                    (unsigned int)expected[4], (unsigned int)expected[5]);

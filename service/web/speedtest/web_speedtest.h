@@ -76,6 +76,8 @@ typedef struct
     uint32_t                     session_id;                              // 服务端当前/最近一次连接的序号
     double                       current_mbps;                            // 最新1秒速率
     double                       average_mbps;                            // 最终接收端平均速率或服务端本地汇总
+    double                       sender_mbps;                             // 发送端最终实际总速率
+    bool                         sender_valid;                            // 是否取得有效发送端汇总
     double                       packet_loss_percent;                     // UDP接收端丢包率
     uint64_t                     elapsed_ms;                              // 当前任务耗时
     bool                         average_valid;                           // 是否有有效汇总

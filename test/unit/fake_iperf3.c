@@ -22,6 +22,10 @@ int main(int argc, char **argv)
 {
     const char *mode = getenv("LINKG_TEST_IPERF_MODE");
     int         port = 0;
+    int         udp = 0;
+    const char *window = NULL;
+    const char *bandwidth = NULL;
+    const char *expected_burst = getenv("LINKG_TEST_EXPECT_BURST");
 
     setvbuf(stdout, NULL, _IOLBF, 0);
     for (int index = 1; index + 1 < argc; index++)
@@ -30,6 +34,69 @@ int main(int argc, char **argv)
         {
             port = atoi(argv[index + 1]);
         }
+        if (strcmp(argv[index], "-u") == 0)
+        {
+            udp = 1;
+        }
+        if (strcmp(argv[index], "-w") == 0)
+        {
+            window = argv[index + 1];
+        }
+        if (strcmp(argv[index], "-b") == 0)
+        {
+            bandwidth = argv[index + 1];
+        }
+        if (strcmp(argv[index], "-P") == 0)
+        {
+            fputs("unexpected parallel argument\n", stderr);
+            return 2;
+        }
+    }
+    if (udp && (window == NULL || strcmp(window, "2M") != 0))
+    {
+        fputs("missing UDP measurement socket buffer\n", stderr);
+        return 2;
+    }
+    if (udp)
+    {
+        double        rate;
+        unsigned long burst = 1UL;
+        char         *suffix;
+        char         *digits;
+
+        if (bandwidth == NULL)
+        {
+            fputs("missing UDP measurement rate\n", stderr);
+            return 2;
+        }
+        rate = strtod(bandwidth, &suffix);
+        if (suffix == bandwidth || !(rate > 0.0) || rate > 200.0 || *suffix != 'M')
+        {
+            fputs("invalid UDP measurement rate\n", stderr);
+            return 2;
+        }
+        suffix++;
+        if (*suffix == '/')
+        {
+            digits = suffix + 1;
+            burst = strtoul(digits, &suffix, 10);
+            if (suffix == digits || burst == 1UL)
+            {
+                fputs("invalid or unnecessary UDP burst\n", stderr);
+                return 2;
+            }
+        }
+        if (*suffix != '\0' || burst == 0UL || burst > 32UL || (burst & (burst - 1UL)) != 0UL ||
+            (expected_burst != NULL && burst != strtoul(expected_burst, NULL, 10)))
+        {
+            fputs("invalid UDP measurement burst\n", stderr);
+            return 2;
+        }
+    }
+    else if (window != NULL || bandwidth != NULL)
+    {
+        fputs("unexpected UDP arguments for TCP or server mode\n", stderr);
+        return 2;
     }
     if (mode != NULL && strcmp(mode, "busy") == 0 && port < 5203)
     {

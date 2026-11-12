@@ -320,9 +320,21 @@
         field("speedtestResultHint").textContent = server ?
             "服务端持续监听，每个客户端测试结束后保留该会话的曲线与平均值。" :
             "实时为本机区间速率；最终带宽优先使用远端或本机接收端汇总。";
+        if (status.sender_valid)
+        {
+            field("speedtestResultHint").textContent += " 实际发送总速率 " + formatMbps(status.sender_mbps) + " Mbps。";
+        }
+        if (status.packet_loss_valid)
+        {
+            field("speedtestResultHint").textContent += " UDP未接收率包含端点、传输队列和无线链路的影响。";
+        }
         if (server)
         {
-            field("speedtestListenPort").value = String(status.port);
+            // 运行期间端口已锁定，可以跟随后端实际状态；停止后保留用户正在编辑的值。
+            if (running || restore)
+            {
+                field("speedtestListenPort").value = String(status.port);
+            }
             field("speedtestListenAddress").textContent = status.bind_address ?
                 status.bind_address + ":" + status.port : "正在获取组网IP…";
         }

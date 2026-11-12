@@ -38,11 +38,22 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_WEB_SPEEDTEST_THREAD_NAME       "web-speedtest"  // 线程名
-#define LINKG_WEB_SPEEDTEST_POLL_MS           200              // 子进程轮询周期，单位毫秒
-#define LINKG_WEB_SPEEDTEST_CONNECT_EXTRA_MS  20000ULL         // 测试连接及收尾额外超时
-#define LINKG_WEB_SPEEDTEST_KILL_GRACE_MS     1500ULL          // 终止后等待强制退出的时间
-#define LINKG_WEB_SPEEDTEST_LINE_SIZE         512U             // 单行输出最大缓冲长度
+#define LINKG_WEB_SPEEDTEST_THREAD_NAME         "web-speedtest"  // 线程名
+#define LINKG_WEB_SPEEDTEST_POLL_MS             200              // 子进程轮询周期，单位毫秒
+#define LINKG_WEB_SPEEDTEST_CONNECT_EXTRA_MS    20000ULL         // 测试连接及收尾额外超时
+#define LINKG_WEB_SPEEDTEST_KILL_GRACE_MS       1500ULL          // 终止后等待强制退出的时间
+#define LINKG_WEB_SPEEDTEST_LINE_SIZE           512U             // 单行输出最大缓冲长度
+#define LINKG_WEB_SPEEDTEST_UDP_BUFFER          "2M"             // 仅测速UDP Socket申请2MiB缓冲
+#define LINKG_WEB_SPEEDTEST_UDP_BURST_MAX       32U              // 实板对照后限制单流UDP突发最多32包
+#define LINKG_WEB_SPEEDTEST_UDP_BURST_WINDOW_US 4000U            // 按目标速率限制单批对应时间为4ms
+#define LINKG_WEB_SPEEDTEST_BUFFER_LIMIT        4194304UL        // 显式Socket缓冲允许上限至少4MiB
+
+#ifndef LINKG_WEB_SPEEDTEST_RMEM_MAX_PATH
+#define LINKG_WEB_SPEEDTEST_RMEM_MAX_PATH     "/proc/sys/net/core/rmem_max"
+#endif
+#ifndef LINKG_WEB_SPEEDTEST_WMEM_MAX_PATH
+#define LINKG_WEB_SPEEDTEST_WMEM_MAX_PATH     "/proc/sys/net/core/wmem_max"
+#endif
 
 #define LINKG_WEB_SPEEDTEST_PUBLIC_SERVER     "116.169.118.91" // 默认公共节点IP
 #define LINKG_WEB_SPEEDTEST_PUBLIC_PORT_FIRST 5201U            // 公共端口范围起始
@@ -61,6 +72,7 @@ typedef struct
     bool                         pending;          // 是否存在尚未执行的任务
     bool                         server_busy;      // 当前公网端口是否明确报告繁忙
     bool                         last_summary_sum; // 当前最终统计是否已采用SUM汇总
+    bool                         last_sender_sum;  // 发送端汇总是否已采用SUM
     uint64_t                     started_ms;       // 当前测速开始时刻
     uint32_t                     next_job_id;      // 下一个任务编号
     linkg_web_speedtest_params_t pending_params;   // 即将执行的参数副本
@@ -75,6 +87,74 @@ static linkg_web_speedtest_context_t g_web_speedtest =
 };
 
 /****************************** 参数检查 ******************************/
+
+/**
+ * @brief 读取内核Socket缓冲上限。
+ */
+static int _linkg_web_speedtest_read_buffer_limit(const char *path, unsigned long *value)
+{
+    FILE *stream;
+    int   fields;
+    int   ret;
+
+    stream = fopen(path, "re");
+    if (stream == NULL)
+    {
+        return -errno;
+    }
+    fields = fscanf(stream, "%lu", value);
+    ret = fields == 1 ? 0 : -EINVAL;
+    if (fclose(stream) != 0 && ret == 0)
+    {
+        ret = -errno;
+    }
+    return ret;
+}
+
+/**
+ * @brief 仅提高不足的上限，不降低已有更大值，不修改Socket默认值。
+ */
+static int _linkg_web_speedtest_raise_buffer_limit(const char *path)
+{
+    unsigned long value;
+    FILE         *stream;
+    int           ret;
+
+    ret = _linkg_web_speedtest_read_buffer_limit(path, &value);
+    if (ret != 0 || value >= LINKG_WEB_SPEEDTEST_BUFFER_LIMIT)
+    {
+        return ret;
+    }
+    stream = fopen(path, "we");
+    if (stream == NULL)
+    {
+        return -errno;
+    }
+    ret = fprintf(stream, "%lu\n", LINKG_WEB_SPEEDTEST_BUFFER_LIMIT) < 0 ? -EIO : 0;
+    if (fclose(stream) != 0 && ret == 0)
+    {
+        ret = -errno;
+    }
+    if (ret != 0)
+    {
+        return ret;
+    }
+    ret = _linkg_web_speedtest_read_buffer_limit(path, &value);
+    return ret != 0 ? ret : (value >= LINKG_WEB_SPEEDTEST_BUFFER_LIMIT ? 0 : -ENOBUFS);
+}
+
+/**
+ * @brief 测速模块初始化时准备UDP缓冲额度；不修改rmem/wmem_default。
+ */
+static int _linkg_web_speedtest_prepare_buffer_limits(void)
+{
+    int receive_ret;
+    int send_ret;
+
+    receive_ret = _linkg_web_speedtest_raise_buffer_limit(LINKG_WEB_SPEEDTEST_RMEM_MAX_PATH);
+    send_ret = _linkg_web_speedtest_raise_buffer_limit(LINKG_WEB_SPEEDTEST_WMEM_MAX_PATH);
+    return receive_ret != 0 ? receive_ret : send_ret;
+}
 
 /**
  * @brief 检查服务器是否为合法IPv4、IPv6或ASCII域名。
@@ -177,6 +257,27 @@ static bool _linkg_web_speedtest_params_valid(const linkg_web_speedtest_params_t
     }
 
     return true;
+}
+
+/**
+ * @brief 按目标速率和包长选择不超过4ms负载的二次幂突发，低速至少单包发送。
+ * @note 仅用于已经通过校验的UDP客户端参数，不改变目标总速率。
+ */
+static uint32_t _linkg_web_speedtest_udp_burst(const linkg_web_speedtest_params_t *params)
+{
+    double   packets;
+    uint32_t burst;
+
+    packets = params->bandwidth_mbps * (double)LINKG_WEB_SPEEDTEST_UDP_BURST_WINDOW_US /
+              (8.0 * (double)params->packet_length);
+    burst = 1U;
+
+    while (burst < LINKG_WEB_SPEEDTEST_UDP_BURST_MAX && (double)(burst * 2U) <= packets)
+    {
+        burst *= 2U;
+    }
+
+    return burst;
 }
 
 /****************************** 状态辅助 ******************************/
@@ -285,6 +386,9 @@ static void _linkg_web_speedtest_parse_line(const char *line)
             g_web_speedtest.status.sample_count        = 0U;
             g_web_speedtest.status.interval_count      = 0U;
             g_web_speedtest.last_summary_sum           = false;
+            g_web_speedtest.last_sender_sum            = false;
+            g_web_speedtest.status.sender_valid        = false;
+            g_web_speedtest.status.sender_mbps         = 0.0;
             snprintf(g_web_speedtest.status.message, sizeof(g_web_speedtest.status.message),
                      "%s", "客户端已连接，正在接收测试数据");
         }
@@ -341,6 +445,12 @@ static void _linkg_web_speedtest_parse_line(const char *line)
 
     if (receiver || sender)
     {
+        if (sender && (!g_web_speedtest.last_sender_sum || is_sum))
+        {
+            g_web_speedtest.status.sender_mbps = mbps;
+            g_web_speedtest.status.sender_valid = true;
+            g_web_speedtest.last_sender_sum = is_sum;
+        }
         // 接收端优先；同一方向的SUM优先于单流，服务端反向测试允许sender汇总。
         summary_accepted = (receiver || server_mode) &&
                            (!g_web_speedtest.status.average_valid ||
@@ -624,13 +734,12 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
     pid_t         pid;
     pid_t         waited;
     size_t        used;
-    uint32_t      burst_level;
-    uint32_t      burst_count;
     int           pipe_fd[2];
     int           arg_count;
     int           status;
     int           ret;
     int           count;
+    uint32_t      udp_burst;
     bool          reaped;
     bool          eof;
     bool          stopping;
@@ -673,34 +782,18 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
     snprintf(port, sizeof(port), "%u", (unsigned int)params->port);
     snprintf(duration, sizeof(duration), "%u", (unsigned int)params->duration_sec);
     snprintf(packet_length, sizeof(packet_length), "%u", (unsigned int)params->packet_length);
-    /****************************** UDP突发发送分档 ******************************/
-
-    // 50Mbps以内保持普通发送；超过50Mbps后，每26Mbps提高一个突发档位。
-    // 最大32档，超过180Mbps也不再增加突发长度。
-    burst_count = 0U;
-
-    if (!server_mode && params->protocol == LINKG_WEB_SPEEDTEST_UDP &&
-        params->bandwidth_mbps > 50.0)
+    if (!server_mode && params->protocol == LINKG_WEB_SPEEDTEST_UDP)
     {
-        burst_level = 1U;
-
-        while (burst_level < 5U &&
-               params->bandwidth_mbps > 50.0 + 26.0 * (double)burst_level)
+        // 保持单流总速率，按带宽与包长选择突发，避免低速任务出现长时间空窗。
+        udp_burst = _linkg_web_speedtest_udp_burst(params);
+        if (udp_burst > 1U)
         {
-            burst_level++;
+            snprintf(bandwidth, sizeof(bandwidth), "%.6fM/%u", params->bandwidth_mbps, (unsigned int)udp_burst);
         }
-
-        burst_count = 1U << burst_level;
-    }
-
-    if (burst_count != 0U)
-    {
-        snprintf(bandwidth, sizeof(bandwidth), "%.3fM/%u",
-                 params->bandwidth_mbps, (unsigned int)burst_count);
-    }
-    else
-    {
-        snprintf(bandwidth, sizeof(bandwidth), "%.3fM", params->bandwidth_mbps);
+        else
+        {
+            snprintf(bandwidth, sizeof(bandwidth), "%.6fM", params->bandwidth_mbps);
+        }
     }
 
     arg_count = 0;
@@ -735,6 +828,9 @@ static int _linkg_web_speedtest_run(const linkg_web_speedtest_params_t *params, 
     if (!server_mode && params->protocol == LINKG_WEB_SPEEDTEST_UDP)
     {
         argv[arg_count++] = "-u";
+        // -w由客户端协商到两端；服务端命令不接受该选项。
+        argv[arg_count++] = "-w";
+        argv[arg_count++] = LINKG_WEB_SPEEDTEST_UDP_BUFFER;
         argv[arg_count++] = "-b";
         argv[arg_count++] = bandwidth;
         argv[arg_count++] = "-l";
@@ -932,6 +1028,9 @@ static int _linkg_web_speedtest_run_with_retry(const linkg_web_speedtest_params_
         pthread_mutex_lock(&g_web_speedtest.lock);
         g_web_speedtest.server_busy                = false;
         g_web_speedtest.last_summary_sum           = false;
+        g_web_speedtest.last_sender_sum            = false;
+        g_web_speedtest.status.sender_valid        = false;
+        g_web_speedtest.status.sender_mbps         = 0.0;
         g_web_speedtest.status.params.port         = attempt.port;
         g_web_speedtest.status.current_mbps        = 0.0;
         g_web_speedtest.status.average_mbps        = 0.0;
@@ -1025,6 +1124,14 @@ static void _linkg_web_speedtest_worker(linkg_thread_t *thread, void *user_data)
         {
             g_web_speedtest.status.state = LINKG_WEB_SPEEDTEST_COMPLETED;
             snprintf(g_web_speedtest.status.message, sizeof(g_web_speedtest.status.message), "%s", "测速完成");
+            if (params.mode == LINKG_WEB_SPEEDTEST_MODE_CLIENT && params.protocol == LINKG_WEB_SPEEDTEST_UDP &&
+                g_web_speedtest.status.sender_valid &&
+                g_web_speedtest.status.sender_mbps < params.bandwidth_mbps * 0.95)
+            {
+                snprintf(g_web_speedtest.status.message, sizeof(g_web_speedtest.status.message),
+                         "测速完成；实际发送%.2f Mbps，未达到目标%.2f Mbps，本轮不能代表目标速率下的丢包表现",
+                         g_web_speedtest.status.sender_mbps, params.bandwidth_mbps);
+            }
         }
         else if (ret == -ECANCELED)
         {
@@ -1063,6 +1170,13 @@ int _linkg_web_speedtest_init(void)
     }
     pthread_mutex_unlock(&g_web_speedtest.lock);
 
+    ret = _linkg_web_speedtest_prepare_buffer_limits();
+    if (ret != 0)
+    {
+        // 配额不足由iperf3在UDP任务启动时明确报错，不能阻止其他Web/TCP服务初始化。
+        LINKG_LOG_WARN("WEB-SPEEDTEST: prepare UDP socket buffer limits failed, error=%d", ret);
+    }
+
     ret = linkg_thread_init(&g_web_speedtest.worker, LINKG_WEB_SPEEDTEST_THREAD_NAME,
                             _linkg_web_speedtest_worker, NULL);
     if (ret != 0)
@@ -1075,6 +1189,7 @@ int _linkg_web_speedtest_init(void)
     g_web_speedtest.pending          = false;
     g_web_speedtest.server_busy      = false;
     g_web_speedtest.last_summary_sum = false;
+    g_web_speedtest.last_sender_sum = false;
     g_web_speedtest.started_ms       = 0U;
     g_web_speedtest.initialized      = true;
     g_web_speedtest.status.state     = LINKG_WEB_SPEEDTEST_IDLE;

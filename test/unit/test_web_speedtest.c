@@ -20,6 +20,11 @@
 static pid_t test_waitpid(pid_t pid, int *status, int options);
 static int   test_kill(pid_t pid, int signal_number);
 
+static char g_test_rmem_path[256];
+static char g_test_wmem_path[256];
+#define LINKG_WEB_SPEEDTEST_RMEM_MAX_PATH g_test_rmem_path
+#define LINKG_WEB_SPEEDTEST_WMEM_MAX_PATH g_test_wmem_path
+
 #define waitpid test_waitpid
 #define kill    test_kill
 #include "../../service/web/speedtest/web_speedtest.c"
@@ -30,6 +35,28 @@ static linkg_cellular_status_snapshot_t g_cellular;
 static atomic_bool                     g_cancel_after_reap;
 static atomic_int                      g_reaped_pid;
 static atomic_int                      g_signals_after_reap;
+
+/**
+ * @brief 使用临时文件验证配额提高、已有大值保留和格式错误；不修改测试主机内核。
+ */
+static void test_buffer_limits(void)
+{
+    unsigned long value;
+    FILE         *stream;
+
+    stream = fopen(g_test_rmem_path, "w");
+    assert(stream != NULL && fputs("212992\n", stream) >= 0 && fclose(stream) == 0);
+    stream = fopen(g_test_wmem_path, "w");
+    assert(stream != NULL && fputs("8388608\n", stream) >= 0 && fclose(stream) == 0);
+    assert(_linkg_web_speedtest_prepare_buffer_limits() == 0);
+    assert(_linkg_web_speedtest_read_buffer_limit(g_test_rmem_path, &value) == 0 && value == 4194304UL);
+    assert(_linkg_web_speedtest_read_buffer_limit(g_test_wmem_path, &value) == 0 && value == 8388608UL);
+    stream = fopen(g_test_rmem_path, "w");
+    assert(stream != NULL && fputs("invalid\n", stream) >= 0 && fclose(stream) == 0);
+    assert(_linkg_web_speedtest_prepare_buffer_limits() == -EINVAL);
+    stream = fopen(g_test_rmem_path, "w");
+    assert(stream != NULL && fputs("212992\n", stream) >= 0 && fclose(stream) == 0);
+}
 
 /**
  * @brief 提供可控的蜂窝状态，不访问真实蜂窝网络。
@@ -96,6 +123,8 @@ static void reset_parser(bool server)
 {
     memset(&g_web_speedtest.status, 0, sizeof(g_web_speedtest.status));
     g_web_speedtest.status.params.mode = server ? LINKG_WEB_SPEEDTEST_MODE_SERVER : LINKG_WEB_SPEEDTEST_MODE_CLIENT;
+    g_web_speedtest.last_sender_sum = false;
+    g_web_speedtest.last_summary_sum = false;
 }
 
 /**
@@ -110,6 +139,9 @@ static void test_summary_priority(void)
     assert(g_web_speedtest.status.average_valid);
     assert(g_web_speedtest.status.average_mbps == 400.0);
     assert(g_web_speedtest.status.average_is_sender);
+    assert(g_web_speedtest.status.sender_valid && g_web_speedtest.status.sender_mbps == 400.0);
+    _linkg_web_speedtest_parse_line("[  7] 0.00-5.00 sec 1 MBytes 100 Mbits/sec sender");
+    assert(g_web_speedtest.status.sender_mbps == 400.0);
     _linkg_web_speedtest_parse_line("[SUM] 0.00-5.00 sec 8 MBytes 800 Mbits/sec 1.0 ms 20/100 (20%) receiver");
     _linkg_web_speedtest_parse_line("[  5] 0.00-5.00 sec 1 MBytes 100 Mbits/sec 1.0 ms 10/100 (10%) receiver");
     assert(g_web_speedtest.status.average_mbps == 800.0);
@@ -119,6 +151,7 @@ static void test_summary_priority(void)
     _linkg_web_speedtest_parse_line("Accepted connection from 172.28.2.1, port 1235");
     assert(g_web_speedtest.status.session_id == 2);
     assert(!g_web_speedtest.status.average_valid && !g_web_speedtest.status.packet_loss_valid);
+    assert(!g_web_speedtest.status.sender_valid);
     assert(g_web_speedtest.status.sample_count == 0);
 }
 
@@ -233,20 +266,48 @@ static linkg_web_speedtest_status_t wait_terminal(uint32_t job)
  */
 static void test_worker_reuse(void)
 {
+    static const struct
+    {
+        double       bandwidth_mbps;
+        uint32_t     packet_length;
+        unsigned int burst;
+    } cases[] =
+    {
+        {0.1, 1300U, 1U},
+        {6.0, 1400U, 2U},
+        {20.0, 512U, 16U},
+        {50.0, 1300U, 16U},
+        {95.0, 1400U, 32U},
+        {180.0, 1400U, 32U},
+        {180.0, 1472U, 32U},
+        {200.0, 200U, 32U}
+    };
     linkg_web_speedtest_params_t params = client_params();
     linkg_web_speedtest_status_t status;
+    char                        burst_text[8];
     uint32_t                    job;
     uint32_t                    rejected;
 
     assert(_linkg_web_speedtest_init() == 0 && _linkg_web_speedtest_start() == 0);
-    for (unsigned pass = 0; pass < 3; pass++)
+    for (size_t pass = 0U; pass < sizeof(cases) / sizeof(cases[0]); pass++)
     {
+        params.bandwidth_mbps = cases[pass].bandwidth_mbps;
+        params.packet_length  = cases[pass].packet_length;
+        params.direction = pass % 2U != 0U ? LINKG_WEB_SPEEDTEST_DOWNLOAD : LINKG_WEB_SPEEDTEST_UPLOAD;
+        snprintf(burst_text, sizeof(burst_text), "%u", cases[pass].burst);
+        assert(setenv("LINKG_TEST_EXPECT_BURST", burst_text, 1) == 0);
         setenv("LINKG_TEST_IPERF_MODE", "normal", 1);
         assert(_linkg_web_speedtest_submit(&params, &job) == 0);
         status = wait_terminal(job);
         assert(status.state == LINKG_WEB_SPEEDTEST_COMPLETED);
         assert(status.average_valid && status.average_mbps == 7.5);
     }
+    assert(unsetenv("LINKG_TEST_EXPECT_BURST") == 0);
+    params.protocol = LINKG_WEB_SPEEDTEST_TCP;
+    assert(_linkg_web_speedtest_submit(&params, &job) == 0);
+    status = wait_terminal(job);
+    assert(status.state == LINKG_WEB_SPEEDTEST_COMPLETED);
+    params.protocol = LINKG_WEB_SPEEDTEST_UDP;
     setenv("LINKG_TEST_IPERF_MODE", "missing_summary", 1);
     assert(_linkg_web_speedtest_submit(&params, &job) == 0);
     status = wait_terminal(job);
@@ -327,13 +388,56 @@ static void test_reaped_process_signal(void)
 }
 
 /**
+ * @brief 检查合法带宽与包长范围内的突发上限、预算和单调性。
+ */
+static void test_udp_burst_budget(void)
+{
+    linkg_web_speedtest_params_t params = client_params();
+    uint32_t                    previous_rate[1473] = {0};
+    uint32_t                    previous_length;
+    uint32_t                    burst;
+    double                      budget;
+    double                      packet_bits;
+
+    for (uint32_t rate = 0U; rate <= 200U; rate++)
+    {
+        params.bandwidth_mbps = rate == 0U ? 0.1 : (double)rate;
+        budget = params.bandwidth_mbps * (double)LINKG_WEB_SPEEDTEST_UDP_BURST_WINDOW_US;
+        previous_length = LINKG_WEB_SPEEDTEST_UDP_BURST_MAX;
+
+        for (uint32_t length = 200U; length <= 1472U; length++)
+        {
+            params.packet_length = length;
+            packet_bits = 8.0 * (double)length;
+            burst = _linkg_web_speedtest_udp_burst(&params);
+            assert(burst >= 1U && burst <= LINKG_WEB_SPEEDTEST_UDP_BURST_MAX);
+            assert((burst & (burst - 1U)) == 0U);
+            assert(burst >= previous_rate[length] && burst <= previous_length);
+            assert(burst == 1U || (double)burst * packet_bits <= budget);
+            assert(burst == LINKG_WEB_SPEEDTEST_UDP_BURST_MAX || (double)(burst * 2U) * packet_bits > budget);
+            previous_rate[length] = burst;
+            previous_length = burst;
+        }
+    }
+}
+
+/**
  * @brief 运行指定复现用例或完整回归。
  */
 int main(int argc, char **argv)
 {
     const char *name = argc > 1 ? argv[1] : "all";
+    char        directory[] = "/tmp/linkg-speedtest-limits-XXXXXX";
 
+    assert(mkdtemp(directory) != NULL);
+    snprintf(g_test_rmem_path, sizeof(g_test_rmem_path), "%s/rmem_max", directory);
+    snprintf(g_test_wmem_path, sizeof(g_test_wmem_path), "%s/wmem_max", directory);
+    test_buffer_limits();
     assert(linkg_time_init() == 0);
+    if (strcmp(name, "burst") == 0 || strcmp(name, "all") == 0)
+    {
+        test_udp_burst_budget();
+    }
     if (strcmp(name, "summary") == 0 || strcmp(name, "all") == 0)
     {
         test_summary_priority();
@@ -363,5 +467,8 @@ int main(int argc, char **argv)
         test_public_port_retry();
     }
     printf("PASS web_speedtest %s\n", name);
+    assert(unlink(g_test_rmem_path) == 0);
+    assert(unlink(g_test_wmem_path) == 0);
+    assert(rmdir(directory) == 0);
     return 0;
 }

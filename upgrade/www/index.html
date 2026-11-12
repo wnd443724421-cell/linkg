@@ -149,6 +149,11 @@
                                 data-page="/view/diagnostics_uart.html">
                                 串口诊断
                             </a>
+                            <a href="#/diagnostics/speedtest"
+                                data-route="diagnostics/speedtest"
+                                data-page="/view/diagnostics_speedtest.html">
+                                链路性能测试
+                            </a>
                         </div>
                     </div>
 
@@ -324,6 +329,7 @@
                         loadStylesheet("/css/pages/network_basic.css", latestVersion),
                         loadStylesheet("/css/pages/serial.css", latestVersion),
                         loadStylesheet("/css/pages/diagnostics_uart.css", latestVersion),
+                        loadStylesheet("/css/pages/diagnostics_speedtest.css", latestVersion),
                         loadStylesheet("/css/pages/link_wifi.css", latestVersion),
                         loadStylesheet("/css/pages/link_cellular.css", latestVersion)
                     ]);
@@ -339,6 +345,7 @@
                     await loadScript("/js/api/network_basic.js", latestVersion);
                     await loadScript("/js/api/serial.js", latestVersion);
                     await loadScript("/js/api/uart_diagnostic.js", latestVersion);
+                    await loadScript("/js/api/speedtest.js", latestVersion);
                     await loadScript("/js/api/wifi.js", latestVersion);
                     await loadScript("/js/api/cellular.js", latestVersion);
                     await loadScript("/js/pages/overview.js", latestVersion);
@@ -351,6 +358,7 @@
                     await loadScript("/js/pages/network_basic.js", latestVersion);
                     await loadScript("/js/pages/serial.js", latestVersion);
                     await loadScript("/js/pages/diagnostics_uart.js", latestVersion);
+                    await loadScript("/js/pages/diagnostics_speedtest.js", latestVersion);
                     await loadScript("/js/pages/link_wifi.js", latestVersion);
                     await loadScript("/js/pages/link_cellular.js", latestVersion);
                     await loadScript("/js/pages/index.js", latestVersion);

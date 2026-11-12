@@ -347,6 +347,8 @@ int _linkg_web_handler_speedtest_get(const cJSON *param, char **response)
         cJSON_AddNumberToObject(data, "packet_length", status.params.packet_length) == NULL ||
         cJSON_AddNumberToObject(data, "current_mbps", status.current_mbps) == NULL ||
         cJSON_AddNumberToObject(data, "average_mbps", status.average_mbps) == NULL ||
+        cJSON_AddNumberToObject(data, "sender_mbps", status.sender_mbps) == NULL ||
+        cJSON_AddBoolToObject(data, "sender_valid", status.sender_valid) == NULL ||
         cJSON_AddNumberToObject(data, "interval_count", status.interval_count) == NULL ||
         cJSON_AddNumberToObject(data, "session_id", status.session_id) == NULL ||
         cJSON_AddBoolToObject(data, "server_connected", status.server_connected) == NULL ||
