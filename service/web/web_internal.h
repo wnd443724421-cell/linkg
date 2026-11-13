@@ -51,7 +51,12 @@ typedef enum
     LINKG_WEB_CMD_UART_DIAG_STOP        = 1027, // 请求取消UART硬件诊断
     LINKG_WEB_CMD_SPEEDTEST_START       = 1028, // 启动5G测速任务
     LINKG_WEB_CMD_SPEEDTEST_GET         = 1029, // 查询5G测速任务
-    LINKG_WEB_CMD_SPEEDTEST_STOP        = 1030  // 取消5G测速任务
+    LINKG_WEB_CMD_SPEEDTEST_STOP        = 1030, // 取消5G测速任务
+    LINKG_WEB_CMD_CONFIG_EXPORT        = 1031, // 导出完整用户配置快照
+    LINKG_WEB_CMD_CONFIG_IMPORT        = 1032, // 导入配置并重载全部服务
+    LINKG_WEB_CMD_WIFI_SCAN_START      = 1033, // 启动独占被动信道扫描
+    LINKG_WEB_CMD_WIFI_SCAN_GET        = 1034, // 查询扫描与恢复结果
+    LINKG_WEB_CMD_WIFI_SCAN_STOP       = 1035  // 取消扫描并恢复Wi-Fi
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -69,6 +74,8 @@ const char *_linkg_web_network_basic_instance(void);
 void _linkg_web_network_response_complete(bool sent);
 int  _linkg_web_device_init(void);
 void _linkg_web_device_response_complete(bool sent);
+void _linkg_web_config_init(void);
+void _linkg_web_config_response_complete(bool sent);
 void _linkg_web_system_init(void);
 void _linkg_web_system_response_complete(bool sent);
 
@@ -83,6 +90,9 @@ int  _linkg_web_response_error(int cmd, const char *message, char **response);
 
 /****************************** 请求处理 ******************************/
 
+int  _linkg_web_handler_config_export(const cJSON *param, char **response);
+int  _linkg_web_handler_config_import(const cJSON *param, char **response);
+
 int  _linkg_web_handler_header_get(const cJSON *param, char **response);
 int  _linkg_web_handler_overview_get(const cJSON *param, char **response);
 int  _linkg_web_handler_switch_status_get(const cJSON *param, char **response);
@@ -90,6 +100,9 @@ int  _linkg_web_handler_switch_status_get(const cJSON *param, char **response);
 int  _linkg_web_handler_wifi_config_get(const cJSON *param, char **response);
 int  _linkg_web_handler_wifi_config_set(const cJSON *param, char **response);
 int  _linkg_web_handler_wifi_status_get(const cJSON *param, char **response);
+int  _linkg_web_handler_wifi_scan_start(const cJSON *param, char **response);
+int  _linkg_web_handler_wifi_scan_get(const cJSON *param, char **response);
+int  _linkg_web_handler_wifi_scan_stop(const cJSON *param, char **response);
 
 int  _linkg_web_handler_cellular_config_get(const cJSON *param, char **response);
 int  _linkg_web_handler_cellular_config_set(const cJSON *param, char **response);

@@ -35,6 +35,7 @@ typedef struct
     pthread_mutex_t  file_lock;         // 用户配置文件写入互斥锁
     linkg_config_t   current;           // 当前生效配置
     bool             initialized;       // 是否已经加载配置
+    bool             import_committed;  // 导入落盘后等待全服务重载，禁止旧配置覆盖
     bool             restore_committed; // 按键恢复成功后禁止本进程再次保存用户配置
 } linkg_config_context_t;
 
@@ -95,193 +96,6 @@ static int _config_error_from_file(int error)
     }
 }
 
-/****************************** 默认配置 ******************************/
-
-/**
- * @brief 设置全局配置默认值。
- */
-static void _config_set_default(linkg_config_t *out)
-{
-    if (out == NULL)
-    {
-        return;
-    }
-
-    memset(out, 0, sizeof(*out));
-
-    linkg_device_config_set_default(&out->device);
-    linkg_network_config_set_default(&out->network);
-    linkg_links_config_set_default(&out->links);
-    linkg_paths_config_set_default(&out->paths);
-    linkg_uart_config_set_default(&out->uart);
-}
-
-/****************************** 配置校验 ******************************/
-
-/**
- * @brief 校验全局配置。
- */
-static int _config_validate(const linkg_config_t *config)
-{
-    int ret;
-
-    if (config == NULL)
-    {
-        return CONFIG_ERR_PARAM;
-    }
-
-    ret = linkg_device_config_validate(&config->device);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    ret = linkg_network_config_validate(&config->network);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    ret = linkg_links_config_validate(&config->links);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    ret = linkg_paths_config_validate(&config->paths);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    ret = linkg_uart_config_validate(&config->uart);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    if (config->paths.wifi.enabled && !config->links.wifi.enabled)
-    {
-        return CONFIG_ERR_VALIDATE;
-    }
-
-    if (config->paths.cellular.enabled && !config->links.cellular.enabled)
-    {
-        return CONFIG_ERR_VALIDATE;
-    }
-
-    return CONFIG_OK;
-}
-
-/****************************** JSON解析 ******************************/
-
-/**
- * @brief 解析全局JSON配置。
- */
-static int _config_parse_json(const cJSON *root, linkg_config_t *out)
-{
-    linkg_config_t temp;
-    const cJSON   *child;
-    bool           found;
-    int            ret;
-
-    if (root == NULL || out == NULL)
-    {
-        return CONFIG_ERR_PARAM;
-    }
-
-    if (!cJSON_IsObject(root))
-    {
-        return CONFIG_ERR_PARSE;
-    }
-
-    _config_set_default(&temp);
-
-    child = NULL;
-
-    ret = linkg_json_get_object(root, "device", &child);
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
-    ret = linkg_device_config_parse(child, &temp.device);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    child = NULL;
-
-    ret = linkg_json_get_object(root, "network", &child);
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
-    ret = linkg_network_config_parse(child, &temp.network);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    child = NULL;
-
-    ret = linkg_json_get_object(root, "links", &child);
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
-    ret = linkg_links_config_parse(temp.device.role, child, &temp.links);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    child = NULL;
-
-    ret = linkg_json_get_object(root, "paths", &child);
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
-    ret = linkg_paths_config_parse(child, &temp.paths);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    child = NULL;
-    found = false;
-
-    ret = linkg_json_try_get_array(root, "uart", &child, &found);
-    if (ret != LINKG_JSON_OK)
-    {
-        return config_json_parse_error(ret);
-    }
-
-    if (found)
-    {
-        ret = linkg_uart_config_parse(child, &temp.uart);
-        if (ret != CONFIG_OK)
-        {
-            return ret;
-        }
-    }
-
-    ret = _config_validate(&temp);
-    if (ret != CONFIG_OK)
-    {
-        return ret;
-    }
-
-    *out = temp;
-
-    return CONFIG_OK;
-}
-
 /****************************** 配置文件读取 ******************************/
 
 /**
@@ -328,7 +142,7 @@ static int _config_read_validated_file(const char *path, linkg_config_t *config,
         return config_json_parse_error(ret);
     }
 
-    ret = _config_parse_json(root, config);
+    ret = linkg_config_parse_json(root, config);
 
     cJSON_Delete(root);
 
@@ -444,6 +258,7 @@ void linkg_config_deinit(void)
     // 全部业务模块停止后，允许下一个应用生命周期重新保存配置。
     pthread_mutex_lock(&g_config.file_lock);
     g_config.restore_committed = false;
+    g_config.import_committed  = false;
     pthread_mutex_unlock(&g_config.file_lock);
 }
 
@@ -666,7 +481,7 @@ int linkg_config_replace(const linkg_config_t *config)
 
     temp = *config;
 
-    ret = _config_validate(&temp);
+    ret = config_validate(&temp);
     if (ret != CONFIG_OK)
     {
         return ret;
@@ -687,7 +502,7 @@ int linkg_config_replace(const linkg_config_t *config)
 /**
  * @brief 保存当前配置到用户配置文件。
  */
-int linkg_config_save(const linkg_config_t *config)
+static int _config_save(const linkg_config_t *config, bool imported)
 {
     cJSON *root;
     char  *content;
@@ -698,43 +513,15 @@ int linkg_config_save(const linkg_config_t *config)
         return CONFIG_ERR_PARAM;
     }
 
-    ret = _config_validate(config);
+    ret = config_validate(config);
     if (ret != CONFIG_OK)
     {
         return ret;
     }
 
-    root = cJSON_CreateObject();
-    if (root == NULL)
-    {
-        return CONFIG_ERR_MEMORY;
-    }
-
-    ret = linkg_device_config_to_json(root, "device", &config->device);
-
-    if (ret == CONFIG_OK)
-    {
-        ret = linkg_network_config_to_json(root, "network", &config->network);
-    }
-
-    if (ret == CONFIG_OK)
-    {
-        ret = linkg_links_config_to_json(root, "links", &config->links);
-    }
-
-    if (ret == CONFIG_OK)
-    {
-        ret = linkg_paths_config_to_json(root, "paths", &config->paths);
-    }
-
-    if (ret == CONFIG_OK)
-    {
-        ret = linkg_uart_config_to_json(root, "uart", &config->uart);
-    }
-
+    ret = linkg_config_to_json(config, &root);
     if (ret != CONFIG_OK)
     {
-        cJSON_Delete(root);
         return ret;
     }
 
@@ -749,11 +536,11 @@ int linkg_config_save(const linkg_config_t *config)
 
     pthread_mutex_lock(&g_config.file_lock);
 
-    if (g_config.restore_committed)
+    if (g_config.restore_committed || g_config.import_committed)
     {
         pthread_mutex_unlock(&g_config.file_lock);
         linkg_json_string_free(content);
-        LINKG_LOG_WARN("CONFIG: save rejected, factory restore is committed");
+        LINKG_LOG_WARN("CONFIG: save rejected, configuration reload is committed");
         return CONFIG_ERR_FILE;
     }
 
@@ -761,6 +548,11 @@ int linkg_config_save(const linkg_config_t *config)
                                       content,
                                       strlen(content),
                                       LINKG_CONFIG_FILE_MODE);
+
+    if (ret == 0 && imported)
+    {
+        g_config.import_committed = true;
+    }
 
     pthread_mutex_unlock(&g_config.file_lock);
     linkg_json_string_free(content);
@@ -771,6 +563,56 @@ int linkg_config_save(const linkg_config_t *config)
     }
 
     return CONFIG_OK;
+}
+
+/****************************** 配置导入 ******************************/
+
+/**
+ * @brief 保存配置，调用方使用配置事务协调运行态更新。
+ */
+int linkg_config_save(const linkg_config_t *config)
+{
+    return _config_save(config, false);
+}
+
+/**
+ * @brief 完整校验并原子保存导入配置，不提前替换当前内存快照。
+ *
+ * 调用方必须持有配置写事务；成功后必须重载全部服务。
+ */
+int linkg_config_import(const cJSON *root)
+{
+    linkg_config_t config;
+    int            ret;
+
+    // 备份文件必须包含五个完整配置域，拒绝局部配置或其他产品文件。
+    if (!cJSON_IsObject(root) || cJSON_GetArraySize(root) != 5 ||
+        !cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(root, "uart")))
+    {
+        return CONFIG_ERR_VALIDATE;
+    }
+
+    ret = linkg_config_parse_json(root, &config);
+    if (ret != CONFIG_OK)
+    {
+        return ret;
+    }
+
+    return _config_save(&config, true);
+}
+
+/**
+ * @brief 查询导入是否已经落盘并等待全服务重载。
+ */
+bool linkg_config_import_pending(void)
+{
+    bool pending;
+
+    pthread_mutex_lock(&g_config.file_lock);
+    pending = g_config.import_committed;
+    pthread_mutex_unlock(&g_config.file_lock);
+
+    return pending;
 }
 
 /****************************** 配置恢复 ******************************/
@@ -791,6 +633,12 @@ int linkg_config_restore_factory(void)
     {
         pthread_mutex_unlock(&g_config.file_lock);
         return CONFIG_OK;
+    }
+
+    if (g_config.import_committed)
+    {
+        pthread_mutex_unlock(&g_config.file_lock);
+        return CONFIG_ERR_FILE;
     }
 
     // 先等待已经开始的Web保存完成，再原子恢复出厂配置。

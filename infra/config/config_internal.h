@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "linkg_config.h"
+
 /****************************** 错误类型 ******************************/
 
 typedef enum
@@ -24,6 +26,11 @@ typedef enum
     CONFIG_ERR_VALIDATE = -4, // 配置校验失败
     CONFIG_ERR_MEMORY   = -5  // 内存分配失败
 } config_error_t;
+
+/****************************** 完整配置 ******************************/
+
+void config_set_default(linkg_config_t *out);
+int  config_validate(const linkg_config_t *config);
 
 /****************************** 错误处理 ******************************/
 

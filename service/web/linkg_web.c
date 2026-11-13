@@ -34,6 +34,7 @@ int linkg_web_init(void)
     }
 
     _linkg_web_system_init();
+    _linkg_web_config_init();
 
     ret = _linkg_web_speedtest_init();
     if (ret != 0)

@@ -28,6 +28,7 @@
 #include "network_wifi.h"
 #include "linkg_wifi.h"
 #include "linkg_switch.h"
+#include "linkg_network_task.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -800,6 +801,11 @@ int linkg_network_set_wifi_config(const linkg_wifi_config_t *config)
         return -ENODEV;
     }
 
+    if (linkg_network_wifi_task_active())
+    {
+        return -EBUSY;
+    }
+
     pthread_mutex_lock(&g_network.lock);
 
     if (g_network.state != LINKG_NETWORK_STATE_STOPPED &&
@@ -857,6 +863,11 @@ int linkg_network_set_wifi_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t
     if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
     {
         return -ENODEV;
+    }
+
+    if (linkg_network_wifi_task_active())
+    {
+        return -EBUSY;
     }
 
     ret = linkg_wifi_set_narrow_config(mode, rate);

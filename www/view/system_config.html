@@ -1,0 +1,32 @@
+<div id="configFilePage" class="page config-file-page">
+    <div class="page-header">
+        <h1 class="page-title">配置导入与导出</h1>
+        <p class="page-description">备份当前配置，或导入已保存的配置文件</p>
+    </div>
+    <p id="configFileStatus" class="config-file-status" role="status" aria-live="polite">正在连接设备…</p>
+
+    <section class="page-card">
+        <div class="page-card-header"><h2 class="page-card-title">导出配置</h2></div>
+        <div class="config-file-body">
+            <p>下载设备当前的完整配置，包括网络、无线、业务流量规则和串口转发规则。</p>
+            <p class="config-file-note">备份包含 Wi-Fi 密码、SIM PIN 等敏感配置，请妥善保管。</p>
+            <button id="configFileExport" class="config-file-button" type="button" disabled>导出当前配置</button>
+        </div>
+    </section>
+
+    <section class="page-card">
+        <div class="page-card-header"><h2 class="page-card-title">导入配置</h2></div>
+        <div class="config-file-body">
+            <p>选择由 LinkG 导出的 JSON 文件。导入将完整替换当前用户配置，并重新初始化全部 LinkG 服务；Linux 系统不会重启。</p>
+            <label class="config-file-picker">选择配置文件<input id="configFileInput" type="file" accept=".json,application/json" disabled></label>
+            <p id="configFileSummary" class="config-file-note">尚未选择文件，最大 64 KiB。</p>
+            <label class="config-file-confirm"><input id="configFileConfirm" type="checkbox" disabled>我确认替换当前配置并重启 LinkG 服务，连接会暂时中断。</label>
+            <p class="config-file-note">导入其他设备的配置前，请检查节点 ID 和网络地址，避免重复。地址改变后，需要调整电脑网络并通过新地址访问。</p>
+            <div class="config-file-actions">
+                <button id="configFileImport" class="config-file-button config-file-primary" type="button" disabled>导入并重启服务</button>
+                <button id="configFileRefresh" class="config-file-button" type="button">刷新连接</button>
+                <a id="configFileTarget" class="config-file-target" hidden>访问导入后的管理地址</a>
+            </div>
+        </div>
+    </section>
+</div>

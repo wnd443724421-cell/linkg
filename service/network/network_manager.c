@@ -13,12 +13,14 @@
 
 #include "linkg_log.h"
 #include "linkg_thread.h"
+#include "linkg_time.h"
 
 #include "network_cellular.h"
 #include "network_internal.h"
 #include "network_wifi.h"
 #include "linkg_switch.h"
 #include "linkg_discovery.h"
+#include "linkg_network_task.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -30,12 +32,31 @@
 
 /****************************** 管理上下文 ******************************/
 
+typedef enum
+{
+    LINKG_NETWORK_TASK_IDLE = 0, // 未持有Wi-Fi维护资源
+    LINKG_NETWORK_TASK_PENDING,  // 等待停止并回收原Owner
+    LINKG_NETWORK_TASK_RUNNING,  // 独占任务正在执行
+    LINKG_NETWORK_TASK_RESTORING // 等待原配置的Owner重新启动
+} linkg_network_task_phase_t;
+
 typedef struct
 {
-    int  shutdown_result;            // Manager最近一次退出清理结果
+    linkg_thread_t                    task_thread;                 // 独占任务线程，不阻塞蜂窝管理
+    linkg_network_wifi_task_run_t     task_run;                    // 调用方提供的任务函数
+    linkg_network_wifi_task_finish_t  task_finish;                 // 恢复结束后通知调用方
+    void                             *task_context;                // 调用方上下文，完成前必须有效
+    linkg_network_task_phase_t        task_phase;                  // Wi-Fi独占任务阶段
+    uint64_t                          task_ready_at;               // 提交响应的发送宽限时间
+    int                               task_error;                  // 独占操作结果
+    bool                              task_released;               // 任务是否已经释放无线资源
+    bool                              task_fault;                  // 资源未释放时禁止再次启动无线Owner
+    bool                              task_cancel;                 // 任务取消请求
 
-    bool wifi_restart_requested;     // Wi-Fi独立重启请求
-    bool cellular_restart_requested; // Cellular独立重启请求
+    int                               shutdown_result;             // Manager最近一次退出清理结果
+
+    bool                              wifi_restart_requested;      // Wi-Fi独立重启请求
+    bool                              cellular_restart_requested;  // Cellular独立重启请求
 
 } linkg_network_manager_context_t;
 
@@ -553,6 +574,188 @@ static bool _linkg_network_manager_process_worker(linkg_network_worker_t *worker
     return true;
 }
 
+/****************************** 独占任务 ******************************/
+
+/**
+ * @brief 独占任务线程入口，原Wi-Fi Owner此时已停止并反初始化。
+ */
+static void _linkg_network_task_thread(linkg_thread_t *thread, void *user_data)
+{
+    linkg_network_wifi_task_run_t run;
+    void                        *context;
+    bool                         cancelled;
+    bool                         released;
+    int                          ret;
+
+    (void)user_data;
+    pthread_mutex_lock(&g_network.lock);
+    run       = g_network_manager.task_run;
+    context   = g_network_manager.task_context;
+    cancelled = g_network_manager.task_cancel;
+    pthread_mutex_unlock(&g_network.lock);
+
+    released = true;
+    ret = -ECANCELED;
+    if (!cancelled && linkg_thread_is_running(thread))
+    {
+        released = false;
+        ret = run(thread, context, &released);
+    }
+
+    pthread_mutex_lock(&g_network.lock);
+    g_network_manager.task_error    = ret;
+    g_network_manager.task_released = released;
+    pthread_mutex_unlock(&g_network.lock);
+    (void)linkg_thread_wakeup(&g_network.manager_thread);
+}
+
+/**
+ * @brief 结束独占任务，完成通知不得持有Network状态锁。
+ */
+static void _linkg_network_task_finish(int task_error, int restore_error)
+{
+    linkg_network_wifi_task_finish_t finish;
+    void                           *context;
+
+    if (g_network_manager.task_thread.initialized)
+    {
+        linkg_thread_deinit(&g_network_manager.task_thread);
+    }
+    _linkg_network_manager_maintenance_end(&g_network.wifi_worker, LINKG_LINK_ACCESS_WIFI, "exclusive_task_finished");
+
+    pthread_mutex_lock(&g_network.lock);
+    finish = g_network_manager.task_finish;
+    context = g_network_manager.task_context;
+    g_network_manager.task_fault = g_network_manager.task_fault || !g_network_manager.task_released;
+    g_network_manager.task_phase = LINKG_NETWORK_TASK_IDLE;
+    g_network_manager.task_run = NULL;
+    g_network_manager.task_finish = NULL;
+    g_network_manager.task_context = NULL;
+    pthread_mutex_unlock(&g_network.lock);
+
+    if (finish != NULL)
+    {
+        finish(context, task_error, restore_error);
+    }
+}
+
+/**
+ * @brief 推进停止、独占操作和恢复；耗时操作仅由独立任务线程执行。
+ */
+static void _linkg_network_manager_process_task(void)
+{
+    linkg_network_worker_t     *worker;
+    linkg_network_task_phase_t phase;
+    bool                      cancelled;
+    bool                      released;
+    bool                      restored;
+    int                       task_error;
+    int                       ret;
+
+    worker = &g_network.wifi_worker;
+    pthread_mutex_lock(&g_network.lock);
+    phase      = g_network_manager.task_phase;
+    cancelled  = g_network_manager.task_cancel;
+    task_error = g_network_manager.task_error;
+    released   = g_network_manager.task_released;
+    pthread_mutex_unlock(&g_network.lock);
+
+    if (phase == LINKG_NETWORK_TASK_PENDING)
+    {
+        if (linkg_time_elapsed_ms() < g_network_manager.task_ready_at && !cancelled)
+        {
+            return;
+        }
+        if (cancelled)
+        {
+            _linkg_network_task_finish(-ECANCELED, 0);
+            return;
+        }
+        _linkg_network_manager_maintenance_begin(worker, LINKG_LINK_ACCESS_WIFI);
+        if (!worker->maintenance_owned)
+        {
+            _linkg_network_task_finish(-EBUSY, 0);
+            return;
+        }
+        ret = _linkg_network_worker_stop(worker);
+        if (linkg_thread_is_started(&worker->thread))
+        {
+            return;
+        }
+        if (ret != 0 || worker->module_initialized)
+        {
+            worker->start_attempted = true;
+            _linkg_network_task_finish(ret != 0 ? ret : -EBUSY, ret != 0 ? ret : -EBUSY);
+            return;
+        }
+
+        ret = linkg_thread_init(&g_network_manager.task_thread, "network-task", _linkg_network_task_thread, NULL);
+        if (ret == 0)
+        {
+            ret = linkg_thread_start(&g_network_manager.task_thread);
+        }
+        pthread_mutex_lock(&g_network.lock);
+        if (ret == 0)
+        {
+            g_network_manager.task_phase = LINKG_NETWORK_TASK_RUNNING;
+        }
+        else
+        {
+            g_network_manager.task_error = ret;
+            g_network_manager.task_released = true;
+            g_network_manager.task_phase = LINKG_NETWORK_TASK_RESTORING;
+            worker->start_attempted = false;
+        }
+        pthread_mutex_unlock(&g_network.lock);
+        return;
+    }
+
+    if (phase == LINKG_NETWORK_TASK_RUNNING)
+    {
+        if (linkg_thread_is_running(&g_network_manager.task_thread))
+        {
+            return;
+        }
+        ret = linkg_thread_stop(&g_network_manager.task_thread);
+        if (ret != 0)
+        {
+            return;
+        }
+        // join后再读取完成结果；资源未释放时禁止启动第二个无线控制服务。
+        pthread_mutex_lock(&g_network.lock);
+        task_error = g_network_manager.task_error;
+        released = g_network_manager.task_released;
+        if (released)
+        {
+            g_network_manager.task_phase = LINKG_NETWORK_TASK_RESTORING;
+            worker->start_attempted = false;
+        }
+        pthread_mutex_unlock(&g_network.lock);
+        if (!released)
+        {
+            worker->start_attempted = true;
+            _linkg_network_task_finish(task_error != 0 ? task_error : -EBUSY, -EBUSY);
+        }
+        return;
+    }
+
+    if (phase == LINKG_NETWORK_TASK_RESTORING)
+    {
+        (void)_linkg_network_manager_process_worker(worker, true, false, LINKG_LINK_ACCESS_WIFI);
+        pthread_mutex_lock(&g_network.lock);
+        restored = worker->start_succeeded;
+        pthread_mutex_unlock(&g_network.lock);
+        if (restored && linkg_thread_is_running(&worker->thread))
+        {
+            _linkg_network_task_finish(task_error, 0);
+        }
+        else if (worker->start_attempted && !linkg_thread_is_started(&worker->thread))
+        {
+            _linkg_network_task_finish(task_error, worker->stop_result != 0 ? worker->stop_result : -EIO);
+        }
+    }
+}
+
 /****************************** Manager等待 ******************************/
 
 /**
@@ -618,6 +821,7 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
     bool wifi_restart;
     bool cellular_restart;
     bool processed;
+    bool task_active;
     int  first_error;
     int  ret;
 
@@ -638,6 +842,7 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
          */
         pthread_mutex_lock(&g_network.lock);
 
+        task_active      = g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE;
         wifi_enabled     = g_network.wifi_config.enabled;
         cellular_enabled = g_network.cellular_config.enabled;
 
@@ -649,10 +854,18 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
 
         pthread_mutex_unlock(&g_network.lock);
 
-        processed = _linkg_network_manager_process_worker(&g_network.wifi_worker, wifi_enabled, wifi_restart, LINKG_LINK_ACCESS_WIFI);
-        if (processed)
+        processed = true;
+        if (task_active)
         {
-            _linkg_network_manager_maintenance_finish(&g_network.wifi_worker, LINKG_LINK_ACCESS_WIFI, wifi_enabled);
+            _linkg_network_manager_process_task();
+        }
+        else if (!g_network_manager.task_fault)
+        {
+            processed = _linkg_network_manager_process_worker(&g_network.wifi_worker, wifi_enabled, wifi_restart, LINKG_LINK_ACCESS_WIFI);
+            if (processed)
+            {
+                _linkg_network_manager_maintenance_finish(&g_network.wifi_worker, LINKG_LINK_ACCESS_WIFI, wifi_enabled);
+            }
         }
         /**
          * 旧Owner尚未回收时，保留未完成的Wi-Fi重启请求。
@@ -711,6 +924,20 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
      * Manager退出前必须回收两个Owner。
      * 不能在Owner仍访问Network上下文时释放公共资源。
      */
+    if (g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE)
+    {
+        ret = g_network_manager.task_thread.initialized ? linkg_thread_stop(&g_network_manager.task_thread) : 0;
+        _linkg_network_manager_record_error(&first_error, ret);
+        if (ret == 0)
+        {
+            if (!g_network_manager.task_released && g_network_manager.task_phase == LINKG_NETWORK_TASK_RUNNING)
+            {
+                _linkg_network_manager_record_error(&first_error, -EBUSY);
+            }
+            _linkg_network_task_finish(-ECANCELED, -ESHUTDOWN);
+        }
+    }
+
     ret = _linkg_network_worker_stop(&g_network.cellular_worker);
     _linkg_network_manager_record_error(&first_error, ret);
 
@@ -839,7 +1066,7 @@ int _linkg_network_manager_stop(void)
 
     if (!linkg_thread_is_started(&g_network.manager_thread))
     {
-        return 0;
+        return g_network_manager.task_fault ? -EBUSY : 0;
     }
 
     ret = linkg_thread_stop(&g_network.manager_thread);
@@ -850,7 +1077,7 @@ int _linkg_network_manager_stop(void)
 
     pthread_mutex_lock(&g_network.lock);
 
-    ret = g_network_manager.shutdown_result;
+    ret = g_network_manager.task_fault ? -EBUSY : g_network_manager.shutdown_result;
 
     pthread_mutex_unlock(&g_network.lock);
 
@@ -913,6 +1140,12 @@ static int _linkg_network_manager_request_restart(bool wifi)
         return -ESHUTDOWN;
     }
 
+    if (wifi && (g_network_manager.task_fault || g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE))
+    {
+        pthread_mutex_unlock(&g_network.lock);
+        return -EBUSY;
+    }
+
     if (wifi)
     {
         g_network_manager.wifi_restart_requested = true;
@@ -943,4 +1176,93 @@ int _linkg_network_manager_request_wifi_restart(void)
 int _linkg_network_manager_request_cellular_restart(void)
 {
     return _linkg_network_manager_request_restart(false);
+}
+
+/****************************** 独占维护接口 ******************************/
+
+/**
+ * @brief 提交Wi-Fi独占维护任务，context有效期持续到finish返回。
+ *
+ * run仅在原Owner完整停止和反初始化后执行，且必须报告资源是否释放。
+ * finish在恢复原Owner后调用；恢复成功表示服务启动成功，不表示已经关联对端。
+ */
+int linkg_network_wifi_task_start(linkg_network_wifi_task_run_t run, linkg_network_wifi_task_finish_t finish, void *context)
+{
+    if (run == NULL || finish == NULL)
+    {
+        return -EINVAL;
+    }
+    if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
+    {
+        return -ENODEV;
+    }
+    pthread_mutex_lock(&g_network.lock);
+    if (g_network.state != LINKG_NETWORK_STATE_RUNNING ||
+        !linkg_thread_is_running(&g_network.manager_thread))
+    {
+        pthread_mutex_unlock(&g_network.lock);
+        return -ESHUTDOWN;
+    }
+    if (g_network_manager.task_fault || !g_network.wifi_config.enabled || !g_network.wifi_worker.start_succeeded ||
+        !linkg_thread_is_running(&g_network.wifi_worker.thread) ||
+        g_network_manager.wifi_restart_requested ||
+        g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE)
+    {
+        pthread_mutex_unlock(&g_network.lock);
+        return -EBUSY;
+    }
+    g_network_manager.task_run = run;
+    g_network_manager.task_finish = finish;
+    g_network_manager.task_context = context;
+    g_network_manager.task_ready_at = linkg_time_elapsed_ms() + 1000U;
+    g_network_manager.task_error = 0;
+    g_network_manager.task_released = true;
+    g_network_manager.task_cancel = false;
+    g_network_manager.task_phase = LINKG_NETWORK_TASK_PENDING;
+    pthread_mutex_unlock(&g_network.lock);
+    (void)linkg_thread_wakeup(&g_network.manager_thread);
+    return 0;
+}
+
+/**
+ * @brief 请求取消独占操作；即使取消仍必须等待资源释放与原服务恢复。
+ */
+int linkg_network_wifi_task_cancel(void)
+{
+    if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
+    {
+        return -ENODEV;
+    }
+    pthread_mutex_lock(&g_network.lock);
+    if (g_network_manager.task_phase == LINKG_NETWORK_TASK_IDLE)
+    {
+        pthread_mutex_unlock(&g_network.lock);
+        return -ENOENT;
+    }
+    g_network_manager.task_cancel = true;
+    if (g_network_manager.task_phase == LINKG_NETWORK_TASK_RUNNING)
+    {
+        atomic_store(&g_network_manager.task_thread.running, false);
+        (void)linkg_thread_wakeup(&g_network_manager.task_thread);
+    }
+    pthread_mutex_unlock(&g_network.lock);
+    (void)linkg_thread_wakeup(&g_network.manager_thread);
+    return 0;
+}
+
+/**
+ * @brief 查询Wi-Fi是否正处于独占维护事务中。
+ */
+bool linkg_network_wifi_task_active(void)
+{
+    bool active;
+
+    if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
+    {
+        return false;
+    }
+    pthread_mutex_lock(&g_network.lock);
+    active = g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE;
+    pthread_mutex_unlock(&g_network.lock);
+    return active;
 }

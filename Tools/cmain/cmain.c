@@ -20,7 +20,7 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_CMAIN_REQUEST_MAX        (32U * 1024U)  // 最大请求长度
+#define LINKG_CMAIN_REQUEST_MAX        (128U * 1024U)  // 最大请求长度
 #define LINKG_CMAIN_RESPONSE_INIT      (8U * 1024U)   // 响应初始缓冲区大小
 #define LINKG_CMAIN_RESPONSE_MAX       (256U * 1024U) // 最大响应长度
 #define LINKG_CMAIN_RECV_CHUNK         (4U * 1024U)   // 单次接收缓冲区大小

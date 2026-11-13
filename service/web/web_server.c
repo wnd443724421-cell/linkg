@@ -33,7 +33,7 @@
 #define LINKG_WEB_SERVER_THREAD_NAME      "web-server"          // Web服务线程名称
 #define LINKG_WEB_SERVER_BACKLOG          8                     // TCP监听等待队列长度
 #define LINKG_WEB_REQUEST_BUFFER_INIT     (4U * 1024U)          // 请求初始缓冲区大小
-#define LINKG_WEB_REQUEST_MAX             (32U * 1024U)         // 最大请求长度
+#define LINKG_WEB_REQUEST_MAX             (128U * 1024U)         // 最大请求长度
 #define LINKG_WEB_RECV_CHUNK_SIZE         (4U * 1024U)          // 单次接收缓冲区大小
 #define LINKG_WEB_IO_TIMEOUT_SEC          3                     // 单连接收发超时时间，单位秒
 #define LINKG_WEB_LOG_TAG                 "WEB-SERVER"          // 日志标签
@@ -551,6 +551,7 @@ static void _linkg_web_server_thread(linkg_thread_t *thread, void *user_data)
         _linkg_web_network_response_complete(ret == 0);
         _linkg_web_device_response_complete(ret == 0);
         _linkg_web_system_response_complete(ret == 0);
+        _linkg_web_config_response_complete(ret == 0);
 
         if (ret != 0)
         {

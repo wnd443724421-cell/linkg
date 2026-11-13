@@ -100,8 +100,7 @@ void _linkg_web_system_response_complete(bool sent)
     ret = linkg_lifecycle_request_exit(action);
     if (ret != 0)
     {
-        LINKG_LOG_ERROR("WEB: system action request failed, action=%d, error=%d",
-                        (int)action, ret);
+        LINKG_LOG_ERROR("WEB: system action request failed, action=%d, error=%d", (int)action, ret);
     }
 }
 

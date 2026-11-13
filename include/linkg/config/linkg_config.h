@@ -6,6 +6,10 @@
 #ifndef LINKG_CONFIG_H
 #define LINKG_CONFIG_H
 
+#include <stdbool.h>
+
+#include "cJSON.h"
+
 #include "linkg_device_config.h"
 #include "linkg_links_config.h"
 #include "linkg_network_config.h"
@@ -19,7 +23,7 @@ extern "C" {
 /****************************** 配置路径 ******************************/
 
 #define LINKG_CONFIG_FACTORY_PATH "/app/current/config/linkgDefault.json" // 出厂默认配置文件
-#define LINKG_CONFIG_USER_PATH    "/app/linkgUser.json"    // 用户运行配置文件
+#define LINKG_CONFIG_USER_PATH    "/app/linkgUser.json"                       // 用户运行配置文件
 
 /****************************** 类型定义 ******************************/
 
@@ -36,6 +40,13 @@ typedef struct
 
 int  linkg_config_load(void);
 void linkg_config_deinit(void);
+
+/****************************** 配置转换 ******************************/
+
+int  linkg_config_parse_json(const cJSON *root, linkg_config_t *out);
+int  linkg_config_to_json(const linkg_config_t *config, cJSON **out);
+int  linkg_config_import(const cJSON *root);
+bool linkg_config_import_pending(void);
 
 /****************************** 配置获取 ******************************/
 

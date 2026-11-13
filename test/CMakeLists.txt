@@ -156,3 +156,42 @@ add_linkg_logic_test(test_web_speedtest
 target_include_directories(test_web_speedtest PRIVATE "${LINKG_ROOT}/service/web/speedtest")
 add_dependencies(test_web_speedtest fake_iperf3)
 set_tests_properties(test_web_speedtest PROPERTIES TIMEOUT 40 ENVIRONMENT "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1;PATH=${CMAKE_BINARY_DIR}/fake-bin:$ENV{PATH}")
+
+add_linkg_logic_test(test_config_transfer
+    unit/test_config_transfer.c
+    "${LINKG_ROOT}/infra/config/linkg_config.c"
+    "${LINKG_ROOT}/infra/config/config_codec.c"
+    "${LINKG_ROOT}/service/web/handlers/web_handler_config.c"
+    "${LINKG_ROOT}/service/web/web_response.c"
+    "${LINKG_ROOT}/infra/base/linkg_file.c"
+    "${LINKG_ROOT}/infra/base/linkg_json.c"
+    "${LINKG_ROOT}/infra/base/linkg_network_ops.c"
+    "${LINKG_ROOT}/infra/base/linkg_time.c"
+    "${LINKG_ROOT}/infra/config/config_internal.c"
+    "${LINKG_ROOT}/infra/config/linkg_cellular_config.c"
+    "${LINKG_ROOT}/infra/config/linkg_device_config.c"
+    "${LINKG_ROOT}/infra/config/linkg_links_config.c"
+    "${LINKG_ROOT}/infra/config/linkg_network_config.c"
+    "${LINKG_ROOT}/infra/config/linkg_paths_config.c"
+    "${LINKG_ROOT}/infra/config/linkg_uart_config.c"
+    "${LINKG_ROOT}/infra/config/linkg_wifi_config.c"
+    "${LINKG_ROOT}/modules/wifi/linkg_wifi_ops.c"
+    "${LINKG_ROOT}/third_party/cjson/cJSON.c"
+)
+
+target_include_directories(test_config_transfer PRIVATE "${LINKG_ROOT}/service/web")
+target_link_options(test_config_transfer PRIVATE -Wl,--wrap=linkg_file_write_all_atomic -Wl,--wrap=linkg_file_read_all)
+
+add_linkg_logic_test(test_wifi_scan
+    unit/test_wifi_scan.c
+    "${LINKG_ROOT}/modules/wifi/wifi_scan_result.c"
+)
+
+add_linkg_logic_test(test_network_task
+    unit/test_network_task.c
+    "${LINKG_ROOT}/service/network/network_manager.c"
+    "${LINKG_ROOT}/infra/base/linkg_thread.c"
+    "${LINKG_ROOT}/infra/base/linkg_time.c"
+)
+target_include_directories(test_network_task PRIVATE "${LINKG_ROOT}/service/network" "${LINKG_ROOT}/include/linkg/service/network")
+set_tests_properties(test_network_task PROPERTIES TIMEOUT 60)

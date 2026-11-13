@@ -280,9 +280,9 @@ static int _uart_diag_web_stop_response(uint32_t job_id, bool cancel_requested, 
 int _linkg_web_handler_uart_diagnostic_start(const cJSON *param, char **response)
 {
     static const char *const keys[] = {"mode", "uart_num"};
-    const cJSON            *mode;
-    const cJSON            *uart_num;
-    linkg_uart_diagnostic_params_t params;
+    const cJSON                    *mode;
+    const cJSON                    *uart_num;
+    linkg_uart_diagnostic_params_t  params;
     char                           *job_position;
     char                            job_text[11];
     size_t                          job_length;
@@ -298,8 +298,7 @@ int _linkg_web_handler_uart_diagnostic_start(const cJSON *param, char **response
 
     if (!_uart_diag_web_object_has_keys(param, keys, sizeof(keys) / sizeof(keys[0])))
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_START,
-                                        "诊断参数无效：仅允许mode和uart_num字段", response);
+        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_START, "诊断参数无效：仅允许mode和uart_num字段", response);
     }
 
     mode = cJSON_GetObjectItemCaseSensitive(param, "mode");
@@ -315,8 +314,7 @@ int _linkg_web_handler_uart_diagnostic_start(const cJSON *param, char **response
         ret = _uart_diag_web_get_uint32(uart_num, &uart_index);
         if (ret != 0 || uart_index >= LINKG_UART_DIAGNOSTIC_UART_COUNT)
         {
-            return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_START,
-                                             "单串口模式需要uart_num=0、1或2", response);
+            return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_START, "单串口模式需要uart_num=0、1或2", response);
         }
 
         params.mode     = LINKG_UART_DIAGNOSTIC_MODE_SINGLE;
@@ -326,8 +324,7 @@ int _linkg_web_handler_uart_diagnostic_start(const cJSON *param, char **response
     {
         if (cJSON_GetObjectItemCaseSensitive(param, "uart_num") != NULL)
         {
-            return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_START,
-                                             "全部测试模式不允许设置uart_num", response);
+            return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_START, "全部测试模式不允许设置uart_num", response);
         }
 
         params.mode = LINKG_UART_DIAGNOSTIC_MODE_ALL;
@@ -370,12 +367,12 @@ int _linkg_web_handler_uart_diagnostic_get(const cJSON *param, char **response)
 {
     static const char *const keys[] = {"job_id"};
     linkg_uart_diagnostic_status_t status;
-    const cJSON                  *job;
-    cJSON                        *data;
-    cJSON                        *tests;
-    uint32_t                      job_id;
-    uint32_t                      index;
-    int                           ret;
+    const cJSON                   *job;
+    cJSON                         *data;
+    cJSON                         *tests;
+    uint32_t                       job_id;
+    uint32_t                       index;
+    int                            ret;
 
     if (response == NULL)
     {
@@ -388,8 +385,7 @@ int _linkg_web_handler_uart_diagnostic_get(const cJSON *param, char **response)
     {
         if (!_uart_diag_web_object_has_keys(param, keys, sizeof(keys) / sizeof(keys[0])))
         {
-            return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_GET,
-                                            "查询参数无效：仅允许job_id字段", response);
+            return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_GET, "查询参数无效：仅允许job_id字段", response);
         }
 
         job = cJSON_GetObjectItemCaseSensitive(param, "job_id");
@@ -402,8 +398,7 @@ int _linkg_web_handler_uart_diagnostic_get(const cJSON *param, char **response)
     ret = linkg_uart_diagnostic_get_status(job_id, &status);
     if (ret != 0)
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_GET,
-                                        ret == -ENOENT ? "诊断任务不存在或已被新任务覆盖" : "读取诊断状态失败", response);
+        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_GET, ret == -ENOENT ? "诊断任务不存在或已被新任务覆盖" : "读取诊断状态失败", response);
     }
     if (status.test_count > LINKG_UART_DIAGNOSTIC_MAX_TESTS)
     {
@@ -472,8 +467,7 @@ int _linkg_web_handler_uart_diagnostic_stop(const cJSON *param, char **response)
 
     if (!_uart_diag_web_object_has_keys(param, keys, sizeof(keys) / sizeof(keys[0])))
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_STOP,
-                                        "取消参数无效：必须提供job_id，0表示当前任务", response);
+        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_STOP, "取消参数无效：必须提供job_id，0表示当前任务", response);
     }
 
     job = cJSON_GetObjectItemCaseSensitive(param, "job_id");
@@ -485,8 +479,7 @@ int _linkg_web_handler_uart_diagnostic_stop(const cJSON *param, char **response)
     ret = linkg_uart_diagnostic_get_status(job_id, &status);
     if (ret != 0)
     {
-        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_STOP,
-                                        "诊断任务不存在或已被新任务覆盖", response);
+        return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_STOP, "诊断任务不存在或已被新任务覆盖", response);
     }
 
     target_job_id = job_id == 0U ? status.job_id : job_id;
@@ -527,6 +520,5 @@ int _linkg_web_handler_uart_diagnostic_stop(const cJSON *param, char **response)
     }
 
     linkg_json_string_free(finished_response);
-    return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_STOP,
-                                    ret == -ENOENT ? "诊断任务已被新任务替代" : "请求取消诊断任务失败", response);
+    return _linkg_web_response_error(LINKG_WEB_CMD_UART_DIAG_STOP, ret == -ENOENT ? "诊断任务已被新任务替代" : "请求取消诊断任务失败", response);
 }
