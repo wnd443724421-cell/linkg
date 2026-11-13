@@ -30,13 +30,14 @@
 
 /****************************** 模块常量 ******************************/
 
-#define WIFI_SCAN_TEXT_MAX    32768U                                          // 有界命令输出容量
-#define WIFI_SCAN_READY_MS    10000U                                          // 扫描WPA就绪超时
-#define WIFI_SCAN_RESULT_MS   8000U                                           // 单轮扫描结果超时
-#define WIFI_SCAN_SURVEY_MS   3000U                                           // survey子进程超时
-#define WIFI_SCAN_POLL_MS     100                                             // 取消轮询间隔
-#define WIFI_SCAN_FREQUENCIES "5745,5765,5785,5805,5825"                      // 五个用户信道
-#define WIFI_SCAN_COMMAND     "SCAN freq=" WIFI_SCAN_FREQUENCIES " passive=1" // 仅执行被动扫描
+#define WIFI_SCAN_BSS_ITERATION_MAX 1024U                                           // 原始BSS遍历上限，与128条有效AP容量分开
+#define WIFI_SCAN_TEXT_MAX          32768U                                          // 有界命令输出容量
+#define WIFI_SCAN_READY_MS          10000U                                          // 扫描WPA就绪超时
+#define WIFI_SCAN_RESULT_MS         8000U                                           // 单轮扫描结果超时
+#define WIFI_SCAN_SURVEY_MS         3000U                                           // survey子进程超时
+#define WIFI_SCAN_POLL_MS           100                                             // 取消轮询间隔
+#define WIFI_SCAN_FREQUENCIES       "5745,5765,5785,5805,5825"                      // 五个用户信道
+#define WIFI_SCAN_COMMAND           "SCAN freq=" WIFI_SCAN_FREQUENCIES " passive=1" // 仅执行被动扫描
 
 /****************************** 内部辅助 ******************************/
 
@@ -253,7 +254,7 @@ static int _wifi_scan_read_bss(linkg_thread_t *thread, struct wpa_ctrl *control,
     int       ret;
     uint32_t  index;
 
-    for (index = 0U; index <= LINKG_WIFI_SCAN_BSS_MAX; index++)
+    for (index = 0U; index <= WIFI_SCAN_BSS_ITERATION_MAX; index++)
     {
         if (!linkg_thread_is_running(thread))
         {
@@ -269,7 +270,7 @@ static int _wifi_scan_read_bss(linkg_thread_t *thread, struct wpa_ctrl *control,
         {
             return 0;
         }
-        if (index == LINKG_WIFI_SCAN_BSS_MAX)
+        if (index == WIFI_SCAN_BSS_ITERATION_MAX)
         {
             result->bss_truncated = true;
             return 0;

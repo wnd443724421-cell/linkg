@@ -446,7 +446,7 @@ static int _linkg_web_server_poll(linkg_thread_t *thread, bool *listen_ready)
 
     do
     {
-        ret = poll(descriptors, 2U, -1);
+        ret = poll(descriptors, 2U, _linkg_web_config_reload_pending() ? 1000 : -1);
     }
     while (ret < 0 && errno == EINTR && linkg_thread_is_running(thread));
 
@@ -505,6 +505,7 @@ static void _linkg_web_server_thread(linkg_thread_t *thread, void *user_data)
     while (linkg_thread_is_running(thread))
     {
         listen_ready = false;
+        _linkg_web_config_retry_reload();
 
         ret = _linkg_web_server_poll(thread, &listen_ready);
         if (ret != 0)

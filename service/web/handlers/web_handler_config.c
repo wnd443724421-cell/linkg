@@ -18,6 +18,7 @@
 #include "linkg_json.h"
 #include "linkg_lifecycle.h"
 #include "linkg_log.h"
+#include "linkg_time.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -26,6 +27,7 @@
 /****************************** 全局上下文 ******************************/
 
 // Handler与完成回调均由同一个Web线程调用。
+static uint64_t g_web_config_retry_at; // 下次重载请求重试的单调时间
 static bool g_web_config_restart_armed = false; // 配置落盘后等待应答完成
 
 /****************************** 服务接口 ******************************/
@@ -36,6 +38,7 @@ static bool g_web_config_restart_armed = false; // 配置落盘后等待应答�
 void _linkg_web_config_init(void)
 {
     g_web_config_restart_armed = false;
+    g_web_config_retry_at = 0U;
 }
 
 /**
@@ -43,24 +46,51 @@ void _linkg_web_config_init(void)
  */
 void _linkg_web_config_response_complete(bool sent)
 {
-    int ret;
+    if (!g_web_config_restart_armed)
+    {
+        return;
+    }
+    if (sent)
+    {
+        usleep(300000U);
+    }
+    _linkg_web_config_retry_reload();
+}
+
+/**
+ * @brief 导入已经落盘时保留重载义务，失败后由Web周期轮询再次提交。
+ */
+void _linkg_web_config_retry_reload(void)
+{
+    uint64_t now;
+    int      ret;
 
     if (!g_web_config_restart_armed)
     {
         return;
     }
-
-    g_web_config_restart_armed = false;
-    if (sent)
+    now = linkg_time_elapsed_ms();
+    if (now < g_web_config_retry_at)
     {
-        usleep(300000U);
+        return;
     }
-
     ret = linkg_lifecycle_request_exit(LINKG_EXIT_ACTION_RESTART_SERVICES);
-    if (ret != 0)
+    if (ret == 0)
     {
-        LINKG_LOG_ERROR("WEB: imported configuration restart failed, error=%d", ret);
+        g_web_config_restart_armed = false;
+        g_web_config_retry_at = 0U;
+        return;
     }
+    g_web_config_retry_at = now + 1000U;
+    LINKG_LOG_ERROR("WEB: imported configuration restart failed, retry pending, error=%d", ret);
+}
+
+/**
+ * @brief 仅Web线程读取，待重载时启用有界轮询，不依赖新的客户端请求。
+ */
+bool _linkg_web_config_reload_pending(void)
+{
+    return g_web_config_restart_armed;
 }
 
 /****************************** 请求处理 ******************************/
@@ -232,6 +262,7 @@ int _linkg_web_handler_config_import(const cJSON *param, char **response)
                                          "配置保存失败，已恢复原配置" : "配置保存失败，持久化状态无法确认，请检查日志", response);
     }
 
+    g_web_config_retry_at = 0U;
     g_web_config_restart_armed = true;
     *response                  = accepted;
 

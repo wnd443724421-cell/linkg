@@ -164,7 +164,12 @@ int _linkg_web_handler_wifi_scan_start(const cJSON *param, char **response)
         (void)linkg_network_scan_cancel(job_id);
         return -ENOMEM;
     }
-    return _linkg_web_response_success(LINKG_WEB_CMD_WIFI_SCAN_START, data, "信道扫描已提交", response);
+    ret = _linkg_web_response_success(LINKG_WEB_CMD_WIFI_SCAN_START, data, "信道扫描已提交", response);
+    if (ret != 0)
+    {
+        (void)linkg_network_scan_cancel(job_id);
+    }
+    return ret;
 }
 
 /**

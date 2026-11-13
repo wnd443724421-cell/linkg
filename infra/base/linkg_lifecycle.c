@@ -319,7 +319,12 @@ linkg_exit_action_t linkg_lifecycle_wait_for_exit(void)
 
     for (;;)
     {
-        ret = poll(poll_fds, 2U, -1);
+        // 通知写入异常时仍能消费已经登记的请求，避免无限等待eventfd。
+        if (atomic_load_explicit(&g_lifecycle.requested, memory_order_acquire))
+        {
+            return linkg_lifecycle_get_exit_action();
+        }
+        ret = poll(poll_fds, 2U, 1000);
         if (ret < 0)
         {
             if (errno == EINTR)

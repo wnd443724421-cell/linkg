@@ -22,6 +22,7 @@ typedef struct
 {
     pthread_mutex_t           lock;             // 保护任务和公共生命周期入口，不在后台应用期间持有
     pthread_cond_t            idle;             // 通知生命周期调用方应用或诊断已经结束
+    uint64_t                  reservation;      // 接受时预留，后台线程领取配置事务
     bool                      busy;             // 至多一个应用任务，完成前拒绝重复SET
     bool                      diagnostic_busy;  // 诊断任务独占UART生命周期和配置应用入口
     linkg_uart_config_t       candidate;        // 后台线程持有的候选配置副本
@@ -259,7 +260,7 @@ static void *_uart_apply_thread(void *argument)
     restore_ret    = 0;
     save_attempted = false;
 
-    ret = linkg_config_transaction_begin();
+    ret = linkg_config_transaction_begin_reserved(g_uart_apply.reservation);
     if (ret != 0)
     {
         goto finished;
@@ -396,6 +397,14 @@ int linkg_uart_manager_apply(const linkg_uart_config_t *config, uint32_t *job_id
         return -ret;
     }
 
+    ret = linkg_config_transaction_reserve(&g_uart_apply.reservation);
+    if (ret != 0)
+    {
+        pthread_attr_destroy(&attributes);
+        pthread_mutex_unlock(&g_uart_apply.lock);
+        return ret;
+    }
+
     g_uart_apply.candidate             = *config;
     g_uart_apply.busy                  = true;
     g_uart_apply.status.state          = LINKG_UART_APPLY_RUNNING;
@@ -412,6 +421,7 @@ int linkg_uart_manager_apply(const linkg_uart_config_t *config, uint32_t *job_id
     pthread_attr_destroy(&attributes);
     if (ret != 0)
     {
+        (void)linkg_config_transaction_cancel_reserved(g_uart_apply.reservation);
         g_uart_apply.busy         = false;
         g_uart_apply.status.state = LINKG_UART_APPLY_FAILED;
         g_uart_apply.status.error = -ret;

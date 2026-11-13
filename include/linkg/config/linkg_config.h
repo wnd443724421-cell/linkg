@@ -7,6 +7,7 @@
 #define LINKG_CONFIG_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "cJSON.h"
 
@@ -62,6 +63,9 @@ int linkg_config_get_cellular(linkg_cellular_config_t *out);
 /****************************** 配置事务 ******************************/
 
 int  linkg_config_transaction_begin(void);
+int  linkg_config_transaction_reserve(uint64_t *reservation);
+int  linkg_config_transaction_begin_reserved(uint64_t reservation);
+int  linkg_config_transaction_cancel_reserved(uint64_t reservation);
 void linkg_config_transaction_end(void);
 
 /****************************** 配置更新 ******************************/

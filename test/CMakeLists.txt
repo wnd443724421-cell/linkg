@@ -159,6 +159,7 @@ set_tests_properties(test_web_speedtest PROPERTIES TIMEOUT 40 ENVIRONMENT "ASAN_
 
 add_linkg_logic_test(test_config_transfer
     unit/test_config_transfer.c
+    "${LINKG_ROOT}/service/uart/uart_apply.c"
     "${LINKG_ROOT}/infra/config/linkg_config.c"
     "${LINKG_ROOT}/infra/config/config_codec.c"
     "${LINKG_ROOT}/service/web/handlers/web_handler_config.c"
@@ -179,8 +180,8 @@ add_linkg_logic_test(test_config_transfer
     "${LINKG_ROOT}/third_party/cjson/cJSON.c"
 )
 
-target_include_directories(test_config_transfer PRIVATE "${LINKG_ROOT}/service/web")
-target_link_options(test_config_transfer PRIVATE -Wl,--wrap=linkg_file_write_all_atomic -Wl,--wrap=linkg_file_read_all)
+target_include_directories(test_config_transfer PRIVATE "${LINKG_ROOT}/service/web" "${LINKG_ROOT}/service/uart" "${LINKG_ROOT}/include/linkg/service/uart")
+target_link_options(test_config_transfer PRIVATE -Wl,--wrap=linkg_file_write_all_atomic -Wl,--wrap=linkg_file_read_all -Wl,--wrap=linkg_time_elapsed_ms -Wl,--wrap=pthread_create)
 
 add_linkg_logic_test(test_wifi_scan
     unit/test_wifi_scan.c
@@ -195,3 +196,28 @@ add_linkg_logic_test(test_network_task
 )
 target_include_directories(test_network_task PRIVATE "${LINKG_ROOT}/service/network" "${LINKG_ROOT}/include/linkg/service/network")
 set_tests_properties(test_network_task PROPERTIES TIMEOUT 60)
+
+add_linkg_logic_test(test_lifecycle_wakeup
+    unit/test_lifecycle_wakeup.c
+    "${LINKG_ROOT}/infra/base/linkg_lifecycle.c"
+)
+target_link_options(test_lifecycle_wakeup PRIVATE -Wl,--wrap=write -Wl,--wrap=poll)
+
+add_linkg_logic_test(test_scan_bss_iteration
+    unit/test_scan_bss_iteration.c
+    "${LINKG_ROOT}/modules/wifi/wifi_scan_result.c"
+)
+target_compile_options(test_scan_bss_iteration PRIVATE -ffunction-sections -fdata-sections)
+target_link_options(test_scan_bss_iteration PRIVATE -Wl,--gc-sections)
+file(GLOB_RECURSE LINKG_SCAN_TEST_HEADERS "${LINKG_ROOT}/third_party/*/wpa_ctrl.h")
+foreach(header IN LISTS LINKG_SCAN_TEST_HEADERS)
+    get_filename_component(directory "${header}" DIRECTORY)
+    target_include_directories(test_scan_bss_iteration PRIVATE "${directory}")
+endforeach()
+
+add_linkg_logic_test(test_scan_state
+    unit/test_scan_state.c
+    "${LINKG_ROOT}/service/network/network_scan.c"
+    "${LINKG_ROOT}/modules/wifi/wifi_scan_result.c"
+)
+target_include_directories(test_scan_state PRIVATE "${LINKG_ROOT}/include/linkg/service/network")

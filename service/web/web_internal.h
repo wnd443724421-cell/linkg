@@ -76,6 +76,8 @@ int  _linkg_web_device_init(void);
 void _linkg_web_device_response_complete(bool sent);
 void _linkg_web_config_init(void);
 void _linkg_web_config_response_complete(bool sent);
+void _linkg_web_config_retry_reload(void);
+bool _linkg_web_config_reload_pending(void);
 void _linkg_web_system_init(void);
 void _linkg_web_system_response_complete(bool sent);
 

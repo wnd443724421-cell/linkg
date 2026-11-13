@@ -37,6 +37,7 @@ typedef struct
 
 /****************************** 任务操作 ******************************/
 
+int  linkg_network_scan_reset(void);
 int  linkg_network_scan_start(uint32_t *job_id);
 int  linkg_network_scan_get(linkg_network_scan_status_t *status);
 int  linkg_network_scan_cancel(uint32_t job_id);

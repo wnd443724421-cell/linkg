@@ -84,6 +84,24 @@ static void _linkg_network_scan_finish(void *context, int task_error, int restor
 /****************************** 任务操作 ******************************/
 
 /**
+ * @brief Network重新初始化时清除上一轮服务的测量，不清理活动任务。
+ */
+int linkg_network_scan_reset(void)
+{
+    pthread_mutex_lock(&g_scan_lock);
+    if (g_scan_status.active)
+    {
+        pthread_mutex_unlock(&g_scan_lock);
+        return -EBUSY;
+    }
+    memset(&g_scan_status, 0, sizeof(g_scan_status));
+    linkg_wifi_scan_result_init(&g_scan_status.result);
+    pthread_mutex_unlock(&g_scan_lock);
+    return 0;
+}
+
+
+/**
  * @brief 异步提交一次五信道扫描，不改变用户配置或自动选择信道。
  */
 int linkg_network_scan_start(uint32_t *job_id)
@@ -120,7 +138,10 @@ int linkg_network_scan_start(uint32_t *job_id)
     {
         g_scan_status = previous;
     }
-    *job_id = next_id;
+    if (ret == 0)
+    {
+        *job_id = next_id;
+    }
     pthread_mutex_unlock(&g_scan_lock);
     return ret;
 }

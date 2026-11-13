@@ -22,12 +22,16 @@
 #include "linkg_json.h"
 #include "linkg_lifecycle.h"
 #include "web_internal.h"
+#include "uart_internal.h"
+#include <pthread.h>
 
 /****************************** 测试状态 ******************************/
 
 static char g_test_file[256];        // 所有配置文件IO重定向到临时目录
 static int  g_test_write_fail = 0;   // 单次写失败：1写前，2原子替换后
 static char g_test_instance[64] = "transfer-test-instance"; // 测试服务代次
+static int  g_test_restart_failures;
+static uint64_t g_test_now = 1U;
 static int  g_test_restarts = 0;     // 替身生命周期接收到的重载次数
 
 int __real_linkg_file_write_all_atomic(const char *path, const void *data, size_t length, mode_t mode);
@@ -79,6 +83,80 @@ int linkg_lifecycle_request_exit(linkg_exit_action_t action)
         return -EINVAL;
     }
     g_test_restarts++;
+    if (g_test_restart_failures > 0)
+    {
+        g_test_restart_failures--;
+        return -EIO;
+    }
+    return 0;
+}
+
+/****************************** 确定性异步调度替身 ******************************/
+
+linkg_uart_manager_context_t g_uart_manager;
+static void *(*g_delayed_function)(void *);
+static void *g_delayed_argument;
+static bool  g_delay_create;
+static bool  g_fail_create;
+
+int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*function)(void *), void *argument);
+
+/**
+ * @brief 延迟UART后台执行，精确复现已接受但尚未取得事务锁的窗口。
+ */
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attributes, void *(*function)(void *), void *argument)
+{
+    if (g_fail_create)
+    {
+        return EAGAIN;
+    }
+    if (g_delay_create)
+    {
+        g_delayed_function = function;
+        g_delayed_argument = argument;
+        return 0;
+    }
+    return __real_pthread_create(thread, attributes, function, argument);
+}
+
+/**
+ * @brief 为重载重试提供可控单调时间，不引入秒级测试等待。
+ */
+uint64_t __wrap_linkg_time_elapsed_ms(void)
+{
+    return g_test_now;
+}
+
+/**
+ * @brief 提供UART时间及硬件生命周期替身，仍运行真实配置应用代码。
+ */
+uint64_t uart_now_ms(void)
+{
+    return g_test_now;
+}
+
+int uart_manager_init(void)
+{
+    g_uart_manager.state = LINKG_UART_LIFE_STOPPED;
+    return 0;
+}
+
+int uart_manager_start(bool strict)
+{
+    (void)strict;
+    g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
+    return 0;
+}
+
+int uart_manager_stop(void)
+{
+    g_uart_manager.state = LINKG_UART_LIFE_STOPPED;
+    return 0;
+}
+
+int uart_manager_deinit(void)
+{
+    g_uart_manager.state = LINKG_UART_LIFE_UNINITIALIZED;
     return 0;
 }
 
@@ -258,6 +336,100 @@ static void test_commit_and_reload(void)
 }
 
 /**
+ * @brief 导入落盘后重载失败保持文件保护，周期重试成功后才撤销待提交状态。
+ */
+static void test_reload_retry(void)
+{
+    linkg_config_t old;
+    linkg_config_t imported;
+    cJSON *root;
+    cJSON *param;
+    char *text;
+    char *response;
+    int attempts;
+
+    linkg_config_deinit();
+    _linkg_web_config_init();
+    fixture(&old);
+    TEST_CHECK_EQ(linkg_config_replace(&old), 0);
+    TEST_CHECK_EQ(linkg_config_save(&old), 0);
+    imported = old;
+    imported.network.node_id = 22;
+    TEST_CHECK_EQ(linkg_config_to_json(&imported, &root), 0);
+    TEST_CHECK_EQ(linkg_json_print_formatted(root, &text), 0);
+    cJSON_Delete(root);
+    param = request(text);
+    linkg_json_string_free(text);
+    TEST_CHECK_EQ(_linkg_web_handler_config_import(param, &response), 0);
+    linkg_json_string_free(response);
+    cJSON_Delete(param);
+    attempts = g_test_restarts;
+    g_test_restart_failures = 2;
+    _linkg_web_config_response_complete(false);
+    TEST_CHECK(_linkg_web_config_reload_pending());
+    TEST_CHECK(linkg_config_import_pending());
+    TEST_CHECK(linkg_config_save(&old) != 0);
+    _linkg_web_config_retry_reload();
+    TEST_CHECK_EQ(g_test_restarts, attempts + 1);
+    g_test_now += 1000U;
+    _linkg_web_config_retry_reload();
+    TEST_CHECK(_linkg_web_config_reload_pending());
+    g_test_now += 1000U;
+    _linkg_web_config_retry_reload();
+    TEST_CHECK(!_linkg_web_config_reload_pending());
+    TEST_CHECK_EQ(g_test_restarts, attempts + 3);
+    TEST_CHECK(linkg_config_import_pending());
+    TEST_CHECK(linkg_config_save(&old) != 0);
+    linkg_config_deinit();
+}
+
+/**
+ * @brief 真实UART接受任务立即阻止其他事务，创建失败撤销预留，跨线程领取后正常应用。
+ */
+static void test_uart_transaction_reservation(void)
+{
+    linkg_config_t config;
+    linkg_uart_apply_status_t status;
+    pthread_t worker;
+    uint32_t job_id;
+    uint64_t reservation;
+
+    fixture(&config);
+    TEST_CHECK_EQ(linkg_config_replace(&config), 0);
+    TEST_CHECK_EQ(linkg_config_save(&config), 0);
+    g_uart_manager.state = LINKG_UART_LIFE_RUNNING;
+    config.uart.items[1].port_config.baudrate = 57600U;
+    g_delay_create = true;
+    TEST_CHECK_EQ(linkg_uart_manager_apply(&config.uart, &job_id), 0);
+    TEST_CHECK(job_id != 0U && g_delayed_function != NULL);
+    TEST_CHECK_EQ(linkg_config_transaction_begin(), -EBUSY);
+    TEST_CHECK_EQ(linkg_config_transaction_reserve(&reservation), -EBUSY);
+    TEST_CHECK_EQ(linkg_uart_manager_get_apply_status(&status), 0);
+    TEST_CHECK_EQ(status.state, LINKG_UART_APPLY_RUNNING);
+    g_delay_create = false;
+    TEST_CHECK_EQ(__real_pthread_create(&worker, NULL, g_delayed_function, g_delayed_argument), 0);
+    TEST_CHECK_EQ(pthread_join(worker, NULL), 0);
+    TEST_CHECK_EQ(linkg_uart_manager_get_apply_status(&status), 0);
+    TEST_CHECK_EQ(status.state, LINKG_UART_APPLY_APPLIED);
+    TEST_CHECK_EQ(linkg_config_transaction_begin(), 0);
+    linkg_config_transaction_end();
+    config.uart.items[1].port_config.baudrate = 38400U;
+    g_fail_create = true;
+    TEST_CHECK_EQ(linkg_uart_manager_apply(&config.uart, &job_id), -EAGAIN);
+    g_fail_create = false;
+    TEST_CHECK_EQ(linkg_config_transaction_begin(), 0);
+    linkg_config_transaction_end();
+    TEST_CHECK_EQ(linkg_config_transaction_reserve(&reservation), 0);
+    TEST_CHECK_EQ(linkg_config_transaction_begin_reserved(reservation + 1U), -ESTALE);
+    TEST_CHECK_EQ(linkg_config_transaction_cancel_reserved(reservation + 1U), -ESTALE);
+    TEST_CHECK_EQ(linkg_config_transaction_begin(), -EBUSY);
+    TEST_CHECK_EQ(linkg_config_transaction_cancel_reserved(reservation), 0);
+    TEST_CHECK_EQ(linkg_config_transaction_begin(), 0);
+    linkg_config_transaction_end();
+    linkg_config_deinit();
+}
+
+/**
  * @brief 浏览器集成测试的JSON行桥，读写真实配置模块但不操作硬件。
  */
 static int gateway(void)
@@ -366,6 +538,8 @@ int main(int argc, char **argv)
     TEST_RUN(test_roundtrip);
     TEST_RUN(test_invalid_import);
     TEST_RUN(test_commit_and_reload);
+    TEST_RUN(test_reload_retry);
+    TEST_RUN(test_uart_transaction_reservation);
     linkg_config_deinit();
     unlink(g_test_file);
     rmdir(directory);

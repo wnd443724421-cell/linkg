@@ -29,6 +29,7 @@
 #include "linkg_wifi.h"
 #include "linkg_switch.h"
 #include "linkg_network_task.h"
+#include "linkg_network_scan.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -371,6 +372,12 @@ int linkg_network_init(linkg_packet_pool_t *packet_pool)
     if (g_network.state != LINKG_NETWORK_STATE_UNINITIALIZED)
     {
         return -EALREADY;
+    }
+
+    ret = linkg_network_scan_reset();
+    if (ret != 0)
+    {
+        return ret;
     }
 
     _linkg_network_reset_context();

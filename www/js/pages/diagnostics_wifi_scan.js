@@ -8,6 +8,7 @@
     let status = null;
     let instance = "";
     let bandwidth = 0;
+    let workMode = "";
     let busy = false;
     let loaded = false;
     let actionMessage = "";
@@ -70,7 +71,7 @@
             frequency.className = "scan-sub";
             frequency.textContent = channel.frequency_mhz + " MHz";
             first.appendChild(frequency);
-            if (channel.channel === 165 && bandwidth >= 40)
+            if (workMode === "wide" && channel.channel === 165 && bandwidth >= 40)
             {
                 const warning = document.createElement("span");
                 warning.className = "scan-bandwidth-warning";
@@ -118,7 +119,7 @@
             networks.appendChild(row);
         }
         field("scanBssCount").textContent = entries.length + " 个网络";
-        field("scanBssNote").textContent = (data.bss_truncated ? "附近网络较多，列表已达到记录上限。 " : "") +
+        field("scanBssNote").textContent = (data.bss_truncated ? "附近网络较多，列表可能不完整（已达到记录或遍历上限）。 " : "") +
             (data.job_id ? "信道统计有效轮次见上表；无有效信道统计 " + data.survey_failures + " 轮，附近网络列表读取成功 " + data.bss_rounds + " 轮。" : "");
         buttons();
     }
@@ -183,6 +184,7 @@
         const token = session;
         instance = "";
         bandwidth = 0;
+        workMode = "";
         loaded = false;
         busy = false;
         actionMessage = "";
@@ -194,7 +196,7 @@
             if (token === session && root) { instance = response.data.instance || ""; buttons(); }
         }).catch(function () {});
         LinkGWifiApi.getConfig().then(function (response) {
-            if (token === session && root) { bandwidth = Number(response.data.wifi?.wideband?.wide_params?.ap_bandwidth || 0); if (status) { render(status); } }
+            if (token === session && root) { workMode = response.data.wifi?.wideband?.work_mode || ""; bandwidth = Number(response.data.wifi?.wideband?.wide_params?.ap_bandwidth || 0); if (status) { render(status); } }
         }).catch(function () {});
         refresh(token);
     }

@@ -49,6 +49,9 @@ static linkg_config_context_t g_config =
 
 static pthread_mutex_t g_config_transaction_lock = PTHREAD_MUTEX_INITIALIZER; // 配置写事务锁，不阻塞配置读取
 
+static uint64_t g_config_transaction_reservation; // 已接受异步事务的预留编号，由事务锁保护
+static uint64_t g_config_transaction_sequence;    // 预留编号递增序列，不复用0
+
 /****************************** 配置事务 ******************************/
 
 /**
@@ -56,9 +59,111 @@ static pthread_mutex_t g_config_transaction_lock = PTHREAD_MUTEX_INITIALIZER; //
  */
 int linkg_config_transaction_begin(void)
 {
-    int ret = pthread_mutex_trylock(&g_config_transaction_lock);
+    int ret;
 
-    return ret == 0 ? 0 : -ret;
+    ret = pthread_mutex_trylock(&g_config_transaction_lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+    if (g_config_transaction_reservation != 0U)
+    {
+        pthread_mutex_unlock(&g_config_transaction_lock);
+        return -EBUSY;
+    }
+    pthread_mutex_lock(&g_config.file_lock);
+    ret = g_config.import_committed || g_config.restore_committed ? -ESHUTDOWN : 0;
+    pthread_mutex_unlock(&g_config.file_lock);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_config_transaction_lock);
+    }
+    return ret;
+}
+
+/**
+ * @brief 接受异步任务前预留事务，不将普通互斥锁跨线程移交。
+ */
+int linkg_config_transaction_reserve(uint64_t *reservation)
+{
+    int ret;
+
+    if (reservation == NULL)
+    {
+        return -EINVAL;
+    }
+    *reservation = 0U;
+    ret = linkg_config_transaction_begin();
+    if (ret != 0)
+    {
+        return ret;
+    }
+    g_config_transaction_sequence++;
+    if (g_config_transaction_sequence == 0U)
+    {
+        g_config_transaction_sequence = 1U;
+    }
+    g_config_transaction_reservation = g_config_transaction_sequence;
+    *reservation = g_config_transaction_reservation;
+    pthread_mutex_unlock(&g_config_transaction_lock);
+    return 0;
+}
+
+/**
+ * @brief 后台执行线程领取自己的预留，成功后由本线程结束事务。
+ */
+int linkg_config_transaction_begin_reserved(uint64_t reservation)
+{
+    int ret;
+
+    if (reservation == 0U)
+    {
+        return -EINVAL;
+    }
+    ret = pthread_mutex_lock(&g_config_transaction_lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+    if (g_config_transaction_reservation != reservation)
+    {
+        pthread_mutex_unlock(&g_config_transaction_lock);
+        return -ESTALE;
+    }
+    g_config_transaction_reservation = 0U;
+    pthread_mutex_lock(&g_config.file_lock);
+    ret = g_config.import_committed || g_config.restore_committed ? -ESHUTDOWN : 0;
+    pthread_mutex_unlock(&g_config.file_lock);
+    if (ret != 0)
+    {
+        pthread_mutex_unlock(&g_config_transaction_lock);
+    }
+    return ret;
+}
+
+/**
+ * @brief 线程创建失败时撤销本任务预留，不影响其他任务的事务。
+ */
+int linkg_config_transaction_cancel_reserved(uint64_t reservation)
+{
+    int ret;
+
+    if (reservation == 0U)
+    {
+        return -EINVAL;
+    }
+    ret = pthread_mutex_lock(&g_config_transaction_lock);
+    if (ret != 0)
+    {
+        return -ret;
+    }
+    ret = g_config_transaction_reservation == reservation ? 0 : -ESTALE;
+    if (ret == 0)
+    {
+        g_config_transaction_reservation = 0U;
+    }
+    pthread_mutex_unlock(&g_config_transaction_lock);
+    return ret;
 }
 
 /**
