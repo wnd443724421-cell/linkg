@@ -28,7 +28,7 @@
 #define LINKG_NETWORK_WIFI_THREAD_NAME     "network-wifi" // Wi-Fi Owner线程名称
 #define LINKG_NETWORK_CELLULAR_THREAD_NAME "network-cell" // Cellular Owner线程名称
 
-#define LINKG_NETWORK_MANAGER_POLL_MS      1000          // Manager最长等待时间
+#define LINKG_NETWORK_MANAGER_POLL_MS      1000           // Manager最长等待时间
 
 /****************************** 管理上下文 ******************************/
 
@@ -615,7 +615,7 @@ static void _linkg_network_task_thread(linkg_thread_t *thread, void *user_data)
 static void _linkg_network_task_finish(int task_error, int restore_error)
 {
     linkg_network_wifi_task_finish_t finish;
-    void                           *context;
+    void                            *context;
 
     if (g_network_manager.task_thread.initialized)
     {
@@ -645,12 +645,12 @@ static void _linkg_network_task_finish(int task_error, int restore_error)
 static void _linkg_network_manager_process_task(void)
 {
     linkg_network_worker_t     *worker;
-    linkg_network_task_phase_t phase;
-    bool                      cancelled;
-    bool                      released;
-    bool                      restored;
-    int                       task_error;
-    int                       ret;
+    linkg_network_task_phase_t  phase;
+    bool                        cancelled;
+    bool                        released;
+    bool                        restored;
+    int                         task_error;
+    int                         ret;
 
     worker = &g_network.wifi_worker;
     pthread_mutex_lock(&g_network.lock);

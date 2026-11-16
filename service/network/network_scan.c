@@ -20,7 +20,7 @@
 /****************************** 全局上下文 ******************************/
 
 static pthread_mutex_t             g_scan_lock = PTHREAD_MUTEX_INITIALIZER; // 扫描快照锁
-static linkg_network_scan_status_t g_scan_status;                          // 最近一次任务及测量快照
+static linkg_network_scan_status_t g_scan_status;                           // 最近一次任务及测量快照
 
 /****************************** 任务回调 ******************************/
 

@@ -1,0 +1,38 @@
+netsh interface ipv4 show config name=12
+Configuration for interface "网桥"
+    DHCP enabled:                         Yes
+    IP Address:                           192.168.1.2
+    Subnet Prefix:                        192.168.1.0/24 (mask 255.255.255.0)
+    InterfaceMetric:                      25
+    DNS servers configured through DHCP:  None
+    Register with which suffix:           Primary only
+    WINS servers configured through DHCP: None
+
+powershell.exe -NoProfile -Command "Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '172.28.0.0/16' -InterfaceIndex 12 | Select-Object DestinationPrefix,NextHop,InterfaceIndex | Format-Table -AutoSize"
+DestinationPrefix NextHop     InterfaceIndex
+----------------- -------     --------------
+172.28.0.0/16     192.168.1.1             12
+
+ping -n 4 -w 1000 172.28.1.1
+Pinging 172.28.1.1 with 32 bytes of data:
+Reply from 172.28.1.1: bytes=32 time<1ms TTL=64
+Reply from 172.28.1.1: bytes=32 time<1ms TTL=64
+Reply from 172.28.1.1: bytes=32 time<1ms TTL=64
+Reply from 172.28.1.1: bytes=32 time<1ms TTL=64
+
+Ping statistics for 172.28.1.1:
+    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms
+
+ping -n 4 -w 1000 172.28.2.1
+Pinging 172.28.2.1 with 32 bytes of data:
+Reply from 172.28.2.1: bytes=32 time=2ms TTL=63
+Reply from 172.28.2.1: bytes=32 time=2ms TTL=63
+Reply from 172.28.2.1: bytes=32 time=2ms TTL=63
+Reply from 172.28.2.1: bytes=32 time=2ms TTL=63
+
+Ping statistics for 172.28.2.1:
+    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 2ms, Maximum = 2ms, Average = 2ms

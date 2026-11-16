@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="410" viewBox="0 0 1120 410" role="img" aria-labelledby="title desc">
+<title id="title">LinkG 宽带 Wi-Fi 一对多连接</title><desc id="desc">电脑通过网线连接 AP 节点 1，AP 通过 Wi-Fi 分别连接 STA 节点 2 和 STA 节点 3。两个 STA 均接入同一个 AP。</desc>
+<rect width="1120" height="410" rx="14" fill="#f6f8fc"/>
+<g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" text-anchor="middle">
+<text x="560" y="35" fill="#172b4d" font-size="22" font-weight="700">宽带 Wi-Fi 一对多连接 · 1 个 AP ＋ 2 个 STA</text>
+<g fill="#fff" stroke="#d7e1ef" stroke-width="2"><rect x="30" y="143" width="230" height="130" rx="10"/><rect x="408" y="143" width="250" height="130" rx="10"/><rect x="850" y="65" width="235" height="130" rx="10"/><rect x="850" y="240" width="235" height="130" rx="10"/></g>
+<g fill="#172b4d" font-size="22" font-weight="700"><text x="145" y="180">电脑</text><text x="533" y="180">设备 A · AP</text><text x="968" y="102">设备 B · STA</text><text x="968" y="277">设备 C · STA</text></g>
+<g fill="#4b607b" font-size="17"><text x="145" y="215">DHCP 或静态 IP ＋路由</text><text x="145" y="246">以太网接入</text><text x="533" y="215">节点 ID：1</text><text x="968" y="137">节点 ID：2</text><text x="968" y="312">节点 ID：3</text></g>
+<g fill="#245fc9" font-size="20" font-family="Consolas, monospace"><text x="533" y="249">172.28.1.1</text><text x="968" y="171">172.28.2.1</text><text x="968" y="346">172.28.3.1</text></g>
+<path d="M260 208H408" fill="none" stroke="#71859e" stroke-width="4"/><text x="334" y="190" font-size="16" fill="#4b607b">网线</text>
+<path d="M658 208H715L850 130M715 208L850 305" fill="none" stroke="#2867d5" stroke-width="4" stroke-dasharray="8 6"/>
+<text x="752" y="115" font-size="16" fill="#245fc9">Wi-Fi</text><text x="755" y="326" font-size="16" fill="#245fc9">Wi-Fi</text>
+<text x="533" y="383" font-size="16" fill="#60748e">两台 STA 连接同一个 AP，节点 ID 不可重复；各设备分别连接天线和电源。</text>
+</g></svg>
