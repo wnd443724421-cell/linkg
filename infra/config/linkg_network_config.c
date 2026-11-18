@@ -316,11 +316,12 @@ static int _network_subnet_conflict_validate(const linkg_network_config_t *confi
         return ret;
     }
 
-    if (linkg_network_ipv4_subnet_overlap(&virtual_network.ip, &virtual_network.netmask, &ethernet.ip, &ethernet.netmask))
+    if (linkg_network_ipv4_subnet_overlap(&virtual_network.ip, &virtual_network.netmask, &ethernet.ip, &ethernet.netmask) &&
+    !linkg_network_config_is_direct_mode(config))
     {
         return CONFIG_ERR_VALIDATE;
     }
-
+    
     if (linkg_network_ipv4_subnet_overlap(&virtual_network.ip, &virtual_network.netmask, &tun.ip, &tun.netmask))
     {
         return CONFIG_ERR_VALIDATE;
@@ -1139,6 +1140,28 @@ int linkg_network_config_get_node_virtual_subnet(const linkg_network_config_t *c
     }
 
     return CONFIG_OK;
+}
+
+/**
+ * @brief 判断Ethernet是否使用本节点Virtual Endpoint子网。
+ */
+bool linkg_network_config_is_direct_mode(const linkg_network_config_t *config)
+{
+    linkg_network_ipv4_config_t local_subnet;
+    int                         ret;
+
+    if (config == NULL)
+    {
+        return false;
+    }
+
+    ret = linkg_network_config_get_node_virtual_subnet(config, config->node_id, &local_subnet);
+    if (ret != CONFIG_OK)
+    {
+        return false;
+    }
+
+    return config->ethernet_network.s_addr == local_subnet.ip.s_addr;
 }
 
 /**

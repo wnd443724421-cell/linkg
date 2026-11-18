@@ -1,0 +1,22 @@
+.config-file-page { max-width: 1080px; margin: 0 auto; }
+.config-file-page .page-card { margin-top: 18px; }
+.config-file-body { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; padding: 20px; }
+.config-file-body p { line-height: 1.7; }
+.config-file-note { color: var(--linkg-color-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.config-file-status { margin-top: 16px; color: var(--linkg-color-text-secondary); overflow-wrap: anywhere; }
+.config-file-status.is-error { color: var(--linkg-color-danger); }
+.config-file-status.is-success { color: var(--linkg-color-success); }
+.config-file-status.is-warning { color: var(--linkg-color-warning); }
+.config-file-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; max-width: 100%; font-weight: 500; }
+.config-file-picker input { max-width: 100%; font-weight: normal; }
+.config-file-confirm { display: flex; align-items: flex-start; gap: 8px; line-height: 1.6; }
+.config-file-confirm input { flex: none; margin-top: 5px; }
+.config-file-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.config-file-button { min-height: 36px; padding: 7px 16px; border: 1px solid var(--linkg-color-border); border-radius: 5px; background: var(--linkg-color-surface); cursor: pointer; }
+.config-file-primary { background: var(--linkg-color-primary); color: #fff; border-color: var(--linkg-color-primary); }
+.config-file-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.config-file-target { color: var(--linkg-color-primary); text-decoration: underline; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+    .config-file-body { padding: 16px; }
+    .config-file-picker { align-items: flex-start; flex-direction: column; }
+}

@@ -1,0 +1,14 @@
+obj-m += linkg_fast_nat.o
+
+linkg_fast_nat-y := linkg_fast_nat_main.o \
+                   linkg_fast_nat_config.o \
+                   linkg_fast_nat_mapping.o \
+                   linkg_fast_nat_flow.o \
+                   linkg_fast_nat_rules_common.o \
+                   linkg_fast_nat_rules_nat.o \
+                   linkg_fast_nat_rules_direct.o \
+                   linkg_fast_nat_related.o \
+                   linkg_fast_nat_rtsp.o \
+                   linkg_fast_nat_utils.o
+
+ccflags-y += -I$(src)

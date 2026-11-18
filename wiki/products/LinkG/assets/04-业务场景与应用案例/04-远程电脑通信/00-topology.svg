@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="410" viewBox="0 0 1200 410" role="img" aria-labelledby="title desc">
+  <title id="title">PC 通过两台 LinkG 访问远端 RK</title>
+  <desc id="desc">Windows PC 通过以太网连接 AP 节点 1，AP 与 STA 节点 2 通过 Wi-Fi 组网，STA 通过以太网连接 RK。PC 以虚拟地址 172.28.2.2 访问远端 RK，进行 SSH 登录和双向文件传输。</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#3269bb"/></marker></defs>
+  <rect width="1200" height="410" rx="14" fill="#fff"/>
+  <g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" text-anchor="middle">
+    <text x="600" y="39" font-size="25" font-weight="700" fill="#172b4d">远程电脑通信 · SSH 登录与文件传输</text>
+    <rect x="16" y="65" width="560" height="280" rx="14" fill="#f3f7fd"/>
+    <rect x="624" y="65" width="560" height="280" rx="14" fill="#f0f8f5"/>
+    <text x="296" y="95" font-size="18" fill="#64748b">本地侧 · 节点 1</text>
+    <text x="904" y="95" font-size="18" fill="#64748b">远端侧 · 节点 2</text>
+    <g stroke-width="1.5">
+      <rect x="32" y="117" width="230" height="201" rx="10" fill="#fff" stroke="#b8cce7"/>
+      <rect x="344" y="117" width="215" height="201" rx="10" fill="#eaf2ff" stroke="#6594d7"/>
+      <rect x="641" y="117" width="215" height="201" rx="10" fill="#eaf2ff" stroke="#6594d7"/>
+      <rect x="938" y="117" width="230" height="201" rx="10" fill="#fff" stroke="#9dcbbb"/>
+    </g>
+    <g font-size="25" font-weight="700" fill="#172b4d">
+      <text x="147" y="157">本地 PC</text><text x="451" y="157">LinkG A</text><text x="749" y="157">LinkG B</text><text x="1053" y="157">远端 RK</text>
+    </g>
+    <g font-size="18" fill="#64748b">
+      <text x="147" y="188">Windows</text><text x="451" y="188">AP · 节点 1</text><text x="749" y="188">STA · 节点 2</text><text x="1053" y="188">Linux</text>
+      <text x="147" y="229">本地 192.168.1.2</text><text x="451" y="229">网口 192.168.1.1</text><text x="749" y="229">网口 192.168.1.1</text><text x="1053" y="229">本地 192.168.1.2</text>
+    </g>
+    <g font-size="19" font-weight="600" fill="#285fae">
+      <text x="147" y="272">172.28.1.2</text><text x="451" y="272">172.28.1.1</text><text x="749" y="272">172.28.2.1</text><text x="1053" y="272">172.28.2.2</text>
+    </g>
+    <g stroke="#3269bb" stroke-width="2.5" marker-start="url(#arrow)" marker-end="url(#arrow)">
+      <path d="M272 222H334"/><path d="M569 222H631"/><path d="M866 222H928"/>
+    </g>
+    <g font-size="16" fill="#3269bb"><text x="303" y="202">以太网</text><text x="600" y="202">Wi-Fi</text><text x="897" y="202">以太网</text></g>
+    <text x="600" y="380" font-size="18" fill="#64748b">蓝色地址为组网访问地址；PC 使用 172.28.2.2 访问远端 RK。</text>
+  </g>
+</svg>

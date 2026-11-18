@@ -1,0 +1,24 @@
+CMakeFiles/linkg.dir/platform/wifi/linkg_wifi_hardware.c.o: \
+ /home/dawn/project/linkg_v2/platform/wifi/linkg_wifi_hardware.c \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/stdc-predef.h \
+ /home/dawn/project/linkg_v2/include/linkg/platform/linkg_wifi_hardware.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include/stdint.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/stdint.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/libc-header-start.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/features.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/sys/cdefs.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/wordsize.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/long-double.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/gnu/stubs.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/gnu/stubs-hard.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/types.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/timesize.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/typesizes.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/time64.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/wchar.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/stdint-intn.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/include/bits/stdint-uintn.h \
+ /home/dawn/project/linkg_v2/platform/wifi/wifi_platform_internal.h \
+ /home/dawn/project/linkg_v2/include/linkg/base/linkg_log.h \
+ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include/stdbool.h \
+ /home/dawn/project/linkg_v2/include/linkg/platform/linkg_system_resources.h

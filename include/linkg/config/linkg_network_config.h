@@ -78,6 +78,7 @@ void linkg_network_config_set_default(linkg_network_config_t *out);
 int  linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out);
 int  linkg_network_config_validate(const linkg_network_config_t *config);
 int  linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_network_config_t *config);
+bool linkg_network_config_is_direct_mode(const linkg_network_config_t *config);
 
 /****************************** 地址查询 ******************************/
 

@@ -9,7 +9,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
 
-    <title>LinkG 管理系统</title>
+    <title>铂升机器人 LinkG 无线管理系统</title>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
 
     <!-- Web版本和基础样式加载完成前隐藏页面，避免无样式闪烁。 -->
@@ -28,7 +28,10 @@
             <div class="header-brand">
                 <button id="appMobileNavToggle" class="app-mobile-nav-toggle" type="button"
                     aria-controls="appSidebar" aria-expanded="false" aria-label="打开导航菜单">导航</button>
-                <span class="brand-name">LinkG</span>
+                <span class="brand-name">
+                    <span class="brand-company">铂升机器人</span>
+                    <span class="brand-product">LinkG 无线管理系统</span>
+                </span>
             </div>
 
             <div class="header-runtime">
@@ -154,6 +157,7 @@
                                 data-page="/view/diagnostics_speedtest.html">
                                 链路性能测试
                             </a>
+                            <a href="#/diagnostics/wifi-scan" data-route="diagnostics/wifi-scan" data-page="/view/diagnostics_wifi_scan.html">信道扫描</a>
                         </div>
                     </div>
 
@@ -165,6 +169,12 @@
                         </button>
 
                         <div class="menu-list">
+                            <a href="#/system/config"
+                                data-route="system/config"
+                                data-page="/view/system_config.html">
+                                配置导入与导出
+                            </a>
+
                             <a href="#/system/reboot"
                                 data-route="system/reboot"
                                 data-page="/view/system_reboot.html">
@@ -326,10 +336,12 @@
                         loadStylesheet("/css/pages/device_basic.css", latestVersion),
                         loadStylesheet("/css/pages/system_upgrade.css", latestVersion),
                         loadStylesheet("/css/pages/system_actions.css", latestVersion),
+                        loadStylesheet("/css/pages/system_config.css", latestVersion),
                         loadStylesheet("/css/pages/network_basic.css", latestVersion),
                         loadStylesheet("/css/pages/serial.css", latestVersion),
                         loadStylesheet("/css/pages/diagnostics_uart.css", latestVersion),
                         loadStylesheet("/css/pages/diagnostics_speedtest.css", latestVersion),
+                        loadStylesheet("/css/pages/diagnostics_wifi_scan.css", latestVersion),
                         loadStylesheet("/css/pages/link_wifi.css", latestVersion),
                         loadStylesheet("/css/pages/link_cellular.css", latestVersion)
                     ]);
@@ -342,10 +354,12 @@
                     await loadScript("/js/api/device.js", latestVersion);
                     await loadScript("/js/api/upgrade.js", latestVersion);
                     await loadScript("/js/api/system.js", latestVersion);
+                    await loadScript("/js/api/config_file.js", latestVersion);
                     await loadScript("/js/api/network_basic.js", latestVersion);
                     await loadScript("/js/api/serial.js", latestVersion);
                     await loadScript("/js/api/uart_diagnostic.js", latestVersion);
                     await loadScript("/js/api/speedtest.js", latestVersion);
+                    await loadScript("/js/api/wifi_scan.js", latestVersion);
                     await loadScript("/js/api/wifi.js", latestVersion);
                     await loadScript("/js/api/cellular.js", latestVersion);
                     await loadScript("/js/pages/overview.js", latestVersion);
@@ -355,10 +369,12 @@
                     await loadScript("/js/pages/system_upgrade.js", latestVersion);
                     await loadScript("/js/pages/system_reboot.js", latestVersion);
                     await loadScript("/js/pages/system_factory_reset.js", latestVersion);
+                    await loadScript("/js/pages/system_config.js", latestVersion);
                     await loadScript("/js/pages/network_basic.js", latestVersion);
                     await loadScript("/js/pages/serial.js", latestVersion);
                     await loadScript("/js/pages/diagnostics_uart.js", latestVersion);
                     await loadScript("/js/pages/diagnostics_speedtest.js", latestVersion);
+                    await loadScript("/js/pages/diagnostics_wifi_scan.js", latestVersion);
                     await loadScript("/js/pages/link_wifi.js", latestVersion);
                     await loadScript("/js/pages/link_cellular.js", latestVersion);
                     await loadScript("/js/pages/index.js", latestVersion);

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="510" viewBox="0 0 1200 510" role="img" aria-labelledby="title desc">
+  <title id="title">飞控 MAVLink 经 LinkG 串口与组网链路连接 QGC</title>
+  <desc id="desc">飞控 TELEM1 双向连接 STA 节点 2 的 UART1。STA 使用 UDP Remote 双向路由，将数据发往 AP 节点 1 后电脑的组网地址 172.28.1.2、端口 14550。电脑用以太网接 AP，QGC 监听 UDP 14550 并向实际来源回传。飞控 USB 接外部 USB 电源，仅供电，不连接电脑。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#3269bb"/></marker>
+    <marker id="power" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#278568"/></marker>
+  </defs>
+  <rect width="1200" height="510" rx="14" fill="#fff"/>
+  <g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" text-anchor="middle">
+    <text x="600" y="40" font-size="25" font-weight="700" fill="#172b4d">飞控数传 · MAVLink 双向通信</text>
+    <rect x="16" y="70" width="548" height="240" rx="14" fill="#f0f8f5"/>
+    <rect x="636" y="70" width="548" height="240" rx="14" fill="#f3f7fd"/>
+    <text x="290" y="102" font-size="18" fill="#64748b">远端 · STA 节点 2</text>
+    <text x="910" y="102" font-size="18" fill="#64748b">地面端 · AP 节点 1</text>
+    <g stroke-width="1.5">
+      <rect x="32" y="126" width="210" height="155" rx="10" fill="#fff" stroke="#9dcbbb"/>
+      <rect x="330" y="126" width="215" height="155" rx="10" fill="#eaf2ff" stroke="#6594d7"/>
+      <rect x="655" y="126" width="215" height="155" rx="10" fill="#eaf2ff" stroke="#6594d7"/>
+      <rect x="960" y="126" width="210" height="155" rx="10" fill="#fff" stroke="#b8cce7"/>
+    </g>
+    <g font-size="24" font-weight="700" fill="#172b4d"><text x="137" y="167">飞控</text><text x="437" y="167">LinkG STA</text><text x="762" y="167">LinkG AP</text><text x="1065" y="167">电脑 · QGC</text></g>
+    <g font-size="18" fill="#64748b">
+      <text x="137" y="206">TELEM1 数传口</text><text x="137" y="245">输出 MAVLink</text>
+      <text x="437" y="206">UART1 · Normal</text><text x="437" y="245">172.28.2.1</text>
+      <text x="762" y="206">组网与以太网转发</text><text x="762" y="245">172.28.1.1</text>
+      <text x="1065" y="206">监听 UDP 14550</text><text x="1065" y="245">172.28.1.2</text>
+    </g>
+    <g stroke="#3269bb" stroke-width="2.5" fill="none" marker-start="url(#arrow)" marker-end="url(#arrow)"><path d="M253 204H318"/><path d="M557 204H643"/><path d="M882 204H948"/></g>
+    <g font-size="16" fill="#3269bb"><text x="285" y="184">串口</text><text x="600" y="170">组网</text><text x="600" y="190">链路</text><text x="915" y="184">以太网</text></g>
+    <rect x="32" y="357" width="250" height="80" rx="10" fill="#f0f8f5" stroke="#9dcbbb" stroke-width="1.5"/>
+    <text x="157" y="390" font-size="22" font-weight="700" fill="#27664f">外部 USB 电源</text>
+    <text x="157" y="420" font-size="17" fill="#64748b">飞控 USB 仅接电源</text>
+    <path d="M137 346V293" fill="none" stroke="#278568" stroke-width="2.5" marker-end="url(#power)"/>
+    <text x="193" y="335" font-size="16" fill="#278568">USB 供电</text>
+    <text x="760" y="355" font-size="19" fill="#285fae">STA：UDP Remote 双向 → 172.28.1.2:14550</text>
+    <text x="760" y="393" font-size="18" fill="#64748b">TELEM1 ↔ UART1 · Normal / 57600 / 8N1</text>
+    <text x="760" y="431" font-size="18" fill="#64748b">QGC：UDP 14550 · Server Addresses 留空</text>
+    <text x="600" y="484" font-size="17" fill="#64748b">蓝色为双向数传，绿色为供电；飞控 USB 不连接电脑，电脑通过以太网和 LinkG 接收数传。</text>
+  </g>
+</svg>

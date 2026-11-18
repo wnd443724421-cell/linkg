@@ -217,6 +217,34 @@
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
+.network-basic-ethernet-entry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    margin-top: 12px;
+}
+.network-basic-ethernet-entry .network-basic-address { margin-top: 0; }
+.network-basic-mode-notes {
+    display: grid;
+    gap: 4px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--linkg-color-border-light);
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+}
+.network-basic-mode-notes p { margin: 0; }
+.network-basic-mode-notes strong { color: var(--linkg-color-text); }
+.network-basic-private-note {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+}
+.network-basic-private-note strong { color: var(--linkg-color-text); }
 .network-basic-input-note {
     margin-top: 10px;
     color: var(--linkg-color-text-muted);

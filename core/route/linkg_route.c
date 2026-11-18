@@ -643,28 +643,32 @@ int linkg_route_start(void)
     g_route.netlink_fd      = netlink_fd;
     g_route.started         = true;
 
-    memset(&local_subnet, 0, sizeof(local_subnet));
-
-    ret = _linkg_route_get_local_subnet(&local_subnet);
-    if (ret != 0)
+    // Direct模式由Ethernet直连路由管理本节点子网，无需安装到linkg0。
+    if (!linkg_network_config_is_direct_mode(&g_route.network_config))
     {
-        (void)_linkg_route_netlink_close_locked();
-        g_route.started = false;
+        memset(&local_subnet, 0, sizeof(local_subnet));
 
-        pthread_mutex_unlock(&g_route.lock);
+        ret = _linkg_route_get_local_subnet(&local_subnet);
+        if (ret != 0)
+        {
+            (void)_linkg_route_netlink_close_locked();
+            g_route.started = false;
 
-        return ret;
-    }
+            pthread_mutex_unlock(&g_route.lock);
 
-    ret = _linkg_route_linux_add_locked(&local_subnet);
-    if (ret != 0)
-    {
-        (void)_linkg_route_netlink_close_locked();
-        g_route.started = false;
+            return ret;
+        }
 
-        pthread_mutex_unlock(&g_route.lock);
+        ret = _linkg_route_linux_add_locked(&local_subnet);
+        if (ret != 0)
+        {
+            (void)_linkg_route_netlink_close_locked();
+            g_route.started = false;
 
-        return ret;
+            pthread_mutex_unlock(&g_route.lock);
+
+            return ret;
+        }
     }
 
     pthread_mutex_unlock(&g_route.lock);
@@ -702,20 +706,24 @@ int linkg_route_stop(void)
         return 0;
     }
 
-    memset(&local_subnet, 0, sizeof(local_subnet));
-
-    ret = _linkg_route_get_local_subnet(&local_subnet);
-    if (ret != 0)
+    // Direct模式未安装本节点linkg0路由，停止时无需删除。
+    if (!linkg_network_config_is_direct_mode(&g_route.network_config))
     {
-        pthread_mutex_unlock(&g_route.lock);
-        return ret;
-    }
+        memset(&local_subnet, 0, sizeof(local_subnet));
 
-    ret = _linkg_route_linux_remove_locked(&local_subnet);
-    if (ret != 0)
-    {
-        pthread_mutex_unlock(&g_route.lock);
-        return ret;
+        ret = _linkg_route_get_local_subnet(&local_subnet);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&g_route.lock);
+            return ret;
+        }
+
+        ret = _linkg_route_linux_remove_locked(&local_subnet);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&g_route.lock);
+            return ret;
+        }
     }
 
     ret = _linkg_route_netlink_close_locked();

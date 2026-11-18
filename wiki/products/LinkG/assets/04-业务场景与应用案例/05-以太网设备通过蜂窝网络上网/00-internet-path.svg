@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">以太网设备通过 LinkG 蜂窝网络上网</title>
+  <desc id="desc">RK 开发板使用本地地址 192.168.1.2，通过以太网连接默认网关 192.168.1.1 的 LinkG，LinkG 通过 SIM 卡接入 4G 或 5G 蜂窝网络，转发到 Internet。箭头表示请求与返回数据。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#3269bb"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="360" rx="14" fill="#ffffff"/>
+  <g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" text-anchor="middle">
+    <text x="600" y="40" font-size="25" font-weight="700" fill="#172b4d">以太网设备通过蜂窝网络上网</text>
+    <rect x="16" y="72" width="590" height="226" rx="14" fill="#f3f7fd"/>
+    <text x="311" y="103" font-size="17" fill="#64748b">本地以太网 · 192.168.1.0/24</text>
+    <rect x="30" y="124" width="230" height="146" rx="10" fill="#ffffff" stroke="#b8cce7" stroke-width="1.5"/>
+    <text x="145" y="164" font-size="24" font-weight="700" fill="#172b4d">RK 开发板</text>
+    <text x="145" y="202" font-size="21" fill="#285fae">192.168.1.2</text>
+    <text x="145" y="241" font-size="17" fill="#64748b">以太网接入设备</text>
+    <rect x="360" y="124" width="230" height="146" rx="10" fill="#eaf2ff" stroke="#6594d7" stroke-width="1.5"/>
+    <text x="475" y="164" font-size="26" font-weight="700" fill="#172b4d">LinkG</text>
+    <text x="475" y="202" font-size="21" fill="#285fae">192.168.1.1</text>
+    <text x="475" y="241" font-size="17" fill="#64748b">默认网关 · 公网转发</text>
+    <rect x="690" y="124" width="210" height="146" rx="10" fill="#f0f8f5" stroke="#9dcbbb" stroke-width="1.5"/>
+    <text x="795" y="169" font-size="25" font-weight="700" fill="#16674d">4G / 5G</text>
+    <text x="795" y="205" font-size="22" fill="#172b4d">蜂窝网络</text>
+    <text x="795" y="241" font-size="17" fill="#64748b">运营商数据业务</text>
+    <rect x="1000" y="124" width="176" height="146" rx="10" fill="#ffffff" stroke="#b8cce7" stroke-width="1.5"/>
+    <text x="1088" y="175" font-size="25" font-weight="700" fill="#172b4d">Internet</text>
+    <text x="1088" y="215" font-size="18" fill="#64748b">网站 / 云平台</text>
+    <g stroke="#3269bb" stroke-width="2.5" marker-start="url(#arrow)" marker-end="url(#arrow)">
+      <path d="M 270 198 H 350"/>
+      <path d="M 600 198 H 680"/>
+      <path d="M 910 198 H 990"/>
+    </g>
+    <g font-size="17" fill="#3269bb">
+      <text x="310" y="178">以太网</text>
+      <text x="640" y="178">SIM 接入</text>
+      <text x="950" y="178">公网</text>
+    </g>
+    <text x="600" y="333" font-size="18" fill="#64748b">接入设备的默认网关指向本地 LinkG；双向箭头表示请求与返回数据。</text>
+  </g>
+</svg>

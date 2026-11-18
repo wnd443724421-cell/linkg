@@ -42,12 +42,20 @@
         if (parts.length !== 4) { throw new Error("请输入完整的 IPv4 地址"); }
         return parts.map(octet);
     }
-    function privateNetwork(parts)
+    function validatePrivateNetwork(parts)
     {
-        return parts[0] === 10 || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-            (parts[0] === 192 && parts[1] === 168);
+        if (parts[0] === 10 || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+            (parts[0] === 192 && parts[1] === 168))
+        {
+            return;
+        }
+        throw new Error("请填写 10.x.x.x、172.16.x.x 至 172.31.x.x，或 192.168.x.x 范围内的私有网段。");
     }
-    function readForm()
+    function localVirtualNetwork(config)
+    {
+        return config.virtual_network.split(".").slice(0, 2).concat([config.node_id, 0]).join(".");
+    }
+    function readVirtualForm()
     {
         const node = field("NodeId").value;
         if (!/^\d{1,3}$/.test(node) || Number(node) < 1 || Number(node) > 254)
@@ -55,19 +63,110 @@
             throw new Error("节点 ID 必须为 1–254 的整数");
         }
         const virtual = [1, 2].map(function (n) { return octet(field("VirtualOctet" + n).value); }).concat([0, 0]);
+        validatePrivateNetwork(virtual);
+        return {node_id: Number(node), virtual_network: virtual.join(".")};
+    }
+    function readForm()
+    {
+        const config = readVirtualForm();
+        const virtual = ipv4(config.virtual_network);
         const ethernet = [1, 2, 3].map(function (n) { return octet(field("EthernetOctet" + n).value); }).concat([0]);
-        if (!privateNetwork(virtual) || !privateNetwork(ethernet))
+        validatePrivateNetwork(ethernet);
+        config.ethernet_network = ethernet.join(".");
+        config.dhcp = {enabled: field("DhcpEnabled").checked, default_gateway: field("DefaultGateway").checked};
+        const localNetwork = localVirtualNetwork(config);
+        if (virtual[0] === ethernet[0] && virtual[1] === ethernet[1] && config.ethernet_network !== localNetwork)
         {
-            throw new Error("请使用 RFC1918 私有网段；后端还会检查系统固定网段冲突");
+            throw new Error("使用 Direct 模式时，Ethernet 网段必须为本节点的 " + localNetwork + "/24；其他重叠网段不可用");
         }
-        if (virtual[0] === ethernet[0] && virtual[1] === ethernet[1])
+        return config;
+    }
+    function fillDirectNetwork()
+    {
+        if (busy || !connected) { return; }
+        try
         {
-            throw new Error("虚拟网络与 Ethernet 网段不能重叠");
+            const network = localVirtualNetwork(readVirtualForm());
+            network.split(".").slice(0, 3).forEach(function (part, index) {
+                field("EthernetOctet" + (index + 1)).value = part;
+            });
+            controls();
+            status("已填入直连网段 " + network + "/24，保存配置并重启 LinkG 服务后生效。");
         }
-        return {
-            node_id: Number(node), virtual_network: virtual.join("."), ethernet_network: ethernet.join("."),
-            dhcp: {enabled: field("DhcpEnabled").checked, default_gateway: field("DefaultGateway").checked}
-        };
+        catch (error) { status(error.message, true); }
+    }
+    function bindOctetNavigation()
+    {
+        root.querySelectorAll("#networkBasicConfig .network-basic-address").forEach(function (group) {
+            const inputs = Array.from(group.querySelectorAll("input.network-basic-octet"));
+
+            function focusNext(index)
+            {
+                const next = inputs[index + 1];
+                if (!next || next.disabled) { return; }
+                next.focus();
+                next.select();
+            }
+
+            group.addEventListener("input", function (event) {
+                const input = event.target;
+                const index = inputs.indexOf(input);
+                if (index < 0 || event.isComposing || event.inputType !== "insertText") { return; }
+                if (/^\d{3}$/.test(input.value) && Number(input.value) <= 255 && input.selectionEnd === input.value.length)
+                {
+                    focusNext(index);
+                }
+            });
+            group.addEventListener("keydown", function (event) {
+                const input = event.target;
+                const index = inputs.indexOf(input);
+                if (index < 0 || input.disabled || event.isComposing || event.altKey || event.metaKey || event.shiftKey) { return; }
+
+                if (event.key === "Backspace" && event.ctrlKey)
+                {
+                    event.preventDefault();
+                    inputs.forEach(function (entry) { entry.value = ""; });
+                    inputs[0].focus();
+                    inputs[0].dispatchEvent(new Event("input", {bubbles: true}));
+                    return;
+                }
+                if (event.ctrlKey) { return; }
+
+                const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+                const atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
+                if ((event.key === "ArrowLeft" && atStart) || (event.key === "ArrowRight" && atEnd))
+                {
+                    const left = event.key === "ArrowLeft";
+                    const neighbor = inputs[index + (left ? -1 : 1)];
+                    if (!neighbor || neighbor.disabled) { return; }
+
+                    event.preventDefault();
+                    neighbor.focus();
+                    const position = left ? neighbor.value.length : 0;
+                    neighbor.setSelectionRange(position, position);
+                    return;
+                }
+
+                if (event.key === ".")
+                {
+                    event.preventDefault();
+                    if (/^\d{1,3}$/.test(input.value) && Number(input.value) <= 255 &&
+                        atEnd)
+                    {
+                        focusNext(index);
+                    }
+                }
+                else if (event.key === "Backspace" && index > 0 && atStart)
+                {
+                    event.preventDefault();
+                    const previous = inputs[index - 1];
+                    previous.value = previous.value.slice(0, -1);
+                    previous.focus();
+                    previous.setSelectionRange(previous.value.length, previous.value.length);
+                    previous.dispatchEvent(new Event("input", {bubbles: true}));
+                }
+            });
+        });
     }
     function writeForm(config)
     {
@@ -96,6 +195,16 @@
         });
         // disabled只影响交互，不清除默认网关的原布尔值。
         field("DefaultGateway").disabled = busy || !connected || !field("DhcpEnabled").checked;
+        const directButton = field("UseDirectButton");
+        if (directButton)
+        {
+            let directNetwork = null;
+            try { directNetwork = localVirtualNetwork(readVirtualForm()); } catch (error) { /* 表单尚未填完整。 */ }
+            const ethernet = [1, 2, 3].map(function (n) { return field("EthernetOctet" + n).value; }).concat("0").join(".");
+            const alreadyDirect = directNetwork === ethernet;
+            directButton.disabled = busy || !connected || !directNetwork || alreadyDirect;
+            directButton.textContent = alreadyDirect ? "已是直连网段" : "设为直连网段";
+        }
         field("SaveButton").disabled = busy || !connected || !valid || !dirty();
         field("ResetButton").disabled = busy || !data || !dirty();
         field("RestartButton").hidden = !data || (!data.pending_restart && data.runtime_confirmed);
@@ -128,7 +237,9 @@
         text("CurrentNode", data.running.node_id);
         text("CurrentVirtual", data.running.virtual_ip);
         text("CurrentEthernet", data.running.ethernet_ip);
-        text("RuntimeNote", data.runtime_confirmed ? "当前运行配置" : "运行状态无法确认，请检查设备");
+        const direct = data.running.ethernet_network === localVirtualNetwork(data.running);
+        text("RuntimeNote", data.runtime_confirmed ? "当前运行配置 · " + (direct ? "Direct 模式" : "NAT 模式") :
+            "运行状态无法确认，请检查设备");
         text("SavedNote", !data.persistence_confirmed ? "持久配置状态无法确认，请重新保存" :
             data.pending_restart ? "已保存 · 尚待重启生效" : "已保存配置与运行配置一致");
         if (replaceForm) { writeForm(data.saved); }
@@ -546,8 +657,11 @@
             connected = false;
             field("ReloadButton").addEventListener("click", load);
             field("SaveButton").addEventListener("click", save);
+            const directButton = field("UseDirectButton");
+            if (directButton) { directButton.addEventListener("click", fillDirectNetwork); }
             field("RestartButton").addEventListener("click", restart);
             field("ResetButton").addEventListener("click", function () { writeForm(data.saved); controls(); status("已还原为最近保存的配置。"); });
+            bindOctetNavigation();
             field("Config").addEventListener("input", function () {
                 controls();
                 try { readForm(); status(dirty() ? "有尚未保存的修改。" : "配置未修改。"); }

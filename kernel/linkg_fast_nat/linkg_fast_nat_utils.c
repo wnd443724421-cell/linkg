@@ -6,7 +6,7 @@
  * @date 2026-09-05
  */
 
-#include "linkg_fast_nat_internal.h"
+#include "linkg_fast_nat_utils.h"
 
 #include <linux/errno.h>
 #include <linux/icmp.h>
@@ -134,6 +134,44 @@ bool linkg_fast_nat_ipv4_subnet_overlap(const linkg_fast_nat_ipv4_subnet_t *left
 __be32 linkg_fast_nat_ipv4_prefix_map(__be32 address, const linkg_fast_nat_ipv4_subnet_t *from, const linkg_fast_nat_ipv4_subnet_t *to)
 {
     return to->network | (address & ~from->netmask);
+}
+
+/**
+ * @brief 判断两个IPv4子网的网络地址和掩码是否完全相同。
+ */
+bool linkg_fast_nat_ipv4_subnet_equal(const linkg_fast_nat_ipv4_subnet_t *left, const linkg_fast_nat_ipv4_subnet_t *right)
+{
+    if (left == NULL || right == NULL)
+    {
+        return false;
+    }
+
+    return left->network == right->network &&
+           left->netmask == right->netmask;
+}
+
+/**
+ * @brief 判断IPv4地址是否为子网内可用单播Host地址。
+ */
+bool linkg_fast_nat_ipv4_host_usable(__be32 address, const linkg_fast_nat_ipv4_subnet_t *subnet)
+{
+    __u32 host_mask;
+    __u32 host;
+
+    if (subnet == NULL || !linkg_fast_nat_ipv4_in_subnet(address, subnet))
+    {
+        return false;
+    }
+
+    host_mask = ~ntohl(subnet->netmask);
+    if (host_mask < 3U)
+    {
+        return false;
+    }
+
+    host = ntohl(address) & host_mask;
+
+    return host != 0U && host != host_mask;
 }
 
 /****************************** skb辅助 ******************************/

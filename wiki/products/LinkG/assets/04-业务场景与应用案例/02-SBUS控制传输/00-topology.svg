@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="510" viewBox="0 0 1200 510" role="img" aria-labelledby="title desc">
+  <title id="title">SBUS 从遥控器接收机经 LinkG 传输到飞控</title>
+  <desc id="desc">已与遥控器配对的 SBUS 接收机连接 AP 节点 1 的 UART0，AP 以 UDP Remote TX 将数据经组网链路发往 STA 节点 2 的 172.28.2.1:14555，STA 以 UDP Local RX 接收后通过 UART0 输出到飞控的 SBUS RC 输入。飞控通过 USB 连接电脑上的 QGroundControl 查看通道响应。两端 UART0 均为 SBUS 100000 baud 8E2。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#3269bb"/></marker>
+    <marker id="usb" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#278568"/></marker>
+  </defs>
+  <rect width="1200" height="510" rx="14" fill="#fff"/>
+  <g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" text-anchor="middle">
+    <text x="600" y="39" font-size="25" font-weight="700" fill="#172b4d">SBUS 控制传输 · 接收机到远端飞控</text>
+    <rect x="16" y="68" width="548" height="235" rx="14" fill="#f3f7fd"/>
+    <rect x="636" y="68" width="548" height="235" rx="14" fill="#f0f8f5"/>
+    <text x="290" y="98" font-size="18" fill="#64748b">地面端 · AP 节点 1</text>
+    <text x="910" y="98" font-size="18" fill="#64748b">远端 · STA 节点 2</text>
+    <g stroke-width="1.5">
+      <rect x="32" y="119" width="210" height="157" rx="10" fill="#fff" stroke="#b8cce7"/>
+      <rect x="330" y="119" width="215" height="157" rx="10" fill="#eaf2ff" stroke="#6594d7"/>
+      <rect x="655" y="119" width="215" height="157" rx="10" fill="#eaf2ff" stroke="#6594d7"/>
+      <rect x="960" y="119" width="210" height="157" rx="10" fill="#fff" stroke="#9dcbbb"/>
+      <rect x="865" y="359" width="305" height="93" rx="10" fill="#f0f8f5" stroke="#9dcbbb"/>
+    </g>
+    <g font-size="24" font-weight="700" fill="#172b4d">
+      <text x="137" y="159">SBUS 接收机</text><text x="437" y="159">LinkG A</text><text x="762" y="159">LinkG B</text><text x="1065" y="159">飞控</text>
+      <text x="1017" y="397">电脑 · QGC</text>
+    </g>
+    <g font-size="18" fill="#64748b">
+      <text x="137" y="195">已与遥控器配对</text><text x="137" y="233">输出 SBUS 控制信号</text>
+      <text x="437" y="195">UART0 · SBUS 输入</text><text x="437" y="233">UDP Remote · TX</text>
+      <text x="762" y="195">UART0 · SBUS 输出</text><text x="762" y="233">UDP Local · RX</text>
+      <text x="1065" y="195">SBUS / RC 输入</text><text x="1065" y="233">本例：Pixhawk 6C</text>
+      <text x="1017" y="429">查看遥控通道实时响应</text>
+    </g>
+    <g stroke="#3269bb" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+      <path d="M250 198H320"/><path d="M555 198H645"/><path d="M880 198H950"/>
+    </g>
+    <g font-size="16" fill="#3269bb"><text x="285" y="179">SBUS</text><text x="600" y="165">组网</text><text x="600" y="185">链路</text><text x="915" y="179">SBUS</text></g>
+    <path d="M1065 287V348" fill="none" stroke="#278568" stroke-width="2.5" marker-start="url(#usb)" marker-end="url(#usb)"/>
+    <text x="1110" y="328" font-size="18" fill="#278568">USB</text>
+    <text x="401" y="349" font-size="18" fill="#285fae">网络目标：172.28.2.1:14555 / UDP</text>
+    <text x="401" y="384" font-size="18" fill="#64748b">AP：串口 → 网络；STA：网络 → 串口</text>
+    <text x="401" y="419" font-size="18" fill="#64748b">两端仅用 UART0，均设为 SBUS / 100000 / 8E2</text>
+    <text x="600" y="487" font-size="17" fill="#64748b">蓝色箭头为 SBUS 控制数据；飞控通过 USB 向 QGC 提供通道监视信息。</text>
+  </g>
+</svg>

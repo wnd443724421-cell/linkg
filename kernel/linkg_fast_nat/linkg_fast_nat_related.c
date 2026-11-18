@@ -7,6 +7,7 @@
  */
 
 #include "linkg_fast_nat_internal.h"
+#include "linkg_fast_nat_utils.h"
 
 #include <linux/errno.h>
 #include <linux/in.h>

@@ -62,7 +62,7 @@
                         <span class="network-basic-network-tag">组网共用</span>
                     </div>
 
-                    <div class="network-basic-address" role="group" aria-labelledby="networkBasicVirtualLabel">
+                    <div class="network-basic-address" role="group" aria-labelledby="networkBasicVirtualLabel" aria-describedby="networkBasicPrivateNetworks">
                         <input id="networkBasicVirtualOctet1" class="network-basic-octet"
                             type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
                             autocomplete="off" spellcheck="false" aria-label="虚拟网络第一段" disabled>
@@ -76,7 +76,7 @@
                         <span class="network-basic-octet is-fixed" aria-label="固定第四段 0">0</span>
                         <span class="network-basic-prefix">/16</span>
                     </div>
-                    <p class="network-basic-input-note">前两段可修改，后两段固定为 0</p>
+                    <p class="network-basic-input-note">后两段固定为 0。输满三位自动跳段，Ctrl+退格清空此网段。</p>
                 </div>
 
                 <div class="network-basic-network-card">
@@ -88,24 +88,37 @@
                         <span class="network-basic-network-tag">本机独立</span>
                     </div>
 
-                    <div class="network-basic-address" role="group" aria-labelledby="networkBasicEthernetLabel">
-                        <input id="networkBasicEthernetOctet1" class="network-basic-octet"
-                            type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                            autocomplete="off" spellcheck="false" aria-label="以太网网段第一段" disabled>
-                        <span class="network-basic-dot" aria-hidden="true">.</span>
-                        <input id="networkBasicEthernetOctet2" class="network-basic-octet"
-                            type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                            autocomplete="off" spellcheck="false" aria-label="以太网网段第二段" disabled>
-                        <span class="network-basic-dot" aria-hidden="true">.</span>
-                        <input id="networkBasicEthernetOctet3" class="network-basic-octet"
-                            type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                            autocomplete="off" spellcheck="false" aria-label="以太网网段第三段" disabled>
-                        <span class="network-basic-dot" aria-hidden="true">.</span>
-                        <span class="network-basic-octet is-fixed" aria-label="固定第四段 0">0</span>
-                        <span class="network-basic-prefix">/24</span>
+                    <div class="network-basic-ethernet-entry">
+                        <div class="network-basic-address" role="group" aria-labelledby="networkBasicEthernetLabel" aria-describedby="networkBasicPrivateNetworks">
+                            <input id="networkBasicEthernetOctet1" class="network-basic-octet"
+                                type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
+                                autocomplete="off" spellcheck="false" aria-label="以太网网段第一段" disabled>
+                            <span class="network-basic-dot" aria-hidden="true">.</span>
+                            <input id="networkBasicEthernetOctet2" class="network-basic-octet"
+                                type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
+                                autocomplete="off" spellcheck="false" aria-label="以太网网段第二段" disabled>
+                            <span class="network-basic-dot" aria-hidden="true">.</span>
+                            <input id="networkBasicEthernetOctet3" class="network-basic-octet"
+                                type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
+                                autocomplete="off" spellcheck="false" aria-label="以太网网段第三段" disabled>
+                            <span class="network-basic-dot" aria-hidden="true">.</span>
+                            <span class="network-basic-octet is-fixed" aria-label="固定第四段 0">0</span>
+                            <span class="network-basic-prefix">/24</span>
+                        </div>
+                        <button id="networkBasicUseDirectButton" class="network-basic-button network-basic-button-secondary"
+                            type="button" aria-describedby="networkBasicEthernetModes" disabled>设为直连网段</button>
                     </div>
-                    <p class="network-basic-input-note">最后一段固定为 0，本机 IP 使用 .1</p>
+                    <p class="network-basic-input-note">最后一段固定为 0，本机 IP 使用 .1。Ctrl+退格清空此网段。</p>
+                    <div id="networkBasicEthernetModes" class="network-basic-mode-notes">
+                        <p><strong>直连（Direct）</strong> 以太网使用本节点的虚拟子网，设备的实际 IP 就是组网访问地址。</p>
+                        <p><strong>NAT</strong> 以太网使用独立网段，其他节点通过映射后的虚拟 IP 访问本地设备。</p>
+                    </div>
                 </div>
+                <p id="networkBasicPrivateNetworks" class="network-basic-private-note">
+                    <strong>可用私有网段</strong>
+                    10.x.x.x、172.16.x.x 至 172.31.x.x、192.168.x.x。
+                    所填网段还需避开 LinkG 保留网段。
+                </p>
             </div>
 
             <div class="network-basic-dhcp">

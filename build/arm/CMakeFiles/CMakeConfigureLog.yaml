@@ -1,0 +1,369 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineSystem.cmake:228 (message)"
+      - "CMakeLists.txt:15 (project)"
+    message: |
+      The target system is: Linux -  - arm
+      The host system is: Linux - 7.0.0-43-generic - x86_64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:15 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler: /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc 
+      Build flags: -march=armv7-a;-mfloat-abi=hard;-mfpu=neon-vfpv4
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "a.out"
+      
+      The C compiler identification is GNU, found in:
+        /home/dawn/project/linkg_v2/build/arm/CMakeFiles/3.28.3/CompilerIdC/a.out
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:15 (project)"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-69s6CY"
+      binary: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-69s6CY"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "-march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4"
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_SYSROOT: "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain"
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-69s6CY'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_42a20/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_42a20.dir/build.make CMakeFiles/cmTC_42a20.dir/build
+        gmake[1]: Entering directory '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-69s6CY'
+        Building C object CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain   -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4    -v -o CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c
+        Reading specs from /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/specs
+        COLLECT_GCC=arm-openwrt-linux-gnueabi-gcc.bin
+        Target: arm-openwrt-linux-gnueabi
+        Configured with: /home/xuqiang/workspace/tina-r528/out/v853-perf1/compile_dir/toolchain/gcc-8.3.0/configure --with-bugurl=https://dev.openwrt.org/ --with-pkgversion='OpenWrt/CodeSourcery GCC 8.3.0 2021.08' --prefix=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=arm-openwrt-linux-gnueabi --with-gnu-ld --enable-target-optspace --enable-libgomp --disable-libmudflap --disable-multilib --disable-nls --without-isl --without-cloog --with-host-libstdcxx=-lstdc++ --with-gmp=/home/xuqiang/workspace/tina-r528/out/host --with-mpfr=/home/xuqiang/workspace/tina-r528/out/host --with-mpc=/home/xuqiang/workspace/tina-r528/out/host --disable-decimal-float --with-diagnostics-color=auto-if-env --enable-libssp --enable-__cxa_atexit --with-cpu=cortex-a7 --with-fpu=neon --with-float=hard --with-headers=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/include --enable-libsanitizer --enable-languages=c,c++,fortran --enable-shared --enable-threads --with-slibdir=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/lib --enable-lto --with-libelf=/home/xuqiang/workspace/tina-r528/out/host
+        Thread model: posix
+        gcc version 8.3.0 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) 
+        COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o' '-c' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4'
+         /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/cc1 -quiet -v -iprefix /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/ -isysroot /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -idirafter /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/include /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpbase CMakeCCompilerABI.c -mfloat-abi=hard -mfpu=neon-vfpv4 -mtls-dialect=gnu -marm -march=armv7-a+neon-vfpv4 -auxbase-strip CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -version -o /tmp/ccPXLaqn.s
+        GNU C17 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) version 8.3.0 (arm-openwrt-linux-gnueabi)
+        	compiled by GNU C version 4.8.4, GMP version 6.1.0, MPFR version 3.1.3, MPC version 1.0.3, isl version none
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include"
+        ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed"
+        ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/sys-include"
+        ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/include"
+        ignoring nonexistent directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include
+         /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed
+         /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/sys-include
+         /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/include
+        End of search list.
+        GNU C17 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) version 8.3.0 (arm-openwrt-linux-gnueabi)
+        	compiled by GNU C version 4.8.4, GMP version 6.1.0, MPFR version 3.1.3, MPC version 1.0.3, isl version none
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        Compiler executable checksum: a3b0939f9eecabf6dbe8df2649638084
+        COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o' '-c' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4'
+         /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/bin/as -v -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4 -meabi=5 -o CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o /tmp/ccPXLaqn.s
+        GNU assembler version 2.28 (arm-openwrt-linux-gnueabi) using BFD version (GNU Binutils) 2.28
+        COMPILER_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/bin/
+        LIBRARY_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/
+        COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o' '-c' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4'
+        Linking C executable cmTC_42a20
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_42a20.dir/link.txt --verbose=1
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4   -v CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -o cmTC_42a20 
+        Reading specs from /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/specs
+        COLLECT_GCC=arm-openwrt-linux-gnueabi-gcc.bin
+        COLLECT_LTO_WRAPPER=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/lto-wrapper
+        Target: arm-openwrt-linux-gnueabi
+        Configured with: /home/xuqiang/workspace/tina-r528/out/v853-perf1/compile_dir/toolchain/gcc-8.3.0/configure --with-bugurl=https://dev.openwrt.org/ --with-pkgversion='OpenWrt/CodeSourcery GCC 8.3.0 2021.08' --prefix=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=arm-openwrt-linux-gnueabi --with-gnu-ld --enable-target-optspace --enable-libgomp --disable-libmudflap --disable-multilib --disable-nls --without-isl --without-cloog --with-host-libstdcxx=-lstdc++ --with-gmp=/home/xuqiang/workspace/tina-r528/out/host --with-mpfr=/home/xuqiang/workspace/tina-r528/out/host --with-mpc=/home/xuqiang/workspace/tina-r528/out/host --disable-decimal-float --with-diagnostics-color=auto-if-env --enable-libssp --enable-__cxa_atexit --with-cpu=cortex-a7 --with-fpu=neon --with-float=hard --with-headers=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/include --enable-libsanitizer --enable-languages=c,c++,fortran --enable-shared --enable-threads --with-slibdir=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/lib --enable-lto --with-libelf=/home/xuqiang/workspace/tina-r528/out/host
+        Thread model: posix
+        gcc version 8.3.0 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) 
+        COMPILER_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/bin/
+        LIBRARY_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/
+        COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'cmTC_42a20' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4'
+         /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/collect2 -plugin /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/liblto_plugin.so -plugin-opt=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc1ubJB0.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain --eh-frame-hdr -dynamic-linker /lib/ld-linux-armhf.so.3 -X -m armelf_linux_eabi -o cmTC_42a20 /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crt1.o /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crti.o /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtbegin.o -L /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib -rpath-link /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0 -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -lgcc --as-needed -lgcc_s --no-as-needed -lc -lgcc --as-needed -lgcc_s --no-as-needed /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtend.o /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crtn.o
+        COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'cmTC_42a20' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4'
+        gmake[1]: Leaving directory '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-69s6CY'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
+      - "/usr/share/cmake-3.28/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:15 (project)"
+    message: |
+      Parsed C implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include]
+          add: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed]
+          add: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/sys-include]
+          add: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/include]
+        end of search list found
+        collapse include dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include]
+        collapse include dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed]
+        collapse include dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/sys-include] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/sys-include]
+        collapse include dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/include] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/include]
+        implicit include dirs: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/sys-include;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CMakeDetermineCompilerABI.cmake:159 (message)"
+      - "/usr/share/cmake-3.28/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:15 (project)"
+    message: |
+      Parsed C implicit link information:
+        link line regex: [^( *|.*[/\\])(arm-openwrt-linux-ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        ignore line: [Change Dir: '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-69s6CY']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_42a20/fast]
+        ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_42a20.dir/build.make CMakeFiles/cmTC_42a20.dir/build]
+        ignore line: [gmake[1]: Entering directory '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-69s6CY']
+        ignore line: [Building C object CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o]
+        ignore line: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain   -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4    -v -o CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c]
+        ignore line: [Reading specs from /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/specs]
+        ignore line: [COLLECT_GCC=arm-openwrt-linux-gnueabi-gcc.bin]
+        ignore line: [Target: arm-openwrt-linux-gnueabi]
+        ignore line: [Configured with: /home/xuqiang/workspace/tina-r528/out/v853-perf1/compile_dir/toolchain/gcc-8.3.0/configure --with-bugurl=https://dev.openwrt.org/ --with-pkgversion='OpenWrt/CodeSourcery GCC 8.3.0 2021.08' --prefix=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=arm-openwrt-linux-gnueabi --with-gnu-ld --enable-target-optspace --enable-libgomp --disable-libmudflap --disable-multilib --disable-nls --without-isl --without-cloog --with-host-libstdcxx=-lstdc++ --with-gmp=/home/xuqiang/workspace/tina-r528/out/host --with-mpfr=/home/xuqiang/workspace/tina-r528/out/host --with-mpc=/home/xuqiang/workspace/tina-r528/out/host --disable-decimal-float --with-diagnostics-color=auto-if-env --enable-libssp --enable-__cxa_atexit --with-cpu=cortex-a7 --with-fpu=neon --with-float=hard --with-headers=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/include --enable-libsanitizer --enable-languages=c,c++,fortran --enable-shared --enable-threads --with-slibdir=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/lib --enable-lto --with-libelf=/home/xuqiang/workspace/tina-r528/out/host]
+        ignore line: [Thread model: posix]
+        ignore line: [gcc version 8.3.0 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) ]
+        ignore line: [COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o' '-c' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4']
+        ignore line: [ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/cc1 -quiet -v -iprefix /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/ -isysroot /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -idirafter /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/include /usr/share/cmake-3.28/Modules/CMakeCCompilerABI.c -quiet -dumpbase CMakeCCompilerABI.c -mfloat-abi=hard -mfpu=neon-vfpv4 -mtls-dialect=gnu -marm -march=armv7-a+neon-vfpv4 -auxbase-strip CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -version -o /tmp/ccPXLaqn.s]
+        ignore line: [GNU C17 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) version 8.3.0 (arm-openwrt-linux-gnueabi)]
+        ignore line: [	compiled by GNU C version 4.8.4  GMP version 6.1.0  MPFR version 3.1.3  MPC version 1.0.3  isl version none]
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include"]
+        ignore line: [ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed"]
+        ignore line: [ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/sys-include"]
+        ignore line: [ignoring duplicate directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/../../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/include"]
+        ignore line: [ignoring nonexistent directory "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include]
+        ignore line: [ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/include-fixed]
+        ignore line: [ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/sys-include]
+        ignore line: [ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/include]
+        ignore line: [End of search list.]
+        ignore line: [GNU C17 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) version 8.3.0 (arm-openwrt-linux-gnueabi)]
+        ignore line: [	compiled by GNU C version 4.8.4  GMP version 6.1.0  MPFR version 3.1.3  MPC version 1.0.3  isl version none]
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [Compiler executable checksum: a3b0939f9eecabf6dbe8df2649638084]
+        ignore line: [COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o' '-c' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4']
+        ignore line: [ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/bin/as -v -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4 -meabi=5 -o CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o /tmp/ccPXLaqn.s]
+        ignore line: [GNU assembler version 2.28 (arm-openwrt-linux-gnueabi) using BFD version (GNU Binutils) 2.28]
+        ignore line: [COMPILER_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/bin/]
+        ignore line: [LIBRARY_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o' '-c' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4']
+        ignore line: [Linking C executable cmTC_42a20]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_42a20.dir/link.txt --verbose=1]
+        ignore line: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4   -v CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -o cmTC_42a20 ]
+        ignore line: [Reading specs from /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/specs]
+        ignore line: [COLLECT_GCC=arm-openwrt-linux-gnueabi-gcc.bin]
+        ignore line: [COLLECT_LTO_WRAPPER=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/lto-wrapper]
+        ignore line: [Target: arm-openwrt-linux-gnueabi]
+        ignore line: [Configured with: /home/xuqiang/workspace/tina-r528/out/v853-perf1/compile_dir/toolchain/gcc-8.3.0/configure --with-bugurl=https://dev.openwrt.org/ --with-pkgversion='OpenWrt/CodeSourcery GCC 8.3.0 2021.08' --prefix=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=arm-openwrt-linux-gnueabi --with-gnu-ld --enable-target-optspace --enable-libgomp --disable-libmudflap --disable-multilib --disable-nls --without-isl --without-cloog --with-host-libstdcxx=-lstdc++ --with-gmp=/home/xuqiang/workspace/tina-r528/out/host --with-mpfr=/home/xuqiang/workspace/tina-r528/out/host --with-mpc=/home/xuqiang/workspace/tina-r528/out/host --disable-decimal-float --with-diagnostics-color=auto-if-env --enable-libssp --enable-__cxa_atexit --with-cpu=cortex-a7 --with-fpu=neon --with-float=hard --with-headers=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/include --enable-libsanitizer --enable-languages=c,c++,fortran --enable-shared --enable-threads --with-slibdir=/home/xuqiang/workspace/tina-r528/out/v853-perf1/staging_dir/toolchain/lib --enable-lto --with-libelf=/home/xuqiang/workspace/tina-r528/out/host]
+        ignore line: [Thread model: posix]
+        ignore line: [gcc version 8.3.0 (OpenWrt/CodeSourcery GCC 8.3.0 2021.08) ]
+        ignore line: [COMPILER_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/bin/]
+        ignore line: [LIBRARY_PATH=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/:/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS= '-mfloat-abi=hard' '-mfpu=neon-vfpv4' '-v' '-o' 'cmTC_42a20' '-mtls-dialect=gnu' '-marm' '-march=armv7-a+neon-vfpv4']
+        link line: [ /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/collect2 -plugin /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/liblto_plugin.so -plugin-opt=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc1ubJB0.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain --eh-frame-hdr -dynamic-linker /lib/ld-linux-armhf.so.3 -X -m armelf_linux_eabi -o cmTC_42a20 /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crt1.o /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crti.o /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtbegin.o -L /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib -rpath-link /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0 -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib -L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o -lgcc --as-needed -lgcc_s --no-as-needed -lc -lgcc --as-needed -lgcc_s --no-as-needed /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtend.o /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crtn.o]
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/collect2] ==> ignore
+          arg [-plugin] ==> ignore
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/liblto_plugin.so] ==> ignore
+          arg [-plugin-opt=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../libexec/gcc/arm-openwrt-linux-gnueabi/8.3.0/lto-wrapper] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/cc1ubJB0.res] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [--sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/lib/ld-linux-armhf.so.3] ==> ignore
+          arg [-X] ==> ignore
+          arg [-m] ==> ignore
+          arg [armelf_linux_eabi] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_42a20] ==> ignore
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crt1.o] ==> obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crt1.o]
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crti.o] ==> obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crti.o]
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtbegin.o] ==> obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtbegin.o]
+          arg [-L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib] ==> dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib]
+          arg [-rpath-link] ==> ignore
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib] ==> ignore
+          arg [-L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0] ==> dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0]
+          arg [-L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc] ==> dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc]
+          arg [-L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib] ==> dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib]
+          arg [-L/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib] ==> dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib]
+          arg [CMakeFiles/cmTC_42a20.dir/CMakeCCompilerABI.c.o] ==> ignore
+          arg [-lgcc] ==> lib [gcc]
+          arg [--as-needed] ==> ignore
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [--no-as-needed] ==> ignore
+          arg [-lc] ==> lib [c]
+          arg [-lgcc] ==> lib [gcc]
+          arg [--as-needed] ==> ignore
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [--no-as-needed] ==> ignore
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtend.o] ==> obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtend.o]
+          arg [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crtn.o] ==> obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crtn.o]
+        collapse obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crt1.o] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib/crt1.o]
+        collapse obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crti.o] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib/crti.o]
+        collapse obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtbegin.o] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtbegin.o]
+        collapse obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtend.o] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtend.o]
+        collapse obj [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib/crtn.o] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib/crtn.o]
+        collapse library dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib]
+        collapse library dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0]
+        collapse library dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc]
+        collapse library dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/lib] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib]
+        collapse library dir [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib] ==> [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib]
+        implicit libs: [gcc;gcc_s;c;gcc;gcc_s]
+        implicit objs: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib/crt1.o;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib/crti.o;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtbegin.o;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/crtend.o;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib/crtn.o]
+        implicit dirs: [/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/usr/lib;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc/arm-openwrt-linux-gnueabi/8.3.0;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib/gcc;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/arm-openwrt-linux-gnueabi/lib;/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake:101 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/CheckCSourceCompiles.cmake:52 (cmake_check_source_compiles)"
+      - "/usr/share/cmake-3.28/Modules/FindThreads.cmake:97 (CHECK_C_SOURCE_COMPILES)"
+      - "/usr/share/cmake-3.28/Modules/FindThreads.cmake:163 (_threads_check_libc)"
+      - "CMakeLists.txt:41 (find_package)"
+    checks:
+      - "Performing Test CMAKE_HAVE_LIBC_PTHREAD"
+    directories:
+      source: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-BJ11Zn"
+      binary: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-BJ11Zn"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "-march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4"
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_SYSROOT: "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain"
+    buildResult:
+      variable: "CMAKE_HAVE_LIBC_PTHREAD"
+      cached: true
+      stdout: |
+        Change Dir: '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-BJ11Zn'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_053b0/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_053b0.dir/build.make CMakeFiles/cmTC_053b0.dir/build
+        gmake[1]: 进入目录“/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-BJ11Zn”
+        Building C object CMakeFiles/cmTC_053b0.dir/src.c.o
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -DCMAKE_HAVE_LIBC_PTHREAD  -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4  -std=gnu17 -o CMakeFiles/cmTC_053b0.dir/src.c.o -c /home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-BJ11Zn/src.c
+        Linking C executable cmTC_053b0
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_053b0.dir/link.txt --verbose=1
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4  CMakeFiles/cmTC_053b0.dir/src.c.o -o cmTC_053b0 
+        CMakeFiles/cmTC_053b0.dir/src.c.o: In function `main':
+        src.c:(.text+0x44): undefined reference to `pthread_create'
+        src.c:(.text+0x50): undefined reference to `pthread_detach'
+        src.c:(.text+0x5c): undefined reference to `pthread_cancel'
+        src.c:(.text+0x6c): undefined reference to `pthread_join'
+        collect2: error: ld returned 1 exit status
+        gmake[1]: *** [CMakeFiles/cmTC_053b0.dir/build.make:99：cmTC_053b0] 错误 1
+        gmake[1]: 离开目录“/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-BJ11Zn”
+        gmake: *** [Makefile:127：cmTC_053b0/fast] 错误 2
+        
+      exitCode: 2
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CheckLibraryExists.cmake:69 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindThreads.cmake:112 (CHECK_LIBRARY_EXISTS)"
+      - "/usr/share/cmake-3.28/Modules/FindThreads.cmake:175 (_threads_check_lib)"
+      - "CMakeLists.txt:41 (find_package)"
+    checks:
+      - "Looking for pthread_create in pthreads"
+    directories:
+      source: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-mhQaGB"
+      binary: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-mhQaGB"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "-march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4"
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_SYSROOT: "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain"
+    buildResult:
+      variable: "CMAKE_HAVE_PTHREADS_CREATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-mhQaGB'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_89bd7/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_89bd7.dir/build.make CMakeFiles/cmTC_89bd7.dir/build
+        gmake[1]: 进入目录“/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-mhQaGB”
+        Building C object CMakeFiles/cmTC_89bd7.dir/CheckFunctionExists.c.o
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain   -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4 -DCHECK_FUNCTION_EXISTS=pthread_create -std=gnu17 -o CMakeFiles/cmTC_89bd7.dir/CheckFunctionExists.c.o -c /home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-mhQaGB/CheckFunctionExists.c
+        Linking C executable cmTC_89bd7
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_89bd7.dir/link.txt --verbose=1
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4 -DCHECK_FUNCTION_EXISTS=pthread_create CMakeFiles/cmTC_89bd7.dir/CheckFunctionExists.c.o -o cmTC_89bd7  -lpthreads 
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/../lib/gcc/arm-openwrt-linux-gnueabi/8.3.0/../../../../arm-openwrt-linux-gnueabi/bin/ld: cannot find -lpthreads
+        collect2: error: ld returned 1 exit status
+        gmake[1]: *** [CMakeFiles/cmTC_89bd7.dir/build.make:99：cmTC_89bd7] 错误 1
+        gmake[1]: 离开目录“/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-mhQaGB”
+        gmake: *** [Makefile:127：cmTC_89bd7/fast] 错误 2
+        
+      exitCode: 2
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.28/Modules/CheckLibraryExists.cmake:69 (try_compile)"
+      - "/usr/share/cmake-3.28/Modules/FindThreads.cmake:112 (CHECK_LIBRARY_EXISTS)"
+      - "/usr/share/cmake-3.28/Modules/FindThreads.cmake:176 (_threads_check_lib)"
+      - "CMakeLists.txt:41 (find_package)"
+    checks:
+      - "Looking for pthread_create in pthread"
+    directories:
+      source: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-ATKouh"
+      binary: "/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-ATKouh"
+    cmakeVariables:
+      CMAKE_C_FLAGS: "-march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4"
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_SYSROOT: "/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain"
+    buildResult:
+      variable: "CMAKE_HAVE_PTHREAD_CREATE"
+      cached: true
+      stdout: |
+        Change Dir: '/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-ATKouh'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_bd5a2/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_bd5a2.dir/build.make CMakeFiles/cmTC_bd5a2.dir/build
+        gmake[1]: 进入目录“/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-ATKouh”
+        Building C object CMakeFiles/cmTC_bd5a2.dir/CheckFunctionExists.c.o
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain   -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4 -DCHECK_FUNCTION_EXISTS=pthread_create -std=gnu17 -o CMakeFiles/cmTC_bd5a2.dir/CheckFunctionExists.c.o -c /home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-ATKouh/CheckFunctionExists.c
+        Linking C executable cmTC_bd5a2
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_bd5a2.dir/link.txt --verbose=1
+        /home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain/bin/arm-openwrt-linux-gcc --sysroot=/home/dawn/t113_tina5.0_v1.2/prebuilt/rootfsbuilt/arm/toolchain-sunxi-glibc-gcc-830/toolchain -march=armv7-a -mfloat-abi=hard -mfpu=neon-vfpv4 -DCHECK_FUNCTION_EXISTS=pthread_create CMakeFiles/cmTC_bd5a2.dir/CheckFunctionExists.c.o -o cmTC_bd5a2  -lpthread 
+        gmake[1]: 离开目录“/home/dawn/project/linkg_v2/build/arm/CMakeFiles/CMakeScratch/TryCompile-ATKouh”
+        
+      exitCode: 0
+...

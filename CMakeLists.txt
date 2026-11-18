@@ -174,19 +174,29 @@ if(ARCHITECTURE STREQUAL "arm")
     )
 
     set(LINKG_FAST_NAT_FILES
-        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_main.c"
-        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_utils.c"
-        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_related.c"
-        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_rtsp.c"
-        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_internal.h"
-        "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_uapi.h"
-        "${LINKG_FAST_NAT_SOURCE_DIR}/Kbuild"
+        "linkg_fast_nat_main.c"
+        "linkg_fast_nat_config.c"
+        "linkg_fast_nat_mapping.c"
+        "linkg_fast_nat_flow.c"
+        "linkg_fast_nat_rules_common.c"
+        "linkg_fast_nat_rules_nat.c"
+        "linkg_fast_nat_rules_direct.c"
+        "linkg_fast_nat_related.c"
+        "linkg_fast_nat_rtsp.c"
+        "linkg_fast_nat_utils.c"
+        "linkg_fast_nat_internal.h"
+        "linkg_fast_nat_utils.h"
+        "linkg_fast_nat_uapi.h"
+        "Kbuild"
     )
 
+    set(LINKG_FAST_NAT_SOURCES)
     foreach(file IN LISTS LINKG_FAST_NAT_FILES)
-        if(NOT EXISTS "${file}")
-            message(FATAL_ERROR "Fast NAT file not found: ${file}")
+        set(source "${LINKG_FAST_NAT_SOURCE_DIR}/${file}")
+        if(NOT EXISTS "${source}")
+            message(FATAL_ERROR "Fast NAT file not found: ${source}")
         endif()
+        list(APPEND LINKG_FAST_NAT_SOURCES "${source}")
     endforeach()
 
     if(DEFINED ENV{LICHEE_TOP_DIR} AND NOT "$ENV{LICHEE_TOP_DIR}" STREQUAL "")
@@ -281,37 +291,8 @@ if(ARCHITECTURE STREQUAL "arm")
 
         COMMAND
             "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_main.c"
-            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_main.c"
-
-        COMMAND
-            "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_utils.c"
-            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_utils.c"
-
-        COMMAND
-            "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_related.c"
-            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_related.c"
-
-        COMMAND
-            "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_rtsp.c"
-            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_rtsp.c"
-        COMMAND
-            "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_internal.h"
-            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_internal.h"
-
-        COMMAND
-            "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE_DIR}/linkg_fast_nat_uapi.h"
-            "${LINKG_FAST_NAT_BUILD_DIR}/linkg_fast_nat_uapi.h"
-
-        COMMAND
-            "${CMAKE_COMMAND}" -E copy_if_different
-            "${LINKG_FAST_NAT_SOURCE_DIR}/Kbuild"
-            "${LINKG_FAST_NAT_BUILD_DIR}/Kbuild"
+            ${LINKG_FAST_NAT_SOURCES}
+            "${LINKG_FAST_NAT_BUILD_DIR}"
 
         COMMAND
             "${LINKG_KERNEL_MAKE_PROGRAM}"
@@ -328,7 +309,7 @@ if(ARCHITECTURE STREQUAL "arm")
             "${LINKG_FAST_NAT_OUTPUT}"
 
         DEPENDS
-            ${LINKG_FAST_NAT_FILES}
+            ${LINKG_FAST_NAT_SOURCES}
 
         COMMENT
             "Building LinkG Fast NAT kernel module"

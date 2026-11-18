@@ -244,7 +244,7 @@ int linkg_network_get_running_config(linkg_network_config_t *out)
 }
 
 /**
- * @brief 配置本机节点IPv4地址。
+ * @brief 根据网络模式配置本机节点IPv4地址。
  */
 static int _linkg_network_node_address_start(void)
 {
@@ -252,6 +252,12 @@ static int _linkg_network_node_address_start(void)
     int            ret;
 
     if (g_network.node_address_started)
+    {
+        return 0;
+    }
+
+    // Direct模式的节点地址已经配置在Ethernet，无需重复添加到Loopback。
+    if (linkg_network_config_is_direct_mode(&g_network.network_config))
     {
         return 0;
     }
@@ -272,7 +278,6 @@ static int _linkg_network_node_address_start(void)
 
     return 0;
 }
-
 /**
  * @brief 删除本机节点IPv4地址。
  */
