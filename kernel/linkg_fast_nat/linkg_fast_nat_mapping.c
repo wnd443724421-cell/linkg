@@ -480,6 +480,14 @@ static int _linkg_fast_nat_mapping_reverse_lookup(__u32 slot, __u8 protocol, __b
     unsigned long           flags;
     unsigned long           last_seen;
     unsigned long           now;
+    __be32                  saved_original_ip;
+    __be32                  saved_remote_ip;
+    __be16                  saved_original_id;
+    __be16                  saved_remote_id;
+    __u32                   seq;
+    __u8                    saved_protocol;
+    __u8                    saved_snat_type;
+    __u8                    state;
     bool                    check_remote_id;
 
     if (slot >= LINKG_FAST_NAT_SLOT_COUNT || original_ip == NULL || original_id == NULL || snat_type == NULL)
@@ -487,71 +495,58 @@ static int _linkg_fast_nat_mapping_reverse_lookup(__u32 slot, __u8 protocol, __b
         return -EINVAL;
     }
 
-    entry = &g_mapping.entries[slot];
-
-    if (smp_load_acquire(&entry->state) != LINKG_FAST_NAT_ENTRY_ACTIVE)
-    {
-        return -ENOENT;
-    }
-
-    if (READ_ONCE(entry->key.protocol) != protocol)
-    {
-        return -ENOENT;
-    }
-
-    if (READ_ONCE(entry->key.remote_ip) != remote_ip)
-    {
-        return -ENOENT;
-    }
-
+    entry           = &g_mapping.entries[slot];
     check_remote_id = protocol == IPPROTO_TCP || protocol == IPPROTO_UDP;
-    if (check_remote_id && READ_ONCE(entry->key.remote_id) != remote_id)
+
+    // 在同一次版本快照中读取匹配字段和原始端点，避免回收复用造成字段混合。
+    do
+    {
+        seq   = read_seqcount_begin(&entry->seq);
+        state = READ_ONCE(entry->state);
+
+        if (state == LINKG_FAST_NAT_ENTRY_ACTIVE)
+        {
+            saved_protocol    = READ_ONCE(entry->key.protocol);
+            saved_remote_ip   = READ_ONCE(entry->key.remote_ip);
+            saved_remote_id   = READ_ONCE(entry->key.remote_id);
+            saved_original_ip = READ_ONCE(entry->key.original_ip);
+            saved_original_id = READ_ONCE(entry->key.original_id);
+            saved_snat_type   = READ_ONCE(entry->snat_type);
+            last_seen         = READ_ONCE(entry->last_seen);
+        }
+    } while (read_seqcount_retry(&entry->seq, seq));
+
+    if (state != LINKG_FAST_NAT_ENTRY_ACTIVE ||
+        saved_protocol != protocol ||
+        saved_remote_ip != remote_ip ||
+        (check_remote_id && saved_remote_id != remote_id))
     {
         return -ENOENT;
     }
 
-    now       = jiffies;
-    last_seen = READ_ONCE(entry->last_seen);
+    now = jiffies;
 
     if (!time_after_eq(now, last_seen + LINKG_FAST_NAT_MAPPING_REFRESH_TIME))
     {
-        *original_ip = READ_ONCE(entry->key.original_ip);
-        *original_id = READ_ONCE(entry->key.original_id);
-        *snat_type   = READ_ONCE(entry->snat_type);
-
-        if (smp_load_acquire(&entry->state) != LINKG_FAST_NAT_ENTRY_ACTIVE)
+        // 返回快照前再次确认槽位版本，拒绝已经回收或复用的Mapping。
+        if (read_seqcount_retry(&entry->seq, seq))
         {
             return -ENOENT;
         }
 
-        if (READ_ONCE(entry->key.protocol) != protocol || READ_ONCE(entry->key.remote_ip) != remote_ip)
-        {
-            return -ENOENT;
-        }
-
-        if (check_remote_id && READ_ONCE(entry->key.remote_id) != remote_id)
-        {
-            return -ENOENT;
-        }
-
+        *original_ip = saved_original_ip;
+        *original_id = saved_original_id;
+        *snat_type   = saved_snat_type;
         return 0;
     }
 
     spin_lock_irqsave(&g_mapping.lock, flags);
 
-    if (entry->state != LINKG_FAST_NAT_ENTRY_ACTIVE)
-    {
-        spin_unlock_irqrestore(&g_mapping.lock, flags);
-        return -ENOENT;
-    }
-
-    if (entry->key.protocol != protocol || entry->key.remote_ip != remote_ip)
-    {
-        spin_unlock_irqrestore(&g_mapping.lock, flags);
-        return -ENOENT;
-    }
-
-    if (check_remote_id && entry->key.remote_id != remote_id)
+    if (raw_read_seqcount(&entry->seq) != seq ||
+        entry->state != LINKG_FAST_NAT_ENTRY_ACTIVE ||
+        entry->key.protocol != protocol ||
+        entry->key.remote_ip != remote_ip ||
+        (check_remote_id && entry->key.remote_id != remote_id))
     {
         spin_unlock_irqrestore(&g_mapping.lock, flags);
         return -ENOENT;

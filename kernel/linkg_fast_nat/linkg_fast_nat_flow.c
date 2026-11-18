@@ -12,6 +12,7 @@
 #include <linux/in.h>
 #include <linux/jhash.h>
 #include <linux/jiffies.h>
+#include <linux/seqlock.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -42,6 +43,7 @@ typedef struct
 {
     linkg_fast_nat_flow_key_t key;       // 标准Ethernet -> Virtual流Key
     unsigned long             last_seen; // 最近一次活动时间
+    seqcount_t                seq;       // Flow槽位版本，创建和回收由写锁保护
     __u8                      state;     // LINKG_FAST_NAT_FLOW_*
 } linkg_fast_nat_flow_entry_t;
 
@@ -75,7 +77,14 @@ static linkg_fast_nat_flow_context_t g_flow =
  */
 void linkg_fast_nat_flow_reset(void)
 {
+    __u32 index;
+
     memset(g_flow.flows, 0, sizeof(g_flow.flows));
+
+    for (index = 0U; index < LINKG_FAST_NAT_FLOW_SLOT_COUNT; index++)
+    {
+        seqcount_init(&g_flow.flows[index].seq);
+    }
     memset(g_flow.fast_flow_slots, 0xFF, sizeof(g_flow.fast_flow_slots));
 
     g_flow.fast_flow_last_hit     = 0U;
@@ -88,11 +97,11 @@ void linkg_fast_nat_flow_reset(void)
  */
 static bool _linkg_fast_nat_flow_key_equal(const linkg_fast_nat_flow_key_t *left, const linkg_fast_nat_flow_key_t *right)
 {
-    return left->protocol    == right->protocol &&
-           left->ethernet_ip == right->ethernet_ip &&
-           left->ethernet_id == right->ethernet_id &&
-           left->virtual_ip  == right->virtual_ip &&
-           left->virtual_id  == right->virtual_id;
+    return READ_ONCE(left->protocol)    == right->protocol &&
+           READ_ONCE(left->ethernet_ip) == right->ethernet_ip &&
+           READ_ONCE(left->ethernet_id) == right->ethernet_id &&
+           READ_ONCE(left->virtual_ip)  == right->virtual_ip &&
+           READ_ONCE(left->virtual_id)  == right->virtual_id;
 }
 
 /**
@@ -119,7 +128,7 @@ static __u32 _linkg_fast_nat_flow_hash(const linkg_fast_nat_flow_key_t *key)
  * 高频数据包只读取last_seen，达到刷新周期后才进入写锁更新，
  * 从而避免每个数据包都写共享Flow状态。
  */
-static int _linkg_fast_nat_flow_refresh(const linkg_fast_nat_flow_key_t *key, __u32 slot)
+static int _linkg_fast_nat_flow_refresh(const linkg_fast_nat_flow_key_t *key, __u32 slot, __u32 seq)
 {
     linkg_fast_nat_flow_entry_t *entry;
     unsigned long                flags;
@@ -137,12 +146,20 @@ static int _linkg_fast_nat_flow_refresh(const linkg_fast_nat_flow_key_t *key, __
 
     if (!time_after_eq(now, last_seen + LINKG_FAST_NAT_FLOW_REFRESH_TIME))
     {
+        // 校验Lookup读取时的槽位版本，避免GC回收后复用导致错误命中。
+        if (read_seqcount_retry(&entry->seq, seq))
+        {
+            return -ENOENT;
+        }
+
         return 0;
     }
 
     spin_lock_irqsave(&g_flow.lock, flags);
 
-    if (entry->state != LINKG_FAST_NAT_FLOW_ACTIVE || !_linkg_fast_nat_flow_key_equal(&entry->key, key))
+    if (raw_read_seqcount(&entry->seq) != seq ||
+        entry->state != LINKG_FAST_NAT_FLOW_ACTIVE ||
+        !_linkg_fast_nat_flow_key_equal(&entry->key, key))
     {
         spin_unlock_irqrestore(&g_flow.lock, flags);
         return -ENOENT;
@@ -158,15 +175,17 @@ static int _linkg_fast_nat_flow_refresh(const linkg_fast_nat_flow_key_t *key, __
 /**
  * @brief 从快速缓存查找Ethernet主动Virtual流。
  */
-static int _linkg_fast_nat_flow_fast_lookup(const linkg_fast_nat_flow_key_t *key, __u32 *slot)
+static int _linkg_fast_nat_flow_fast_lookup(const linkg_fast_nat_flow_key_t *key, __u32 *slot, __u32 *seq)
 {
     linkg_fast_nat_flow_entry_t *entry;
     __u32                        cached_slot;
     __u32                        start;
     __u32                        offset;
     __u32                        index;
+    __u32                        version;
+    bool                         matched;
 
-    if (key == NULL || slot == NULL)
+    if (key == NULL || slot == NULL || seq == NULL)
     {
         return -EINVAL;
     }
@@ -185,12 +204,15 @@ static int _linkg_fast_nat_flow_fast_lookup(const linkg_fast_nat_flow_key_t *key
 
         entry = &g_flow.flows[cached_slot];
 
-        if (smp_load_acquire(&entry->state) != LINKG_FAST_NAT_FLOW_ACTIVE)
+        do
         {
-            continue;
-        }
+            version = read_seqcount_begin(&entry->seq);
 
-        if (!_linkg_fast_nat_flow_key_equal(&entry->key, key))
+            matched = READ_ONCE(entry->state) == LINKG_FAST_NAT_FLOW_ACTIVE &&
+                      _linkg_fast_nat_flow_key_equal(&entry->key, key);
+        } while (read_seqcount_retry(&entry->seq, version));
+
+        if (!matched)
         {
             continue;
         }
@@ -201,6 +223,7 @@ static int _linkg_fast_nat_flow_fast_lookup(const linkg_fast_nat_flow_key_t *key
         }
 
         *slot = cached_slot;
+        *seq  = version;
         return 0;
     }
 
@@ -231,14 +254,16 @@ static void _linkg_fast_nat_flow_fast_update(__u32 slot)
 /**
  * @brief 无锁查找Ethernet主动Virtual流Hash主表。
  */
-static int _linkg_fast_nat_flow_hash_lookup(const linkg_fast_nat_flow_key_t *key, __u32 *slot)
+static int _linkg_fast_nat_flow_hash_lookup(const linkg_fast_nat_flow_key_t *key, __u32 *slot, __u32 *seq)
 {
     linkg_fast_nat_flow_entry_t *entry;
     __u32                        current_slot;
     __u32                        probe;
+    __u32                        version;
     __u8                         state;
+    bool                         matched;
 
-    if (key == NULL || slot == NULL)
+    if (key == NULL || slot == NULL || seq == NULL)
     {
         return -EINVAL;
     }
@@ -248,16 +273,24 @@ static int _linkg_fast_nat_flow_hash_lookup(const linkg_fast_nat_flow_key_t *key
     for (probe = 0U; probe < LINKG_FAST_NAT_FLOW_SLOT_COUNT; probe++)
     {
         entry = &g_flow.flows[current_slot];
-        state = smp_load_acquire(&entry->state);
+
+        do
+        {
+            version = read_seqcount_begin(&entry->seq);
+            state   = READ_ONCE(entry->state);
+            matched = state == LINKG_FAST_NAT_FLOW_ACTIVE &&
+                      _linkg_fast_nat_flow_key_equal(&entry->key, key);
+        } while (read_seqcount_retry(&entry->seq, version));
 
         if (state == LINKG_FAST_NAT_FLOW_FREE)
         {
             return -ENOENT;
         }
 
-        if (state == LINKG_FAST_NAT_FLOW_ACTIVE && _linkg_fast_nat_flow_key_equal(&entry->key, key))
+        if (matched)
         {
             *slot = current_slot;
+            *seq  = version;
             return 0;
         }
 
@@ -274,12 +307,13 @@ static int _linkg_fast_nat_flow_hash_lookup(const linkg_fast_nat_flow_key_t *key
  */
 static int _linkg_fast_nat_flow_lookup(const linkg_fast_nat_flow_key_t *key, __u32 *slot)
 {
-    int ret;
+    __u32 seq;
+    int   ret;
 
-    ret = _linkg_fast_nat_flow_fast_lookup(key, slot);
+    ret = _linkg_fast_nat_flow_fast_lookup(key, slot, &seq);
     if (ret == 0)
     {
-        ret = _linkg_fast_nat_flow_refresh(key, *slot);
+        ret = _linkg_fast_nat_flow_refresh(key, *slot, seq);
         if (ret == 0)
         {
             return 0;
@@ -295,13 +329,13 @@ static int _linkg_fast_nat_flow_lookup(const linkg_fast_nat_flow_key_t *key, __u
         return ret;
     }
 
-    ret = _linkg_fast_nat_flow_hash_lookup(key, slot);
+    ret = _linkg_fast_nat_flow_hash_lookup(key, slot, &seq);
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_fast_nat_flow_refresh(key, *slot);
+    ret = _linkg_fast_nat_flow_refresh(key, *slot, seq);
     if (ret != 0)
     {
         return ret;
@@ -323,6 +357,7 @@ int linkg_fast_nat_flow_get_or_create(const linkg_fast_nat_flow_key_t *key)
     __u32                        current_slot;
     __u32                        probe;
     __u32                        slot;
+    __u32                        found_seq;
     __u8                         state;
     int                          ret;
 
@@ -344,7 +379,7 @@ int linkg_fast_nat_flow_get_or_create(const linkg_fast_nat_flow_key_t *key)
 
     spin_lock_irqsave(&g_flow.lock, flags);
 
-    ret = _linkg_fast_nat_flow_hash_lookup(key, &slot);
+    ret = _linkg_fast_nat_flow_hash_lookup(key, &slot, &found_seq);
     if (ret == 0)
     {
         g_flow.flows[slot].last_seen = jiffies;
@@ -393,10 +428,14 @@ int linkg_fast_nat_flow_get_or_create(const linkg_fast_nat_flow_key_t *key)
 
     entry = &g_flow.flows[insert_slot];
 
+    write_seqcount_begin(&entry->seq);
+
     entry->key       = *key;
     entry->last_seen = jiffies;
 
     smp_store_release(&entry->state, LINKG_FAST_NAT_FLOW_ACTIVE);
+
+    write_seqcount_end(&entry->seq);
 
     g_flow.flow_count++;
 
@@ -447,7 +486,9 @@ static void _linkg_fast_nat_flow_gc_timer(struct timer_list *timer)
             continue;
         }
 
+        write_seqcount_begin(&entry->seq);
         smp_store_release(&entry->state, LINKG_FAST_NAT_FLOW_TOMBSTONE);
+        write_seqcount_end(&entry->seq);
 
         if (g_flow.flow_count > 0U)
         {
