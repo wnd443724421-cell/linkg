@@ -1,0 +1,262 @@
+{
+  "url": "http://192.168.1.1/?v=LinkG-v1.0.0%2B20261101.2#/diagnostics/uart",
+  "rows": [
+    {
+      "label": "loopback round 1",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "passed",
+          "tx_bytes": 1536,
+          "rx_bytes": 1536,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": 0,
+          "elapsed_ms": 188
+        }
+      ],
+      "job_id": 13,
+      "mode": "single",
+      "state": "completed",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": false,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": true,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 207
+    },
+    {
+      "label": "loopback round 2",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "passed",
+          "tx_bytes": 1536,
+          "rx_bytes": 1536,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": 0,
+          "elapsed_ms": 188
+        }
+      ],
+      "job_id": 14,
+      "mode": "single",
+      "state": "completed",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": false,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": true,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 207
+    },
+    {
+      "label": "loopback round 3",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "passed",
+          "tx_bytes": 1536,
+          "rx_bytes": 1536,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": 0,
+          "elapsed_ms": 188
+        }
+      ],
+      "job_id": 15,
+      "mode": "single",
+      "state": "completed",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": false,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": true,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 207
+    },
+    {
+      "label": "loopback round 4",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "passed",
+          "tx_bytes": 1536,
+          "rx_bytes": 1536,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": 0,
+          "elapsed_ms": 189
+        }
+      ],
+      "job_id": 16,
+      "mode": "single",
+      "state": "completed",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": false,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": true,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 207
+    },
+    {
+      "label": "loopback round 5",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "passed",
+          "tx_bytes": 1536,
+          "rx_bytes": 1536,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": 0,
+          "elapsed_ms": 189
+        }
+      ],
+      "job_id": 17,
+      "mode": "single",
+      "state": "completed",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": false,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": true,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 207
+    },
+    {
+      "label": "cancel loopback from page",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "cancelled",
+          "tx_bytes": 512,
+          "rx_bytes": 511,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": -125,
+          "elapsed_ms": 63
+        }
+      ],
+      "job_id": 18,
+      "mode": "single",
+      "state": "cancelled",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": true,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": false,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 82
+    },
+    {
+      "label": "loopback next round after cancellation",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "passed",
+          "tx_bytes": 1536,
+          "rx_bytes": 1536,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": 0,
+          "elapsed_ms": 188
+        }
+      ],
+      "job_id": 19,
+      "mode": "single",
+      "state": "completed",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": false,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": true,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 210
+    },
+    {
+      "label": "loopback after leaving and returning",
+      "tests": [
+        {
+          "uart_num": 2,
+          "path": "normal",
+          "state": "passed",
+          "tx_bytes": 1536,
+          "rx_bytes": 1536,
+          "error_count": 0,
+          "first_error_offset": 4294967295,
+          "frames_total": 0,
+          "frames_ok": 0,
+          "error": 0,
+          "elapsed_ms": 188
+        }
+      ],
+      "job_id": 20,
+      "mode": "single",
+      "state": "completed",
+      "selected_uart": 2,
+      "current_test": 0,
+      "test_count": 1,
+      "cancel_requested": false,
+      "uart_was_initialized": true,
+      "uart_was_running": true,
+      "uart_restored": true,
+      "tests_passed": true,
+      "error": 0,
+      "restore_error": 0,
+      "elapsed_ms": 207
+    }
+  ],
+  "errors": []
+}

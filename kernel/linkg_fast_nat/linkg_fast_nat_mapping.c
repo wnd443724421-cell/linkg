@@ -13,6 +13,7 @@
 #include <linux/jhash.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
+#include <linux/seqlock.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -45,6 +46,7 @@ typedef struct
 {
     linkg_fast_nat_mapping_key_t key;       // SNAT前原始五元组
     unsigned long                last_seen; // 最近一次活动时间
+    seqcount_t                   seq;       // Mapping槽位版本，创建和回收由写锁保护
     __u8                         snat_type; // SNAT来源类型
     __u8                         state;     // LINKG_FAST_NAT_ENTRY_*
 } linkg_fast_nat_entry_t;
@@ -80,7 +82,15 @@ static linkg_fast_nat_mapping_context_t g_mapping =
  */
 void linkg_fast_nat_mapping_reset(void)
 {
+    __u32 index;
+
     memset(g_mapping.entries, 0, sizeof(g_mapping.entries));
+
+    for (index = 0U; index < LINKG_FAST_NAT_SLOT_COUNT; index++)
+    {
+        seqcount_init(&g_mapping.entries[index].seq);
+    }
+
     memset(g_mapping.fast_slots, 0xFF, sizeof(g_mapping.fast_slots));
 
     g_mapping.fast_last_hit     = 0U;
@@ -93,11 +103,11 @@ void linkg_fast_nat_mapping_reset(void)
  */
 static bool _linkg_fast_nat_mapping_key_equal(const linkg_fast_nat_mapping_key_t *left, const linkg_fast_nat_mapping_key_t *right)
 {
-    return left->protocol    == right->protocol &&
-           left->original_ip == right->original_ip &&
-           left->original_id == right->original_id &&
-           left->remote_ip   == right->remote_ip &&
-           left->remote_id   == right->remote_id;
+    return READ_ONCE(left->protocol)    == right->protocol &&
+           READ_ONCE(left->original_ip) == right->original_ip &&
+           READ_ONCE(left->original_id) == right->original_id &&
+           READ_ONCE(left->remote_ip)   == right->remote_ip &&
+           READ_ONCE(left->remote_id)   == right->remote_id;
 }
 
 /**
@@ -124,7 +134,7 @@ static __u32 _linkg_fast_nat_mapping_hash(const linkg_fast_nat_mapping_key_t *ke
  * 高频数据包只读取last_seen，达到刷新周期后才进入写锁更新，
  * 从而避免每个数据包都写共享Mapping状态。
  */
-static int _linkg_fast_nat_mapping_refresh(const linkg_fast_nat_mapping_key_t *key, __u8 snat_type, __u32 slot)
+static int _linkg_fast_nat_mapping_refresh(const linkg_fast_nat_mapping_key_t *key, __u8 snat_type, __u32 slot, __u32 seq)
 {
     linkg_fast_nat_entry_t *entry;
     unsigned long           flags;
@@ -142,12 +152,19 @@ static int _linkg_fast_nat_mapping_refresh(const linkg_fast_nat_mapping_key_t *k
 
     if (!time_after_eq(now, last_seen + LINKG_FAST_NAT_MAPPING_REFRESH_TIME))
     {
+        // 校验Lookup读取时的槽位版本，避免GC回收后复用导致错误命中。
+        if (read_seqcount_retry(&entry->seq, seq))
+        {
+            return -ENOENT;
+        }
+
         return 0;
     }
 
     spin_lock_irqsave(&g_mapping.lock, flags);
 
-    if (entry->state != LINKG_FAST_NAT_ENTRY_ACTIVE ||
+    if (raw_read_seqcount(&entry->seq) != seq ||
+        entry->state != LINKG_FAST_NAT_ENTRY_ACTIVE ||
         entry->snat_type != snat_type ||
         !_linkg_fast_nat_mapping_key_equal(&entry->key, key))
     {
@@ -165,15 +182,17 @@ static int _linkg_fast_nat_mapping_refresh(const linkg_fast_nat_mapping_key_t *k
 /**
  * @brief 从快速缓存查找SNAT映射。
  */
-static int _linkg_fast_nat_mapping_fast_lookup(const linkg_fast_nat_mapping_key_t *key, __u8 snat_type, __u32 *slot)
+static int _linkg_fast_nat_mapping_fast_lookup(const linkg_fast_nat_mapping_key_t *key, __u8 snat_type, __u32 *slot, __u32 *seq)
 {
     linkg_fast_nat_entry_t *entry;
     __u32                   cached_slot;
     __u32                   start;
     __u32                   offset;
     __u32                   index;
+    __u32                   version;
+    bool                    matched;
 
-    if (key == NULL || slot == NULL)
+    if (key == NULL || slot == NULL || seq == NULL)
     {
         return -EINVAL;
     }
@@ -192,12 +211,16 @@ static int _linkg_fast_nat_mapping_fast_lookup(const linkg_fast_nat_mapping_key_
 
         entry = &g_mapping.entries[cached_slot];
 
-        if (smp_load_acquire(&entry->state) != LINKG_FAST_NAT_ENTRY_ACTIVE)
+        do
         {
-            continue;
-        }
+            version = read_seqcount_begin(&entry->seq);
 
-        if (READ_ONCE(entry->snat_type) != snat_type || !_linkg_fast_nat_mapping_key_equal(&entry->key, key))
+            matched = READ_ONCE(entry->state) == LINKG_FAST_NAT_ENTRY_ACTIVE &&
+                      READ_ONCE(entry->snat_type) == snat_type &&
+                      _linkg_fast_nat_mapping_key_equal(&entry->key, key);
+        } while (read_seqcount_retry(&entry->seq, version));
+
+        if (!matched)
         {
             continue;
         }
@@ -208,6 +231,7 @@ static int _linkg_fast_nat_mapping_fast_lookup(const linkg_fast_nat_mapping_key_
         }
 
         *slot = cached_slot;
+        *seq  = version;
         return 0;
     }
 
@@ -238,14 +262,16 @@ static void _linkg_fast_nat_mapping_fast_update(__u32 slot)
 /**
  * @brief 无锁查找SNAT映射Hash主表。
  */
-static int _linkg_fast_nat_mapping_hash_lookup(const linkg_fast_nat_mapping_key_t *key, __u8 snat_type, __u32 *slot)
+static int _linkg_fast_nat_mapping_hash_lookup(const linkg_fast_nat_mapping_key_t *key, __u8 snat_type, __u32 *slot, __u32 *seq)
 {
     linkg_fast_nat_entry_t *entry;
     __u32                   current_slot;
     __u32                   probe;
+    __u32                   version;
     __u8                    state;
+    bool                    matched;
 
-    if (key == NULL || slot == NULL)
+    if (key == NULL || slot == NULL || seq == NULL)
     {
         return -EINVAL;
     }
@@ -255,18 +281,25 @@ static int _linkg_fast_nat_mapping_hash_lookup(const linkg_fast_nat_mapping_key_
     for (probe = 0U; probe < LINKG_FAST_NAT_SLOT_COUNT; probe++)
     {
         entry = &g_mapping.entries[current_slot];
-        state = smp_load_acquire(&entry->state);
+
+        do
+        {
+            version = read_seqcount_begin(&entry->seq);
+            state   = READ_ONCE(entry->state);
+            matched = state == LINKG_FAST_NAT_ENTRY_ACTIVE &&
+                      READ_ONCE(entry->snat_type) == snat_type &&
+                      _linkg_fast_nat_mapping_key_equal(&entry->key, key);
+        } while (read_seqcount_retry(&entry->seq, version));
 
         if (state == LINKG_FAST_NAT_ENTRY_FREE)
         {
             return -ENOENT;
         }
 
-        if (state == LINKG_FAST_NAT_ENTRY_ACTIVE &&
-            READ_ONCE(entry->snat_type) == snat_type &&
-            _linkg_fast_nat_mapping_key_equal(&entry->key, key))
+        if (matched)
         {
             *slot = current_slot;
+            *seq  = version;
             return 0;
         }
 
@@ -283,12 +316,13 @@ static int _linkg_fast_nat_mapping_hash_lookup(const linkg_fast_nat_mapping_key_
  */
 static int _linkg_fast_nat_mapping_lookup(const linkg_fast_nat_mapping_key_t *key, __u8 snat_type, __u32 *slot)
 {
-    int ret;
+    __u32 seq;
+    int   ret;
 
-    ret = _linkg_fast_nat_mapping_fast_lookup(key, snat_type, slot);
+    ret = _linkg_fast_nat_mapping_fast_lookup(key, snat_type, slot, &seq);
     if (ret == 0)
     {
-        ret = _linkg_fast_nat_mapping_refresh(key, snat_type, *slot);
+        ret = _linkg_fast_nat_mapping_refresh(key, snat_type, *slot, seq);
         if (ret == 0)
         {
             return 0;
@@ -304,13 +338,13 @@ static int _linkg_fast_nat_mapping_lookup(const linkg_fast_nat_mapping_key_t *ke
         return ret;
     }
 
-    ret = _linkg_fast_nat_mapping_hash_lookup(key, snat_type, slot);
+    ret = _linkg_fast_nat_mapping_hash_lookup(key, snat_type, slot, &seq);
     if (ret != 0)
     {
         return ret;
     }
 
-    ret = _linkg_fast_nat_mapping_refresh(key, snat_type, *slot);
+    ret = _linkg_fast_nat_mapping_refresh(key, snat_type, *slot, seq);
     if (ret != 0)
     {
         return ret;
@@ -332,6 +366,7 @@ static int _linkg_fast_nat_mapping_get_or_create(const linkg_fast_nat_mapping_ke
     __u32                   current_slot;
     __u32                   probe;
     __u32                   found_slot;
+    __u32                   found_seq;
     __u8                    state;
     int                     ret;
 
@@ -363,7 +398,7 @@ static int _linkg_fast_nat_mapping_get_or_create(const linkg_fast_nat_mapping_ke
 
     spin_lock_irqsave(&g_mapping.lock, flags);
 
-    ret = _linkg_fast_nat_mapping_hash_lookup(key, snat_type, &found_slot);
+    ret = _linkg_fast_nat_mapping_hash_lookup(key, snat_type, &found_slot, &found_seq);
     if (ret == 0)
     {
         g_mapping.entries[found_slot].last_seen = jiffies;
@@ -413,11 +448,15 @@ static int _linkg_fast_nat_mapping_get_or_create(const linkg_fast_nat_mapping_ke
 
     entry = &g_mapping.entries[insert_slot];
 
+    write_seqcount_begin(&entry->seq);
+
     entry->key       = *key;
     entry->last_seen = jiffies;
     entry->snat_type = snat_type;
 
     smp_store_release(&entry->state, LINKG_FAST_NAT_ENTRY_ACTIVE);
+
+    write_seqcount_end(&entry->seq);
 
     g_mapping.active_count++;
 
@@ -626,7 +665,9 @@ static void _linkg_fast_nat_mapping_gc_timer(struct timer_list *timer)
             continue;
         }
 
+        write_seqcount_begin(&entry->seq);
         smp_store_release(&entry->state, LINKG_FAST_NAT_ENTRY_TOMBSTONE);
+        write_seqcount_end(&entry->seq);
 
         if (g_mapping.active_count > 0U)
         {

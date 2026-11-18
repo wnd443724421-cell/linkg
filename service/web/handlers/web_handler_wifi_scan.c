@@ -177,7 +177,7 @@ int _linkg_web_handler_wifi_scan_start(const cJSON *param, char **response)
  */
 int _linkg_web_handler_wifi_scan_get(const cJSON *param, char **response)
 {
-    linkg_network_scan_status_t status;
+    linkg_network_scan_status_t  status;
     const linkg_wifi_scan_bss_t *entry;
     cJSON    *data;
     cJSON    *channels;
