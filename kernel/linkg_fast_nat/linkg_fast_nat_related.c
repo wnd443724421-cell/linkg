@@ -13,6 +13,7 @@
 #include <linux/in.h>
 #include <linux/jhash.h>
 #include <linux/jiffies.h>
+#include <linux/seqlock.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -47,6 +48,7 @@ typedef struct
     __be32                        remote_virtual_ip;   // 远端客户端Virtual IPv4
     __be16                        remote_virtual_port; // 远端客户端目标TCP/UDP端口
     unsigned long                 last_seen;           // 最近一次活动时间
+    seqcount_t                    seq;                 // Related槽位版本，写入由Related表写锁保护
     __u8                          state;               // LINKG_FAST_NAT_RELATED_*
 } linkg_fast_nat_related_entry_t;
 
@@ -77,7 +79,15 @@ static linkg_fast_nat_related_context_t g_related =
  */
 static void _linkg_fast_nat_related_reset(void)
 {
+    __u32 index;
+
     memset(g_related.entries, 0, sizeof(g_related.entries));
+
+    for (index = 0U; index < LINKG_FAST_NAT_RELATED_SLOT_COUNT; index++)
+    {
+        seqcount_init(&g_related.entries[index].seq);
+    }
+
     g_related.active_count = 0U;
 }
 
@@ -86,10 +96,10 @@ static void _linkg_fast_nat_related_reset(void)
  */
 static bool _linkg_fast_nat_related_key_equal(const linkg_fast_nat_related_key_t *left, const linkg_fast_nat_related_key_t *right)
 {
-    return left->protocol          == right->protocol &&
-           left->local_device_ip   == right->local_device_ip &&
-           left->local_device_port == right->local_device_port &&
-           left->gateway_port      == right->gateway_port;
+    return READ_ONCE(left->protocol)          == right->protocol &&
+           READ_ONCE(left->local_device_ip)   == right->local_device_ip &&
+           READ_ONCE(left->local_device_port) == right->local_device_port &&
+           READ_ONCE(left->gateway_port)      == right->gateway_port;
 }
 
 /**
@@ -112,14 +122,18 @@ static __u32 _linkg_fast_nat_related_hash(const linkg_fast_nat_related_key_t *ke
 /**
  * @brief 无锁查询Related Hash表。
  *
- * entry只在state发布为ACTIVE前写入完整内容，读取侧通过acquire语义读取state。
+ * 在相同槽位版本下读取匹配Key和远端目标，避免并发更新或复用造成字段混合。
  */
 static int _linkg_fast_nat_related_lookup(const linkg_fast_nat_related_key_t *key, __be32 *remote_virtual_ip, __be16 *remote_virtual_port, __u32 *slot)
 {
     linkg_fast_nat_related_entry_t *entry;
-    __u32                           current_slot;
-    __u32                           probe;
-    __u8                            state;
+    __be32                         saved_virtual_ip;
+    __be16                         saved_virtual_port;
+    __u32                          current_slot;
+    __u32                          probe;
+    __u32                          seq;
+    __u8                           state;
+    bool                           matched;
 
     if (key == NULL || remote_virtual_ip == NULL || remote_virtual_port == NULL || slot == NULL)
     {
@@ -131,17 +145,29 @@ static int _linkg_fast_nat_related_lookup(const linkg_fast_nat_related_key_t *ke
     for (probe = 0U; probe < LINKG_FAST_NAT_RELATED_SLOT_COUNT; probe++)
     {
         entry = &g_related.entries[current_slot];
-        state = smp_load_acquire(&entry->state);
+
+        do
+        {
+            seq     = read_seqcount_begin(&entry->seq);
+            state   = READ_ONCE(entry->state);
+            matched = state == LINKG_FAST_NAT_RELATED_ACTIVE && _linkg_fast_nat_related_key_equal(&entry->key, key);
+
+            if (matched)
+            {
+                saved_virtual_ip   = READ_ONCE(entry->remote_virtual_ip);
+                saved_virtual_port = READ_ONCE(entry->remote_virtual_port);
+            }
+        } while (read_seqcount_retry(&entry->seq, seq));
 
         if (state == LINKG_FAST_NAT_RELATED_FREE)
         {
             return -ENOENT;
         }
 
-        if (state == LINKG_FAST_NAT_RELATED_ACTIVE && _linkg_fast_nat_related_key_equal(&entry->key, key))
+        if (matched)
         {
-            *remote_virtual_ip   = READ_ONCE(entry->remote_virtual_ip);
-            *remote_virtual_port = READ_ONCE(entry->remote_virtual_port);
+            *remote_virtual_ip   = saved_virtual_ip;
+            *remote_virtual_port = saved_virtual_port;
             *slot                = current_slot;
             return 0;
         }
@@ -221,7 +247,9 @@ static void _linkg_fast_nat_related_gc_timer(struct timer_list *timer)
             continue;
         }
 
+        write_seqcount_begin(&entry->seq);
         smp_store_release(&entry->state, LINKG_FAST_NAT_RELATED_TOMBSTONE);
+        write_seqcount_end(&entry->seq);
 
         if (g_related.active_count > 0U)
         {
@@ -322,16 +350,19 @@ int linkg_fast_nat_related_add(__be32 local_device_ip, __be16 local_device_port,
         entry = &g_related.entries[existing_slot];
         if (entry->state == LINKG_FAST_NAT_RELATED_ACTIVE && _linkg_fast_nat_related_key_equal(&entry->key, &key))
         {
+            write_seqcount_begin(&entry->seq);
             WRITE_ONCE(entry->remote_virtual_ip, remote_virtual_ip);
             WRITE_ONCE(entry->remote_virtual_port, remote_virtual_port);
             entry->last_seen = jiffies;
+            write_seqcount_end(&entry->seq);
+
+            spin_unlock_irqrestore(&g_related.lock, flags);
+            return 0;
         }
 
         spin_unlock_irqrestore(&g_related.lock, flags);
-        return 0;
     }
-
-    if (ret != -ENOENT)
+    else if (ret != -ENOENT)
     {
         return ret;
     }
@@ -342,9 +373,12 @@ int linkg_fast_nat_related_add(__be32 local_device_ip, __be16 local_device_port,
     if (ret == 0)
     {
         entry = &g_related.entries[existing_slot];
+
+        write_seqcount_begin(&entry->seq);
         WRITE_ONCE(entry->remote_virtual_ip, remote_virtual_ip);
         WRITE_ONCE(entry->remote_virtual_port, remote_virtual_port);
         entry->last_seen = jiffies;
+        write_seqcount_end(&entry->seq);
 
         spin_unlock_irqrestore(&g_related.lock, flags);
         return 0;
@@ -387,12 +421,16 @@ int linkg_fast_nat_related_add(__be32 local_device_ip, __be16 local_device_port,
 
     entry = &g_related.entries[insert_slot];
 
+    write_seqcount_begin(&entry->seq);
+
     entry->key                 = key;
     entry->remote_virtual_ip   = remote_virtual_ip;
     entry->remote_virtual_port = remote_virtual_port;
     entry->last_seen           = jiffies;
 
     smp_store_release(&entry->state, LINKG_FAST_NAT_RELATED_ACTIVE);
+
+    write_seqcount_end(&entry->seq);
 
     g_related.active_count++;
 
