@@ -25,7 +25,7 @@
 #define LINKG_FAST_NAT_RELATED_ACTIVE_MAX       128U                                          // 最大活动Related数量
 #define LINKG_FAST_NAT_RELATED_HASH_SEED        0x4C524C44U                                   // "LRLD"固定Hash种子
 #define LINKG_FAST_NAT_RELATED_REFRESH_TIME     (1U * HZ)                                     // 最近命中时间最小刷新周期
-#define LINKG_FAST_NAT_RELATED_TIMEOUT          (120U * HZ)                                   // Related无流量超时时间
+#define LINKG_FAST_NAT_RELATED_TIMEOUT          (180U * HZ)                                   // Related无流量超时时间
 #define LINKG_FAST_NAT_RELATED_GC_INTERVAL      (5U * HZ)                                     // Related超时扫描周期
 #define LINKG_FAST_NAT_RELATED_FREE             0U                                            // Related槽位从未使用
 #define LINKG_FAST_NAT_RELATED_ACTIVE           1U                                            // Related槽位当前有效
