@@ -73,6 +73,11 @@ int linkg_fast_nat_config_validate(const linkg_fast_nat_config_t *config, linkg_
         return -EPROTO;
     }
 
+    if (config->direct_snat_disabled > 1U)
+    {
+        return -EINVAL;
+    }
+
     if (!_linkg_fast_nat_config_subnet_valid(&config->ethernet_network) ||
         !_linkg_fast_nat_config_subnet_valid(&config->tun_network) ||
         !_linkg_fast_nat_config_subnet_valid(&config->virtual_network) ||

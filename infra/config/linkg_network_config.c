@@ -321,7 +321,7 @@ static int _network_subnet_conflict_validate(const linkg_network_config_t *confi
     {
         return CONFIG_ERR_VALIDATE;
     }
-    
+
     if (linkg_network_ipv4_subnet_overlap(&virtual_network.ip, &virtual_network.netmask, &tun.ip, &tun.netmask))
     {
         return CONFIG_ERR_VALIDATE;
@@ -784,6 +784,7 @@ void linkg_network_config_set_default(linkg_network_config_t *out)
 
     out->dhcp.enabled         = true;
     out->dhcp.default_gateway = false;
+    out->direct_snat_enabled   = true;
 }
 
 /**
@@ -831,6 +832,7 @@ int linkg_network_config_validate(const linkg_network_config_t *config)
 int linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out)
 {
     linkg_network_config_t temp;
+    const cJSON           *direct_snat_enabled;
     uint32_t               node_id;
     int                    ret;
 
@@ -869,6 +871,17 @@ int linkg_network_config_parse(const cJSON *node, linkg_network_config_t *out)
     if (ret != CONFIG_OK)
     {
         return ret;
+    }
+
+    direct_snat_enabled = cJSON_GetObjectItemCaseSensitive(node, "direct_snat_enabled");
+    if (direct_snat_enabled != NULL)
+    {
+        if (!cJSON_IsBool(direct_snat_enabled))
+        {
+            return CONFIG_ERR_PARSE;
+        }
+
+        temp.direct_snat_enabled = cJSON_IsTrue(direct_snat_enabled);
     }
 
     ret = _network_dhcp_config_parse(node, &temp.dhcp);
@@ -938,6 +951,13 @@ int linkg_network_config_to_json(cJSON *parent, const char *key, const linkg_net
     {
         cJSON_Delete(object);
         return ret;
+    }
+
+    ret = linkg_json_add_bool(object, "direct_snat_enabled", config->direct_snat_enabled);
+    if (ret != LINKG_JSON_OK)
+    {
+        cJSON_Delete(object);
+        return config_json_write_error(ret);
     }
 
     ret = _network_dhcp_config_to_json(object, &config->dhcp);

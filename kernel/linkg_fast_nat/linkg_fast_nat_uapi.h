@@ -60,7 +60,7 @@ typedef struct
     __s32  tun_ifindex;      // LinkG TUN接口ifindex
 
     __u16  snat_port_start;  // Fast SNAT动态端口池起始端口
-    __u16  reserved0;        // 对齐及后续扩展预留
+    __u16  direct_snat_disabled; // 0=启用Direct SNAT，1=关闭Direct SNAT
 
     __s32  uplink_ifindex;   // 外部网络上行接口ifindex
 

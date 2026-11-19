@@ -1,3 +1,4 @@
+
 /**
  * @file linkg_network_config.h
  * @brief LinkG网络配置定义及处理接口
@@ -65,11 +66,12 @@ typedef struct
 
 typedef struct
 {
-    uint8_t                        node_id;          // LinkG节点编号
-    struct in_addr                 virtual_network;  // 组网虚拟网络基地址，同一组网成员必须一致
-    struct in_addr                 ethernet_network; // Ethernet网络基地址，本节点独立配置
-    linkg_network_dhcp_config_t    dhcp;             // Ethernet DHCP服务配置
-    linkg_network_traffic_config_t traffic;          // 用户业务流量分类配置
+    uint8_t                        node_id;              // LinkG节点编号
+    struct in_addr                 virtual_network;      // 组网虚拟网络基地址，同一组网成员必须一致
+    struct in_addr                 ethernet_network;     // Ethernet网络基地址，本节点独立配置
+    bool                           direct_snat_enabled;  // Direct模式是否启用SNAT，NAT模式忽略
+    linkg_network_dhcp_config_t    dhcp;                 // Ethernet DHCP服务配置
+    linkg_network_traffic_config_t traffic;              // 用户业务流量分类配置
 } linkg_network_config_t;
 
 /****************************** 配置处理 ******************************/

@@ -1,3 +1,4 @@
+
 {
     "device": {
         "role": "sta"
@@ -6,6 +7,7 @@
         "node_id": 2,
         "virtual_network": "172.28.0.0",
         "ethernet_network": "192.168.1.0",
+        "direct_snat_enabled": true,
         "dhcp": {
             "enabled": true,
             "default_gateway": false
@@ -27,7 +29,7 @@
                 "class": "realtime",
                 "protocol": "tcp",
                 "start": 80,
-                "end": 81
+                "end": 80
             }
         ]
     },

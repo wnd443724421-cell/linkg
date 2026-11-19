@@ -237,6 +237,20 @@
 }
 .network-basic-mode-notes p { margin: 0; }
 .network-basic-mode-notes strong { color: var(--linkg-color-text); }
+.network-basic-direct-snat {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--linkg-color-border-light);
+}
+.network-basic-direct-snat .network-basic-toggle-row { align-items: flex-start; }
+.network-basic-direct-snat .network-basic-toggle-row > span { flex: 1; min-width: 0; }
+.network-basic-direct-snat .network-basic-toggle-row input { margin: 2px 0 0; }
+.network-basic-direct-snat-hint {
+    margin: 6px 0 0;
+    color: var(--linkg-color-text-muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
 .network-basic-private-note {
     grid-column: 1 / -1;
     margin: 0;

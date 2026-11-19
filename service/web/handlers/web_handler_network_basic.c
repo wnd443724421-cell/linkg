@@ -45,11 +45,12 @@ static bool _linkg_web_network_addresses_equal(const linkg_network_config_t *lef
 }
 
 /**
- * @brief 判断本页面管理的五项配置是否一致。
+ * @brief 判断本页面管理的基础网络配置是否一致。
  */
 static bool _linkg_web_network_equal(const linkg_network_config_t *left, const linkg_network_config_t *right)
 {
     return _linkg_web_network_addresses_equal(left, right) &&
+           left->direct_snat_enabled == right->direct_snat_enabled &&
            left->dhcp.enabled == right->dhcp.enabled &&
            left->dhcp.default_gateway == right->dhcp.default_gateway;
 }
@@ -93,6 +94,7 @@ static int _linkg_web_network_json(cJSON *parent, const char *key, const linkg_n
         linkg_json_add_int(object, "node_id", config->node_id) != 0 ||
         linkg_json_add_string(object, "virtual_network", virtual_network_text) != 0 ||
         linkg_json_add_string(object, "ethernet_network", network_text) != 0 ||
+        linkg_json_add_bool(object, "direct_snat_enabled", config->direct_snat_enabled) != 0 ||
         linkg_json_add_string(object, "virtual_ip", virtual_text) != 0 ||
         linkg_json_add_string(object, "ethernet_ip", ethernet_text) != 0 ||
         linkg_json_add_bool(dhcp, "enabled", config->dhcp.enabled) != 0 ||
@@ -126,11 +128,12 @@ static int _linkg_web_network_apply_response(int cmd, const char *apply, char **
 }
 
 /**
- * @brief 严格读取五项配置，仅修改调用方提供的完整快照对应字段。
+ * @brief 读取基础网络配置，兼容旧版请求缺少Direct SNAT字段。
  */
 static int _linkg_web_network_parse(const cJSON *param, linkg_network_config_t *network)
 {
     const cJSON *dhcp;
+    const cJSON *direct_snat_enabled;
     uint32_t     node_id;
     char         virtual_network[INET_ADDRSTRLEN];
     char         ethernet_network[INET_ADDRSTRLEN];
@@ -144,6 +147,17 @@ static int _linkg_web_network_parse(const cJSON *param, linkg_network_config_t *
         linkg_json_get_bool(dhcp, "default_gateway", &network->dhcp.default_gateway) != 0)
     {
         return -EINVAL;
+    }
+
+    direct_snat_enabled = cJSON_GetObjectItemCaseSensitive(param, "direct_snat_enabled");
+    if (direct_snat_enabled != NULL)
+    {
+        if (!cJSON_IsBool(direct_snat_enabled))
+        {
+            return -EINVAL;
+        }
+
+        network->direct_snat_enabled = cJSON_IsTrue(direct_snat_enabled);
     }
 
     network->node_id = (uint8_t)node_id;
@@ -314,7 +328,8 @@ int _linkg_web_handler_network_basic_set(const cJSON *param, char **response)
         return _linkg_web_network_apply_response(LINKG_WEB_CMD_NETWORK_BASIC_SET, "none", response);
     }
 
-    restart = !_linkg_web_network_addresses_equal(&old_config.network, &new_config.network);
+    restart = !_linkg_web_network_addresses_equal(&old_config.network, &new_config.network) ||
+              old_config.network.direct_snat_enabled != new_config.network.direct_snat_enabled;
     ret = _linkg_web_network_apply_response(LINKG_WEB_CMD_NETWORK_BASIC_SET,
                                            restart ? "restart_required" : "dynamic", &success_response);
     if (ret != 0)

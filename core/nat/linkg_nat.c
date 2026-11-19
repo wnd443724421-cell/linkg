@@ -44,6 +44,7 @@ typedef struct
     linkg_network_ipv4_config_t ethernet_network;     // 本节点Ethernet网络
     linkg_network_ipv4_config_t ethernet;             // 本节点Ethernet接口IPv4配置
     int                         driver_fd;            // Fast NAT字符设备句柄
+    bool                        direct_snat_enabled;  // Direct模式是否执行SNAT
     bool                        driver_loaded;        // Fast NAT内核模块是否由当前NAT生命周期持有
     bool                        initialized;          // 模块是否已经初始化
     bool                        started;              // Fast NAT是否已经启动
@@ -81,7 +82,8 @@ static int _linkg_nat_build_context(const linkg_network_config_t *network_config
 
     memset(context, 0, sizeof(*context));
 
-    context->driver_fd = -1;
+    context->driver_fd           = -1;
+    context->direct_snat_enabled = network_config->direct_snat_enabled;
 
     ret = linkg_network_config_get_virtual_network(network_config, &context->virtual_network);
     if (ret != 0)
@@ -214,7 +216,8 @@ static int _linkg_nat_build_driver_config(linkg_fast_nat_config_t *config)
 #endif
     }
 
-    config->snat_port_start = LINKG_RESOURCE_NAT_SNAT_PORT_START;
+    config->snat_port_start      = LINKG_RESOURCE_NAT_SNAT_PORT_START;
+    config->direct_snat_disabled = g_nat.direct_snat_enabled ? 0U : 1U;
 
     return 0;
 }

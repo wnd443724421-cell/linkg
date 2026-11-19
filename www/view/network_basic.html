@@ -110,8 +110,18 @@
                     </div>
                     <p class="network-basic-input-note">最后一段固定为 0，本机 IP 使用 .1。Ctrl+退格清空此网段。</p>
                     <div id="networkBasicEthernetModes" class="network-basic-mode-notes">
-                        <p><strong>直连（Direct）</strong> 以太网使用本节点的虚拟子网，设备的实际 IP 就是组网访问地址。</p>
-                        <p><strong>NAT</strong> 以太网使用独立网段，其他节点通过映射后的虚拟 IP 访问本地设备。</p>
+                        <p><strong>直连</strong> 以太网使用本节点虚拟子网，设备 IP 即组网访问地址。</p>
+                        <p><strong>NAT</strong> 以太网使用独立网段，通过地址映射访问本地设备。</p>
+                    </div>
+                    <div class="network-basic-direct-snat">
+                        <label class="network-basic-toggle-row" for="networkBasicDirectSnatEnabled">
+                            <span>
+                                <strong class="network-basic-field-title">直连源地址转换（SNAT）</strong>
+                                <span id="networkBasicDirectSnatHelp" class="network-basic-field-subtitle">开启：按现有规则转换源地址，兼容未配置回程路由的本地设备。</span>
+                            </span>
+                            <input id="networkBasicDirectSnatEnabled" type="checkbox" aria-describedby="networkBasicDirectSnatHelp networkBasicDirectSnatHint" checked disabled>
+                        </label>
+                        <p id="networkBasicDirectSnatHint" class="network-basic-direct-snat-hint">仅直连模式可配置，修改后需重启服务。</p>
                     </div>
                 </div>
                 <p id="networkBasicPrivateNetworks" class="network-basic-private-note">
@@ -134,7 +144,7 @@
             <div class="network-basic-form-footer">
                 <div class="network-basic-footer-message">
                     <span class="network-basic-notice-mark" aria-hidden="true">i</span>
-                    <span>节点或网段修改需重启 LinkG 服务；仅 DHCP 开关修改可动态应用。</span>
+                    <span>节点、网段或 SNAT 配置修改需重启 LinkG 服务；仅 DHCP 修改可动态应用。</span>
                 </div>
                 <div class="network-basic-form-actions">
                     <button id="networkBasicResetButton" class="network-basic-button network-basic-button-secondary"

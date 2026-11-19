@@ -13,13 +13,33 @@
 #include <linux/kernel.h>
 
 /**
- * @brief 仅记录本地Ethernet设备主动访问远端Virtual的流。
+ * @brief Direct SNAT关闭时跳过协议派生流的Related目的转换。
+ */
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_related(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
+{
+    const linkg_fast_nat_config_t *config = linkg_fast_nat_get_config();
+
+    if (config->direct_snat_disabled != 0U)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    return linkg_fast_nat_rule_ethernet_rx_related(skb, state, iph);
+}
+
+/**
+ * @brief 仅在Direct SNAT开启时记录本地Ethernet设备主动访问远端Virtual的流。
  */
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_record_flow(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
 {
     const linkg_fast_nat_config_t *config = linkg_fast_nat_get_config();
 
     (void)state;
+
+    if (config->direct_snat_disabled != 0U)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
 
     if (!linkg_fast_nat_ipv4_host_usable(iph->saddr, &config->ethernet_network) ||
         !linkg_fast_nat_ipv4_in_subnet(iph->daddr, &config->virtual_network) ||
@@ -32,7 +52,22 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_rx_record_flow(stru
 }
 
 /**
- * @brief 保持本地通信直达，对远端访问本地设备按流方向执行SNAT。
+ * @brief Direct SNAT关闭时跳过RTSP协议解析与派生Flow预建。
+ */
+static linkg_fast_nat_rule_result_t _linkg_fast_nat_tun_rx_protocol_helper(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
+{
+    const linkg_fast_nat_config_t *config = linkg_fast_nat_get_config();
+
+    if (config->direct_snat_disabled != 0U)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
+
+    return linkg_fast_nat_rule_tun_rx_protocol_helper(skb, state, iph);
+}
+
+/**
+ * @brief 保持本地通信直达；Direct SNAT关闭时保留远端原始源地址和端口。
  */
 static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_tx_source_translate(struct sk_buff *skb, const struct nf_hook_state *state, struct iphdr *iph)
 {
@@ -42,6 +77,11 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_tx_source_translate
     int                            ret;
 
     (void)state;
+
+    if (config->direct_snat_disabled != 0U)
+    {
+        return LINKG_FAST_NAT_RULE_NEXT;
+    }
 
     if (!linkg_fast_nat_ipv4_host_usable(iph->daddr, &config->ethernet_network) ||
         linkg_fast_nat_ipv4_in_subnet(iph->saddr, &config->local_virtual_subnet))
@@ -95,13 +135,13 @@ static linkg_fast_nat_rule_result_t _linkg_fast_nat_ethernet_tx_source_translate
 static const linkg_fast_nat_rule_func_t g_ethernet_rx_rules[] =
 {
     linkg_fast_nat_rule_ethernet_rx_reverse_snat,
-    linkg_fast_nat_rule_ethernet_rx_related,
+    _linkg_fast_nat_ethernet_rx_related,
     _linkg_fast_nat_ethernet_rx_record_flow,
 };
 
 static const linkg_fast_nat_rule_func_t g_tun_rx_rules[] =
 {
-    linkg_fast_nat_rule_tun_rx_protocol_helper,
+    _linkg_fast_nat_tun_rx_protocol_helper,
 };
 
 static const linkg_fast_nat_rule_func_t g_uplink_rx_rules[] =

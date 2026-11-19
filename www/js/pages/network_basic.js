@@ -21,6 +21,7 @@
             node_id: config.node_id,
             virtual_network: config.virtual_network,
             ethernet_network: config.ethernet_network,
+            direct_snat_enabled: config.direct_snat_enabled,
             dhcp: {enabled: config.dhcp.enabled, default_gateway: config.dhcp.default_gateway}
         };
     }
@@ -73,6 +74,7 @@
         const ethernet = [1, 2, 3].map(function (n) { return octet(field("EthernetOctet" + n).value); }).concat([0]);
         validatePrivateNetwork(ethernet);
         config.ethernet_network = ethernet.join(".");
+        config.direct_snat_enabled = field("DirectSnatEnabled").checked;
         config.dhcp = {enabled: field("DhcpEnabled").checked, default_gateway: field("DefaultGateway").checked};
         const localNetwork = localVirtualNetwork(config);
         if (virtual[0] === ethernet[0] && virtual[1] === ethernet[1] && config.ethernet_network !== localNetwork)
@@ -179,6 +181,7 @@
         });
         field("DhcpEnabled").checked = config.dhcp.enabled;
         field("DefaultGateway").checked = config.dhcp.default_gateway;
+        field("DirectSnatEnabled").checked = config.direct_snat_enabled;
     }
     function dirty()
     {
@@ -195,6 +198,18 @@
         });
         // disabled只影响交互，不清除默认网关的原布尔值。
         field("DefaultGateway").disabled = busy || !connected || !field("DhcpEnabled").checked;
+        let directMode = false;
+        try
+        {
+            const current = readForm();
+            directMode = current.ethernet_network === localVirtualNetwork(current);
+        }
+        catch (error) { /* 网段尚未输入完整。 */ }
+        field("DirectSnatEnabled").disabled = busy || !connected || !directMode;
+        text("DirectSnatHelp", !directMode ? "仅在直连模式下生效，不影响 NAT 模式的地址转换。" :
+            field("DirectSnatEnabled").checked ? "开启：按现有规则转换源地址，兼容未配置回程路由的本地设备。" :
+            "关闭：保留远端真实源 IP 和端口，本地设备需配置正确的回程路由。");
+        text("DirectSnatHint", directMode ? "修改后需重启 LinkG 服务。" : "当前非直连模式，保留已保存的开关状态。");
         const directButton = field("UseDirectButton");
         if (directButton)
         {
@@ -216,6 +231,7 @@
     {
         [next && next.running, next && next.saved].forEach(function (config) {
             if (!config || !Number.isInteger(config.node_id) || config.node_id < 1 || config.node_id > 254 ||
+                typeof config.direct_snat_enabled !== "boolean" ||
                 !config.dhcp || typeof config.dhcp.enabled !== "boolean" || typeof config.dhcp.default_gateway !== "boolean")
             {
                 throw new Error("设备返回的基础网络配置无效");
@@ -238,7 +254,8 @@
         text("CurrentVirtual", data.running.virtual_ip);
         text("CurrentEthernet", data.running.ethernet_ip);
         const direct = data.running.ethernet_network === localVirtualNetwork(data.running);
-        text("RuntimeNote", data.runtime_confirmed ? "当前运行配置 · " + (direct ? "Direct 模式" : "NAT 模式") :
+        text("RuntimeNote", data.runtime_confirmed ? "当前运行配置 · " + (direct ?
+            "直连模式 · SNAT " + (data.running.direct_snat_enabled ? "开启" : "关闭") : "NAT 模式") :
             "运行状态无法确认，请检查设备");
         text("SavedNote", !data.persistence_confirmed ? "持久配置状态无法确认，请重新保存" :
             data.pending_restart ? "已保存 · 尚待重启生效" : "已保存配置与运行配置一致");
@@ -298,6 +315,11 @@
         }
         if (before.node_id !== after.node_id) { notices.push("节点 ID 将在服务重启后生效，客户端通常无需重新获取 IP。"); }
         if (before.virtual_network !== after.virtual_network) { notices.push("虚拟网段改变后，请更新客户端路由；静态用户需重新添加手工路由。"); }
+        if (before.direct_snat_enabled !== after.direct_snat_enabled)
+        {
+            notices.push(after.direct_snat_enabled ? "直连 SNAT 开启后需重启 LinkG 服务。" :
+                "直连 SNAT 关闭后需重启 LinkG 服务，且本地设备必须配置正确的回程路由。");
+        }
         if (before.dhcp.enabled !== after.dhcp.enabled)
         {
             notices.push(after.dhcp.enabled ? "DHCP 开启后，请让客户端重新获取 IP。" : "关闭 DHCP 后，依赖自动获取 IP 的设备需改为手动静态 IP。");
