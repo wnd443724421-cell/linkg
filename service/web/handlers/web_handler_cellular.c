@@ -679,6 +679,15 @@ static int _linkg_web_cellular_status_build_network(const linkg_cellular_network
         }
     }
 
+    if (serving_cell->valid && serving_cell->cell_id_valid)
+    {
+        ret = linkg_json_add_string(object, "cell_id", serving_cell->cell_id);
+        if (ret != LINKG_JSON_OK)
+        {
+            goto error;
+        }
+    }
+
     if (serving_cell->rsrp_valid)
     {
         ret = linkg_json_add_int(object, "rsrp_dbm", serving_cell->rsrp_dbm);
@@ -714,6 +723,89 @@ error:
     cJSON_Delete(object);
 
     return _linkg_web_cellular_json_error(ret);
+}
+
+/**
+ * @brief 构造单个地址族的公网探测异常记录，时长使用服务端单调时钟计算。
+ */
+static int _linkg_web_cellular_build_probe_history(cJSON *parent, const char *name,
+                                                  const linkg_cellular_probe_history_t *history)
+{
+    cJSON   *object;
+    uint64_t now_ms;
+    uint64_t duration_ms;
+    int      ret;
+
+    object = cJSON_CreateObject();
+    if (object == NULL)
+    {
+        return -ENOMEM;
+    }
+
+    now_ms = linkg_time_elapsed_ms();
+    duration_ms = history->duration_ms;
+    if (history->active && now_ms >= history->started_ms)
+    {
+        duration_ms = now_ms - history->started_ms;
+    }
+
+    ret = linkg_json_add_bool(object, "valid", history->valid);
+    if (ret == LINKG_JSON_OK)
+    {
+        ret = linkg_json_add_bool(object, "active", history->active);
+    }
+    if (ret == LINKG_JSON_OK &&
+        (cJSON_AddNumberToObject(object, "duration_ms", (double)duration_ms) == NULL ||
+         cJSON_AddNumberToObject(object, "recovered_ms", (double)history->recovered_ms) == NULL))
+    {
+        ret = LINKG_JSON_ERR_MEMORY;
+    }
+    if (ret == LINKG_JSON_OK)
+    {
+        ret = linkg_json_add_object(parent, name, object);
+    }
+    if (ret != LINKG_JSON_OK)
+    {
+        cJSON_Delete(object);
+        return _linkg_web_cellular_json_error(ret);
+    }
+
+    return 0;
+}
+
+/**
+ * @brief 构造双栈公网探测观测结果。
+ */
+static int _linkg_web_cellular_build_probe(cJSON *parent, const linkg_cellular_probe_status_t *probe)
+{
+    cJSON *object;
+    int    ret;
+
+    object = cJSON_CreateObject();
+    if (object == NULL)
+    {
+        return -ENOMEM;
+    }
+
+    ret = _linkg_web_cellular_build_probe_history(object, "ipv4", &probe->ipv4);
+    if (ret == 0)
+    {
+        ret = _linkg_web_cellular_build_probe_history(object, "ipv6", &probe->ipv6);
+    }
+    if (ret == 0)
+    {
+        ret = linkg_json_add_object(parent, "internet_probe", object);
+        if (ret != LINKG_JSON_OK)
+        {
+            ret = _linkg_web_cellular_json_error(ret);
+        }
+    }
+    if (ret != 0)
+    {
+        cJSON_Delete(object);
+    }
+
+    return ret;
 }
 
 /**
@@ -1055,6 +1147,13 @@ int _linkg_web_handler_cellular_status_get(const cJSON *param, char **response)
 
     if (available)
     {
+        ret = _linkg_web_cellular_build_probe(data, &snapshot.probe);
+        if (ret != 0)
+        {
+            cJSON_Delete(data);
+            return ret;
+        }
+
         local = NULL;
         ret = _linkg_web_cellular_status_build_local(&snapshot.local, &local);
         if (ret != 0)

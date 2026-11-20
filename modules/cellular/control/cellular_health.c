@@ -7,6 +7,7 @@
  */
 
 #include "cellular_health.h"
+#include "cellular_observation.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -107,7 +108,13 @@ static uint64_t _cellular_health_next_time(uint64_t now_ms, uint64_t delay_ms)
  */
 static void _cellular_health_invalidate_locked(void)
 {
+    linkg_cellular_probe_status_t probe;
+
+    probe = g_cellular_health.info.probe;
     memset(&g_cellular_health.info, 0, sizeof(g_cellular_health.info));
+    g_cellular_health.info.probe = probe;
+    g_cellular_health.info.probe.ipv4.valid = false;
+    g_cellular_health.info.probe.ipv6.valid = false;
     g_cellular_health.epoch++;
     g_cellular_health.next_probe_ms = 0U;
 }
@@ -251,6 +258,47 @@ static int _cellular_health_probe_family(linkg_thread_t *thread, uint64_t epoch,
     }
 
     return 0;
+}
+
+/****************************** 公网异常观测 ******************************/
+
+/**
+ * @brief 地址族检测完成后立即记录，避免IPv6检测等待被计入IPv4的发现时间。
+ */
+static void _cellular_health_record_probe(uint64_t epoch, bool ipv6, int result)
+{
+    linkg_cellular_probe_history_t *history;
+    linkg_cellular_probe_history_t  snapshot;
+    cellular_observation_event_t   event;
+    uint64_t                       now_ms;
+    char                           wall_time[40];
+
+    now_ms = linkg_time_elapsed_ms();
+
+    pthread_mutex_lock(&g_cellular_health.lock);
+    if (!g_cellular_health.started || !g_cellular_health.online || g_cellular_health.epoch != epoch)
+    {
+        pthread_mutex_unlock(&g_cellular_health.lock);
+        return;
+    }
+
+    history = ipv6 ? &g_cellular_health.info.probe.ipv6 : &g_cellular_health.info.probe.ipv4;
+    event = cellular_observation_update_probe(history, result, now_ms);
+    snapshot = *history;
+    pthread_mutex_unlock(&g_cellular_health.lock);
+
+    if (event == CELLULAR_OBSERVATION_NONE)
+    {
+        return;
+    }
+
+    cellular_observation_wall_time(wall_time, sizeof(wall_time));
+    CELLULAR_INFO("public probe %s, family=%s wall=%s first_failed_ms=%llu recovered_ms=%llu duration_ms=%llu",
+                   event == CELLULAR_OBSERVATION_FAILED ? "failed" : "recovered",
+                   ipv6 ? "IPv6" : "IPv4", wall_time,
+                   (unsigned long long)snapshot.started_ms,
+                   (unsigned long long)snapshot.recovered_ms,
+                   (unsigned long long)snapshot.duration_ms);
 }
 
 /****************************** 探测结果更新 ******************************/
@@ -415,11 +463,15 @@ static void _cellular_health_worker(linkg_thread_t *thread, void *user_data)
             continue;
         }
 
+        _cellular_health_record_probe(epoch, false, ipv4_result);
+
         ipv6_result = _cellular_health_probe_family(thread, epoch, true);
         if (ipv6_result == -ECANCELED)
         {
             continue;
         }
+
+        _cellular_health_record_probe(epoch, true, ipv6_result);
 
         _cellular_health_commit_round(epoch, ipv4_result, ipv6_result);
     }
@@ -441,6 +493,7 @@ int cellular_health_init(void)
         return -EALREADY;
     }
 
+    memset(&g_cellular_health.info.probe, 0, sizeof(g_cellular_health.info.probe));
     _cellular_health_invalidate_locked();
     g_cellular_health.recovery_stage        = 0U;
     g_cellular_health.next_recovery_ms      = 0U;
@@ -516,6 +569,7 @@ int cellular_health_stop(void)
     {
         pthread_mutex_lock(&g_cellular_health.lock);
         g_cellular_health.started = false;
+        memset(&g_cellular_health.info.probe, 0, sizeof(g_cellular_health.info.probe));
         pthread_mutex_unlock(&g_cellular_health.lock);
     }
 
