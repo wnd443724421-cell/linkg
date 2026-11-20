@@ -766,7 +766,7 @@ static int _linkg_discovery_cellular_poll_timeout(uint64_t now_us)
 }
 
 /** @brief 执行一次Cellular周期状态发送及Peer老化。 */
-static void _linkg_discovery_cellular_process_periodic(uint64_t now_us)
+static void _linkg_discovery_cellular_process_periodic(uint64_t now_us, bool send_ready)
 {
     linkg_device_role_t role;
     int ret;
@@ -776,22 +776,26 @@ static void _linkg_discovery_cellular_process_periodic(uint64_t now_us)
         return;
     }
 
-    pthread_mutex_lock(&g_discovery_cellular.lock);
-    role = g_discovery_cellular.role;
-    pthread_mutex_unlock(&g_discovery_cellular.lock);
+    // 本机IPv6不可用时暂停发送，但仍由Discovery Core正常推进Peer老化。
+    if (send_ready)
+    {
+        pthread_mutex_lock(&g_discovery_cellular.lock);
+        role = g_discovery_cellular.role;
+        pthread_mutex_unlock(&g_discovery_cellular.lock);
 
-    ret = 0;
-    if (role == LINKG_DEVICE_ROLE_AP)
-    {
-        ret = _linkg_discovery_cellular_send_ap_sync();
-    }
-    else if (role == LINKG_DEVICE_ROLE_STA)
-    {
-        ret = _linkg_discovery_cellular_send_sta_report();
-    }
-    if (ret != 0)
-    {
-        LINKG_LOG_WARN("DISCOVERY-CELLULAR: periodic report failed, error=%d", ret);
+        ret = 0;
+        if (role == LINKG_DEVICE_ROLE_AP)
+        {
+            ret = _linkg_discovery_cellular_send_ap_sync();
+        }
+        else if (role == LINKG_DEVICE_ROLE_STA)
+        {
+            ret = _linkg_discovery_cellular_send_sta_report();
+        }
+        if (ret != 0)
+        {
+            LINKG_LOG_WARN("DISCOVERY-CELLULAR: periodic report failed, error=%d", ret);
+        }
     }
 
     ret = linkg_discovery_channel_age_peers(now_us);
@@ -903,6 +907,42 @@ static int _linkg_discovery_cellular_deactivate(void)
     pthread_mutex_unlock(&g_discovery_cellular.lock);
 
     return first_error;
+}
+
+/** @brief 丢弃异常UDP Socket，不注销Discovery Channel或Peer。 */
+static void _linkg_discovery_cellular_close_failed_socket(void)
+{
+    pthread_mutex_lock(&g_discovery_cellular.lock);
+    if (g_discovery_cellular.socket_fd >= 0)
+    {
+        (void)close(g_discovery_cellular.socket_fd);
+        g_discovery_cellular.socket_fd = -1;
+    }
+    pthread_mutex_unlock(&g_discovery_cellular.lock);
+}
+
+/** @brief 在已注册Channel上重新建立UDP Socket，避免Socket故障误注销Peer。 */
+static int _linkg_discovery_cellular_restore_socket(void)
+{
+    int socket_fd;
+
+    if (g_discovery_cellular.socket_fd >= 0)
+    {
+        return 0;
+    }
+
+    socket_fd = _linkg_discovery_cellular_open_socket();
+    if (socket_fd < 0)
+    {
+        return socket_fd;
+    }
+
+    pthread_mutex_lock(&g_discovery_cellular.lock);
+    g_discovery_cellular.socket_fd = socket_fd;
+    g_discovery_cellular.next_report_us = linkg_time_monotonic_us();
+    pthread_mutex_unlock(&g_discovery_cellular.lock);
+
+    return 0;
 }
 
 /****************************** 地址事件 ******************************/
@@ -1018,6 +1058,8 @@ static int _linkg_discovery_cellular_wait(linkg_thread_t *thread, int socket_fd,
     struct pollfd descriptors[3];
     nfds_t       count;
     nfds_t       address_index;
+    socklen_t    error_length;
+    int          socket_error;
     int          ret;
 
     if (thread == NULL || socket_ready == NULL || address_ready == NULL)
@@ -1080,9 +1122,19 @@ static int _linkg_discovery_cellular_wait(linkg_thread_t *thread, int socket_fd,
 
     if (socket_fd >= 0)
     {
-        if ((descriptors[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        if ((descriptors[1].revents & (POLLHUP | POLLNVAL)) != 0)
         {
             return -ENETDOWN;
+        }
+        if ((descriptors[1].revents & POLLERR) != 0)
+        {
+            // UDP暂时路由不可达可能产生POLLERR，清除Socket异步错误但不注销Peer。
+            socket_error = 0;
+            error_length = sizeof(socket_error);
+            if (getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &socket_error, &error_length) != 0)
+            {
+                return -errno;
+            }
         }
         *socket_ready = (descriptors[1].revents & POLLIN) != 0;
     }
@@ -1116,7 +1168,9 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
     bool            ipv6_ready;
     bool            active;
     bool            address_changed;
+    bool            ifindex_changed;
     int             last_retry_error;
+    int             last_socket_error;
     int             address_fd;
     int             socket_fd;
     int             timeout_ms;
@@ -1128,9 +1182,10 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
         return -EINVAL;
     }
 
-    active           = false;
-    ipv6_ready       = false;
-    last_retry_error = 0;
+    active            = false;
+    ipv6_ready        = false;
+    last_retry_error  = 0;
+    last_socket_error = 0;
 
     address_fd = _linkg_discovery_cellular_open_address_monitor();
     if (address_fd < 0)
@@ -1152,64 +1207,54 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
             }
         }
 
-        // 接口消失、关闭或ifindex变化仍属于Channel资源失效，保持原有注销流程。
-        if (active && ready >= 0 && ifindex != g_discovery_cellular.bound_ifindex)
+        // 本机网络不可用仅暂停控制报文收发，对端存活由Discovery Core老化决定。
+        if (active && ready <= 0 && ipv6_ready)
         {
-            if (!linkg_thread_is_running(thread))
-            {
-                break;
-            }
-
-            LINKG_LOG_WARN("DISCOVERY-CELLULAR: interface changed, rebuilding channel");
-
-            ret = _linkg_discovery_cellular_deactivate();
-            if (ret != 0)
-            {
-                goto finish;
-            }
-
-            active = false;
+            LINKG_LOG_WARN("DISCOVERY-CELLULAR: interface/IPv6 unavailable, channel retained, peer aging continues");
             ipv6_ready = false;
         }
 
-        // 同一UP接口临时失去IPv6，不注销Channel或Peer；正常Peer老化仍继续。
-        if (active && ready == 0 && ipv6_ready)
+        // 同一或重新创建的usb0恢复有效IPv6时，仅更新地址与接口索引，不注销Peer。
+        if (active && ready > 0)
         {
-            LINKG_LOG_WARN("DISCOVERY-CELLULAR: IPv6 unavailable, retaining channel");
-            ipv6_ready = false;
-        }
+            address_changed = memcmp(&ipv6, &g_discovery_cellular.bound_ipv6, sizeof(ipv6)) != 0;
+            ifindex_changed = ifindex != g_discovery_cellular.bound_ifindex;
 
-        // 同一接口获取新IPv6或地址恢复后直接上报，避免注销Peer及Transport。
-        if (active && ready > 0 && (!ipv6_ready || memcmp(&ipv6, &g_discovery_cellular.bound_ipv6, sizeof(ipv6)) != 0))
-        {
-            previous_ipv6   = g_discovery_cellular.bound_ipv6;
-            address_changed = memcmp(&ipv6, &previous_ipv6, sizeof(ipv6)) != 0;
-
-            pthread_mutex_lock(&g_discovery_cellular.lock);
-            g_discovery_cellular.bound_ipv6     = ipv6;
-            g_discovery_cellular.next_report_us = linkg_time_monotonic_us();
-            pthread_mutex_unlock(&g_discovery_cellular.lock);
-
-            if (address_changed)
+            if (!ipv6_ready || address_changed || ifindex_changed)
             {
-                if (inet_ntop(AF_INET6, &previous_ipv6, previous_text, sizeof(previous_text)) == NULL)
-                {
-                    (void)strncpy(previous_text, "<invalid>", sizeof(previous_text));
-                    previous_text[sizeof(previous_text) - 1U] = '\0';
-                }
-                if (inet_ntop(AF_INET6, &ipv6, current_text, sizeof(current_text)) == NULL)
-                {
-                    (void)strncpy(current_text, "<invalid>", sizeof(current_text));
-                    current_text[sizeof(current_text) - 1U] = '\0';
-                }
-                LINKG_LOG_WARN("DISCOVERY-CELLULAR: IPv6 changed, old=%s, new=%s, immediate report scheduled", previous_text, current_text);
-            }
-            else
-            {
-                LINKG_LOG_WARN("DISCOVERY-CELLULAR: IPv6 restored, immediate report scheduled");
-            }
+                previous_ipv6 = g_discovery_cellular.bound_ipv6;
 
-            ipv6_ready = true;
+                pthread_mutex_lock(&g_discovery_cellular.lock);
+                g_discovery_cellular.bound_ipv6     = ipv6;
+                g_discovery_cellular.bound_ifindex  = ifindex;
+                g_discovery_cellular.next_report_us = linkg_time_monotonic_us();
+                pthread_mutex_unlock(&g_discovery_cellular.lock);
+
+                if (address_changed)
+                {
+                    if (inet_ntop(AF_INET6, &previous_ipv6, previous_text, sizeof(previous_text)) == NULL)
+                    {
+                        (void)strncpy(previous_text, "<invalid>", sizeof(previous_text));
+                        previous_text[sizeof(previous_text) - 1U] = '\0';
+                    }
+                    if (inet_ntop(AF_INET6, &ipv6, current_text, sizeof(current_text)) == NULL)
+                    {
+                        (void)strncpy(current_text, "<invalid>", sizeof(current_text));
+                        current_text[sizeof(current_text) - 1U] = '\0';
+                    }
+                    LINKG_LOG_WARN("DISCOVERY-CELLULAR: IPv6 changed, old=%s, new=%s, immediate report scheduled", previous_text, current_text);
+                }
+                else if (ifindex_changed)
+                {
+                    LINKG_LOG_WARN("DISCOVERY-CELLULAR: interface index changed, ifindex=%u, immediate report scheduled", ifindex);
+                }
+                else
+                {
+                    LINKG_LOG_WARN("DISCOVERY-CELLULAR: IPv6 restored, immediate report scheduled");
+                }
+
+                ipv6_ready = true;
+            }
         }
 
         if (!linkg_thread_is_running(thread))
@@ -1222,8 +1267,8 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
             ret = _linkg_discovery_cellular_activate(&ipv6, ifindex);
             if (ret == 0)
             {
-                active = true;
-                ipv6_ready = true;
+                active           = true;
+                ipv6_ready       = true;
                 last_retry_error = 0;
             }
             else
@@ -1245,13 +1290,25 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
             break;
         }
 
+        // Socket异常只恢复Socket；与网络地址变化一样，不触发Peer注销。
+        if (active && g_discovery_cellular.socket_fd < 0)
+        {
+            ret = _linkg_discovery_cellular_restore_socket();
+            if (ret != 0 && ret != last_socket_error)
+            {
+                LINKG_LOG_WARN("DISCOVERY-CELLULAR: UDP socket recovery pending, error=%d", ret);
+            }
+            last_socket_error = ret;
+        }
+
+        // 网络不可用时照常推进老化，不能把Peer老化绑定到IPv6就绪状态。
         if (active)
         {
-            _linkg_discovery_cellular_process_periodic(linkg_time_monotonic_us());
+            _linkg_discovery_cellular_process_periodic(linkg_time_monotonic_us(), ipv6_ready && g_discovery_cellular.socket_fd >= 0);
         }
 
         timeout_ms = active ? _linkg_discovery_cellular_poll_timeout(linkg_time_monotonic_us()) : LINKG_DISCOVERY_CELLULAR_MONITOR_INTERVAL_MS;
-        socket_fd = active ? g_discovery_cellular.socket_fd : -1;
+        socket_fd = active && ipv6_ready ? g_discovery_cellular.socket_fd : -1;
         ret = _linkg_discovery_cellular_wait(thread, socket_fd, address_fd, timeout_ms, &socket_ready, &address_ready);
         if (!linkg_thread_is_running(thread))
         {
@@ -1268,13 +1325,8 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
             }
             if (active && ret == -ENETDOWN)
             {
-                ret = _linkg_discovery_cellular_deactivate();
-                if (ret != 0)
-                {
-                    goto finish;
-                }
-                active = false;
-                ipv6_ready = false;
+                LINKG_LOG_WARN("DISCOVERY-CELLULAR: UDP socket unavailable, recovering without unregistering peer");
+                _linkg_discovery_cellular_close_failed_socket();
                 continue;
             }
             goto finish;
@@ -1301,14 +1353,8 @@ static int _linkg_discovery_cellular_run(linkg_thread_t *thread)
             ret = _linkg_discovery_cellular_receive(thread);
             if (ret != 0)
             {
-                LINKG_LOG_WARN("DISCOVERY-CELLULAR: receive failed, rebuilding channel, error=%d", ret);
-                ret = _linkg_discovery_cellular_deactivate();
-                if (ret != 0)
-                {
-                    goto finish;
-                }
-                active = false;
-                ipv6_ready = false;
+                LINKG_LOG_WARN("DISCOVERY-CELLULAR: receive failed, recovering UDP socket without unregistering peer, error=%d", ret);
+                _linkg_discovery_cellular_close_failed_socket();
             }
         }
     }
