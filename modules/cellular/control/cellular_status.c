@@ -22,6 +22,7 @@
 #include "linkg_time.h"
 
 #include "rg255_query.h"
+#include "cellular_observation.h"
 
 /****************************** 状态周期 ******************************/
 
@@ -589,6 +590,8 @@ static void _cellular_status_clear_radio(cellular_status_info_t *info, uint64_t 
     info->network.plmn_valid         = false;
     info->network.mcc[0]             = '\0';
     info->network.mnc[0]             = '\0';
+    info->network.cell_id_valid      = false;
+    info->network.cell_id[0]         = '\0';
     info->network.band               = 0U;
     info->network.rsrp_dbm           = 0;
     info->network.rsrp_valid         = false;
@@ -612,6 +615,7 @@ static void _cellular_status_refresh_radio(at_channel_t *channel, cellular_statu
     serving_cell.network_type = LINKG_CELLULAR_NETWORK_TYPE_UNKNOWN;
 
     ret = rg255_query_serving_cell(channel, &serving_cell);
+    now_ms = linkg_time_elapsed_ms();
     if (ret == -ENODATA)
     {
         _cellular_status_clear_radio(info, now_ms);
@@ -627,6 +631,8 @@ static void _cellular_status_refresh_radio(at_channel_t *channel, cellular_statu
     info->network.serving_cell_valid = true;
     info->network.network_type       = serving_cell.network_type;
     info->network.plmn_valid         = serving_cell.plmn_valid;
+    info->network.cell_id_valid      = serving_cell.cell_id_valid;
+    memcpy(info->network.cell_id, serving_cell.cell_id, sizeof(info->network.cell_id));
     info->network.band               = serving_cell.band;
     info->network.rsrp_dbm           = serving_cell.rsrp_dbm;
     info->network.rsrp_valid         = serving_cell.rsrp_valid;
@@ -1277,8 +1283,9 @@ static void _cellular_status_finalize_info(cellular_status_info_t *info, uint64_
  */
 static int _cellular_status_publish(const cellular_status_info_t *info, const cellular_status_deadlines_t *deadlines)
 {
-    bool previous_partial;
-    int  previous_error;
+    cellular_status_network_info_t previous_network;
+    bool                           previous_partial;
+    int                            previous_error;
 
     pthread_mutex_lock(&g_cellular_status.lock);
 
@@ -1288,6 +1295,7 @@ static int _cellular_status_publish(const cellular_status_info_t *info, const ce
         return -ENETDOWN;
     }
 
+    previous_network = g_cellular_status.info.network;
     previous_partial = g_cellular_status.info.partial;
     previous_error   = g_cellular_status.info.last_error;
 
@@ -1295,6 +1303,8 @@ static int _cellular_status_publish(const cellular_status_info_t *info, const ce
     g_cellular_status.deadlines = *deadlines;
 
     pthread_mutex_unlock(&g_cellular_status.lock);
+
+    cellular_observation_log_cell(&previous_network, &info->network);
 
     if (previous_error != info->last_error)
     {
@@ -1794,6 +1804,8 @@ int cellular_status_get_snapshot(linkg_cellular_status_snapshot_t *snapshot)
     snapshot->network.serving_cell.plmn_valid = radio_current && info.network.plmn_valid;
     memcpy(snapshot->network.serving_cell.mcc, info.network.mcc, sizeof(snapshot->network.serving_cell.mcc));
     memcpy(snapshot->network.serving_cell.mnc, info.network.mnc, sizeof(snapshot->network.serving_cell.mnc));
+    snapshot->network.serving_cell.cell_id_valid = radio_current && info.network.serving_cell_valid && info.network.cell_id_valid;
+    memcpy(snapshot->network.serving_cell.cell_id, info.network.cell_id, sizeof(snapshot->network.serving_cell.cell_id));
     snapshot->network.serving_cell.band       = info.network.band;
     snapshot->network.serving_cell.rsrp_dbm   = info.network.rsrp_dbm;
     snapshot->network.serving_cell.rsrp_valid = radio_current && info.network.rsrp_valid;

@@ -52,6 +52,7 @@ typedef enum
 
 #define LINKG_CELLULAR_MCC_MAX_LENGTH 3U // 移动国家码最大长度
 #define LINKG_CELLULAR_MNC_MAX_LENGTH 3U // 移动网络码最大长度
+#define LINKG_CELLULAR_CELL_ID_MAX_LENGTH 9U // LTE为7位、NR5G-SA为9位十六进制
 
 typedef struct
 {
@@ -60,6 +61,9 @@ typedef struct
     bool     plmn_valid; // 当前服务小区PLMN是否有效
     char     mcc[LINKG_CELLULAR_MCC_MAX_LENGTH + 1U]; // 当前移动国家码
     char     mnc[LINKG_CELLULAR_MNC_MAX_LENGTH + 1U]; // 当前移动网络码
+
+    bool     cell_id_valid; // 当前小区编号是否有效
+    char     cell_id[LINKG_CELLULAR_CELL_ID_MAX_LENGTH + 1U]; // 完整十六进制小区编号
 
     uint16_t band;       // 当前工作频段
 
@@ -116,6 +120,24 @@ typedef struct
     char            pdp_apn[LINKG_CELLULAR_APN_MAX + 1U]; // 当前选中PDP上下文的实际APN
 } linkg_cellular_data_status_t;
 
+/****************************** 公网探测记录 ******************************/
+
+typedef struct
+{
+    bool     valid;        // 最近一次地址族检测是否形成有效网络结果
+    bool     active;       // 是否处于已观测到的连续失败期间
+    uint64_t started_ms;   // 首次完整失败结果时间，使用应用单调时钟
+    uint64_t recovered_ms; // 最近一次恢复结果时间，0表示尚无恢复记录
+    uint64_t updated_ms;   // 最近一次地址族检测完成时间
+    uint64_t duration_ms;  // 当前异常已持续或最近一次异常的时长
+} linkg_cellular_probe_history_t;
+
+typedef struct
+{
+    linkg_cellular_probe_history_t ipv4; // IPv4公网探测记录
+    linkg_cellular_probe_history_t ipv6; // IPv6公网探测记录
+} linkg_cellular_probe_status_t;
+
 /****************************** 状态快照 ******************************/
 
 typedef struct
@@ -124,6 +146,7 @@ typedef struct
     linkg_cellular_local_status_t   local;   // 本机蜂窝状态
     linkg_cellular_network_status_t network; // 当前移动网络状态
     linkg_cellular_data_status_t    data;    // 当前数据承载状态
+    linkg_cellular_probe_status_t   probe;   // 公网探测原始异常记录
 } linkg_cellular_status_snapshot_t;
 
 #ifdef __cplusplus

@@ -399,6 +399,74 @@
         }
     }
 
+    /****************************** 公网探测记录 ******************************/
+
+    function formatProbeDuration(milliseconds)
+    {
+        if (!Number.isFinite(milliseconds) || milliseconds < 0)
+        {
+            return "--";
+        }
+
+        return (milliseconds / 1000).toFixed(1) + " 秒";
+    }
+
+    function renderInternetProbe(probe)
+    {
+        const element = field("cellularInternetProbe");
+
+        if (element == null)
+        {
+            return;
+        }
+
+        element.title = "从首次整轮检测失败到首次检测成功的间隔";
+        if (probe == null || probe.ipv4 == null || probe.ipv6 == null)
+        {
+            setText("cellularInternetProbe", "--");
+            return;
+        }
+
+        const families = [
+            { name: "IPv4", value: probe.ipv4 },
+            { name: "IPv6", value: probe.ipv6 }
+        ];
+        const active = families.filter(function (item) {
+            return item.value.active === true;
+        });
+
+        if (active.length > 0)
+        {
+            const details = active.map(function (item) {
+                return item.name + " 持续 " + formatProbeDuration(item.value.duration_ms);
+            }).join("，");
+
+            setText("cellularInternetProbe", "公网连通异常（" + details + "）");
+            return;
+        }
+
+        if (families.some(function (item) { return item.value.valid !== true; }))
+        {
+            setText("cellularInternetProbe", "等待有效检测结果");
+            return;
+        }
+
+        const recovered = families.filter(function (item) {
+            return Number.isFinite(item.value.recovered_ms) && item.value.recovered_ms > 0;
+        }).sort(function (left, right) {
+            return right.value.recovered_ms - left.value.recovered_ms;
+        });
+
+        if (recovered.length > 0)
+        {
+            setText("cellularInternetProbe", "已恢复，上次 " + recovered[0].name + " 公网连通异常持续 " +
+                    formatProbeDuration(recovered[0].value.duration_ms));
+            return;
+        }
+
+        setText("cellularInternetProbe", "正常");
+    }
+
     /****************************** 运行状态 ******************************/
 
     function renderStatus(data)
@@ -470,6 +538,8 @@
                 network.plmn : "--");
         setText("cellularNetworkMode", formatNetworkMode(local.network_mode));
         setText("cellularBand", formatBand(network.band, network.network_type));
+        setText("cellularCellId", typeof network.cell_id === "string" ? network.cell_id : "--");
+        renderInternetProbe(data.internet_probe);
         setText("cellularPdpApn", pdpApn);
         setText("cellularRsrp", formatRsrp(network.rsrp_dbm));
         setText("cellularRsrq",

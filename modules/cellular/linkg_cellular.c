@@ -1055,7 +1055,8 @@ int linkg_cellular_deinit(void)
  */
 int linkg_cellular_get_status(linkg_cellular_status_snapshot_t *snapshot)
 {
-    linkg_cellular_lifecycle_t lifecycle;
+    cellular_health_info_t      health;
+    linkg_cellular_lifecycle_t  lifecycle;
     bool                       enabled;
     int                        ret;
 
@@ -1085,6 +1086,11 @@ int linkg_cellular_get_status(linkg_cellular_status_snapshot_t *snapshot)
     if (ret != 0)
     {
         return ret;
+    }
+
+    if (cellular_health_get_info(&health) == 0)
+    {
+        snapshot->probe = health.probe;
     }
 
     return 0;

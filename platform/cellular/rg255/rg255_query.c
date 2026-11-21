@@ -950,6 +950,55 @@ static int _rg255_query_parse_plmn(char *mcc_field, char *mnc_field, rg255_servi
 }
 
 /**
+ * @brief 解析可选小区编号，保留LTE和NR5G-SA各自的完整位宽。
+ */
+static int _rg255_query_parse_cell_id(char *field, size_t width, rg255_serving_cell_info_t *info)
+{
+    char   *text;
+    size_t  length;
+    size_t  index;
+    int     ret;
+
+    ret = _rg255_query_get_field_text(field, &text);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    info->cell_id_valid = false;
+    info->cell_id[0] = '\0';
+
+    if (text[0] == '\0' || strcmp(text, "-") == 0)
+    {
+        return 0;
+    }
+
+    length = strlen(text);
+    if (length > width || width > LINKG_CELLULAR_CELL_ID_MAX_LENGTH)
+    {
+        return 0;
+    }
+
+    for (index = 0U; index < length; index++)
+    {
+        if (!isxdigit((unsigned char)text[index]))
+        {
+            return 0;
+        }
+    }
+
+    memset(info->cell_id, '0', width);
+    for (index = 0U; index < length; index++)
+    {
+        info->cell_id[width - length + index] = (char)toupper((unsigned char)text[index]);
+    }
+
+    info->cell_id[width] = '\0';
+    info->cell_id_valid = true;
+    return 0;
+}
+
+/**
  * @brief 解析LTE服务小区无线状态。
  */
 static int _rg255_query_parse_lte_serving_cell(char **fields, size_t field_count, rg255_serving_cell_info_t *info)
@@ -968,6 +1017,12 @@ static int _rg255_query_parse_lte_serving_cell(char **fields, size_t field_count
     }
 
     ret = _rg255_query_parse_plmn(fields[4], fields[5], info);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_cell_id(fields[6], 7U, info);
     if (ret != 0)
     {
         return ret;
@@ -1032,6 +1087,12 @@ static int _rg255_query_parse_nr5g_sa_serving_cell(char **fields, size_t field_c
     }
 
     ret = _rg255_query_parse_plmn(fields[4], fields[5], info);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = _rg255_query_parse_cell_id(fields[6], 9U, info);
     if (ret != 0)
     {
         return ret;

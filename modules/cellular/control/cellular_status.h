@@ -66,6 +66,8 @@ typedef struct
     bool                                plmn_valid;        // 当前服务小区PLMN是否有效
     char                                mcc[LINKG_CELLULAR_MCC_MAX_LENGTH + 1U]; // 当前移动国家码
     char                                mnc[LINKG_CELLULAR_MNC_MAX_LENGTH + 1U]; // 当前移动网络码
+    bool                                cell_id_valid;     // 当前小区编号是否有效
+    char                                cell_id[LINKG_CELLULAR_CELL_ID_MAX_LENGTH + 1U]; // 完整十六进制小区编号
     uint16_t                            band;              // 当前工作频段
     int32_t                             rsrp_dbm;          // 当前RSRP，单位dBm
     bool                                rsrp_valid;        // 当前RSRP是否有效

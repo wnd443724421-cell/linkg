@@ -26,6 +26,7 @@ typedef struct
     uint32_t ipv4_failed_rounds;  // IPv4连续完整失败轮数
     uint32_t ipv6_failed_rounds;  // IPv6连续完整失败轮数
     uint64_t updated_ms;          // 最近一轮双栈检测完成时间
+    linkg_cellular_probe_status_t probe; // 每地址族的原始异常观测记录
 } cellular_health_info_t;
 
 /****************************** 生命周期 ******************************/
