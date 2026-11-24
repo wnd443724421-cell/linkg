@@ -10,6 +10,8 @@
 #include "linkg_network_task.h"
 #include "linkg_time.h"
 #include "linkg_switch.h"
+#include "linkg_config.h"
+#include "linkg_wifi.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -29,6 +31,11 @@ static atomic_bool hold_task;
 static atomic_bool fail_restore;
 static atomic_bool release_resources;
 static atomic_int operation_error;
+static atomic_bool ap_recovery_required;
+static atomic_bool config_busy;
+static atomic_int config_attempts;
+static atomic_int wifi_maintenance_begins;
+static atomic_int wifi_maintenance_ends;
 
 /**
  * @brief 运行模块替身直到真实Owner线程收到停止请求。
@@ -70,6 +77,11 @@ int _linkg_network_wifi_run(linkg_thread_t *thread)
  */
 int _linkg_network_wifi_stop(void)
 {
+    if (atomic_exchange(&ap_recovery_required, false))
+    {
+        assert(atomic_load(&wifi_maintenance_begins) > atomic_load(&wifi_maintenance_ends));
+    }
+
     return 0;
 }
 /**
@@ -131,7 +143,10 @@ int linkg_discovery_set_cellular_enabled(bool enabled)
  */
 int linkg_switch_begin_maintenance(linkg_link_access_t access)
 {
-    (void)access;
+    if (access == LINKG_LINK_ACCESS_WIFI)
+    {
+        atomic_fetch_add(&wifi_maintenance_begins, 1);
+    }
     return 0;
 }
 /**
@@ -139,8 +154,35 @@ int linkg_switch_begin_maintenance(linkg_link_access_t access)
  */
 int linkg_switch_end_maintenance(linkg_link_access_t access)
 {
-    (void)access;
+    if (access == LINKG_LINK_ACCESS_WIFI)
+    {
+        atomic_fetch_add(&wifi_maintenance_ends, 1);
+    }
     return 0;
+}
+
+/**
+ * @brief 模拟AP健康恢复请求，停止旧Owner后由替身清除。
+ */
+bool linkg_wifi_ap_recovery_required(void)
+{
+    return atomic_load(&ap_recovery_required);
+}
+
+/**
+ * @brief 注入配置事务占用，验证Manager不抢占配置操作。
+ */
+int linkg_config_transaction_begin(void)
+{
+    atomic_fetch_add(&config_attempts, 1);
+    return atomic_load(&config_busy) ? -EBUSY : 0;
+}
+
+/**
+ * @brief 释放模拟配置事务。
+ */
+void linkg_config_transaction_end(void)
+{
 }
 
 /**
@@ -205,6 +247,23 @@ int main(void)
     wait_count(&wifi_starts, 1);
     wait_count(&cell_starts, 1);
     usleep(10000U);
+
+    // AP健康故障必须等待配置事务，并先BEGIN Maintenance再停止旧Owner。
+    atomic_store(&config_busy, true);
+    atomic_store(&ap_recovery_required, true);
+    assert(linkg_thread_wakeup(&g_network.manager_thread) == 0);
+    wait_count(&config_attempts, 1);
+    assert(atomic_load(&wifi_starts) == 1);
+    assert(atomic_load(&wifi_maintenance_begins) == 0);
+
+    atomic_store(&config_busy, false);
+    assert(linkg_thread_wakeup(&g_network.manager_thread) == 0);
+    wait_count(&wifi_starts, 2);
+    wait_count(&wifi_maintenance_ends, 1);
+    assert(atomic_load(&wifi_maintenance_begins) == 1);
+    assert(atomic_load(&cell_starts) == 1);
+    assert(!atomic_load(&ap_recovery_required));
+
     atomic_store(&hold_task, true);
     assert(linkg_network_wifi_task_start(task, finished, NULL) == 0);
     assert(linkg_network_wifi_task_start(task, finished, NULL) == -EBUSY);

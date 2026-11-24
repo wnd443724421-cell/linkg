@@ -1454,7 +1454,11 @@ bool linkg_wifi_ap_recovery_required(void)
 {
     bool required;
 
-    pthread_mutex_lock(&g_wifi.lock);
+    // Manager不能因Wi-Fi状态锁被驱动操作占用而阻塞蜂窝维护。
+    if (pthread_mutex_trylock(&g_wifi.lock) != 0)
+    {
+        return false;
+    }
 
     required = g_wifi.lifecycle == LINKG_WIFI_LIFECYCLE_RUNNING &&
                g_wifi.role == LINKG_DEVICE_ROLE_AP &&
