@@ -21,6 +21,10 @@ int wifi_hostapd_update_config(const linkg_wifi_config_t *config);
 int wifi_hostapd_start(const linkg_wifi_config_t *config);
 int wifi_hostapd_stop(void);
 
+/****************************** 状态查询 ******************************/
+
+int wifi_hostapd_check_health(void);
+
 #ifdef __cplusplus
 }
 #endif

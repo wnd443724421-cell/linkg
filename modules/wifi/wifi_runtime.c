@@ -108,6 +108,12 @@ static int _wifi_runtime_apply_recovery_started(wifi_runtime_t *runtime, uint64_
 
     runtime->recovery_state = WIFI_RUNTIME_RECOVERY_RUNNING;
 
+    // STA服务重新启动前使旧关联失效，只接受新一轮真实连接事件。
+    if (runtime->role == LINKG_DEVICE_ROLE_STA)
+    {
+        runtime->link_state = WIFI_RUNTIME_LINK_DISCONNECTED;
+    }
+
     _wifi_runtime_commit(runtime, now_ms);
 
     return 0;

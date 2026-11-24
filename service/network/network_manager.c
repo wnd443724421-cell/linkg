@@ -11,9 +11,11 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "linkg_config.h"
 #include "linkg_log.h"
 #include "linkg_thread.h"
 #include "linkg_time.h"
+#include "linkg_wifi.h"
 
 #include "network_cellular.h"
 #include "network_internal.h"
@@ -822,6 +824,8 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
     bool cellular_restart;
     bool processed;
     bool task_active;
+    bool health_restart;
+    bool health_transaction;
     int  first_error;
     int  ret;
 
@@ -854,6 +858,17 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
 
         pthread_mutex_unlock(&g_network.lock);
 
+        health_restart = !task_active && !wifi_restart && wifi_enabled &&
+                         !g_network_manager.task_fault && linkg_wifi_ap_recovery_required();
+        health_transaction = false;
+        if (health_restart && linkg_config_transaction_begin() == 0)
+        {
+            // 等待配置事务完成，沿用原完整重启和Maintenance所有权。
+            health_transaction = true;
+            wifi_restart = true;
+            LINKG_LOG_WARN("NETWORK: AP service unhealthy, requesting Wi-Fi maintenance restart");
+        }
+
         processed = true;
         if (task_active)
         {
@@ -867,6 +882,11 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
                 _linkg_network_manager_maintenance_finish(&g_network.wifi_worker, LINKG_LINK_ACCESS_WIFI, wifi_enabled);
             }
         }
+        if (health_transaction)
+        {
+            linkg_config_transaction_end();
+        }
+
         /**
          * 旧Owner尚未回收时，保留未完成的Wi-Fi重启请求。
          * 不覆盖处理期间新到达的请求。

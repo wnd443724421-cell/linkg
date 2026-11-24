@@ -483,6 +483,35 @@ static int _wifi_hostapd_remove_ctrl(void)
     return -saved_errno;
 }
 
+/**
+ * @brief 检查受管hostapd进程和AP VAP状态，不修改无线配置。
+ */
+int wifi_hostapd_check_health(void)
+{
+    bool running;
+    bool enabled;
+    int  ret;
+
+    ret = linkg_os_process_running(&g_hostapd_pid, &running);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!running)
+    {
+        return -ECHILD;
+    }
+
+    ret = _wifi_hostapd_get_enabled(&enabled);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return enabled ? 0 : -ENETDOWN;
+}
+
 /****************************** 服务辅助 ******************************/
 
 /**

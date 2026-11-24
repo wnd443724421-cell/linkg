@@ -51,6 +51,9 @@ static linkg_wifi_context_t g_wifi =
     .role      = LINKG_DEVICE_ROLE_UNKNOWN            // 当前设备角色
 };
 
+// 仅由串行Owner访问，跨stop/deinit保留磁盘INI尚未生效的状态。
+static bool g_wifi_ini_reload_pending = false;
+
 /****************************** 上下文辅助 ******************************/
 
 /**
@@ -221,12 +224,9 @@ static int _linkg_wifi_apply_link_event(const wifi_runtime_event_t *event, uint6
 }
 
 /**
- * @brief 向运行状态提交一个内部恢复阶段事件。
+ * @brief 向运行状态提交一个内部恢复阶段事件，调用方持有g_wifi.lock。
  */
-static int _linkg_wifi_apply_recovery_event(wifi_runtime_event_type_t type,
-                                             wifi_runtime_recovery_reason_t reason,
-                                             int error,
-                                             uint64_t now_ms)
+static int _linkg_wifi_apply_recovery_event_locked(wifi_runtime_event_type_t type, wifi_runtime_recovery_reason_t reason, int error, uint64_t now_ms)
 {
     wifi_runtime_event_t event;
 
@@ -240,6 +240,35 @@ static int _linkg_wifi_apply_recovery_event(wifi_runtime_event_type_t type,
 }
 
 /**
+ * @brief 完成服务恢复；STA必须已建立事件监听及同步初始连接状态。
+ */
+static int _linkg_wifi_complete_recovery(uint64_t now_ms)
+{
+    int ret = 0;
+
+    if (g_wifi.role != LINKG_DEVICE_ROLE_STA || wifi_monitor_get_event_fd() < 0)
+    {
+        return 0;
+    }
+
+    pthread_mutex_lock(&g_wifi.lock);
+
+    if (g_wifi.runtime.recovery_state == WIFI_RUNTIME_RECOVERY_RUNNING)
+    {
+        ret = _linkg_wifi_apply_recovery_event_locked(WIFI_RUNTIME_EVENT_RECOVERY_SUCCEEDED,
+                                                     WIFI_RUNTIME_RECOVERY_REASON_NONE, 0, now_ms);
+        if (ret == 0)
+        {
+            WIFI_INFO("service recovery completed, role=%d", (int)g_wifi.role);
+        }
+    }
+
+    pthread_mutex_unlock(&g_wifi.lock);
+
+    return ret;
+}
+
+/**
  * @brief 执行STA服务恢复并重新建立连接监控。
  *
  * @note 本函数只能由network-wifi Owner线程调用；服务启动内部仍保留
@@ -247,33 +276,35 @@ static int _linkg_wifi_apply_recovery_event(wifi_runtime_event_type_t type,
  */
 static int _linkg_wifi_recover_sta_service(void)
 {
-    wifi_runtime_event_t initial_event;
-    uint64_t             now_ms;
-    int                  sync_ret;
-    int                  ret;
+    wifi_runtime_event_t           initial_event;
+    wifi_runtime_recovery_reason_t reason;
+    uint64_t                       now_ms;
+    int                            sync_ret;
+    int                            ret;
 
     if (g_wifi.role != LINKG_DEVICE_ROLE_STA)
     {
         return -EOPNOTSUPP;
     }
 
+    // 旧关联失效和Radio同步在同一状态锁内完成。
+    pthread_mutex_lock(&g_wifi.lock);
+
     if (!wifi_runtime_recovery_required(&g_wifi.runtime))
     {
+        pthread_mutex_unlock(&g_wifi.lock);
         return 0;
     }
 
     now_ms = linkg_time_elapsed_ms();
+    reason = g_wifi.runtime.recovery_reason;
 
-    ret = _linkg_wifi_apply_recovery_event(WIFI_RUNTIME_EVENT_RECOVERY_STARTED,
-                                            g_wifi.runtime.recovery_reason,
-                                            0,
-                                            now_ms);
+    ret = _linkg_wifi_apply_recovery_event_locked(WIFI_RUNTIME_EVENT_RECOVERY_STARTED, reason, 0, now_ms);
     if (ret != 0)
     {
+        pthread_mutex_unlock(&g_wifi.lock);
         return ret;
     }
-
-    pthread_mutex_lock(&g_wifi.lock);
 
     sync_ret = wifi_radio_sync_runtime(&g_wifi.runtime, now_ms);
 
@@ -281,19 +312,19 @@ static int _linkg_wifi_recover_sta_service(void)
 
     if (sync_ret != 0)
     {
-        WIFI_WARN("synchronize radio state before STA service recovery failed, error=%d",
+        WIFI_WARN("synchronize radio state before service recovery failed, error=%d",
                   sync_ret);
     }
 
     wifi_monitor_stop();
 
-    ret = wifi_service_ops_stop(LINKG_DEVICE_ROLE_STA);
+    ret = wifi_service_ops_stop(g_wifi.role);
     if (ret != 0)
     {
         goto fail;
     }
 
-    ret = wifi_service_ops_start(LINKG_DEVICE_ROLE_STA, &g_wifi.config);
+    ret = wifi_service_ops_start(g_wifi.role, &g_wifi.config);
     if (ret != 0)
     {
         goto fail;
@@ -304,26 +335,12 @@ static int _linkg_wifi_recover_sta_service(void)
     pthread_mutex_lock(&g_wifi.lock);
 
     wifi_radio_notify_reapplied(&g_wifi.runtime, now_ms);
-
-    pthread_mutex_unlock(&g_wifi.lock);
-
-    ret = _linkg_wifi_apply_recovery_event(WIFI_RUNTIME_EVENT_RECOVERY_SUCCEEDED,
-                                            WIFI_RUNTIME_RECOVERY_REASON_NONE,
-                                            0,
-                                            now_ms);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    pthread_mutex_lock(&g_wifi.lock);
-
     sync_ret = wifi_radio_sync_runtime(&g_wifi.runtime, now_ms);
 
     pthread_mutex_unlock(&g_wifi.lock);
     if (sync_ret != 0)
     {
-        WIFI_WARN("synchronize radio state after STA service recovery failed, error=%d",
+        WIFI_WARN("synchronize radio state after service recovery failed, error=%d",
                   sync_ret);
     }
 
@@ -332,7 +349,8 @@ static int _linkg_wifi_recover_sta_service(void)
     ret = wifi_monitor_start(now_ms, &initial_event);
     if (ret != 0)
     {
-        goto fail_after_recovery;
+        reason = WIFI_RUNTIME_RECOVERY_REASON_EVENT_CHANNEL;
+        goto fail;
     }
 
     if (initial_event.type == WIFI_RUNTIME_EVENT_STA_CONNECTED ||
@@ -341,40 +359,28 @@ static int _linkg_wifi_recover_sta_service(void)
         ret = _linkg_wifi_apply_link_event(&initial_event, now_ms);
         if (ret != 0)
         {
-            goto fail_after_recovery;
+            reason = WIFI_RUNTIME_RECOVERY_REASON_EVENT_CHANNEL;
+            goto fail;
         }
     }
 
-    WIFI_INFO("STA service recovery completed");
+    ret = _linkg_wifi_complete_recovery(linkg_time_elapsed_ms());
+    if (ret != 0)
+    {
+        goto fail;
+    }
 
     return 0;
 
 fail:
-    now_ms = linkg_time_elapsed_ms();
+    pthread_mutex_lock(&g_wifi.lock);
 
-    (void)_linkg_wifi_apply_recovery_event(WIFI_RUNTIME_EVENT_RECOVERY_FAILED,
-                                           g_wifi.runtime.recovery_reason,
-                                           ret,
-                                           now_ms);
+    g_wifi.runtime.recovery_reason = reason;
+    (void)_linkg_wifi_apply_recovery_event_locked(WIFI_RUNTIME_EVENT_RECOVERY_FAILED, reason, ret, linkg_time_elapsed_ms());
 
-    WIFI_ERROR("STA service recovery failed, error=%d", ret);
+    pthread_mutex_unlock(&g_wifi.lock);
 
-    return ret;
-
-fail_after_recovery:
-    /**
-     * 服务本身已经恢复成功，但运行状态重新接管失败。
-     * 将其重新标记为恢复失败，交由上层结束本轮Wi-Fi Owner运行。
-     */
-    g_wifi.runtime.recovery_state  = WIFI_RUNTIME_RECOVERY_RUNNING;
-    g_wifi.runtime.recovery_reason = WIFI_RUNTIME_RECOVERY_REASON_EVENT_CHANNEL;
-
-    (void)_linkg_wifi_apply_recovery_event(WIFI_RUNTIME_EVENT_RECOVERY_FAILED,
-                                           WIFI_RUNTIME_RECOVERY_REASON_EVENT_CHANNEL,
-                                           ret,
-                                           linkg_time_elapsed_ms());
-
-    WIFI_ERROR("resume STA runtime after service recovery failed, error=%d", ret);
+    WIFI_ERROR("service recovery failed, role=%d, reason=%d, error=%d", (int)g_wifi.role, (int)reason, ret);
 
     return ret;
 }
@@ -398,10 +404,32 @@ static int _linkg_wifi_handle_runtime_event(const wifi_runtime_event_t *event, u
             return _linkg_wifi_apply_link_event(event, now_ms);
 
         case WIFI_RUNTIME_EVENT_RECOVERY_REQUIRED:
+            pthread_mutex_lock(&g_wifi.lock);
+
+            // 监听重建期间再次确认异常，结束本轮恢复，不开放动态配置。
+            if (g_wifi.runtime.recovery_state == WIFI_RUNTIME_RECOVERY_RUNNING)
+            {
+                ret = event->error != 0 ? event->error : -EIO;
+                g_wifi.runtime.recovery_reason = event->recovery_reason;
+                (void)_linkg_wifi_apply_recovery_event_locked(WIFI_RUNTIME_EVENT_RECOVERY_FAILED,
+                                                             event->recovery_reason, ret, now_ms);
+                pthread_mutex_unlock(&g_wifi.lock);
+                WIFI_ERROR("service recovery monitor takeover failed, error=%d", ret);
+                return ret;
+            }
+
             ret = wifi_runtime_apply_event(&g_wifi.runtime, event, now_ms);
+            pthread_mutex_unlock(&g_wifi.lock);
+
             if (ret != 0)
             {
                 return ret;
+            }
+
+            // AP恢复由Network Manager协调Switch Maintenance后执行完整无线重启。
+            if (g_wifi.role == LINKG_DEVICE_ROLE_AP)
+            {
+                return 0;
             }
 
             return _linkg_wifi_recover_sta_service();
@@ -424,15 +452,12 @@ static uint64_t _linkg_wifi_get_runtime_deadline(void)
 
     pthread_mutex_lock(&g_wifi.lock);
 
-    radio_deadline = wifi_radio_get_deadline();
+    radio_deadline = (g_wifi.role == LINKG_DEVICE_ROLE_AP &&
+                      g_wifi.runtime.recovery_state != WIFI_RUNTIME_RECOVERY_IDLE)
+        ? 0U : wifi_radio_get_deadline();
 
     pthread_mutex_unlock(&g_wifi.lock);
 
-
-    if (g_wifi.role != LINKG_DEVICE_ROLE_STA)
-    {
-        return radio_deadline;
-    }
 
     monitor_deadline = wifi_monitor_get_deadline();
 
@@ -482,17 +507,12 @@ static int _linkg_wifi_get_poll_timeout(uint64_t now_ms)
 }
 
 /**
- * @brief 处理一次STA monitor定时任务。
+ * @brief 处理当前角色monitor定时任务。
  */
 static int _linkg_wifi_process_monitor(uint64_t now_ms)
 {
     wifi_runtime_event_t event;
     int                  ret;
-
-    if (g_wifi.role != LINKG_DEVICE_ROLE_STA)
-    {
-        return 0;
-    }
 
     _linkg_wifi_clear_runtime_event(&event);
 
@@ -502,7 +522,13 @@ static int _linkg_wifi_process_monitor(uint64_t now_ms)
         return ret;
     }
 
-    return _linkg_wifi_handle_runtime_event(&event, now_ms);
+    ret = _linkg_wifi_handle_runtime_event(&event, now_ms);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return _linkg_wifi_complete_recovery(linkg_time_elapsed_ms());
 }
 
 /**
@@ -513,6 +539,13 @@ static void _linkg_wifi_process_radio(uint64_t now_ms)
     int ret;
 
     pthread_mutex_lock(&g_wifi.lock);
+
+    if (g_wifi.role == LINKG_DEVICE_ROLE_AP &&
+        g_wifi.runtime.recovery_state != WIFI_RUNTIME_RECOVERY_IDLE)
+    {
+        pthread_mutex_unlock(&g_wifi.lock);
+        return;
+    }
 
     ret = wifi_radio_process(&g_wifi.runtime, now_ms);
 
@@ -711,10 +744,10 @@ static int _linkg_wifi_stop_runtime(void)
 
     first_error = 0;
 
+    wifi_monitor_stop();
+
     if (g_wifi.role == LINKG_DEVICE_ROLE_STA)
     {
-        wifi_monitor_stop();
-
         ret = wifi_service_ops_disconnect_sta();
         if (ret != 0 && ret != -ENOTCONN)
         {
@@ -772,11 +805,7 @@ static int _linkg_wifi_deinit_modules(void)
 
     first_error = 0;
 
-    if (g_wifi.role == LINKG_DEVICE_ROLE_STA)
-    {
-        wifi_monitor_deinit();
-    }
-
+    wifi_monitor_deinit();
     wifi_radio_deinit();
 
     ret = wifi_status_deinit();
@@ -872,13 +901,10 @@ int linkg_wifi_init(linkg_device_role_t role, uint8_t node_id, const linkg_wifi_
             goto fail;
         }
 
-        if (role == LINKG_DEVICE_ROLE_STA)
+        ret = wifi_monitor_init(role);
+        if (ret != 0)
         {
-            ret = wifi_monitor_init();
-            if (ret != 0)
-            {
-                goto fail;
-            }
+            goto fail;
         }
     }
 
@@ -1014,6 +1040,11 @@ int linkg_wifi_start(void)
     
     phase = "prepare_driver_ini";
     ret = wifi_driver_prepare_ini(hardware_id, g_wifi.config.wideband.work_mode, &ini_changed);
+    if (driver_was_loaded && (ret != 0 || ini_changed))
+    {
+        g_wifi_ini_reload_pending = true;
+    }
+
     if (ret != 0)
     {
         goto fail;
@@ -1028,13 +1059,16 @@ int linkg_wifi_start(void)
         ret = wifi_driver_update_ax_ini(g_wifi.role,
                                         g_wifi.config.wideband.wide_params.protocol_mode,
                                         &ax_changed);
+        if (driver_was_loaded && (ret != 0 || ax_changed))
+        {
+            g_wifi_ini_reload_pending = true;
+        }
+
         if (ret != 0)
         {
             goto fail;
         }
 
-        /* 链接切换或文件内容变化，都需要已加载驱动重新读取INI。 */
-        ini_changed = ini_changed || ax_changed;
     }
 
     phase = "load_driver";
@@ -1058,7 +1092,7 @@ int linkg_wifi_start(void)
         goto fail;
     }
 
-    if (driver_was_loaded && ini_changed)
+    if (driver_was_loaded && g_wifi_ini_reload_pending)
     {
         phase = "reload_driver_ini";
         ret = wifi_driver_reload_ini(g_wifi.role);
@@ -1067,6 +1101,9 @@ int linkg_wifi_start(void)
             goto fail;
         }
     }
+
+    // 首次加载或reload成功后才确认磁盘INI已经生效。
+    g_wifi_ini_reload_pending = false;
 
     phase = "interface_up";
     ret = linkg_network_interface_set_up(WIFI_PLATFORM_INTERFACE_NAME, true);
@@ -1113,23 +1150,20 @@ int linkg_wifi_start(void)
 
     _linkg_wifi_clear_runtime_event(&initial_event);
 
-    if (g_wifi.role == LINKG_DEVICE_ROLE_STA)
+    phase = "start_monitor";
+    ret = wifi_monitor_start(now_ms, &initial_event);
+    if (ret != 0)
     {
-        phase = "start_monitor";
-        ret = wifi_monitor_start(now_ms, &initial_event);
+        goto fail;
+    }
+
+    if (initial_event.type == WIFI_RUNTIME_EVENT_STA_CONNECTED ||
+        initial_event.type == WIFI_RUNTIME_EVENT_STA_DISCONNECTED)
+    {
+        ret = wifi_runtime_apply_event(&g_wifi.runtime, &initial_event, now_ms);
         if (ret != 0)
         {
             goto fail;
-        }
-
-        if (initial_event.type == WIFI_RUNTIME_EVENT_STA_CONNECTED ||
-            initial_event.type == WIFI_RUNTIME_EVENT_STA_DISCONNECTED)
-        {
-            ret = wifi_runtime_apply_event(&g_wifi.runtime, &initial_event, now_ms);
-            if (ret != 0)
-            {
-                goto fail;
-            }
         }
     }
 
@@ -1370,6 +1404,12 @@ int linkg_wifi_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate)
         goto out;
     }
 
+    if (g_wifi.runtime.recovery_state != WIFI_RUNTIME_RECOVERY_IDLE)
+    {
+        ret = -EBUSY;
+        goto out;
+    }
+
     old_mode = g_wifi.config.wideband.narrow_params.mode;
     old_rate = g_wifi.config.wideband.narrow_params.manual_rate;
 
@@ -1406,6 +1446,27 @@ out:
 }
 
 /****************************** 状态读取 ******************************/
+
+/**
+ * @brief 查询AP是否已确认服务故障，恢复生命周期由Network Manager负责。
+ */
+bool linkg_wifi_ap_recovery_required(void)
+{
+    bool required;
+
+    pthread_mutex_lock(&g_wifi.lock);
+
+    required = g_wifi.lifecycle == LINKG_WIFI_LIFECYCLE_RUNNING &&
+               g_wifi.role == LINKG_DEVICE_ROLE_AP &&
+               g_wifi.config.enabled &&
+               g_wifi.runtime.recovery_state == WIFI_RUNTIME_RECOVERY_REQUIRED &&
+               g_wifi.runtime.recovery_reason == WIFI_RUNTIME_RECOVERY_REASON_HOSTAPD_UNHEALTHY;
+
+    pthread_mutex_unlock(&g_wifi.lock);
+
+    return required;
+}
+
 
 /**
  * @brief 获取最新有效的统一Wi-Fi状态快照。

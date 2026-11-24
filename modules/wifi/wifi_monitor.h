@@ -1,6 +1,6 @@
 /**
  * @file wifi_monitor.h
- * @brief LinkG Wi-Fi STA连接状态机接口
+ * @brief LinkG Wi-Fi AP健康检查及STA连接状态机接口
  */
 
 #ifndef WIFI_MONITOR_H
@@ -16,7 +16,7 @@ extern "C" {
 
 /****************************** 生命周期 ******************************/
 
-int  wifi_monitor_init(void);
+int  wifi_monitor_init(linkg_device_role_t role);
 int  wifi_monitor_start(uint64_t now_ms, wifi_runtime_event_t *event);
 void wifi_monitor_stop(void);
 void wifi_monitor_deinit(void);

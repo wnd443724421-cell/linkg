@@ -33,7 +33,8 @@ int linkg_wifi_set_narrow_config(linkg_wifi_narrow_mode_t mode, uint16_t rate);
 
 /****************************** 状态读取 ******************************/
 
-int linkg_wifi_get_status(linkg_wifi_status_snapshot_t *snapshot);
+int  linkg_wifi_get_status(linkg_wifi_status_snapshot_t *snapshot);
+bool linkg_wifi_ap_recovery_required(void);
 
 #ifdef __cplusplus
 }

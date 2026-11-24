@@ -1,6 +1,6 @@
 /**
  * @file wifi_monitor.c
- * @brief LinkG Wi-Fi STA连接状态机实现
+ * @brief LinkG Wi-Fi AP健康检查及STA连接状态机实现
  * @author Dawn
  * @version 5.0.0
  * @date 2026-08-26
@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "wifi_hostapd.h"
 #include "wifi_internal.h"
 #include "wifi_status.h"
 #include "wifi_status_query.h"
@@ -29,6 +30,8 @@
 #define WIFI_MONITOR_FREQUENCY_CAPTURE_MS    1000U   // 连接后延迟采集工作频率时间
 #define WIFI_MONITOR_WPA_HEALTH_INTERVAL_MS  3000U   // WPA服务健康检查周期
 #define WIFI_MONITOR_LISTENER_FAILURE_LIMIT  3U      // 连续事件监听恢复失败阈值
+#define WIFI_MONITOR_AP_HEALTH_INTERVAL_MS    3000U   // AP服务健康检查周期
+#define WIFI_MONITOR_AP_FAILURE_LIMIT         2U      // AP连续健康检查失败阈值
 
 /****************************** 内部状态 ******************************/
 
@@ -43,16 +46,19 @@ typedef enum
 
 typedef struct
 {
+    linkg_device_role_t        role;                      // 当前监控角色
     wifi_wpa_event_listener_t *listener;                  // WPA事件监听器
     wifi_monitor_sta_state_t   sta_state;                 // 当前STA连接监控状态
     uint64_t                   state_deadline_ms;         // 当前状态下一动作期限
     uint64_t                   connected_event_ms;        // 最近CONNECTED事件时间
     uint64_t                   frequency_capture_ms;      // 下一次工作频率采集时间
     uint64_t                   wpa_health_check_ms;       // 下一次WPA健康检查时间
+    uint64_t                   ap_health_check_ms;        // 下一次AP健康检查时间
     uint32_t                   last_frequency_mhz;        // 最近一次成功连接频率
     uint8_t                    targeted_scan_count;       // 当前连续定向扫描次数
     uint8_t                    scan_failure_count;        // 当前连续扫描失败次数
     uint8_t                    listener_failure_count;    // 连续事件监听恢复失败次数
+    uint8_t                    ap_failure_count;          // 连续AP健康检查失败次数
     int                        listener_fd;               // WPA事件监听描述符
     bool                       frequency_capture_pending; // 是否等待采集连接频率
     bool                       initialized;               // 模块是否已经初始化
@@ -176,6 +182,8 @@ static void _wifi_monitor_reset_runtime(void)
     g_wifi_monitor.connected_event_ms         = 0U;
     g_wifi_monitor.frequency_capture_ms       = 0U;
     g_wifi_monitor.wpa_health_check_ms        = 0U;
+    g_wifi_monitor.ap_health_check_ms         = 0U;
+    g_wifi_monitor.ap_failure_count          = 0U;
     g_wifi_monitor.last_frequency_mhz         = 0U;
     g_wifi_monitor.targeted_scan_count        = 0U;
     g_wifi_monitor.scan_failure_count         = 0U;
@@ -711,15 +719,64 @@ static void _wifi_monitor_process_state_deadline(uint64_t now_ms, wifi_runtime_e
     }
 }
 
+/****************************** AP服务维护 ******************************/
+
+/**
+ * @brief 周期检查AP服务，确认退出或连续失败时请求Owner恢复。
+ */
+static void _wifi_monitor_process_ap_health(uint64_t now_ms, wifi_runtime_event_t *event)
+{
+    int ret;
+
+    if (g_wifi_monitor.ap_health_check_ms == 0U ||
+        now_ms < g_wifi_monitor.ap_health_check_ms)
+    {
+        return;
+    }
+
+    g_wifi_monitor.ap_health_check_ms = now_ms + WIFI_MONITOR_AP_HEALTH_INTERVAL_MS;
+
+    ret = wifi_hostapd_check_health();
+    if (ret == 0)
+    {
+        g_wifi_monitor.ap_failure_count = 0U;
+        return;
+    }
+
+    if (g_wifi_monitor.ap_failure_count < WIFI_MONITOR_AP_FAILURE_LIMIT)
+    {
+        g_wifi_monitor.ap_failure_count++;
+    }
+
+    // 进程确认退出无需等待第二轮；控制接口及VAP异常要求连续确认。
+    if (ret != -ECHILD && g_wifi_monitor.ap_failure_count < WIFI_MONITOR_AP_FAILURE_LIMIT)
+    {
+        WIFI_WARN("AP health check failed, error=%d, consecutive=%u",
+                  ret, (unsigned int)g_wifi_monitor.ap_failure_count);
+        return;
+    }
+
+    g_wifi_monitor.ap_health_check_ms = 0U;
+
+    WIFI_WARN("AP service unhealthy, error=%d, consecutive=%u, recovery=requested",
+              ret, (unsigned int)g_wifi_monitor.ap_failure_count);
+    _wifi_monitor_set_recovery_event(event, WIFI_RUNTIME_RECOVERY_REASON_HOSTAPD_UNHEALTHY, ret);
+}
+
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 初始化STA连接监控状态机。
+ * @brief 初始化AP健康检查或STA连接监控状态机。
  *
  * @note 本模块不创建线程，只能由network-wifi Owner线程调用。
  */
-int wifi_monitor_init(void)
+int wifi_monitor_init(linkg_device_role_t role)
 {
+    if (role != LINKG_DEVICE_ROLE_AP && role != LINKG_DEVICE_ROLE_STA)
+    {
+        return -EINVAL;
+    }
+
     if (g_wifi_monitor.initialized)
     {
         return -EALREADY;
@@ -727,6 +784,7 @@ int wifi_monitor_init(void)
 
     memset(&g_wifi_monitor, 0, sizeof(g_wifi_monitor));
 
+    g_wifi_monitor.role        = role;
     g_wifi_monitor.listener_fd = -1;
     g_wifi_monitor.initialized = true;
 
@@ -734,7 +792,7 @@ int wifi_monitor_init(void)
 }
 
 /**
- * @brief 启动STA连接监控并建立WPA事件顺序屏障。
+ * @brief 启动AP健康检查或STA连接监控及WPA事件顺序屏障。
  */
 int wifi_monitor_start(uint64_t now_ms, wifi_runtime_event_t *event)
 {
@@ -759,7 +817,14 @@ int wifi_monitor_start(uint64_t now_ms, wifi_runtime_event_t *event)
     _wifi_monitor_clear_event(event);
     _wifi_monitor_reset_runtime();
 
-    g_wifi_monitor.started             = true;
+    g_wifi_monitor.started = true;
+
+    if (g_wifi_monitor.role == LINKG_DEVICE_ROLE_AP)
+    {
+        g_wifi_monitor.ap_health_check_ms = now_ms + WIFI_MONITOR_AP_HEALTH_INTERVAL_MS;
+        return 0;
+    }
+
     g_wifi_monitor.wpa_health_check_ms = now_ms + WIFI_MONITOR_WPA_HEALTH_INTERVAL_MS;
 
     ret = _wifi_monitor_open_listener(&link_state);
@@ -788,7 +853,7 @@ int wifi_monitor_start(uint64_t now_ms, wifi_runtime_event_t *event)
 }
 
 /**
- * @brief 停止STA连接状态机并关闭WPA事件监听器。
+ * @brief 停止AP健康检查或STA连接状态机并关闭WPA事件监听器。
  */
 void wifi_monitor_stop(void)
 {
@@ -804,7 +869,7 @@ void wifi_monitor_stop(void)
 }
 
 /**
- * @brief 释放STA连接监控状态机。
+ * @brief 释放Wi-Fi监控状态机。
  */
 void wifi_monitor_deinit(void)
 {
@@ -905,7 +970,7 @@ int wifi_monitor_handle_event_channel_error(uint64_t now_ms, wifi_runtime_event_
 /****************************** 定时处理 ******************************/
 
 /**
- * @brief 获取STA连接状态机的最近到期期限。
+ * @brief 获取当前角色监控的最近到期期限。
  */
 uint64_t wifi_monitor_get_deadline(void)
 {
@@ -916,13 +981,18 @@ uint64_t wifi_monitor_get_deadline(void)
         return 0U;
     }
 
+    if (g_wifi_monitor.role == LINKG_DEVICE_ROLE_AP)
+    {
+        return g_wifi_monitor.ap_health_check_ms;
+    }
+
     deadline = _wifi_monitor_min_deadline(g_wifi_monitor.state_deadline_ms, g_wifi_monitor.frequency_capture_ms);
 
     return _wifi_monitor_min_deadline(deadline, g_wifi_monitor.wpa_health_check_ms);
 }
 
 /**
- * @brief 处理所有已经到期的STA连接维护动作。
+ * @brief 处理当前角色已到期的监控任务。
  */
 int wifi_monitor_process(uint64_t now_ms, wifi_runtime_event_t *event)
 {
@@ -937,6 +1007,12 @@ int wifi_monitor_process(uint64_t now_ms, wifi_runtime_event_t *event)
     }
 
     _wifi_monitor_clear_event(event);
+
+    if (g_wifi_monitor.role == LINKG_DEVICE_ROLE_AP)
+    {
+        _wifi_monitor_process_ap_health(now_ms, event);
+        return 0;
+    }
 
     if (g_wifi_monitor.sta_state == WIFI_MONITOR_STA_RECOVERY_WAIT)
     {

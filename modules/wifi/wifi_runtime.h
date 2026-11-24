@@ -40,7 +40,8 @@ typedef enum
     WIFI_RUNTIME_RECOVERY_REASON_WPA_UNRESPONSIVE, // wpa_supplicant连续健康检查失败
     WIFI_RUNTIME_RECOVERY_REASON_EVENT_CHANNEL,    // WPA事件监听通道不可恢复
     WIFI_RUNTIME_RECOVERY_REASON_SCAN_STALLED,     // STA扫描流程连续异常
-    WIFI_RUNTIME_RECOVERY_REASON_RADIO_CONTROL     // 无线参数控制连续失败
+    WIFI_RUNTIME_RECOVERY_REASON_RADIO_CONTROL,    // 无线参数控制连续失败
+    WIFI_RUNTIME_RECOVERY_REASON_HOSTAPD_UNHEALTHY  // hostapd退出或AP VAP健康检查失败
 } wifi_runtime_recovery_reason_t;
 
 /****************************** 运行事件 ******************************/
