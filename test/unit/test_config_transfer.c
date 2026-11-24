@@ -27,7 +27,10 @@
 
 /****************************** 测试状态 ******************************/
 
-static char g_test_file[256];        // 所有配置文件IO重定向到临时目录
+static char g_test_file[256];        // 用户配置文件IO重定向到临时目录
+static char g_test_factory[256];     // 独立出厂配置文件
+static int  g_test_read_fail;        // 单次用户文件读取错误
+static unsigned int g_test_factory_reads; // 出厂文件读取次数
 static int  g_test_write_fail = 0;   // 单次写失败：1写前，2原子替换后
 static char g_test_instance[64] = "transfer-test-instance"; // 测试服务代次
 static int  g_test_restart_failures;
@@ -61,7 +64,22 @@ int __wrap_linkg_file_write_all_atomic(const char *path, const void *data, size_
  */
 int __wrap_linkg_file_read_all(const char *path, size_t max_length, char **data, size_t *length)
 {
-    (void)path;
+    if (strcmp(path, LINKG_CONFIG_FACTORY_PATH) == 0)
+    {
+        g_test_factory_reads++;
+        return __real_linkg_file_read_all(g_test_factory, max_length, data, length);
+    }
+
+    if (g_test_read_fail != 0)
+    {
+        int ret = g_test_read_fail;
+
+        g_test_read_fail = 0;
+        *data = NULL;
+        *length = 0U;
+        return ret;
+    }
+
     return __real_linkg_file_read_all(g_test_file, max_length, data, length);
 }
 
@@ -199,6 +217,78 @@ static void fixture(linkg_config_t *config)
     config->uart.items[0].port_config.baudrate = 100000;
     config->uart.items[0].port_config.stop_bits = 2;
     config->uart.items[0].port_config.parity = 'e';
+}
+
+/**
+ * @brief 验证用户读取异常不覆盖原文件，缺失及内容损坏仍可恢复出厂。
+ */
+static void test_load_recovery(void)
+{
+    const int errors[] = {-EIO, -EACCES, -EINVAL, -EFBIG, -EOVERFLOW, -ENOMEM};
+    const char *invalid[] = {"", "{", "{}", "[]"};
+    linkg_config_t user;
+    linkg_config_t factory;
+    linkg_config_t current;
+    cJSON         *root;
+    char          *text;
+    char          *original;
+    char          *actual;
+    size_t         original_length;
+    size_t         actual_length;
+    size_t         index;
+    unsigned int   reads;
+
+    fixture(&user);
+    factory = user;
+    factory.network.node_id = 21U;
+    TEST_CHECK_EQ(linkg_config_replace(&user), CONFIG_OK);
+    TEST_CHECK_EQ(linkg_config_save(&user), CONFIG_OK);
+    TEST_CHECK_EQ(linkg_config_to_json(&factory, &root), CONFIG_OK);
+    TEST_CHECK_EQ(linkg_json_print_formatted(root, &text), 0);
+    cJSON_Delete(root);
+    TEST_CHECK_EQ(__real_linkg_file_write_all_atomic(g_test_factory, text, strlen(text), 0600), 0);
+    linkg_json_string_free(text);
+
+    TEST_CHECK_EQ(__real_linkg_file_read_all(g_test_file, 64U * 1024U, &original, &original_length), 0);
+    reads = g_test_factory_reads;
+    for (index = 0U; index < sizeof(errors) / sizeof(errors[0]); index++)
+    {
+        g_test_read_fail = errors[index];
+        TEST_CHECK(linkg_config_load() != CONFIG_OK);
+        TEST_CHECK_EQ(g_test_factory_reads, reads);
+        TEST_CHECK_EQ(linkg_config_create_snapshot(&current), CONFIG_OK);
+        TEST_CHECK_EQ(current.network.node_id, user.network.node_id);
+        TEST_CHECK_EQ(__real_linkg_file_read_all(g_test_file, 64U * 1024U, &actual, &actual_length), 0);
+        TEST_CHECK_EQ(actual_length, original_length);
+        TEST_CHECK(memcmp(actual, original, original_length) == 0);
+        free(actual);
+    }
+    free(original);
+
+    TEST_CHECK_EQ(linkg_config_load(), CONFIG_OK);
+    TEST_CHECK_EQ(g_test_factory_reads, reads);
+    TEST_CHECK_EQ(unlink(g_test_file), 0);
+    TEST_CHECK_EQ(linkg_config_load(), CONFIG_OK);
+    reads++;
+    TEST_CHECK_EQ(g_test_factory_reads, reads);
+    TEST_CHECK_EQ(linkg_config_create_snapshot(&current), CONFIG_OK);
+    TEST_CHECK_EQ(current.network.node_id, factory.network.node_id);
+
+    for (index = 0U; index < sizeof(invalid) / sizeof(invalid[0]); index++)
+    {
+        TEST_CHECK_EQ(__real_linkg_file_write_all_atomic(g_test_file, invalid[index], strlen(invalid[index]), 0600), 0);
+        TEST_CHECK_EQ(linkg_config_load(), CONFIG_OK);
+        reads++;
+        TEST_CHECK_EQ(g_test_factory_reads, reads);
+        TEST_CHECK_EQ(linkg_config_create_snapshot(&current), CONFIG_OK);
+        TEST_CHECK_EQ(current.network.node_id, factory.network.node_id);
+    }
+
+    TEST_CHECK_EQ(linkg_config_save(&user), CONFIG_OK);
+    TEST_CHECK_EQ(linkg_config_load(), CONFIG_OK);
+    TEST_CHECK_EQ(linkg_config_create_snapshot(&current), CONFIG_OK);
+    TEST_CHECK_EQ(current.network.node_id, user.network.node_id);
+    linkg_config_deinit();
 }
 
 /**
@@ -527,6 +617,7 @@ int main(int argc, char **argv)
         return 1;
     }
     snprintf(g_test_file, sizeof(g_test_file), "%s/user.json", directory);
+    snprintf(g_test_factory, sizeof(g_test_factory), "%s/factory.json", directory);
     if (argc == 2 && strcmp(argv[1], "--gateway") == 0)
     {
         ret = gateway();
@@ -535,6 +626,7 @@ int main(int argc, char **argv)
         rmdir(directory);
         return ret;
     }
+    TEST_RUN(test_load_recovery);
     TEST_RUN(test_roundtrip);
     TEST_RUN(test_invalid_import);
     TEST_RUN(test_commit_and_reload);
@@ -542,6 +634,7 @@ int main(int argc, char **argv)
     TEST_RUN(test_uart_transaction_reservation);
     linkg_config_deinit();
     unlink(g_test_file);
+    unlink(g_test_factory);
     rmdir(directory);
     ret = linkg_test_finish("config_transfer");
     return ret;

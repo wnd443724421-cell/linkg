@@ -29,6 +29,14 @@
 
 /****************************** 内部类型 ******************************/
 
+typedef enum
+{
+    CONFIG_LOAD_RESULT_OK = 0,  // 配置读取及校验成功
+    CONFIG_LOAD_RESULT_MISSING, // 文件不存在
+    CONFIG_LOAD_RESULT_INVALID, // 文件已读取但内容无效
+    CONFIG_LOAD_RESULT_ERROR    // 系统或内部错误
+} config_load_result_t;
+
 typedef struct
 {
     pthread_rwlock_t lock;              // 全局配置读写锁
@@ -207,14 +215,19 @@ static int _config_error_from_file(int error)
  * @brief 读取、解析并校验指定配置文件。
  *
  * 成功后由调用方持有content，需要使用free释放。
- * 失败时content保持NULL，不修改调用方的有效配置。
+ * 失败时content保持NULL，不修改调用方的有效配置；result可为NULL。
  */
-static int _config_read_validated_file(const char *path, linkg_config_t *config, char **content, size_t *length)
+static int _config_read_validated_file(const char *path, linkg_config_t *config, char **content, size_t *length, config_load_result_t *result)
 {
     cJSON  *root;
     char   *buffer;
     size_t  file_length;
     int     ret;
+
+    if (result != NULL)
+    {
+        *result = CONFIG_LOAD_RESULT_ERROR;
+    }
 
     if (path == NULL || config == NULL || content == NULL || length == NULL)
     {
@@ -231,12 +244,26 @@ static int _config_read_validated_file(const char *path, linkg_config_t *config,
     ret = linkg_file_read_all(path, LINKG_CONFIG_FILE_MAX, &buffer, &file_length);
     if (ret != 0)
     {
+        if (result != NULL && ret == -ENOENT)
+        {
+            *result = CONFIG_LOAD_RESULT_MISSING;
+        }
+        else if (ret != -ENOENT)
+        {
+            LINKG_LOG_ERROR("CONFIG: read configuration file failed, path=%s, error=%d", path, ret);
+        }
+
         return _config_error_from_file(ret);
     }
 
     if (file_length == 0U || memchr(buffer, '\0', file_length) != NULL)
     {
         free(buffer);
+        if (result != NULL)
+        {
+            *result = CONFIG_LOAD_RESULT_INVALID;
+        }
+
         return CONFIG_ERR_PARSE;
     }
 
@@ -244,7 +271,13 @@ static int _config_read_validated_file(const char *path, linkg_config_t *config,
     if (ret != LINKG_JSON_OK)
     {
         free(buffer);
-        return config_json_parse_error(ret);
+        ret = config_json_parse_error(ret);
+        if (result != NULL && (ret == CONFIG_ERR_PARSE || ret == CONFIG_ERR_VALIDATE))
+        {
+            *result = CONFIG_LOAD_RESULT_INVALID;
+        }
+
+        return ret;
     }
 
     ret = linkg_config_parse_json(root, config);
@@ -254,11 +287,20 @@ static int _config_read_validated_file(const char *path, linkg_config_t *config,
     if (ret != CONFIG_OK)
     {
         free(buffer);
+        if (result != NULL && (ret == CONFIG_ERR_PARSE || ret == CONFIG_ERR_VALIDATE))
+        {
+            *result = CONFIG_LOAD_RESULT_INVALID;
+        }
+
         return ret;
     }
 
     *content = buffer;
     *length  = file_length;
+    if (result != NULL)
+    {
+        *result = CONFIG_LOAD_RESULT_OK;
+    }
 
     return CONFIG_OK;
 }
@@ -281,7 +323,7 @@ static int _config_restore_factory_file(linkg_config_t *restored)
     content = NULL;
     length  = 0U;
 
-    ret = _config_read_validated_file(LINKG_CONFIG_FACTORY_PATH, &temp, &content, &length);
+    ret = _config_read_validated_file(LINKG_CONFIG_FACTORY_PATH, &temp, &content, &length, NULL);
     if (ret != CONFIG_OK)
     {
         return ret;
@@ -310,30 +352,34 @@ static int _config_restore_factory_file(linkg_config_t *restored)
 /****************************** 生命周期 ******************************/
 
 /**
- * @brief 加载用户配置，加载失败时自动恢复出厂配置。
+ * @brief 加载用户配置，仅文件缺失或内容无效时自动恢复出厂配置。
  */
 int linkg_config_load(void)
 {
-    linkg_config_t config;
-    char          *content;
-    size_t         length;
-    int            ret;
+    linkg_config_t       config;
+    config_load_result_t result;
+    char                *content;
+    size_t               length;
+    int                  ret;
 
     content = NULL;
     length  = 0U;
 
-    ret = _config_read_validated_file(LINKG_CONFIG_USER_PATH, &config, &content, &length);
+    ret = _config_read_validated_file(LINKG_CONFIG_USER_PATH, &config, &content, &length, &result);
 
     free(content);
 
     if (ret != CONFIG_OK)
     {
-        if (ret == CONFIG_ERR_MEMORY)
+        // 文件读取异常不代表配置损坏，不能自动覆盖用户文件。
+        if (result != CONFIG_LOAD_RESULT_MISSING && result != CONFIG_LOAD_RESULT_INVALID)
         {
+            LINKG_LOG_ERROR("CONFIG: user configuration load failed, error=%d, preserving user file", ret);
             return ret;
         }
 
-        LINKG_LOG_INFO("CONFIG: user configuration invalid, error=%d, restoring factory defaults", ret);
+        LINKG_LOG_INFO("CONFIG: user configuration %s, error=%d, restoring factory defaults",
+                       result == CONFIG_LOAD_RESULT_MISSING ? "missing" : "invalid", ret);
 
         ret = _config_restore_factory_file(&config);
         if (ret != CONFIG_OK)
