@@ -668,6 +668,16 @@ void ini_file_commit_conf_update(ini_section_type_enum type, const struct ini_co
     }
 }
 
+// HI1105_INI_FIX_BEGIN [2026-11-22] 加载失败后清除已加载版本，确保再次读取INI
+void ini_file_invalidate_conf_update(ini_section_type_enum type)
+{
+    if (type < INI_SECTION_BUTT)
+    {
+        g_ini_conf_version[type] = (struct ini_conf_version){0};
+    }
+}
+// HI1105_INI_FIX_END [2026-11-22]
+
 /*
  * 函 数 名  : ini_file_check_conf_update
  * 功能描述 : 保留原厂平台接口，通过版本检查后立即提交缓存以兼容旧调用方。
@@ -766,7 +776,7 @@ int ini_cfg_init(void)
         return INI_FAILED;
     }
     g_st_board_info.ini_file_name = g_ini_file_name;
-    
+
     /* Note:"symbol snprintf()"has arg.count conflict(5 vs 4) */
     if (snprintf_s(g_ini_conn_file_name, sizeof(g_ini_conn_file_name),
                    sizeof(g_ini_conn_file_name) - 1, "%s", CUST_PATH_INI_CONN) < 0) {
@@ -817,6 +827,9 @@ void gt_customize_h2d(void)
 oal_module_symbol(ini_file_check_conf_update);
 oal_module_symbol(ini_file_prepare_conf_update);
 oal_module_symbol(ini_file_commit_conf_update);
+// HI1105_INI_FIX_BEGIN [2026-11-22] 导出配置版本失效接口
+oal_module_symbol(ini_file_invalidate_conf_update);
+// HI1105_INI_FIX_END [2026-11-22]
 oal_module_symbol(get_cust_conf_string);
 oal_module_symbol(get_cust_conf_int32);
 #ifdef HISI_NVRAM_SUPPORT

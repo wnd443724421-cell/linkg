@@ -290,13 +290,13 @@
 #define ini_cfg_exit    plat_oneimage_rename(ini_cfg_exit)
 #define ini_cfg_init    plat_oneimage_rename(ini_cfg_init)
 #define ini_file_check_conf_update    plat_oneimage_rename(ini_file_check_conf_update)
-
 /*
  * 修订日期 : 2026年11月22日
  * 修改说明 : 为新增的 INI 文件版本检测与提交接口添加 oneimage 符号重命名。
  */
 #define ini_file_prepare_conf_update    plat_oneimage_rename(ini_file_prepare_conf_update)
 #define ini_file_commit_conf_update    plat_oneimage_rename(ini_file_commit_conf_update)
+#define ini_file_invalidate_conf_update    plat_oneimage_rename(ini_file_invalidate_conf_update)
 
 #define get_ini_file_name    plat_oneimage_rename(get_ini_file_name)
 #define init_dev_excp_handler    plat_oneimage_rename(init_dev_excp_handler)

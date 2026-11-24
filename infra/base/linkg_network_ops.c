@@ -999,45 +999,6 @@ int linkg_network_interface_set_tx_queue_length(const char *ifname, uint32_t que
     return _network_control_socket_close(fd, ret);
 }
 
-/**
- * @brief 设置网络接口MAC地址。
- */
-int linkg_network_interface_set_mac(const char *ifname, const uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
-{
-    struct ifreq ifr;
-    int fd;
-    int ret;
-
-    if (!_network_interface_name_valid(ifname) || mac == NULL)
-    {
-        return -EINVAL;
-    }
-
-    if ((mac[0] & 0x01U) != 0U)
-    {
-        return -EINVAL;
-    }
-
-    ret = _network_ifreq_init(ifname, &ifr);
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    fd = _network_control_socket_open();
-    if (fd < 0)
-    {
-        return fd;
-    }
-
-    ifr.ifr_hwaddr.sa_family = ARPHRD_ETHER;
-    memcpy(ifr.ifr_hwaddr.sa_data, mac, LINKG_NETWORK_MAC_ADDRESS_LENGTH);
-
-    ret = _network_interface_ioctl(fd, SIOCSIFHWADDR, &ifr);
-
-    return _network_control_socket_close(fd, ret);
-}
-
 int linkg_network_interface_get_mac(const char *ifname, uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH])
 {
     struct ifreq ifr;

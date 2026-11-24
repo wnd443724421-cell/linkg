@@ -170,6 +170,7 @@ int32_t ini_file_check_conf_update(ini_section_type_enum type);
 // HI1105_INI_FIX_BEGIN [2026-11-22] 新增两阶段文件版本检查与提交接口
 int32_t ini_file_prepare_conf_update(ini_section_type_enum type, struct ini_conf_version *version);
 void    ini_file_commit_conf_update(ini_section_type_enum type, const struct ini_conf_version *version);
+void    ini_file_invalidate_conf_update(ini_section_type_enum type);
 // HI1105_INI_FIX_END [2026-11-22]
 
 char *  get_host_ini_path(uint32_t chip_id);

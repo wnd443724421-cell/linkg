@@ -107,12 +107,8 @@ OAL_STATIC int32_t hwifi_hcc_custom_ini_data_buf(uint16_t us_syn_id)
 }
 
 /*
- * 函 数 名  : hwifi_custom_host_read_cfg_init_mp13
- * 功能描述 : 初始化 MP13 主机定制化配置，并按文件版本决定是否重读。
- *            DTS、NV 和普通 INI 初始化函数均返回成功时，才提交版本缓存。
- *            保留原驱动部分配置失败仍继续后续流程的处理方式。
- * 返回值   : OAL_SUCC 或 OAL_ERR_CODE_INVALID_CONFIG
- * 修订日期 : 2026年11月22日（注释及排版整理）
+ * 函 数 名  : custom_host_read_cfg_init
+ * 功能描述  : 首次读取定制化配置文件总入口
  */
 uint32_t hwifi_custom_host_read_cfg_init_mp13(void)
 {
@@ -133,7 +129,15 @@ uint32_t hwifi_custom_host_read_cfg_init_mp13(void)
     l_ini_read_ret = ini_file_prepare_conf_update(INI_SECTION_WIFI, &version);
     if (l_ini_read_ret == INI_FILE_TIMESPEC_RECONFIG || l_nv_read_ret) {
         oam_warning_log0(0, OAM_SF_CFG, "hwifi_custom_host_read_cfg_init config is updated");
-        hwifi_config_init(CUS_TAG_PRO_LINE_INI);
+        // HI1105_INI_FIX_BEGIN [2026-11-22] 产线配置失败时不提交新INI版本
+        if (hwifi_config_init(CUS_TAG_PRO_LINE_INI) != INI_SUCC)
+        {
+            loaded = false;
+            // 校准失败可能已清零主机参数，即使INI版本未变也必须重新读取。
+            ini_file_invalidate_conf_update(INI_SECTION_WIFI);
+            oam_error_log0(0, OAM_SF_CFG, "hwifi_custom_host_read_cfg_init PRO_LINE_INI fail");
+        }
+        // HI1105_INI_FIX_END [2026-11-22]
     }
 
     if (l_ini_read_ret == INI_FILE_TIMESPEC_UNRECONFIG) {
@@ -162,6 +166,11 @@ uint32_t hwifi_custom_host_read_cfg_init_mp13(void)
 
     if (loaded) {
         ini_file_commit_conf_update(INI_SECTION_WIFI, &version);
+    } else {
+        // HI1105_INI_FIX_BEGIN [2026-11-22] 失败后失效旧缓存，保证回切上一版时仍重新读取
+        ini_file_invalidate_conf_update(INI_SECTION_WIFI);
+        oam_warning_log0(0, OAM_SF_CFG, "hwifi_custom_host_read_cfg_init: INI version invalidated");
+        // HI1105_INI_FIX_END [2026-11-22]
     }
 
     /* 启动完成后，输出打印 */

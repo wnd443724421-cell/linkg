@@ -51,7 +51,6 @@ int  linkg_network_interface_carrier_is_up(const char *ifname, bool *carrier_up)
 int  linkg_network_interface_set_up(const char *ifname, bool up);
 int  linkg_network_interface_set_mtu(const char *ifname, uint32_t mtu);
 int  linkg_network_interface_set_tx_queue_length(const char *ifname, uint32_t queue_length);
-int  linkg_network_interface_set_mac(const char *ifname, const uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH]);
 int  linkg_network_interface_get_mac(const char *ifname, uint8_t mac[LINKG_NETWORK_MAC_ADDRESS_LENGTH]);
 int  linkg_network_interface_set_ipv4(const char *ifname, const struct in_addr *address, const struct in_addr *netmask);
 int  linkg_network_interface_get_ipv4(const char *ifname, struct in_addr *address);

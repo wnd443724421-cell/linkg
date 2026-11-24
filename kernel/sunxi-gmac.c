@@ -43,7 +43,7 @@
 #include <linux/io.h>
 #include <linux/timer.h>
 #include <linux/hrtimer.h>
-// #include <linux/sunxi-sid.h> // 原厂SID接口当前未启用
+#include <linux/sunxi-sid.h>
 #include <linux/reset.h>
 
 #ifdef CONFIG_RTL8363_NB
@@ -1528,8 +1528,6 @@ static const struct dev_pm_ops geth_pm_ops;
 
 /****************************** MAC与时钟 ******************************/
 
-#define sunxi_get_soc_chipid(x)         {}                                        // SoC Chip ID读取兼容占位宏
-
 /**
  * @brief 基于SoC Chip ID生成本地管理MAC地址。
  */
@@ -1549,7 +1547,13 @@ static void geth_chip_hwaddr(u8 *addr)
     memset(chipid, 0, sizeof(chipid));
     memset(result, 0, sizeof(result));
 
-    sunxi_get_soc_chipid((u8 *)chipid);
+    ret = sunxi_get_soc_chipid(chipid);
+    if (ret || !memchr_inv(chipid, 0, sizeof(chipid)) ||
+        !memchr_inv(chipid, 0xff, sizeof(chipid)))
+    {
+        pr_warn("sunxi-gmac: invalid SoC chip ID for MAC derivation\n");
+        return;
+    }
 
     tfm = crypto_alloc_ahash("md5", 0, CRYPTO_ALG_ASYNC);
     if (IS_ERR(tfm))
@@ -1560,7 +1564,7 @@ static void geth_chip_hwaddr(u8 *addr)
 
     req = ahash_request_alloc(tfm, GFP_KERNEL);
     if (!req)
-        goto out;
+        goto free_tfm;
 
     ahash_request_set_callback(req, 0, NULL, NULL);
 
@@ -1568,7 +1572,7 @@ static void geth_chip_hwaddr(u8 *addr)
     if (ret)
     {
         pr_err("crypto_ahash_init() failed\n");
-        goto out;
+        goto free_req;
     }
 
     sg_init_one(&sg, chipid, sizeof(chipid));
@@ -1577,17 +1581,15 @@ static void geth_chip_hwaddr(u8 *addr)
     if (ret)
     {
         pr_err("crypto_ahash_update() failed for id\n");
-        goto out;
+        goto free_req;
     }
 
     ret = crypto_ahash_final(req);
     if (ret)
     {
         pr_err("crypto_ahash_final() failed for result\n");
-        goto out;
+        goto free_req;
     }
-
-    ahash_request_free(req);
 
     // 取MD5结果的[0][2][4][6][8][10]字节构造MAC地址。
     for (i = 0; i < ETH_ALEN; i++)
@@ -1595,7 +1597,9 @@ static void geth_chip_hwaddr(u8 *addr)
     addr[0] &= 0xfe; // 清除组播地址位。
     addr[0] |= 0x02; // 设置IEEE 802本地管理地址位。
 
-out:
+free_req:
+    ahash_request_free(req);
+free_tfm:
     crypto_free_ahash(tfm);
 }
 
