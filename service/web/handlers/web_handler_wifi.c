@@ -287,30 +287,9 @@ int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
     dynamic_only    = _linkg_web_wifi_narrow_only_changed(&old_config, &new_config);
     restore_network = false;
     error_message   = NULL;
-    if (dynamic_only)
-    {
-        ret = linkg_network_set_wifi_narrow_config(new_config.links.wifi.wideband.narrow_params.mode, new_config.links.wifi.wideband.narrow_params.manual_rate);
-        if (ret == -EBUSY)
-        {
-            return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "WiFi正在恢复或维护，请稍后重试", response);
-        }
-        if (ret != 0)
-        {
-            restore_network = true;
-            error_message = "动态更新WiFi配置失败";
-            goto rollback;
-        }
-        restore_network = true;
-    }
-
     ret = linkg_config_save(&new_config);
     if (ret != 0)
     {
-        if (restore_network)
-        {
-            error_message = "保存WiFi配置失败";
-            goto rollback;
-        }
         return _linkg_web_response_error(LINKG_WEB_CMD_WIFI_CONFIG_SET, "保存WiFi配置失败", response);
     }
     ret = linkg_config_replace(&new_config);
@@ -319,7 +298,26 @@ int _linkg_web_handler_wifi_config_set(const cJSON *param, char **response)
         error_message = "更新全局配置失败";
         goto rollback;
     }
-    if (!dynamic_only)
+    if (dynamic_only)
+    {
+        restore_network = true;
+        ret = linkg_network_set_wifi_narrow_config(new_config.links.wifi.wideband.narrow_params.mode, new_config.links.wifi.wideband.narrow_params.manual_rate);
+        if (ret != 0)
+        {
+            // 恢复或维护拒绝本次运行态更新时，只恢复配置文件及全局快照。
+            if (ret == -EBUSY)
+            {
+                restore_network = false;
+                error_message = "WiFi正在恢复或维护，请稍后重试";
+            }
+            else
+            {
+                error_message = "动态更新WiFi配置失败";
+            }
+            goto rollback;
+        }
+    }
+    else
     {
         ret = linkg_network_set_wifi_config(&new_config.links.wifi);
         if (ret != 0)
