@@ -25,7 +25,7 @@
 /****************************** 事务参数 ******************************/
 
 #define LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US     10000000ULL  // 迁出Wi-Fi后最少等待10秒
-#define LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US       15000000ULL  // 恢复失败后延迟15秒重试
+#define LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US       15000000ULL  // 非LOAD恢复失败后延迟15秒重试
 #define LINKG_SWITCH_OPERATION_RESYNC_INTERVAL_US       2000000ULL  // 协议终态失败后重同步间隔
 #define LINKG_SWITCH_OPERATION_RESYNC_MAX                     2U    // 整组事务追加重同步次数
 #define LINKG_SWITCH_OPERATION_REPAIR_INTERVAL_US      10000000ULL  // 重试耗尽后每10秒修复完整Plan
@@ -1112,8 +1112,16 @@ static void _linkg_switch_operation_finish_locked(linkg_switch_peer_runtime_t *p
             }
             else
             {
-                // 仍以Cellular为主，但不是新的Wi-Fi迁出，推迟下一次恢复尝试。
-                operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US);
+                // LOAD恢复失败沿用10秒冷却，其他恢复原因保持原有15秒冷却。
+                if (policy->group_reason == LINKG_SWITCH_POLICY_REASON_RECOVERY &&
+                    operation->migration_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+                {
+                    operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_RECOVERY_HOLDOFF_US);
+                }
+                else
+                {
+                    operation->recovery.recovery_after_us = _linkg_switch_operation_add_us(now_us, LINKG_SWITCH_OPERATION_FAILED_HOLDOFF_US);
+                }
             }
         }
         else
