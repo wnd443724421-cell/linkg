@@ -33,7 +33,7 @@
  *
  * 所有迁移原因统一按照REALTIME、VIDEO、DATA优先级恢复。
  * 更高优先级业务仍在Cellular且不满足恢复条件时，禁止低优先级抢先恢复。
- * LOAD每次仅恢复一个业务，其他同原因且连续满足条件的业务允许整组恢复。
+ * LOSS和LOAD每次仅恢复一个业务，非质量迁移原因相同且连续满足条件时允许整组恢复。
  * LOSS和LOAD分别保留原有质量验证，非质量迁移保留直接恢复。
  * 本函数只生成策略事件；PlanSync及ACK由Operation负责。
  */
@@ -86,8 +86,9 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
         return -ESTALE;
     }
 
-    // 当前存在活动切换事务时，不重复产生恢复候选。
-    if (peer->role.sta.policy.group_mask != 0U)
+    // 活动切换事务或后台PlanSync修复尚未完成时，禁止生成恢复候选。
+    if (peer->role.sta.policy.group_mask != 0U ||
+        peer->role.sta.policy.sync_repair_pending)
     {
         pthread_mutex_unlock(&g_switch.lock);
         return 0;
@@ -243,9 +244,10 @@ int linkg_switch_policy_cellular_process(const linkg_switch_policy_input_t *inpu
             }
         }
 
-        // 当前业务加入恢复组；LOAD每次只允许一个业务参与验证。
+        // 当前业务加入恢复组；LOSS和LOAD每次只允许一个业务参与验证。
         class_mask |= LINKG_SWITCH_POLICY_CLASS_BIT(index);
-        if (group_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
+        if (group_reason == LINKG_SWITCH_POLICY_MIGRATION_LOSS ||
+            group_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
         {
             break;
         }

@@ -693,6 +693,15 @@ static int _linkg_switch_operation_start(const linkg_switch_policy_event_t *even
             return 0;
         }
 
+        // 完整Plan尚待后台同步修复时，禁止启动新的Wi-Fi恢复事务。
+        if ((event->type == LINKG_SWITCH_POLICY_EVENT_RECOVERY_READY ||
+             event->type == LINKG_SWITCH_POLICY_EVENT_WIFI_DIRECT_RECOVERY) &&
+            policy->sync_repair_pending)
+        {
+            pthread_mutex_unlock(&g_switch.lock);
+            return 0;
+        }
+
         // 完整PlanSync仍在进行，不允许启动新的软件切换事务。
         if (peer->role.sta.plan_sync.state == LINKG_SWITCH_PLAN_SYNC_WAIT_ACK ||
             peer->role.sta.plan_sync.state == LINKG_SWITCH_PLAN_SYNC_RETRY_WAIT)
