@@ -72,13 +72,13 @@ typedef struct
     // Wire质量积分与状态隔离
     uint8_t                             loss_score;                        // 无背压证据时的Wire异常积分，范围0～5
     uint8_t                             load_score;                        // Probe终态与HCC OFF共享的正式积分，范围0～5
-    bool                                fast_probe_warning_active;         // 当前Probe提交100ms仍PENDING的可撤销预警
+    bool                                fast_probe_warning_active;         // 兼容保留，生命周期重置时清零
     uint64_t                            fast_window_started_us;            // 当前活跃业务集合的快速检测起始时刻
     uint64_t                            fast_wire_uplink_us;               // 快速LOAD独立Wire上行去重时间
     uint64_t                            fast_wire_downlink_us;             // 快速LOAD独立Wire下行去重时间
     uint32_t                            fast_window_active_mask;           // 当前Wi-Fi活跃业务掩码
     uint32_t                            fast_window_ack_mask;              // 兼容保留，生命周期重置时清零
-    uint8_t                             fast_window_evidence;              // 待100ms入口消费的HCC OFF证据位
+    uint8_t                             fast_window_evidence;              // 待250ms入口消费的HCC OFF证据位
     uint8_t                             fast_window_probe_points;          // 兼容保留，生命周期重置时清零
     uint8_t                             fast_probe_timeout_streak[LINKG_TRANSPORT_CLASS_COUNT];  // 各业务连续TIMEOUT状态（饱和2）
     uint64_t                            fast_probe_last_timeout_us[LINKG_TRANSPORT_CLASS_COUNT]; // 各业务上次TIMEOUT时间

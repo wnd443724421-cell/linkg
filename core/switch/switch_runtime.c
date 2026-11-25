@@ -119,7 +119,7 @@ static bool _linkg_switch_runtime_process_events(uint64_t now_us)
 }
 
 /**
- * @brief 执行STA当前到期的一轮100ms Wi-Fi Probe快速策略。
+ * @brief 执行STA当前到期的一轮250ms Wi-Fi Probe快速策略。
  */
 static void _linkg_switch_runtime_process_quality_fast(uint64_t now_us)
 {
@@ -136,7 +136,7 @@ static void _linkg_switch_runtime_process_quality_fast(uint64_t now_us)
 
     if (due)
     {
-        // 不补跑错过的历史周期，从本轮重新安排100ms截止时间。
+        // 不补跑错过的历史周期，从本轮重新安排250ms截止时间。
         g_switch.next_quality_fast_us = now_us + LINKG_SWITCH_QUALITY_FAST_INTERVAL_US;
     }
 
@@ -403,7 +403,7 @@ static void _linkg_switch_runtime_process_reconcile(uint64_t now_us)
 /**
  * @brief 判断是否存在原有周期任务、控制事务或待消费的PlanSync结果。
  *
- * 不包含100ms LOAD Fast截止时间；调用方必须持有g_switch.lock。
+ * 不包含250ms LOAD Fast截止时间；调用方必须持有g_switch.lock。
  * 只用于隔离纯Fast唤醒，不修改各模块自身的截止时间和状态机。
  */
 static bool _linkg_switch_runtime_regular_due_locked(uint64_t now_us)
@@ -483,10 +483,10 @@ static bool _linkg_switch_runtime_regular_due_locked(uint64_t now_us)
 }
 
 /**
- * @brief 区分100ms快速探测与原有任务唤醒，保持Operation和Observation的原有时序。
+ * @brief 区分250ms快速探测与原有任务唤醒，保持Operation和Observation的原有时序。
  *
  * 控制事件、PlanSync结果、Observation和原有事务截止时间仍进入完整处理链。
- * 纯100ms Fast唤醒不能额外调用Operation/Verify消费异步ACK。
+ * 纯250ms Fast唤醒不能额外调用Operation/Verify消费异步ACK。
  */
 static void _linkg_switch_runtime_process_due(uint64_t now_us, bool control_processed)
 {
@@ -496,7 +496,7 @@ static void _linkg_switch_runtime_process_due(uint64_t now_us, bool control_proc
     regular_due = _linkg_switch_runtime_regular_due_locked(now_us);
     pthread_mutex_unlock(&g_switch.lock);
 
-    /****************************** 一、独立100ms快速检测 ******************************/
+    /****************************** 一、独立250ms快速检测 ******************************/
 
     if (!regular_due && !control_processed)
     {
@@ -511,7 +511,7 @@ static void _linkg_switch_runtime_process_due(uint64_t now_us, bool control_proc
     _linkg_switch_runtime_process_plan(now_us);
     _linkg_switch_runtime_process_sta(now_us);
 
-    // 250ms Observation先更新HCC/OVF，再处理同一时刻到期的100ms Probe。
+    // 250ms Observation先更新HCC/OVF，再处理同一时刻到期的250ms Probe。
     _linkg_switch_runtime_process_quality_fast(linkg_time_monotonic_us());
 
     // 避免Operation/Verify使用Observation刷新之前的时间。

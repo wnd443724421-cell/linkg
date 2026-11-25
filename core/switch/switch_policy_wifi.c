@@ -494,7 +494,7 @@ int linkg_switch_policy_wifi_process(const linkg_switch_policy_input_t *input, u
 }
 
 /**
- * @brief 独立100ms Wi-Fi负载Probe入口。
+ * @brief 独立250ms Wi-Fi负载Probe入口。
  *
  * 不执行硬故障、黑洞Probe、OVF、HCC或Wire LOSS检测；这些仍由250ms普通入口处理。
  */

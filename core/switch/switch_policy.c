@@ -247,7 +247,7 @@ int linkg_switch_policy_process(uint64_t now_us)
 }
 
 /**
- * @brief 调度独立100ms Wi-Fi Probe快速策略。
+ * @brief 调度独立250ms Wi-Fi Probe快速策略。
  *
  * 使用最近一次250ms Observation快照，只刷新Transport业务活跃状态和Probe结果；
  * 不在此入口运行Cellular恢复策略。
