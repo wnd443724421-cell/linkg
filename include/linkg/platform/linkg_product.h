@@ -5,6 +5,6 @@
 #ifndef LINKG_PRODUCT_H
 #define LINKG_PRODUCT_H
 
-#define LINKG_PRODUCT_MODEL "LinkG V2" // 对外展示的产品型号，非PCB硬件版本
+#define LINKG_PRODUCT_MODEL "LinkG" // 对外展示的产品型号，非PCB硬件版本
 
 #endif // LINKG_PRODUCT_H

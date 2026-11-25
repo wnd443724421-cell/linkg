@@ -437,9 +437,11 @@
 
         if (active.length > 0)
         {
-            setText("cellularInternetProbe", active.map(function (item) {
-                return item.name + " 已持续 " + formatProbeDuration(item.value.duration_ms);
-            }).join("；"));
+            const details = active.map(function (item) {
+                return item.name + " 持续 " + formatProbeDuration(item.value.duration_ms);
+            }).join("，");
+
+            setText("cellularInternetProbe", "公网连通异常（" + details + "）");
             return;
         }
 
@@ -457,7 +459,7 @@
 
         if (recovered.length > 0)
         {
-            setText("cellularInternetProbe", "已恢复，上次 " + recovered[0].name + " " +
+            setText("cellularInternetProbe", "已恢复，上次 " + recovered[0].name + " 公网连通异常持续 " +
                     formatProbeDuration(recovered[0].value.duration_ms));
             return;
         }

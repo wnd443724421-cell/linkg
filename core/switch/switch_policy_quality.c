@@ -33,14 +33,13 @@
 #define LINKG_SWITCH_QUALITY_HCC_MAX_AGE_US        1000000ULL // HCC观测最大年龄
 #define LINKG_SWITCH_QUALITY_HCC_CANDIDATE_IDLE_US 2000000ULL // HCC候选积分2秒无新OFF自动老化
 #define LINKG_SWITCH_QUALITY_HCC_RECOVERY_US       3000000ULL // HCC压力确认后的LOSS最短保护时间
-#define LINKG_SWITCH_QUALITY_FAST_PERIOD_US        100000ULL  // Probe快速检查周期100ms，外部Worker负责调度
 #define LINKG_SWITCH_QUALITY_FAST_TIMEOUT_MS       200U       // 每包实际发送后最多等待200ms
 #define LINKG_SWITCH_QUALITY_FAST_ACTIVE_AGE_MS    1500ULL    // 只探测最近有真实USER_DATA的业务
 #define LINKG_SWITCH_QUALITY_FAST_MAX_OBS_AGE_US   500000ULL  // 快速判决所需Observation最大年龄
 #define LINKG_SWITCH_QUALITY_FAST_MAX_PENDING_US   500000ULL  // 超时未发送/未完成的本地请求取消保护
 #define LINKG_SWITCH_QUALITY_FAST_MASK_AGE_US      300000ULL  // OVF复用快速业务掩码的有效期
 #define LINKG_SWITCH_QUALITY_OVERFLOW_MAX_AGE_US   500000ULL  // OVF源窗口允许延迟消费的最大年龄
-#define LINKG_SWITCH_QUALITY_FAST_EVIDENCE_HCC     0x01U      // 250ms路径产生的新HCC OFF，供100ms路径消费
+#define LINKG_SWITCH_QUALITY_FAST_EVIDENCE_HCC     0x01U      // 250ms路径产生的新HCC OFF，供250ms LOAD路径消费
 
 /****************************** 检测器生命周期 ******************************/
 
@@ -77,7 +76,6 @@ typedef struct
     uint32_t          wifi_link_id;                                 // 当前Wi-Fi链路实例
     uint32_t          selected_class;                               // 当前正在探测的业务类别，COUNT为无业务
     uint32_t          active_mask;                                  // 最近一次成功读取的真实活跃业务集合
-    bool              warned;                                       // 当前Probe的100ms检查点已计入正式LOAD积分
     bool              initialized;                                  // 当前运行实例是否已经绑定
 } linkg_switch_quality_fast_probe_runtime_t;
 
@@ -86,11 +84,8 @@ typedef struct
     uint32_t active_mask;                                           // 当前真实活跃且Wi-Fi单发的类别集合
     uint32_t selected_class;                                        // 本次选中的业务类别
     bool     valid;                                                 // 已成功读取Transport业务统计
-    bool     warning;                                               // 已确认发送的Probe超过100ms仍PENDING，正式加1分
-    bool     timeout_100ms_counted;                                // 本Probe的100ms积分此前已计入，防止终态重复计分
     bool     long_timeout;                                          // 当前Probe已确认真实200ms TIMEOUT
-    bool     ack_good;                                              // RTT严格小于100ms的正常ACK
-    bool     ack_slow;                                              // 已收到ACK，但RTT达到或超过100ms
+    bool     ack_good;                                              // 200ms截止内收到有效ACK
     bool     broken;                                                // 发送失败/取消/API异常，不作为网络超时
 } linkg_switch_quality_fast_result_t;
 
@@ -150,7 +145,7 @@ static bool _linkg_switch_quality_fast_eligible(const linkg_switch_policy_input_
 /**
  * @brief 探测一次真实活跃业务；优先DATA，再VIDEO，最后REALTIME。
  * 每Peer仅有一个在途Probe；Poll/Cancel/Submit均在Switch锁外执行。
- * 仅对Scheduler已接受发送的PENDING按sent_us计时；100ms和200ms分别加1分。
+ * 仅消费Probe网络终态；200ms确认超时计1分，PENDING不计分。
  */
 static void _linkg_switch_quality_fast_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_quality_fast_result_t *output)
 {
@@ -243,7 +238,6 @@ static void _linkg_switch_quality_fast_process(const linkg_switch_policy_input_t
 
         g_quality_fast_probe.handle         = 0U;
         g_quality_fast_probe.submit_us      = 0U;
-        g_quality_fast_probe.warned         = false;
         g_quality_fast_probe.selected_class = selected;
     }
 
@@ -259,8 +253,6 @@ static void _linkg_switch_quality_fast_process(const linkg_switch_policy_input_t
 
         if (ret == 0 && result.state != LINKG_PATH_PROBE_ASYNC_PENDING)
         {
-            // 保存本包100ms检查点是否已加分；终态最多补齐本包剩余积分。
-            output->timeout_100ms_counted = g_quality_fast_probe.warned;
             g_quality_fast_probe.handle = 0U;
 
             if (result.traffic_class != (linkg_transport_class_t)selected ||
@@ -278,42 +270,30 @@ static void _linkg_switch_quality_fast_process(const linkg_switch_policy_input_t
             }
             else if (result.state == LINKG_PATH_PROBE_ASYNC_ACK &&
                      result.rtt_us <= result.completed_us - result.sent_us &&
-                     result.rtt_us < (uint32_t)LINKG_SWITCH_QUALITY_FAST_TIMEOUT_MS * 1000U)
+                     result.rtt_us <= (uint32_t)LINKG_SWITCH_QUALITY_FAST_TIMEOUT_MS * 1000U)
             {
-                if (result.rtt_us < (uint32_t)(LINKG_SWITCH_QUALITY_FAST_PERIOD_US))
-                {
-                    // 即使在后续Tick才Poll到ACK，也按实际RTT判定正常。
-                    output->ack_good = true;
-                }
-                else
-                {
-                    // RTT在100~200ms之间：100ms未响应成立，但不构成200ms超时。
-                    output->ack_slow = true;
-                }
+                output->ack_good = true;
             }
             else
             {
                 output->broken = true;
             }
 
-            g_quality_fast_probe.warned    = false;
             g_quality_fast_probe.submit_us = 0U;
         }
         else if (ret != 0)
         {
-            output->timeout_100ms_counted = g_quality_fast_probe.warned;
             (void)linkg_path_probe_async_cancel(g_quality_fast_probe.handle);
             g_quality_fast_probe.handle    = 0U;
-            output->broken                  = true;
-            g_quality_fast_probe.warned     = false;
-            g_quality_fast_probe.submit_us  = 0U;
+            output->broken                 = true;
+            g_quality_fast_probe.submit_us = 0U;
         }
         else if (g_quality_fast_probe.submit_us != 0U && now_us >= g_quality_fast_probe.submit_us)
         {
             uint64_t elapsed_us = now_us - g_quality_fast_probe.submit_us;
 
             // Scheduler已接纳发送后，回收超时也必须以sent_us为起点。
-            // 避免本地排队较久的Probe刚发出100ms就被提交时间保护提前取消。
+            // 避免本地排队较久的Probe被提交时间保护提前取消。
             if (result.sent_us != 0U && result.sent_us <= now_us)
             {
                 elapsed_us = now_us - result.sent_us;
@@ -321,21 +301,11 @@ static void _linkg_switch_quality_fast_process(const linkg_switch_policy_input_t
 
             if (elapsed_us >= LINKG_SWITCH_QUALITY_FAST_MAX_PENDING_US)
             {
-                // 本地请求长期无终态时释放槽位，并撤销该请求之前已加的100ms积分。
-                output->timeout_100ms_counted = g_quality_fast_probe.warned;
+                // 本地请求长期无终态时释放槽位，不计入网络超时。
                 (void)linkg_path_probe_async_cancel(g_quality_fast_probe.handle);
                 g_quality_fast_probe.handle    = 0U;
                 g_quality_fast_probe.submit_us = 0U;
-                g_quality_fast_probe.warned    = false;
                 output->broken                 = true;
-            }
-            else if (!g_quality_fast_probe.warned && result.sent_us != 0U &&
-                     result.sent_us <= now_us &&
-                     now_us - result.sent_us >= LINKG_SWITCH_QUALITY_FAST_PERIOD_US)
-            {
-                // 仅在Scheduler确认提交后计分，禁止将本地排队时间当作网络超时。
-                output->warning           = true;
-                g_quality_fast_probe.warned = true;
             }
         }
     }
@@ -352,7 +322,6 @@ static void _linkg_switch_quality_fast_process(const linkg_switch_policy_input_t
         {
             g_quality_fast_probe.handle    = handle;
             g_quality_fast_probe.submit_us = now_us;
-            g_quality_fast_probe.warned    = false;
         }
         else
         {
@@ -377,7 +346,7 @@ static void _linkg_switch_quality_reset_loss_locked(linkg_switch_quality_policy_
 }
 
 /**
- * @brief 清除快速LOAD正式积分、当前Probe预警和连续超时状态。
+ * @brief 清除LOAD正式积分及兼容保留的历史检测状态。
  * 调用方必须持有Switch锁。
  */
 static void _linkg_switch_quality_reset_load_locked(linkg_switch_quality_policy_runtime_t *detector)
@@ -831,7 +800,7 @@ static linkg_switch_quality_wire_route_t _linkg_switch_quality_hcc_route_locked(
             detector->hcc_pressure_score--;
         }
 
-        // LOAD减分由100ms快速入口在Probe得到正常ACK后执行。
+        // LOAD减分由250ms快速入口在Probe得到正常ACK后执行。
     }
 
     /****************************** 五、确认压力并隔离LOSS积分 ******************************/
@@ -1083,7 +1052,7 @@ static int _linkg_switch_quality_evaluate_direction_locked(const linkg_switch_lo
 /**
  * @brief 对本轮Wire唯一归属路径计算上下行质量积分，并输出质量事件。
  *
- * 这里只累计LOSS积分；LOAD由独立100ms Probe/HCC证据窗口评分。
+ * 这里只累计LOSS积分；LOAD由独立250ms Probe/HCC证据窗口评分。
  * 每个方向最多一次评分，LOSS单轮正积分最多+2、负积分最多-1。
  * LOSS积分达到5后清除LOSS积分及未完成的批次。
  * 调用方必须持有Switch锁。
@@ -1168,8 +1137,8 @@ static bool _linkg_switch_quality_fast_hcc_blocked(const linkg_switch_policy_inp
 /**
  * @brief 合并HCC OFF与Probe积分，正式积分唯一归Peer Quality Runtime所有。
  *
- * 已发送且100ms仍PENDING：正式加1分；真实200ms TIMEOUT：再加1分。
- * 若100ms Tick未消费到PENDING，则终态一次补齐2分，保证每包只计一次。
+ * 每250ms结算一次；新增HCC OFF或真实200ms TIMEOUT加1分，不叠加。
+ * 200ms截止内的有效ACK在无新增OFF且未阻塞时减1分。
  * 调用方必须持有g_switch.lock。
  */
 static bool _linkg_switch_quality_fast_score_locked(linkg_switch_quality_policy_runtime_t *detector, const linkg_switch_policy_input_t *input, const linkg_switch_quality_fast_result_t *probe, uint64_t now_us)
@@ -1204,48 +1173,8 @@ static bool _linkg_switch_quality_fast_score_locked(linkg_switch_quality_policy_
     hcc_blocked = _linkg_switch_quality_fast_hcc_blocked(input, now_us);
     detector->fast_window_evidence &= (uint8_t)~LINKG_SWITCH_QUALITY_FAST_EVIDENCE_HCC;
 
-    // HCC新增OFF是独立正式证据，每份250ms Observation最多消费一次。
-    delta = new_hcc_off ? 1U : 0U;
-
-    if (probe->warning)
-    {
-        // 当前请求实际已提交发送，满100ms仍PENDING时立即正式加1分。
-        delta += 1U;
-        detector->fast_probe_warning_active = true;
-    }
-
-    if (probe->long_timeout)
-    {
-        // 若本包100ms检查点未被Worker消费，先补上那一个检查点。
-        if (!probe->timeout_100ms_counted)
-        {
-            delta++;
-        }
-
-        // 200ms真实TIMEOUT只增加本检查点的1分，绝不叠加连续超时奖励。
-        delta++;
-        detector->fast_probe_warning_active = false;
-    }
-    else if (probe->ack_slow)
-    {
-        // 100～200ms ACK只保留首分，不能在终态再次加同一分。
-        if (!probe->timeout_100ms_counted)
-        {
-            delta++;
-        }
-        detector->fast_probe_warning_active = false;
-    }
-    else if (probe->ack_good || probe->broken)
-    {
-        // 迟到的本地错误或正常快速ACK，需要撤销之前误记在本包上的100ms分。
-        if (probe->timeout_100ms_counted && detector->fast_probe_warning_active &&
-            detector->load_score > 0U)
-        {
-            detector->load_score--;
-        }
-
-        detector->fast_probe_warning_active = false;
-    }
+    // 同一判决周期内HCC OFF和Probe超时属于负载异常证据，最多加1分。
+    delta = (new_hcc_off || probe->long_timeout) ? 1U : 0U;
 
     if (delta != 0U)
     {
@@ -1256,7 +1185,7 @@ static bool _linkg_switch_quality_fast_score_locked(linkg_switch_quality_policy_
     }
     else if (probe->ack_good && !new_hcc_off && !hcc_blocked && detector->load_score > 0U)
     {
-        // 只有实际RTT<100ms、无新OFF且当前没有HCC阻塞时才恢复1分。
+        // 只有有效ACK、无新OFF且当前没有HCC阻塞时才恢复1分。
         detector->load_score--;
         detector->last_load_valid_us = now_us;
     }
@@ -1272,11 +1201,11 @@ static bool _linkg_switch_quality_fast_score_locked(linkg_switch_quality_policy_
     return true;
 }
 
-/****************************** 100ms快速LOAD入口 ******************************/
+/****************************** 250ms快速LOAD入口 ******************************/
 
 /**
  * @brief 独立消费异步Probe，更新共享LOAD积分，达到5分立即输出LOAD_BAD。
- * 本接口仅供同一个Switch Worker每100ms调用，禁止并发执行。
+ * 本接口仅供同一个Switch Worker每250ms调用，禁止并发执行。
  * 不触碰LOSS积分、Wire累计或Operation事务。
  */
 int linkg_switch_policy_quality_fast_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_quality_state_t *quality_state)
@@ -1388,7 +1317,7 @@ int linkg_switch_policy_quality_fast_process(const linkg_switch_policy_input_t *
 
 /**
  * @brief 保留原有OVF/HCC/Wire/LOSS；HCC新增OFF只存入共享LOAD证据。
- * LOAD加减分统一由100ms快速入口结算，避免双重计分。
+ * LOAD加减分统一由250ms快速入口结算，避免双重计分。
  */
 int linkg_switch_policy_quality_process(const linkg_switch_policy_input_t *input, uint64_t now_us, linkg_switch_policy_quality_state_t *quality_state)
 {
@@ -1442,7 +1371,7 @@ int linkg_switch_policy_quality_process(const linkg_switch_policy_input_t *input
     if (!_linkg_switch_quality_prepare_locked(input, now_us, peer, detector))
     {
         pthread_mutex_unlock(&g_switch.lock);
-        // waiting_sync只隔离250ms的旧样本；不能重置独立100ms快速Probe。
+        // waiting_sync只隔离250ms的旧样本；不能重置独立250ms快速Probe。
         return 0;
     }
 
@@ -1493,7 +1422,7 @@ int linkg_switch_policy_quality_process(const linkg_switch_policy_input_t *input
         *quality_state = _linkg_switch_quality_evaluate_wire_locked(input, now_us, detector, wire_route);
     }
 
-    // HCC原有压力确认和LOSS保护逻辑保持不变，只传递一次新的OFF给100ms LOAD积分。
+    // HCC原有压力确认和LOSS保护逻辑保持不变，只传递一次新的OFF给250ms LOAD积分。
     if (hcc_off &&
         active_fresh &&
         g_quality_fast_probe.active_mask != 0U &&
