@@ -25,7 +25,7 @@
 
 #define LINKG_SWITCH_POLICY_VERIFY_HCC_BE_BAD_THRESHOLD 3U      // BE队列严格大于3包视为负载压力
 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_RTT_BAD_US      200000U // LOAD恢复Wi-Fi Probe RTT异常阈值
-#define LINKG_SWITCH_POLICY_VERIFY_LOAD_ABORT_SCORE     8U      // LOAD恢复提前失败积分阈值
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_ABORT_SCORE     10U     // LOAD恢复提前失败积分阈值
 
 /**
  * @brief 将已固定的验证结果填充为VERIFY_DONE事件。

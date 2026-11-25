@@ -9,6 +9,7 @@
 #include "linkg_link_manager.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -39,16 +40,17 @@ typedef struct
  * @brief Link Manager全局运行上下文。
  *
  * Manager仅借用已注册Link对象，不负责具体Link的创建、启动、停止和销毁。
- * 注册和注销属于模块生命周期操作，不得与外部借用Link指针的运行逻辑并发执行。
+ * 注册表访问由统一互斥锁保护；外部借用Link指针的生命周期仍由调用方保证。
  */
 static linkg_link_manager_context_t g_link_manager;
+static pthread_mutex_t g_link_manager_lock = PTHREAD_MUTEX_INITIALIZER; // 保护注册表、ID分配、计数和接收回调，独立于Context生命周期
 
 /****************************** 内部辅助 ******************************/
 
 /**
- * @brief 根据运行实例标识查找业务链路。
+ * @brief 根据运行实例标识查找业务链路，调用方必须持有Manager锁。
  */
-static linkg_link_t *_linkg_link_manager_find(uint32_t link_id)
+static linkg_link_t *_linkg_link_manager_find_locked(uint32_t link_id)
 {
     uint32_t index;
 
@@ -70,9 +72,9 @@ static linkg_link_t *_linkg_link_manager_find(uint32_t link_id)
 }
 
 /**
- * @brief 根据接入类型查找业务链路。
+ * @brief 根据接入类型查找业务链路，调用方必须持有Manager锁。
  */
-static linkg_link_t *_linkg_link_manager_find_access(linkg_link_access_t access)
+static linkg_link_t *_linkg_link_manager_find_access_locked(linkg_link_access_t access)
 {
     uint32_t index;
 
@@ -94,9 +96,9 @@ static linkg_link_t *_linkg_link_manager_find_access(linkg_link_access_t access)
 }
 
 /**
- * @brief 查找业务链路当前注册槽位。
+ * @brief 查找业务链路当前注册槽位，调用方必须持有Manager锁。
  */
-static int _linkg_link_manager_find_slot(const linkg_link_t *link, uint32_t *slot)
+static int _linkg_link_manager_find_slot_locked(const linkg_link_t *link, uint32_t *slot)
 {
     uint32_t index;
 
@@ -118,9 +120,9 @@ static int _linkg_link_manager_find_slot(const linkg_link_t *link, uint32_t *slo
 }
 
 /**
- * @brief 查找空闲业务链路注册槽位。
+ * @brief 查找空闲业务链路注册槽位，调用方必须持有Manager锁。
  */
-static int _linkg_link_manager_find_free_slot(uint32_t *slot)
+static int _linkg_link_manager_find_free_slot_locked(uint32_t *slot)
 {
     uint32_t index;
 
@@ -142,9 +144,9 @@ static int _linkg_link_manager_find_free_slot(uint32_t *slot)
 }
 
 /**
- * @brief 分配当前Manager内唯一的运行实例标识。
+ * @brief 分配当前Manager内唯一的运行实例标识，调用方必须持有Manager锁。
  */
-static int _linkg_link_manager_allocate_id(uint32_t *link_id)
+static int _linkg_link_manager_allocate_id_locked(uint32_t *link_id)
 {
     uint32_t candidate;
     uint32_t attempt;
@@ -163,7 +165,7 @@ static int _linkg_link_manager_allocate_id(uint32_t *link_id)
             candidate = 1U;
         }
 
-        if (_linkg_link_manager_find(candidate) == NULL)
+        if (_linkg_link_manager_find_locked(candidate) == NULL)
         {
             *link_id = candidate;
 
@@ -183,9 +185,9 @@ static int _linkg_link_manager_allocate_id(uint32_t *link_id)
 }
 
 /**
- * @brief 判断全部已注册业务链路是否已经停止。
+ * @brief 判断全部已注册业务链路是否已经停止，调用方必须持有Manager锁。
  */
-static bool _linkg_link_manager_all_stopped(void)
+static bool _linkg_link_manager_all_stopped_locked(void)
 {
     uint32_t index;
 
@@ -212,6 +214,9 @@ static bool _linkg_link_manager_all_stopped(void)
  */
 static void _linkg_link_manager_receive(linkg_link_t *link, linkg_link_rx_item_t *items, uint32_t count, void *user_data)
 {
+    linkg_link_receive_batch_func_t receive;
+    void                           *receive_user_data;
+
     (void)user_data;
 
     if (link == NULL || items == NULL || count == 0U)
@@ -219,13 +224,19 @@ static void _linkg_link_manager_receive(linkg_link_t *link, linkg_link_rx_item_t
         return;
     }
 
-    if (g_link_manager.receive == NULL)
+    // 锁内取得一致的回调快照，锁外执行上层接收逻辑。
+    pthread_mutex_lock(&g_link_manager_lock);
+    receive           = g_link_manager.receive;
+    receive_user_data = g_link_manager.receive_user_data;
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    if (receive == NULL)
     {
         LINKG_LOG_ERROR("link receive handler unavailable, link=%s", linkg_link_get_name(link));
         return;
     }
 
-    g_link_manager.receive(link, items, count, g_link_manager.receive_user_data);
+    receive(link, items, count, receive_user_data);
 }
 
 /****************************** 生命周期 ******************************/
@@ -235,8 +246,11 @@ static void _linkg_link_manager_receive(linkg_link_t *link, linkg_link_rx_item_t
  */
 int linkg_link_manager_init(void)
 {
+    pthread_mutex_lock(&g_link_manager_lock);
+
     if (g_link_manager.initialized)
     {
+        pthread_mutex_unlock(&g_link_manager_lock);
         return -EALREADY;
     }
 
@@ -244,6 +258,8 @@ int linkg_link_manager_init(void)
 
     g_link_manager.next_id     = 1U;
     g_link_manager.initialized = true;
+
+    pthread_mutex_unlock(&g_link_manager_lock);
 
     LINKG_LOG_INFO("link manager initialized");
 
@@ -257,17 +273,23 @@ int linkg_link_manager_init(void)
  */
 int linkg_link_manager_deinit(void)
 {
+    pthread_mutex_lock(&g_link_manager_lock);
+
     if (!g_link_manager.initialized)
     {
+        pthread_mutex_unlock(&g_link_manager_lock);
         return 0;
     }
 
     if (g_link_manager.count != 0U || g_link_manager.receive != NULL)
     {
+        pthread_mutex_unlock(&g_link_manager_lock);
         return -EBUSY;
     }
 
     memset(&g_link_manager, 0, sizeof(g_link_manager));
+
+    pthread_mutex_unlock(&g_link_manager_lock);
 
     LINKG_LOG_INFO("link manager deinitialized");
 
@@ -289,69 +311,81 @@ int linkg_link_manager_register(linkg_link_t *link)
     uint32_t              slot;
     int                   ret;
 
+    // 查找槽位、分配ID及发布注册关系必须在同一个临界区完成。
+    pthread_mutex_lock(&g_link_manager_lock);
+
     if (!g_link_manager.initialized)
     {
-        return -ENODEV;
+        ret = -ENODEV;
+        goto out;
     }
 
     if (link == NULL || link->runtime == NULL || link->ops == NULL)
     {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     if (linkg_link_get_access(link) == LINKG_LINK_ACCESS_NONE)
     {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     if (linkg_link_get_state(link) != LINKG_LINK_STATE_STOPPED)
     {
-        return -EBUSY;
+        ret = -EBUSY;
+        goto out;
     }
 
     if (linkg_link_get_id(link) != LINKG_LINK_ID_INVALID)
     {
-        return -EALREADY;
+        ret = -EALREADY;
+        goto out;
     }
 
-    ret = _linkg_link_manager_find_slot(link, &slot);
+    ret = _linkg_link_manager_find_slot_locked(link, &slot);
     if (ret == 0)
     {
-        return -EALREADY;
+        ret = -EALREADY;
+        goto out;
     }
 
     if (ret != -ENOENT)
     {
-        return ret;
+        goto out;
     }
 
-    if (_linkg_link_manager_find_access(linkg_link_get_access(link)) != NULL)
+    if (_linkg_link_manager_find_access_locked(linkg_link_get_access(link)) != NULL)
     {
-        return -EEXIST;
+        ret = -EEXIST;
+        goto out;
     }
 
     if (g_link_manager.count >= LINKG_LINK_MANAGER_MAX_LINKS)
     {
-        return -ENOSPC;
+        ret = -ENOSPC;
+        goto out;
     }
 
     runtime = link->runtime;
 
     if (runtime->receive != NULL || runtime->receive_user_data != NULL)
     {
-        return -EBUSY;
+        ret = -EBUSY;
+        goto out;
     }
 
-    ret = _linkg_link_manager_find_free_slot(&slot);
+    ret = _linkg_link_manager_find_free_slot_locked(&slot);
     if (ret != 0)
     {
-        return ret;
+        goto out;
     }
 
-    ret = _linkg_link_manager_allocate_id(&link_id);
+    ret = _linkg_link_manager_allocate_id_locked(&link_id);
     if (ret != 0)
     {
-        return ret;
+        goto out;
     }
 
     link->id = link_id;
@@ -362,12 +396,20 @@ int linkg_link_manager_register(linkg_link_t *link)
     g_link_manager.links[slot] = link;
     g_link_manager.count++;
 
-    LINKG_LOG_INFO("link registered, link=%s, id=%u, access=%d",
-                   linkg_link_get_name(link),
-                   linkg_link_get_id(link),
-                   (int)linkg_link_get_access(link));
+    ret = 0;
 
-    return 0;
+out:
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    if (ret == 0)
+    {
+        LINKG_LOG_INFO("link registered, link=%s, id=%u, access=%d",
+                       linkg_link_get_name(link),
+                       link_id,
+                       (int)linkg_link_get_access(link));
+    }
+
+    return ret;
 }
 
 /**
@@ -383,25 +425,30 @@ int linkg_link_manager_unregister(linkg_link_t *link)
     uint32_t              slot;
     int                   ret;
 
+    pthread_mutex_lock(&g_link_manager_lock);
+
     if (!g_link_manager.initialized)
     {
-        return -ENODEV;
+        ret = -ENODEV;
+        goto out;
     }
 
     if (link == NULL || link->runtime == NULL)
     {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     if (linkg_link_get_state(link) != LINKG_LINK_STATE_STOPPED)
     {
-        return -EBUSY;
+        ret = -EBUSY;
+        goto out;
     }
 
-    ret = _linkg_link_manager_find_slot(link, &slot);
+    ret = _linkg_link_manager_find_slot_locked(link, &slot);
     if (ret != 0)
     {
-        return ret;
+        goto out;
     }
 
     runtime = link->runtime;
@@ -415,11 +462,19 @@ int linkg_link_manager_unregister(linkg_link_t *link)
 
     link->id = LINKG_LINK_ID_INVALID;
 
-    LINKG_LOG_INFO("link unregistered, link=%s, id=%u",
-                   linkg_link_get_name(link),
-                   link_id);
+    ret = 0;
 
-    return 0;
+out:
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    if (ret == 0)
+    {
+        LINKG_LOG_INFO("link unregistered, link=%s, id=%u",
+                       linkg_link_get_name(link),
+                       link_id);
+    }
+
+    return ret;
 }
 
 /****************************** 接收处理 ******************************/
@@ -431,30 +486,43 @@ int linkg_link_manager_unregister(linkg_link_t *link)
  */
 int linkg_link_manager_register_receive_handler(linkg_link_receive_batch_func_t receive, void *user_data)
 {
+    int ret;
+
+    pthread_mutex_lock(&g_link_manager_lock);
+
     if (!g_link_manager.initialized)
     {
-        return -ENODEV;
+        ret = -ENODEV;
+        goto out;
     }
 
     if (receive == NULL)
     {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
-    if (!_linkg_link_manager_all_stopped())
+    if (!_linkg_link_manager_all_stopped_locked())
     {
-        return -EBUSY;
+        ret = -EBUSY;
+        goto out;
     }
 
     if (g_link_manager.receive != NULL)
     {
-        return -EALREADY;
+        ret = -EALREADY;
+        goto out;
     }
 
     g_link_manager.receive           = receive;
     g_link_manager.receive_user_data = user_data;
 
-    return 0;
+    ret = 0;
+
+out:
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    return ret;
 }
 
 /**
@@ -464,20 +532,31 @@ int linkg_link_manager_register_receive_handler(linkg_link_receive_batch_func_t 
  */
 int linkg_link_manager_unregister_receive_handler(void)
 {
+    int ret;
+
+    pthread_mutex_lock(&g_link_manager_lock);
+
     if (!g_link_manager.initialized)
     {
-        return -ENODEV;
+        ret = -ENODEV;
+        goto out;
     }
 
-    if (!_linkg_link_manager_all_stopped())
+    if (!_linkg_link_manager_all_stopped_locked())
     {
-        return -EBUSY;
+        ret = -EBUSY;
+        goto out;
     }
 
     g_link_manager.receive           = NULL;
     g_link_manager.receive_user_data = NULL;
 
-    return 0;
+    ret = 0;
+
+out:
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    return ret;
 }
 
 /****************************** 发送清理 ******************************/
@@ -486,7 +565,7 @@ int linkg_link_manager_unregister_receive_handler(void)
  * @brief 清理目标Path所属链路发送队列中引用该Path的待发送Packet。
  *
  * 目标Path必须已经退出ACTIVE状态。调用前缓存其link_id，只查找并清理唯一归属Link；
- * 下层返回后不得再次读取Path字段。
+ * 下层返回后不得再次读取Path字段。调用方保证Link在清理结束前不会销毁。
  */
 int linkg_link_manager_purge_tx_path(linkg_path_t *path, uint32_t *purged_count)
 {
@@ -500,28 +579,37 @@ int linkg_link_manager_purge_tx_path(linkg_path_t *path, uint32_t *purged_count)
 
     *purged_count = 0U;
 
+    pthread_mutex_lock(&g_link_manager_lock);
+
     if (!g_link_manager.initialized)
     {
+        pthread_mutex_unlock(&g_link_manager_lock);
         return -ENODEV;
     }
 
     if (linkg_path_is_active(path))
     {
+        pthread_mutex_unlock(&g_link_manager_lock);
         return -EBUSY;
     }
 
     link_id = path->link_id;
     if (link_id == LINKG_LINK_ID_INVALID)
     {
+        pthread_mutex_unlock(&g_link_manager_lock);
         return -ENODEV;
     }
 
-    link = _linkg_link_manager_find(link_id);
+    link = _linkg_link_manager_find_locked(link_id);
+
+    pthread_mutex_unlock(&g_link_manager_lock);
+
     if (link == NULL)
     {
         return -ENOENT;
     }
 
+    // 不跨越下层发送队列清理持有Manager锁。
     return linkg_link_purge_tx_path(link, path, purged_count);
 }
 
@@ -529,28 +617,38 @@ int linkg_link_manager_purge_tx_path(linkg_path_t *path, uint32_t *purged_count)
 
 /**
  * @brief 根据运行实例标识获取业务链路。
+ *
+ * 返回借用指针，调用方仍需保证Link对象在使用期间不会销毁。
  */
 linkg_link_t *linkg_link_manager_get(uint32_t link_id)
 {
-    if (!g_link_manager.initialized)
-    {
-        return NULL;
-    }
+    linkg_link_t *link;
 
-    return _linkg_link_manager_find(link_id);
+    pthread_mutex_lock(&g_link_manager_lock);
+
+    link = g_link_manager.initialized ? _linkg_link_manager_find_locked(link_id) : NULL;
+
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    return link;
 }
 
 /**
  * @brief 根据接入类型获取业务链路。
+ *
+ * 返回借用指针，调用方仍需保证Link对象在使用期间不会销毁。
  */
 linkg_link_t *linkg_link_manager_get_by_access(linkg_link_access_t access)
 {
-    if (!g_link_manager.initialized || access == LINKG_LINK_ACCESS_NONE)
-    {
-        return NULL;
-    }
+    linkg_link_t *link;
 
-    return _linkg_link_manager_find_access(access);
+    pthread_mutex_lock(&g_link_manager_lock);
+
+    link = g_link_manager.initialized ? _linkg_link_manager_find_access_locked(access) : NULL;
+
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    return link;
 }
 
 /**
@@ -559,14 +657,16 @@ linkg_link_t *linkg_link_manager_get_by_access(linkg_link_access_t access)
 uint32_t linkg_link_manager_get_id(linkg_link_access_t access)
 {
     linkg_link_t *link;
+    uint32_t      link_id;
 
-    link = linkg_link_manager_get_by_access(access);
-    if (link == NULL)
-    {
-        return LINKG_LINK_ID_INVALID;
-    }
+    pthread_mutex_lock(&g_link_manager_lock);
 
-    return linkg_link_get_id(link);
+    link    = g_link_manager.initialized ? _linkg_link_manager_find_access_locked(access) : NULL;
+    link_id = link != NULL ? linkg_link_get_id(link) : LINKG_LINK_ID_INVALID;
+
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    return link_id;
 }
 
 /**
@@ -574,5 +674,13 @@ uint32_t linkg_link_manager_get_id(linkg_link_access_t access)
  */
 uint32_t linkg_link_manager_count(void)
 {
-    return g_link_manager.initialized ? g_link_manager.count : 0U;
+    uint32_t count;
+
+    pthread_mutex_lock(&g_link_manager_lock);
+
+    count = g_link_manager.initialized ? g_link_manager.count : 0U;
+
+    pthread_mutex_unlock(&g_link_manager_lock);
+
+    return count;
 }
