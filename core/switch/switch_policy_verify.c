@@ -25,6 +25,7 @@
 
 #define LINKG_SWITCH_POLICY_VERIFY_HCC_BE_BAD_THRESHOLD 3U      // BE队列严格大于3包视为负载压力
 #define LINKG_SWITCH_POLICY_VERIFY_LOAD_RTT_BAD_US      200000U // LOAD恢复Wi-Fi Probe RTT异常阈值
+#define LINKG_SWITCH_POLICY_VERIFY_LOAD_ABORT_SCORE     8U      // LOAD恢复提前失败积分阈值
 
 /**
  * @brief 将已固定的验证结果填充为VERIFY_DONE事件。
@@ -1363,11 +1364,21 @@ static void _linkg_switch_verify_process_recovery_load_probe(linkg_switch_policy
 
 
 /**
- * @brief RECOVERY + LOAD五秒结束后逐类别确认是否恢复Wi-Fi。
- *
- * OVF硬否决；每一类须有足够本类Probe网络样本、最近ACK和独立低积分。
+ * @brief 检查LOAD恢复期间是否已确认队列溢出。
  */
-static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_load(const linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_process_params_t *params)
+static bool _linkg_switch_verify_recovery_load_overflow(const linkg_switch_policy_verify_runtime_t *runtime)
+{
+    return runtime->wifi.queue_overflow ||
+           runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_UPLINK].overflow_seen ||
+           runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].overflow_seen;
+}
+
+/**
+ * @brief RECOVERY + LOAD逐类别确认是否满足Wi-Fi恢复条件。
+ *
+ * OVF硬否决；每一类须有足够本类Probe网络样本、最近ACK和低于score_limit的积分。
+ */
+static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_load(const linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_process_params_t *params, uint32_t score_limit)
 {
     uint64_t now_us;
     uint32_t class_index;
@@ -1379,9 +1390,7 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_
 
     if (runtime->path_interrupted ||
         runtime->wifi_load_probe_invalid_mask != 0U ||
-        runtime->wifi.queue_overflow ||
-        runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_UPLINK].overflow_seen ||
-        runtime->wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].overflow_seen ||
+        _linkg_switch_verify_recovery_load_overflow(runtime) ||
         !runtime->class_activity_valid ||
         !params->activity_valid ||
         !_linkg_switch_verify_hcc_recent(&runtime->wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK], now_us) ||
@@ -1410,7 +1419,7 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_
                   LINKG_SWITCH_POLICY_VERIFY_OBSERVATION_MAX_AGE_US)) ||
             runtime->wifi_load_probe_count[class_index] < LINKG_SWITCH_POLICY_VERIFY_LOAD_MIN_SAMPLES ||
             runtime->wifi_load_probe_ack_count[class_index] == 0U ||
-            runtime->wifi_load_score[class_index] >= LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE ||
+            runtime->wifi_load_score[class_index] >= score_limit ||
             runtime->wifi_load_probe_last_ack_us[class_index] == 0U ||
             runtime->wifi_load_probe_last_ack_us[class_index] > now_us ||
             now_us - runtime->wifi_load_probe_last_ack_us[class_index] > LINKG_SWITCH_POLICY_VERIFY_LOAD_ACK_MAX_AGE_US)
@@ -1420,6 +1429,39 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_recovery_
     }
 
     return LINKG_SWITCH_POLICY_VERIFY_WIFI;
+}
+
+/**
+ * @brief 判断LOAD恢复是否具备提前退出条件。
+ *
+ * 任一参与业务达到8分或确认OVF时提前失败。
+ * 所有参与业务积分归零且满足原有恢复条件时提前成功，其他情况继续验证。
+ */
+static linkg_switch_policy_verify_result_t _linkg_switch_verify_recovery_load_early(const linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_process_params_t *params)
+{
+    uint32_t class_index;
+
+    if (_linkg_switch_verify_recovery_load_overflow(runtime))
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+    }
+
+    for (class_index = 0U; class_index < LINKG_TRANSPORT_CLASS_COUNT; class_index++)
+    {
+        if ((runtime->class_mask & LINKG_SWITCH_POLICY_CLASS_BIT(class_index)) != 0U &&
+            runtime->wifi_load_score[class_index] >= LINKG_SWITCH_POLICY_VERIFY_LOAD_ABORT_SCORE)
+        {
+            return LINKG_SWITCH_POLICY_VERIFY_CELLULAR;
+        }
+    }
+
+    // 提前成功必须满足积分归零及原有全部质量条件。
+    if (_linkg_switch_verify_decide_recovery_load(runtime, params, 1U) == LINKG_SWITCH_POLICY_VERIFY_WIFI)
+    {
+        return LINKG_SWITCH_POLICY_VERIFY_WIFI;
+    }
+
+    return LINKG_SWITCH_POLICY_VERIFY_NONE;
 }
 
 /****************************** LOSS分类截止判决 ******************************/
@@ -1717,18 +1759,19 @@ static linkg_switch_policy_verify_result_t _linkg_switch_verify_decide_loss_clas
 /**
  * @brief 周期处理双链路质量验证并交付验证结果。
  *
- * 验证期间持续采集链路观测，3秒或5秒到期后按验证原因执行质量判决。
+ * 验证期间持续采集链路观测，LOAD恢复可提前结束，其他质量判决在截止时间执行。
  * 最终结果只计算一次，并持续交付VERIFY_DONE直至Operation消费。
  */
 int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *runtime, const linkg_switch_policy_verify_process_params_t *params, linkg_switch_policy_verify_process_output_t *output)
 {
-    const linkg_switch_observation_t *observation;
-    bool                              observation_current;
-    bool                              observation_sample_eligible;
-    bool                              paths_usable;
-    bool                              wifi_link_changed;
-    bool                              cellular_link_changed;
-    bool                              load_observation_advanced;
+    const linkg_switch_observation_t    *observation;
+    linkg_switch_policy_verify_result_t early_result;
+    bool                                observation_current;
+    bool                                observation_sample_eligible;
+    bool                                paths_usable;
+    bool                                wifi_link_changed;
+    bool                                cellular_link_changed;
+    bool                                load_observation_advanced;
 
 
     /****************************** 一、参数与会话检查 ******************************/
@@ -1887,6 +1930,17 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     if (paths_usable && runtime->reason == LINKG_SWITCH_POLICY_REASON_RECOVERY && runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
     {
         _linkg_switch_verify_process_recovery_load_probe(runtime, params, load_observation_advanced, observation_sample_eligible && params->now_us < runtime->deadline_us);
+
+        // 提前退出只用于截止前的LOAD恢复，截止时保留原有判决条件。
+        if (params->now_us < runtime->deadline_us)
+        {
+            early_result = _linkg_switch_verify_recovery_load_early(runtime, params);
+            if (early_result != LINKG_SWITCH_POLICY_VERIFY_NONE)
+            {
+                _linkg_switch_verify_finish(runtime, early_result, params->now_us, output);
+                return 0;
+            }
+        }
     }
 
     /****************************** 四、截止时间与质量判决 ******************************/
@@ -1926,7 +1980,7 @@ int linkg_switch_policy_verify_process(linkg_switch_policy_verify_runtime_t *run
     else if (runtime->recovery_reason == LINKG_SWITCH_POLICY_MIGRATION_LOAD)
     {
         // RECOVERY + LOAD只输出整组WIFI或CELLULAR结果。
-        _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_recovery_load(runtime, params), params->now_us, output);
+        _linkg_switch_verify_finish(runtime, _linkg_switch_verify_decide_recovery_load(runtime, params, LINKG_SWITCH_POLICY_VERIFY_RECOVER_SCORE), params->now_us, output);
         return 0;
     }
 

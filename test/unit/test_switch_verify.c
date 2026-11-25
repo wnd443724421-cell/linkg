@@ -228,11 +228,109 @@ static void test_recovery_load_probe_lifecycle(void)
     TEST_CHECK_EQ(runtime.result, LINKG_SWITCH_POLICY_VERIFY_NONE);
 }
 
+/**
+ * @brief 检查LOAD恢复提前退出及原有截止判决。
+ */
+static void test_recovery_load_early_decision(void)
+{
+    linkg_switch_observation_t                  observation;
+    linkg_switch_policy_verify_begin_params_t   begin;
+    linkg_switch_policy_verify_process_params_t process;
+    linkg_switch_policy_verify_process_output_t output;
+    linkg_switch_policy_verify_runtime_t        runtime;
+    uint32_t                                    index;
+    uint64_t                                    now_us;
+
+    // 分别验证7分继续、8分失败、OVF失败、样本不足、提前成功及截止判决。
+    for (index = 0U; index < 10U; index++)
+    {
+        now_us      = 40000000ULL + (uint64_t)index * 10000000ULL;
+        observation = usable_observation(5U, now_us - 10U);
+        begin       = loss_params(&observation, now_us);
+        begin.class_mask      = LINKG_SWITCH_POLICY_CLASS_BIT(LINKG_TRANSPORT_CLASS_VIDEO);
+        begin.operation_ids[LINKG_TRANSPORT_CLASS_REALTIME] = LINKG_SWITCH_POLICY_OPERATION_ID_INVALID;
+        begin.operation_ids[LINKG_TRANSPORT_CLASS_DATA]     = LINKG_SWITCH_POLICY_OPERATION_ID_INVALID;
+        begin.reason          = LINKG_SWITCH_POLICY_REASON_RECOVERY;
+        begin.recovery_reason = LINKG_SWITCH_POLICY_MIGRATION_LOAD;
+
+        memset(&runtime, 0, sizeof(runtime));
+        memset(&process, 0, sizeof(process));
+
+        TEST_CHECK_EQ(linkg_switch_policy_verify_begin(&runtime, &begin), 0);
+        process.now_us         = index >= 8U ? runtime.deadline_us : now_us + 2500000ULL;
+        process.observation    = &observation;
+        process.activity_valid = true;
+        observation.collected_us = process.now_us;
+
+        // 构造已经累计的合法证据；本轮Mock Probe保持PENDING，不增加积分。
+        runtime.class_activity_valid = true;
+        runtime.wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK].initialized     = true;
+        runtime.wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].initialized   = true;
+        runtime.wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_UPLINK].last_updated_us = process.now_us;
+        runtime.wifi_hcc[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].last_updated_us = process.now_us;
+        runtime.wifi_load_probe_count[LINKG_TRANSPORT_CLASS_VIDEO]       = 10U;
+        runtime.wifi_load_probe_ack_count[LINKG_TRANSPORT_CLASS_VIDEO]   = 10U;
+        runtime.wifi_load_probe_last_ack_us[LINKG_TRANSPORT_CLASS_VIDEO] = process.now_us;
+        runtime.wifi_load_score[LINKG_TRANSPORT_CLASS_VIDEO]            = 0U;
+
+        switch (index)
+        {
+            case 0U:
+                runtime.wifi_load_score[LINKG_TRANSPORT_CLASS_VIDEO] = 7U;
+                break;
+            case 1U:
+                runtime.wifi_load_score[LINKG_TRANSPORT_CLASS_VIDEO] = 8U;
+                break;
+            case 2U:
+                runtime.wifi.queue_overflow = true;
+                break;
+            case 3U:
+                runtime.wifi_global_load[LINKG_SWITCH_POLICY_VERIFY_DOWNLINK].overflow_seen = true;
+                break;
+            case 4U:
+                runtime.wifi_load_probe_count[LINKG_TRANSPORT_CLASS_VIDEO] = 9U;
+                runtime.wifi_load_probe_ack_count[LINKG_TRANSPORT_CLASS_VIDEO] = 9U;
+                break;
+            case 5U:
+                runtime.wifi_load_score[LINKG_TRANSPORT_CLASS_VIDEO] = 1U;
+                break;
+            case 6U:
+                runtime.wifi_load_probe_invalid_mask = begin.class_mask;
+                break;
+            case 7U:
+                break;
+            case 8U:
+                runtime.wifi_load_score[LINKG_TRANSPORT_CLASS_VIDEO] = 2U;
+                break;
+            default:
+                runtime.wifi_load_score[LINKG_TRANSPORT_CLASS_VIDEO] = 3U;
+                break;
+        }
+
+        TEST_CHECK_EQ(linkg_switch_policy_verify_process(&runtime, &process, &output), 0);
+
+        if (index == 0U || index == 4U || index == 5U || index == 6U)
+        {
+            TEST_CHECK(!output.event_ready);
+        }
+        else
+        {
+            TEST_CHECK(output.event_ready);
+            TEST_CHECK_EQ(output.event.payload.verify_done.result,
+                          index == 7U || index == 8U ? LINKG_SWITCH_POLICY_VERIFY_WIFI : LINKG_SWITCH_POLICY_VERIFY_CELLULAR);
+            TEST_CHECK_EQ(runtime.wifi_load_probe_handle[LINKG_TRANSPORT_CLASS_VIDEO], 0U);
+        }
+
+        linkg_switch_policy_verify_reset(&runtime);
+    }
+}
+
 int main(void)
 {
     TEST_RUN(test_duration_and_begin_validation);
     TEST_RUN(test_early_failure_and_stable_result);
     TEST_RUN(test_recovery_load_probe_lifecycle);
+    TEST_RUN(test_recovery_load_early_decision);
 
     return linkg_test_finish("switch_verify");
 }
