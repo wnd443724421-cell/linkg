@@ -61,6 +61,8 @@ extern "C" {
 
 /****************************** GPIO硬件资源 ******************************/
 
+#define LINKG_RESOURCE_GPIO_ETHERNET_RESET       "PE17" // 以太网硬件复位，低电平有效
+
 #define LINKG_RESOURCE_GPIO_SBUS_SWITCH          "PD16" // SBUS通路切换控制
 #define LINKG_RESOURCE_GPIO_LED_RUN              "PD1"  // 系统运行LED
 
