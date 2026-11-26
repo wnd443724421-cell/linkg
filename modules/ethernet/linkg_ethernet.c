@@ -25,7 +25,6 @@
 #include "linkg_system_resources.h"
 #include "linkg_thread.h"
 #include "linkg_time.h"
-#include "linkg_gpio.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -38,7 +37,6 @@
 #define LINKG_ETHERNET_IRQ_LINE_MAX              512U         // /proc/interrupts单行缓冲区长度
 #define LINKG_ETHERNET_DEVICE_NAME_MAX           128U         // Ethernet平台设备名称缓冲区长度
 #define LINKG_ETHERNET_IRQ_AFFINITY_VALUE_MAX    32U          // IRQ affinity写入值缓冲区长度
-#define LINKG_ETHERNET_RESET_HOLD_MS             1000U        // 以太网硬件复位低电平保持时间
 
 /****************************** 类型定义 ******************************/
 
@@ -57,7 +55,6 @@ typedef struct
     pthread_mutex_t             control_lock; // Ethernet生命周期串行锁
     pthread_mutex_t             lock;         // Ethernet模块状态锁
     linkg_thread_t              thread;       // Ethernet内部监控线程
-    linux_gpio_t               *reset_gpio;   // Ethernet复位GPIO独占句柄
     linkg_network_ipv4_config_t config;       // Ethernet IPv4配置快照
     linkg_ethernet_lifecycle_t  lifecycle;    // Ethernet模块生命周期状态
     int                         run_error;    // 最近一次监控异常
@@ -96,57 +93,6 @@ static void _linkg_ethernet_set_lifecycle(linkg_ethernet_lifecycle_t lifecycle)
     pthread_mutex_lock(&g_ethernet.lock);
     g_ethernet.lifecycle = lifecycle;
     pthread_mutex_unlock(&g_ethernet.lock);
-}
-
-/****************************** 硬件复位 ******************************/
-
-/**
- * @brief 执行Ethernet硬件复位并保持复位引脚为高电平。
- *
- * 调用方必须持有control_lock，成功后由模块持有GPIO句柄。
- */
-static int _linkg_ethernet_reset(void)
-{
-    linux_gpio_t *gpio;
-    int           ret;
-    int           release_ret;
-
-    gpio = NULL;
-
-    ret = linux_gpio_open(LINKG_RESOURCE_GPIO_ETHERNET_RESET,
-                          LINUX_GPIO_DIRECTION_OUTPUT, false, &gpio);
-    if (ret != 0)
-    {
-        LINKG_LOG_ERROR("Ethernet reset GPIO open failed, pin=%s, error=%d",
-                        LINKG_RESOURCE_GPIO_ETHERNET_RESET, ret);
-        return ret;
-    }
-
-    // GPIO申请成功时已经输出低电平，保持硬件复位状态。
-    ret = linkg_time_sleep_ms(LINKG_ETHERNET_RESET_HOLD_MS);
-
-    // 即使等待失败，也必须尝试解除硬件复位。
-    release_ret = linux_gpio_write(gpio, true);
-    if (release_ret != 0)
-    {
-        LINKG_LOG_ERROR("Ethernet reset GPIO release failed, error=%d",
-                        release_ret);
-    }
-
-    if (ret != 0 || release_ret != 0)
-    {
-        linux_gpio_close(gpio);
-        return ret != 0 ? ret : release_ret;
-    }
-
-    // 持续持有GPIO句柄，避免运行期间复位引脚被其他模块占用。
-    g_ethernet.reset_gpio = gpio;
-
-    LINKG_LOG_INFO("Ethernet hardware reset completed, pin=%s, hold_ms=%u",
-                   LINKG_RESOURCE_GPIO_ETHERNET_RESET,
-                   LINKG_ETHERNET_RESET_HOLD_MS);
-
-    return 0;
 }
 
 /****************************** IRQ绑定 ******************************/
@@ -589,7 +535,7 @@ static void _linkg_ethernet_thread(linkg_thread_t *thread, void *user_data)
 }
 
 /**
- * @brief 初始化Ethernet模块、执行硬件复位及初始化监控线程对象。
+ * @brief 初始化Ethernet模块及其内部监控线程对象。
  */
 int linkg_ethernet_init(const linkg_network_ipv4_config_t *config)
 {
@@ -617,15 +563,6 @@ int linkg_ethernet_init(const linkg_network_ipv4_config_t *config)
     ret = linkg_thread_init(&g_ethernet.thread, LINKG_ETHERNET_THREAD_NAME, _linkg_ethernet_thread, NULL);
     if (ret != 0)
     {
-        pthread_mutex_unlock(&g_ethernet.control_lock);
-        return ret;
-    }
-
-    // 初始化期间执行一次Ethernet硬件复位。
-    ret = _linkg_ethernet_reset();
-    if (ret != 0)
-    {
-        linkg_thread_deinit(&g_ethernet.thread);
         pthread_mutex_unlock(&g_ethernet.control_lock);
         return ret;
     }
@@ -813,10 +750,6 @@ int linkg_ethernet_deinit(void)
     pthread_mutex_unlock(&g_ethernet.lock);
 
     linkg_thread_deinit(&g_ethernet.thread);
-
-    // 释放复位GPIO，不主动将引脚拉低。
-    linux_gpio_close(g_ethernet.reset_gpio);
-    g_ethernet.reset_gpio = NULL;
 
     pthread_mutex_lock(&g_ethernet.lock);
     memset(&g_ethernet.config, 0, sizeof(g_ethernet.config));
