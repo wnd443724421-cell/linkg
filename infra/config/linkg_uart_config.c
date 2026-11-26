@@ -254,7 +254,8 @@ bool linkg_uart_config_reserved_port(linkg_uart_route_proto_t proto, uint16_t po
 {
     if (proto == LINKG_UART_ROUTE_PROTO_UDP)
     {
-        return port >= LINKG_RESOURCE_UDP_PORT_WIFI_DATA && port <= LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY;
+        return (port >= LINKG_RESOURCE_UDP_PORT_WIFI_DATA && port <= LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY) ||
+               port == LINKG_RESOURCE_UDP_PORT_AT;
     }
 
     return port == LINKG_RESOURCE_TCP_PORT_WEB_CONTROL || port == LINKG_RESOURCE_TCP_PORT_WEBSOCKET;

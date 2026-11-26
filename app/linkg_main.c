@@ -40,6 +40,7 @@
 #include "linkg_uart_manager.h"
 #include "linkg_udhcp.h"
 #include "linkg_web.h"
+#include "linkg_at.h"
 #include "linkg_platform_config.h"
 
 /****************************** 应用资源 ******************************/
@@ -77,6 +78,7 @@ typedef struct
     bool                upgrade_initialized;         // Upgrade模块是否已经初始化
     bool                upgrade_started;             // Upgrade线程是否已经启动
     bool                web_initialized;             // Web模块是否已经初始化
+    bool                at_initialized;              // AT模块是否已经初始化
     bool                gpio_started;                // GPIO Manager是否进入过start生命周期
     bool                network_started;             // Network Service是否进入过start生命周期
     bool                switch_started;              // Switch模块是否进入过start生命周期
@@ -89,6 +91,7 @@ typedef struct
     bool                uart_started;                // UART Manager是否进入过start生命周期
     bool                uart_diagnostic_started;     // UART诊断常驻线程是否已经启动
     bool                web_started;                 // Web模块是否进入过start生命周期
+    bool                at_started;                  // AT模块是否进入过start生命周期
 } linkg_app_context_t;
 
 /****************************** 全局上下文 ******************************/
@@ -120,7 +123,8 @@ static bool _linkg_app_has_initialized_modules(void)
            g_app.uart_initialized ||
            g_app.uart_diagnostic_initialized ||
            g_app.upgrade_initialized ||
-           g_app.web_initialized;
+           g_app.web_initialized ||
+           g_app.at_initialized;
 }
 
 /**
@@ -140,7 +144,8 @@ static bool _linkg_app_has_started_modules(void)
            g_app.uart_started ||
            g_app.uart_diagnostic_started ||
            g_app.upgrade_started ||
-           g_app.web_started;
+           g_app.web_started ||
+           g_app.at_started;
 }
 
 /**
@@ -391,6 +396,15 @@ static int _linkg_app_init(void)
 
     g_app.web_initialized = true;
 
+    ret = linkg_at_init();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("initialize AT module failed, error=%d", ret);
+        return ret;
+    }
+
+    g_app.at_initialized = true;
+
     LINKG_LOG_INFO("application modules initialized");
 
     return 0;
@@ -426,7 +440,8 @@ static int _linkg_app_start(void)
         !g_app.uart_initialized ||
         !g_app.uart_diagnostic_initialized ||
         !g_app.upgrade_initialized ||
-        !g_app.web_initialized)
+        !g_app.web_initialized ||
+        !g_app.at_initialized)
     {
         return -ENODEV;
     }
@@ -591,6 +606,15 @@ static int _linkg_app_start(void)
         return ret;
     }
 
+    g_app.at_started = true;
+
+    ret = linkg_at_start();
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("start AT module failed, error=%d", ret);
+        return ret;
+    }
+
     LINKG_LOG_INFO("application modules started");
 
     return 0;
@@ -609,8 +633,20 @@ static int _linkg_app_stop(void)
     int ret;
 
     /**
-     * Web必须最先停止，避免应用拆除过程中继续接受新的管理请求。
+     * AT和Web必须优先停止，避免应用拆除过程中继续接受新的管理请求。
      */
+    if (g_app.at_started)
+    {
+        ret = linkg_at_stop();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("stop AT module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.at_started = false;
+    }
+
     if (g_app.web_started)
     {
         ret = linkg_web_stop();
@@ -815,6 +851,18 @@ static int _linkg_app_deinit(void)
     if (_linkg_app_has_started_modules())
     {
         return -EBUSY;
+    }
+
+    if (g_app.at_initialized)
+    {
+        ret = linkg_at_deinit();
+        if (ret != 0)
+        {
+            LINKG_LOG_ERROR("deinitialize AT module failed, error=%d", ret);
+            return ret;
+        }
+
+        g_app.at_initialized = false;
     }
 
     if (g_app.web_initialized)

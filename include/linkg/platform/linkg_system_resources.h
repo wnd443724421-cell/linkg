@@ -44,6 +44,7 @@ extern "C" {
 #define LINKG_RESOURCE_UDP_PORT_CELLULAR_DISCOVERY     29607U // 蜂窝设备发现UDP端口
 #define LINKG_RESOURCE_TCP_PORT_WEB_CONTROL            29608U // Web CGI本机控制TCP端口
 #define LINKG_RESOURCE_TCP_PORT_WEBSOCKET              29609U // WebSocket服务预留端口
+#define LINKG_RESOURCE_UDP_PORT_AT                     29610U // AT服务UDP端口
 
 /****************************** NAT资源 ******************************/
 
