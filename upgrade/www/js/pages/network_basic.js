@@ -79,7 +79,7 @@
         const localNetwork = localVirtualNetwork(config);
         if (virtual[0] === ethernet[0] && virtual[1] === ethernet[1] && config.ethernet_network !== localNetwork)
         {
-            throw new Error("使用 Direct 模式时，Ethernet 网段必须为本节点的 " + localNetwork + "/24；其他重叠网段不可用");
+            throw new Error("使用直连模式时，本地接入网段必须为本节点的组网子网 " + localNetwork + "/24；其他重叠网段不可用");
         }
         return config;
     }
@@ -189,8 +189,23 @@
         try { return !equal(readForm(), data.saved); }
         catch (error) { return true; }
     }
+    function renderSubnetExamples()
+    {
+        let prefix = null;
+        try
+        {
+            const parts = [1, 2].map(function (n) { return octet(field("VirtualOctet" + n).value); }).concat([0, 0]);
+            validatePrivateNetwork(parts);
+            prefix = parts.slice(0, 2).join(".");
+        }
+        catch (error) { /* 组网网段尚未输入完整。 */ }
+        [1, 2, 3].forEach(function (node) {
+            text("SubnetExample" + node, prefix === null ? "—" : prefix + "." + node + ".0/24");
+        });
+    }
     function controls()
     {
+        renderSubnetExamples();
         let valid = true;
         try { readForm(); } catch (error) { valid = false; }
         root.querySelectorAll("#networkBasicConfig input").forEach(function (input) {
@@ -206,10 +221,9 @@
         }
         catch (error) { /* 网段尚未输入完整。 */ }
         field("DirectSnatEnabled").disabled = busy || !connected || !directMode;
-        text("DirectSnatHelp", !directMode ? "仅在直连模式下生效，不影响 NAT 模式的地址转换。" :
-            field("DirectSnatEnabled").checked ? "开启：按现有规则转换源地址，兼容未配置回程路由的本地设备。" :
-            "关闭：保留远端真实源 IP 和端口，本地设备需配置正确的回程路由。");
-        text("DirectSnatHint", directMode ? "修改后需重启 LinkG 服务。" : "当前非直连模式，保留已保存的开关状态。");
+        text("DirectSnatHint", !valid ? "仅在直连模式下生效。" :
+            directMode ? "仅在直连模式下生效，修改后需重启 LinkG 服务。" :
+                "当前配置为 NAT 模式，此功能不生效。");
         const directButton = field("UseDirectButton");
         if (directButton)
         {
@@ -311,10 +325,10 @@
         const notices = [];
         if (before.ethernet_network !== after.ethernet_network)
         {
-            notices.push("网络地址即将改变。LinkG 服务重启后，请让客户端重新获取 IP；静态 IP 用户需同步修改客户端地址，并通过新的 LinkG IP 访问管理页面。静态 IP 不会因拔插网线自动改变。");
+            notices.push("本地接入网段即将改变。LinkG 服务重启后，请让客户端重新获取 IP；静态 IP 用户需同步修改客户端地址，并通过新的本机接入 IP 访问管理页面。静态 IP 不会因拔插网线自动改变。");
         }
         if (before.node_id !== after.node_id) { notices.push("节点 ID 将在服务重启后生效，客户端通常无需重新获取 IP。"); }
-        if (before.virtual_network !== after.virtual_network) { notices.push("虚拟网段改变后，请更新客户端路由；静态用户需重新添加手工路由。"); }
+        if (before.virtual_network !== after.virtual_network) { notices.push("组网网段改变后，请更新客户端路由；静态用户需重新添加手工路由。"); }
         if (before.direct_snat_enabled !== after.direct_snat_enabled)
         {
             notices.push(after.direct_snat_enabled ? "直连 SNAT 开启后需重启 LinkG 服务。" :

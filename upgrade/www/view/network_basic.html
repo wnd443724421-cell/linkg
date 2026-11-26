@@ -2,7 +2,7 @@
     <div class="page-header network-basic-page-header">
         <div>
             <h1 class="page-title">基础网络</h1>
-            <p class="page-description">查看设备网络地址，管理节点编号与网络配置</p>
+            <p class="page-description">查看设备网络状态，配置节点编号及网络地址</p>
         </div>
         <button id="networkBasicReloadButton" class="network-basic-button network-basic-button-secondary" type="button">刷新状态</button>
     </div>
@@ -21,14 +21,14 @@
                 <span class="network-basic-summary-hint">组网节点编号</span>
             </div>
             <div class="network-basic-summary-item">
-                <span class="network-basic-summary-label">本机虚拟 IP</span>
+                <span class="network-basic-summary-label">本机组网 IP</span>
                 <strong id="networkBasicCurrentVirtual" class="network-basic-summary-value">—</strong>
-                <span class="network-basic-summary-hint">组网访问地址</span>
+                <span class="network-basic-summary-hint">组网内访问本机的地址</span>
             </div>
             <div class="network-basic-summary-item">
-                <span class="network-basic-summary-label">本机以太网 IP</span>
+                <span class="network-basic-summary-label">本机接入 IP</span>
                 <strong id="networkBasicCurrentEthernet" class="network-basic-summary-value">—</strong>
-                <span class="network-basic-summary-hint">本地设备访问地址</span>
+                <span class="network-basic-summary-hint">本机以太网口地址</span>
             </div>
         </div>
     </section>
@@ -56,8 +56,8 @@
                 <div class="network-basic-network-card">
                     <div class="network-basic-network-heading">
                         <div>
-                            <h3 id="networkBasicVirtualLabel" class="network-basic-field-title">虚拟网络</h3>
-                            <p class="network-basic-field-subtitle">所有组网节点必须保持一致</p>
+                            <h3 id="networkBasicVirtualLabel" class="network-basic-field-title">组网网段</h3>
+                            <p class="network-basic-field-subtitle">用于组网内跨节点通信，所有节点必须保持一致。</p>
                         </div>
                         <span class="network-basic-network-tag">组网共用</span>
                     </div>
@@ -65,11 +65,11 @@
                     <div class="network-basic-address" role="group" aria-labelledby="networkBasicVirtualLabel" aria-describedby="networkBasicPrivateNetworks">
                         <input id="networkBasicVirtualOctet1" class="network-basic-octet"
                             type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                            autocomplete="off" spellcheck="false" aria-label="虚拟网络第一段" disabled>
+                            autocomplete="off" spellcheck="false" aria-label="组网网段第一段" disabled>
                         <span class="network-basic-dot" aria-hidden="true">.</span>
                         <input id="networkBasicVirtualOctet2" class="network-basic-octet"
                             type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                            autocomplete="off" spellcheck="false" aria-label="虚拟网络第二段" disabled>
+                            autocomplete="off" spellcheck="false" aria-label="组网网段第二段" disabled>
                         <span class="network-basic-dot" aria-hidden="true">.</span>
                         <span class="network-basic-octet is-fixed" aria-label="固定第三段 0">0</span>
                         <span class="network-basic-dot" aria-hidden="true">.</span>
@@ -77,13 +77,23 @@
                         <span class="network-basic-prefix">/16</span>
                     </div>
                     <p class="network-basic-input-note">后两段固定为 0。输满三位自动跳段，Ctrl+退格清空此网段。</p>
+                    <div class="network-basic-mode-notes network-basic-allocation">
+                        <p><strong>组网地址分配</strong></p>
+                        <p>每个节点根据节点 ID 分配独立的 /24 子网。</p>
+                        <dl class="network-basic-allocation-list">
+                            <div><dt>节点 ID 1</dt><dd id="networkBasicSubnetExample1">—</dd></div>
+                            <div><dt>节点 ID 2</dt><dd id="networkBasicSubnetExample2">—</dd></div>
+                            <div><dt>节点 ID 3</dt><dd id="networkBasicSubnetExample3">—</dd></div>
+                        </dl>
+                        <p>每个节点的组网 IP 使用其子网的 .1 地址。</p>
+                    </div>
                 </div>
 
                 <div class="network-basic-network-card">
                     <div class="network-basic-network-heading">
                         <div>
-                            <h3 id="networkBasicEthernetLabel" class="network-basic-field-title">以太网网段</h3>
-                            <p class="network-basic-field-subtitle">连接本机以太网口的本地网络</p>
+                            <h3 id="networkBasicEthernetLabel" class="network-basic-field-title">本地接入网段</h3>
+                            <p class="network-basic-field-subtitle">用于连接本机以太网口的设备，各节点可独立配置。</p>
                         </div>
                         <span class="network-basic-network-tag">本机独立</span>
                     </div>
@@ -92,15 +102,15 @@
                         <div class="network-basic-address" role="group" aria-labelledby="networkBasicEthernetLabel" aria-describedby="networkBasicPrivateNetworks">
                             <input id="networkBasicEthernetOctet1" class="network-basic-octet"
                                 type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                                autocomplete="off" spellcheck="false" aria-label="以太网网段第一段" disabled>
+                                autocomplete="off" spellcheck="false" aria-label="本地接入网段第一段" disabled>
                             <span class="network-basic-dot" aria-hidden="true">.</span>
                             <input id="networkBasicEthernetOctet2" class="network-basic-octet"
                                 type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                                autocomplete="off" spellcheck="false" aria-label="以太网网段第二段" disabled>
+                                autocomplete="off" spellcheck="false" aria-label="本地接入网段第二段" disabled>
                             <span class="network-basic-dot" aria-hidden="true">.</span>
                             <input id="networkBasicEthernetOctet3" class="network-basic-octet"
                                 type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3"
-                                autocomplete="off" spellcheck="false" aria-label="以太网网段第三段" disabled>
+                                autocomplete="off" spellcheck="false" aria-label="本地接入网段第三段" disabled>
                             <span class="network-basic-dot" aria-hidden="true">.</span>
                             <span class="network-basic-octet is-fixed" aria-label="固定第四段 0">0</span>
                             <span class="network-basic-prefix">/24</span>
@@ -108,20 +118,20 @@
                         <button id="networkBasicUseDirectButton" class="network-basic-button network-basic-button-secondary"
                             type="button" aria-describedby="networkBasicEthernetModes" disabled>设为直连网段</button>
                     </div>
-                    <p class="network-basic-input-note">最后一段固定为 0，本机 IP 使用 .1。Ctrl+退格清空此网段。</p>
+                    <p class="network-basic-input-note">最后一段固定为 0，本机接入 IP 使用 .1。Ctrl+退格清空此网段。</p>
                     <div id="networkBasicEthernetModes" class="network-basic-mode-notes">
-                        <p><strong>直连</strong> 以太网使用本节点虚拟子网，设备 IP 即组网访问地址。</p>
-                        <p><strong>NAT</strong> 以太网使用独立网段，通过地址映射访问本地设备。</p>
+                        <p><strong>直连模式</strong> 接入设备使用本节点组网子网，可通过实际 IP 跨节点访问。</p>
+                        <p><strong>NAT 模式</strong> 接入设备使用独立网段，通过映射后的组网 IP 跨节点访问。</p>
                     </div>
                     <div class="network-basic-direct-snat">
                         <label class="network-basic-toggle-row" for="networkBasicDirectSnatEnabled">
                             <span>
                                 <strong class="network-basic-field-title">直连源地址转换（SNAT）</strong>
-                                <span id="networkBasicDirectSnatHelp" class="network-basic-field-subtitle">开启：按现有规则转换源地址，兼容未配置回程路由的本地设备。</span>
+                                <span id="networkBasicDirectSnatHelp" class="network-basic-field-subtitle">开启后，远端主动访问本地设备时，源 IP 可转换为本机接入 IP，适用于未配置回程路由的设备。关闭后保留远端源 IP 和端口。</span>
                             </span>
                             <input id="networkBasicDirectSnatEnabled" type="checkbox" aria-describedby="networkBasicDirectSnatHelp networkBasicDirectSnatHint" checked disabled>
                         </label>
-                        <p id="networkBasicDirectSnatHint" class="network-basic-direct-snat-hint">仅直连模式可配置，修改后需重启服务。</p>
+                        <p id="networkBasicDirectSnatHint" class="network-basic-direct-snat-hint">仅在直连模式下生效，修改后需重启 LinkG 服务。</p>
                     </div>
                 </div>
                 <p id="networkBasicPrivateNetworks" class="network-basic-private-note">
@@ -133,11 +143,11 @@
 
             <div class="network-basic-dhcp">
                 <label class="network-basic-toggle-row" for="networkBasicDhcpEnabled">
-                    <span><strong class="network-basic-field-title">DHCP 服务</strong><span class="network-basic-field-subtitle">自动分配本地 IP 和虚拟网络路由</span></span>
+                    <span><strong class="network-basic-field-title">DHCP 服务</strong><span class="network-basic-field-subtitle">为接入设备自动分配 IP 地址及组网路由</span></span>
                     <input id="networkBasicDhcpEnabled" type="checkbox" disabled>
                 </label>
                 <label class="network-basic-toggle-row" for="networkBasicDefaultGateway">
-                    <span><strong class="network-basic-field-title">下发默认网关</strong><span class="network-basic-field-subtitle">开启后由 LinkG 提供客户端默认 Internet 出口</span></span>
+                    <span><strong class="network-basic-field-title">下发默认网关</strong><span class="network-basic-field-subtitle">开启后，接入设备默认通过 LinkG 转发外部网络流量</span></span>
                     <input id="networkBasicDefaultGateway" type="checkbox" disabled>
                 </label>
             </div>
@@ -163,11 +173,11 @@
                 <p>以下命令根据<strong>当前运行配置</strong>生成；尚未重启的配置不会提前用于教程。选择客户端获取 IP 的方式，只影响下面显示的命令，不修改 LinkG 服务端配置。执行前确认使用连接 LinkG 的网卡，并记录原有设置。</p>
                 <fieldset class="network-basic-help-mode">
                     <legend>客户端 IP 获取方式</legend>
-                    <label><input type="radio" name="networkBasicHelpMode" value="static" checked><span><strong>手动静态 IP</strong><small>手动设置地址及虚拟组网路由</small></span></label>
+                    <label><input type="radio" name="networkBasicHelpMode" value="static" checked><span><strong>手动静态 IP</strong><small>手动设置地址及组网路由</small></span></label>
                     <label><input type="radio" name="networkBasicHelpMode" value="dhcp"><span><strong>自动获取 IP（DHCP）</strong><small>启用 DHCP 或重新获取地址</small></span></label>
                 </fieldset>
                 <p id="networkBasicStaticNotice" class="network-basic-warning">静态配置不添加 Internet 默认路由。LinkG DHCP 地址池为 .2–.254，未预留静态地址，请先确认 IP 未被其他设备使用。Windows 路由若提示“对象已存在”，先通过 route print -4 检查已有路由。Linux 的临时静态配置使用 NetworkManager 运行时连接来替换当前 DHCP 地址，非追加第二个地址；不会修改原连接档案，NetworkManager 重启后该临时连接消失。</p>
-                <p id="networkBasicDhcpNotice" hidden>“启用 DHCP”用于取消静态 IPv4 配置并恢复自动获取；“重新获取 DHCP 租约”用于已经是 DHCP 模式的设备。LinkG 通过 Option 121/249 下发虚拟路由，原有租约不会因服务端重载立刻更新，换网段后需要主动释放并重新获取租约。</p>
+                <p id="networkBasicDhcpNotice" hidden>“启用 DHCP”用于取消静态 IPv4 配置并恢复自动获取；“重新获取 DHCP 租约”用于已经是 DHCP 模式的设备。LinkG 通过 Option 121/249 下发组网路由，原有租约不会因服务端重载立刻更新，换网段后需要主动释放并重新获取租约。</p>
                 <div class="network-basic-help-fields">
                     <label id="networkBasicClientIpField">客户端静态 IP<input id="networkBasicClientIp" type="text" maxlength="15" autocomplete="off"></label>
                     <label>Windows 网卡名称<input id="networkBasicWindowsInterface" type="text" value="Ethernet" maxlength="80"></label>
