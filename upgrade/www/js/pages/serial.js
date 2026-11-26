@@ -131,13 +131,14 @@
         const localIp = config == null ? "" : config.local_virtual_ip;
         const remoteExample = config == null ? "172.28.1.1" : config.remote_virtual_ip_example;
 
-        address.placeholder = endpoint === "local" ? (localIp || "本机组网 IPv4") : remoteExample;
-        role(row, "ipLabel").textContent = endpoint === "local" ? "本机组网 IPv4（绑定）" : "远端组网 IPv4";
+        address.placeholder = endpoint === "local" ? (localIp || "本机组网 IP") : remoteExample;
+        role(row, "ipLabel").textContent = endpoint === "local" ? "本地绑定 IP" : "远端目标 IP";
+        role(row, "portLabel").textContent = endpoint === "local" ? "本地监听端口" : "远端目标端口";
         role(row, "routeHint").textContent = endpoint === "local" ?
-            ("默认使用本机 LinkG 组网地址 " + localIp + "；0.0.0.0 表示监听全部本机 IPv4 地址。" +
-             (proto === "udp" ? " UDP 回传目标由最近收到的数据报确定。" : "")) :
-            ("请填写目标节点的 LinkG 虚拟组网 IPv4（如 " + remoteExample + "，仅为示例），" +
-             (proto === "tcp" ? "主动连接 TCP 服务。" : "发送到 UDP 对端；就绪不代表对端在线。"));
+            ("默认绑定本机组网 IP" + (localIp ? " " + localIp : "") + "；0.0.0.0 表示监听本机全部 IPv4 地址。" +
+             (proto === "udp" ? " UDP 发送目标为最近收到数据的对端，收到数据后才可向该对端发送。" : " TCP 作为服务端，等待对端连接。")) :
+            ("跨节点通信请填写对端设备的组网访问 IP（如 " + remoteExample + "，仅为示例）。" +
+             (proto === "tcp" ? " TCP 作为客户端，主动连接目标 IP 和端口。" : " UDP 与指定 IP 和端口通信；就绪不代表对端在线。"));
     }
 
     function createRoute(rule)
@@ -239,9 +240,9 @@
             card.querySelector('[data-action="clear"]').disabled = !enabled || !present || count === 0;
             role(card, "count").textContent = count + " / " + config.max_routes_per_port;
             role(card, "empty").hidden = count !== 0;
+            role(card, "modeHint").hidden = !sbus;
             role(card, "modeHint").textContent = sbus ?
-                "SBUS 固定为 " + config.sbus.baudrate + " baud / 8E2；电气反相由 MCU 完成。" :
-                "参数已保存且至少有一条路由时，UART 服务才会打开设备。";
+                "SBUS 固定为 " + config.sbus.baudrate + " baud / 8E2；电气反相由 MCU 完成。" : "";
             rows(card).forEach(function (row, index) {
                 const errorId = "serialRouteError" + card.dataset.uart + "-" + index;
 
@@ -279,8 +280,8 @@
             role(card, "device").textContent = capability.device_path;
             role(card, "portError").id = "serialPortError" + capability.uart_num;
             control(card, "type").setAttribute("aria-describedby", "serialPortError" + capability.uart_num);
-            card.querySelector('[data-action="add"]').setAttribute("aria-label", "新增 UART " + capability.uart_num + " 路由规则");
-            card.querySelector('[data-action="clear"]').setAttribute("aria-label", "清空 UART " + capability.uart_num + " 路由规则");
+            card.querySelector('[data-action="add"]').setAttribute("aria-label", "新增 UART " + capability.uart_num + " 转发规则");
+            card.querySelector('[data-action="clear"]').setAttribute("aria-label", "清空 UART " + capability.uart_num + " 转发规则");
             control(card, "present").checked = stored != null;
             if (capability.sbus_supported)
             {
@@ -365,7 +366,7 @@
             }
             if (rows(card).length > config.max_routes_per_port)
             {
-                error = "路由数量超出上限。";
+                error = "转发规则数量超出上限。";
             }
             if (error)
             {
@@ -390,12 +391,12 @@
                 rule.port = Number(rule.port);
                 if (!["tcp", "udp"].includes(rule.proto) || !["local", "remote"].includes(rule.endpoint) || !["tx", "rx", "rxtx"].includes(rule.dir))
                 {
-                    routeError = "请选择有效的协议、端点和转发方向。";
+                    routeError = "请选择有效的协议、通信模式和转发方向。";
                     routeControl = row.querySelector('[data-route-field="proto"]');
                 }
                 if (!ipv4Valid(rule.ip, rule.endpoint))
                 {
-                    routeError = "请输入有效 IPv4 单播地址；仅 Local 允许 0.0.0.0。";
+                    routeError = "请输入有效 IPv4 单播地址；仅本地监听（Local）允许 0.0.0.0。";
                     routeControl = ipControl;
                 }
                 else if (config.broadcast_addresses.includes(rule.ip))
@@ -495,7 +496,7 @@
         }
         dirty = hasConfigChanges();
         updateControls();
-        message("有未保存修改；保存将短暂中断串口数据，仅重载 UART 服务。", "");
+        message("有未保存修改；保存后仅重载串口服务，串口通信会短暂中断。", "");
     }
 
     function handleClick(event)
@@ -521,7 +522,7 @@
         }
         else if (action === "clear")
         {
-            if (!window.confirm("清空 UART " + card.dataset.uart + " 的全部路由？保存后该设备将不再打开。"))
+            if (!window.confirm("清空 UART " + card.dataset.uart + " 的全部转发规则？保存后该串口将不再启动。"))
             {
                 return;
             }
@@ -538,14 +539,14 @@
         {
             return;
         }
-        if (dirty && !window.confirm("放弃尚未保存的串口和路由修改？"))
+        if (dirty && !window.confirm("放弃尚未保存的串口参数及转发规则修改？"))
         {
             return;
         }
         renderConfig(config);
         dirty = false;
         updateControls();
-        message(uncertain ? "已还原草稿；设备结果尚未确认，请重新读取。" : "已还原到最后一次成功读取的配置。", "");
+        message(uncertain ? "已还原草稿；设备结果尚未确认，请刷新配置。" : "已还原到最后一次成功读取的配置。", "");
     }
 
     async function readConfig(token, expected)
@@ -602,7 +603,7 @@
     async function reload()
     {
         const token = session;
-        if (reading || saving || remoteApplying || (dirty && !window.confirm("重新读取将覆盖当前草稿，是否继续？")))
+        if (reading || saving || remoteApplying || (dirty && !window.confirm("刷新配置将覆盖尚未保存的修改，是否继续？")))
         {
             return;
         }
@@ -630,7 +631,7 @@
         submitted = validation.uart;
         saving = true;
         updateControls();
-        message("正在提交 UART 配置…", "");
+        message("正在提交串口配置…", "");
         try
         {
             const response = await LinkGSerialApi.setConfig({uart: submitted});
@@ -649,13 +650,13 @@
                 uncertain = !confirmed;
                 if (confirmed)
                 {
-                    message("配置未变化，已确认且没有重启 UART。", "is-success");
+                    message("配置未变化，已确认且未重载串口服务。", "is-success");
                 }
             }
             else if (response.data.apply === "applying" && Number(response.data.job_id) > 0)
             {
                 pendingJob = Number(response.data.job_id);
-                message("UART 正在重载，等待线程退出、配置提交及结果确认…", "");
+                message("正在重载串口服务，等待配置应用及结果确认…", "");
             }
             else
             {
@@ -670,7 +671,7 @@
                 uncertain = error.confirmed !== true;
                 message(error.confirmed === true ?
                     "配置被后端拒绝：" + error.message + "。草稿已保留，请修正后重试。" :
-                    "提交结果未确认：" + error.message + "。草稿已保留，请等待状态更新后重新读取。", "is-error");
+                    "提交结果未确认：" + error.message + "。草稿已保留，请等待状态更新后刷新配置。", "is-error");
             }
         }
         if (alive(token))
@@ -783,8 +784,8 @@
             const persisted = config == null ? null : config.uart.find(function (item) { return item.uart_num === number; });
 
             role(card, "status").textContent = remoteApplying ? "正在重载，设备状态待确认" :
-                (port == null ? (persisted == null ? "未配置" : (persisted.routes.length === 0 ? "仅保存参数 · 没有活动路由 · 设备未打开" : "未创建活动上下文")) :
-                 (port.device_open ? "设备已打开" : "设备未就绪") + " · " +
+                (port == null ? (persisted == null ? "未启用" : (persisted.routes.length === 0 ? "已保存参数 · 无转发规则 · 串口未启动" : "已配置 · 串口未启动")) :
+                 (port.device_open ? "串口已打开" : "串口未就绪") + " · " +
                  port.routes.map(function (state, index) { return "规则 " + (index + 1) + "：" + (SERIAL_ROUTE_TEXT[state] || state); }).join("；"));
             role(card, "rates").textContent = port == null ? "" : speed == null ? "实时速率：采样中…" :
                 "实时 UART RX / TX " + formatRate(speed[0]) + " / " + formatRate(speed[1]) +
@@ -792,10 +793,11 @@
             role(card, "counters").textContent = port == null ? "" :
                 "UART RX / TX " + port.uart_rx_bytes + " / " + port.uart_tx_bytes + " B · 网络 RX / TX " +
                 port.net_rx_bytes + " / " + port.net_tx_bytes + " B · 错误 " + port.errors + " · 丢弃 " + port.drops;
-            role(card, "baudHint").textContent = port != null && port.baud.verified ?
-                "当前设备：baud_base " + port.baud.baud_base + " ÷ 分频 " + port.baud.divisor + " = " +
-                port.baud.actual.toFixed(3) + " baud，分频误差 " + port.baud.error_pct.toFixed(4) + "%（不含晶振误差，非实测）。" :
-                "设备打开后显示驱动分频结果；软件支持不代表零误差。";
+            const baudVerified = port != null && port.baud.verified;
+            role(card, "baudHint").hidden = !baudVerified;
+            role(card, "baudHint").textContent = baudVerified ?
+                "驱动分频计算：" + port.baud.baud_base + " ÷ " + port.baud.divisor + " = " +
+                port.baud.actual.toFixed(3) + " baud，分频误差 " + port.baud.error_pct.toFixed(4) + "%（不含晶振误差，非实测）。" : "";
         });
         updateControls();
     }
@@ -826,7 +828,7 @@
                 if (data.apply.job_id !== job)
                 {
                     uncertain = true;
-                    message("应用记录已变化，无法确认本次结果，请重新读取。", "is-error");
+                    message("应用记录已变化，无法确认本次结果，请刷新配置。", "is-error");
                 }
                 else if (data.apply.state === "applied" || data.apply.state === "none")
                 {
@@ -838,14 +840,14 @@
                     uncertain = !confirmed;
                     if (confirmed)
                     {
-                        message("UART 配置已提交并回读确认（" + data.apply.elapsed_ms + " ms）；设备及网络状态见各串口。", "is-success");
+                        message("串口配置已提交并回读确认（" + data.apply.elapsed_ms + " ms）；设备及网络状态见各串口。", "is-success");
                     }
                 }
                 else
                 {
                     uncertain = data.apply.rollback_error !== 0;
                     message(data.apply.state === "rolled_back" ?
-                        "应用失败（" + data.apply.error + "），已恢复旧配置和 UART 运行态；草稿已保留。" :
+                        "应用失败（" + data.apply.error + "），已恢复旧配置和串口运行状态；草稿已保留。" :
                         "应用失败（" + data.apply.error + "），回滚错误 " + data.apply.rollback_error + "；请检查设备状态。", "is-error");
                 }
                 saving = false;
@@ -870,7 +872,7 @@
                         observedJob = data.apply.job_id;
                         externalJob = null;
                         uncertain = true;
-                        message("另一管理页面已修改 UART 配置；当前草稿已保留，请重新读取后再编辑。", "is-error");
+                        message("另一管理页面已修改串口配置；当前草稿已保留，请刷新配置后再编辑。", "is-error");
                         updateControls();
                     }
                     else if (!reading)
@@ -879,7 +881,7 @@
                         {
                             observedJob = data.apply.job_id;
                             externalJob = null;
-                            message("已读取另一管理页面刚提交的 UART 配置。", "");
+                            message("已读取另一管理页面刚提交的串口配置。", "");
                         }
                         else
                         {
