@@ -310,7 +310,9 @@ static void _linkg_at_server_thread(linkg_thread_t *thread, void *user_data)
 
     while (linkg_thread_is_running(thread))
     {
-        ret = poll(descriptors, 2U, -1);
+        _linkg_at_ssh_tick();
+
+        ret = poll(descriptors, 2U, _linkg_at_ssh_poll_timeout());
         if (ret < 0)
         {
             if (errno == EINTR)
@@ -343,6 +345,8 @@ static void _linkg_at_server_thread(linkg_thread_t *thread, void *user_data)
             break;
         }
 
+        _linkg_at_ssh_tick();
+
         if ((descriptors[1].revents & (POLLHUP | POLLNVAL)) != 0)
         {
             LINKG_LOG_ERROR("AT: invalid UDP socket events");
@@ -368,6 +372,10 @@ static void _linkg_at_server_thread(linkg_thread_t *thread, void *user_data)
             _linkg_at_server_receive(descriptors[1].fd);
         }
     }
+
+    // 线程异常退出时也尝试回收本次SSH维护服务。
+    _linkg_at_auth_reset();
+    (void)_linkg_at_ssh_shutdown();
 }
 
 /****************************** 生命周期 ******************************/
@@ -415,12 +423,22 @@ int _linkg_at_server_start(void)
         return -EALREADY;
     }
 
+    ret = _linkg_at_ssh_shutdown();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    _linkg_at_auth_reset();
+
     ret = _linkg_at_server_open_socket();
     if (ret != 0)
     {
         LINKG_LOG_ERROR("AT: bind UDP port failed, port=%u, error=%d", LINKG_RESOURCE_UDP_PORT_AT, ret);
         return ret;
     }
+
+    _linkg_at_ssh_prepare();
 
     ret = linkg_thread_start(&g_at_server.thread);
     if (ret != 0)
@@ -456,8 +474,9 @@ int _linkg_at_server_stop(void)
     }
 
     _linkg_at_server_close_socket();
+    _linkg_at_auth_reset();
 
-    return 0;
+    return _linkg_at_ssh_shutdown();
 }
 
 /**

@@ -9,7 +9,7 @@
 /****************************** 系统服务 ******************************/
 
 #ifndef LINKG_PLATFORM_SSH_ENABLE
-#define LINKG_PLATFORM_SSH_ENABLE 1U // SSH服务开关，0=关闭，1=开启
+#define LINKG_PLATFORM_SSH_ENABLE 0U // SSH服务开关，0=关闭，1=开启
 #endif
 
 #if (LINKG_PLATFORM_SSH_ENABLE != 0U) && (LINKG_PLATFORM_SSH_ENABLE != 1U)

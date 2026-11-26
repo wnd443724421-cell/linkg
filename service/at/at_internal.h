@@ -41,6 +41,21 @@ int _linkg_at_server_start(void);
 int _linkg_at_server_stop(void);
 int _linkg_at_server_deinit(void);
 
+/****************************** 工厂权限 ******************************/
+
+void _linkg_at_auth_reset(void);
+int  _linkg_at_auth_grant(const linkg_at_request_context_t *context, const char *arguments);
+bool _linkg_at_auth_allowed(const linkg_at_request_context_t *context);
+
+/****************************** SSH维护 ******************************/
+
+void _linkg_at_ssh_prepare(void);
+int  _linkg_at_ssh_set(bool enable);
+int  _linkg_at_ssh_get(bool *running);
+int  _linkg_at_ssh_poll_timeout(void);
+void _linkg_at_ssh_tick(void);
+int  _linkg_at_ssh_shutdown(void);
+
 /****************************** 请求分发 ******************************/
 
 int _linkg_at_dispatch_request(const linkg_at_request_context_t *context, const char *request, size_t request_length, char *response, size_t response_size, size_t *response_length);
@@ -53,5 +68,7 @@ int _linkg_at_response_error(char *response, size_t response_size, size_t *respo
 /****************************** 请求处理 ******************************/
 
 int _linkg_at_handler_basic(const linkg_at_request_context_t *context, linkg_at_form_t form, const char *arguments, char *data, size_t data_size);
+int _linkg_at_handler_factory(const linkg_at_request_context_t *context, linkg_at_form_t form, const char *arguments, char *data, size_t data_size);
+int _linkg_at_handler_ssh(const linkg_at_request_context_t *context, linkg_at_form_t form, const char *arguments, char *data, size_t data_size);
 
 #endif // LINKG_AT_INTERNAL_H

@@ -10,6 +10,7 @@
 
 #include "linkg_os.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -795,6 +796,109 @@ int linkg_os_set_ssh_enable(bool enable)
     }
 
     return 0;
+}
+
+/**
+ * @brief 查询系统中是否仍存在Dropbear进程，包括未退出的维护会话。
+ *
+ * 进程查询与LQ10的pidof语义一致，但直接读取procfs以区分查询失败和进程不存在。
+ */
+int linkg_os_get_ssh_running(bool *running)
+{
+    struct dirent *entry;
+    DIR           *directory;
+    char           path[64];
+    char           name[32];
+    ssize_t        length;
+    int            fd;
+    int            ret;
+    int            saved_errno;
+
+    if (running == NULL)
+    {
+        return -EINVAL;
+    }
+
+    *running = false;
+
+    directory = opendir("/proc");
+    if (directory == NULL)
+    {
+        return -errno;
+    }
+
+    ret = 0;
+
+    for (;;)
+    {
+        errno = 0;
+        entry = readdir(directory);
+        if (entry == NULL)
+        {
+            if (errno != 0)
+            {
+                ret = -errno;
+            }
+
+            break;
+        }
+
+        if (entry->d_name[0] == '\0' || strspn(entry->d_name, "0123456789") != strlen(entry->d_name))
+        {
+            continue;
+        }
+
+        ret = snprintf(path, sizeof(path), "/proc/%s/comm", entry->d_name);
+        if (ret < 0 || (size_t)ret >= sizeof(path))
+        {
+            ret = -ENAMETOOLONG;
+            break;
+        }
+
+        ret = 0;
+        fd  = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0)
+        {
+            if (errno == ENOENT || errno == ESRCH)
+            {
+                continue;
+            }
+
+            ret = -errno;
+            break;
+        }
+
+        do
+        {
+            length = read(fd, name, sizeof(name) - 1U);
+        }
+        while (length < 0 && errno == EINTR);
+
+        saved_errno = errno;
+        close(fd);
+
+        if (length < 0)
+        {
+            if (saved_errno == ENOENT || saved_errno == ESRCH)
+            {
+                continue;
+            }
+
+            ret = -saved_errno;
+            break;
+        }
+
+        name[length] = '\0';
+        if (strcmp(name, "dropbear\n") == 0 || strcmp(name, "dropbear") == 0)
+        {
+            *running = true;
+            break;
+        }
+    }
+
+    closedir(directory);
+
+    return ret;
 }
 
 /****************************** 进程管理 ******************************/

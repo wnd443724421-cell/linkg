@@ -19,14 +19,17 @@ typedef struct
     const char        *name;    // 完整AT命令名，不包含参数
     unsigned int       forms;   // 支持的请求形式掩码
     linkg_at_handler_t handler; // 命令处理函数
+    bool               factory; // 是否要求工厂权限
 } linkg_at_command_entry_t;
 
 /****************************** 命令映射 ******************************/
 
 static const linkg_at_command_entry_t g_at_commands[] =
 {
-    {"AT", LINKG_AT_FORM_EXEC, _linkg_at_handler_basic},
-    {NULL, 0U,                 NULL}
+    {"AT",         LINKG_AT_FORM_EXEC,                                           _linkg_at_handler_basic,   false},
+    {"AT+FACTORY", LINKG_AT_FORM_SET,                                            _linkg_at_handler_factory, false},
+    {"AT+SSH",     LINKG_AT_FORM_SET | LINKG_AT_FORM_QUERY | LINKG_AT_FORM_TEST, _linkg_at_handler_ssh,     true},
+    {NULL,         0U,                                                           NULL,                      false}
 };
 
 /****************************** 内部辅助 ******************************/
@@ -146,7 +149,7 @@ static const linkg_at_command_entry_t *_linkg_at_find_handler(const char *comman
  * @brief 分发一条完整AT请求，协议错误统一返回ERROR响应。
  *
  * Handler同步执行，不能持有请求上下文和参数指针。
- * 尚未接入授权模块，命令表只注册无副作用的基础AT指令。
+ * 工厂指令在分发层统一校验权限，Handler仅处理业务逻辑。
  */
 int _linkg_at_dispatch_request(const linkg_at_request_context_t *context, const char *request, size_t request_length, char *response, size_t response_size, size_t *response_length)
 {
@@ -178,6 +181,11 @@ int _linkg_at_dispatch_request(const linkg_at_request_context_t *context, const 
 
     entry = _linkg_at_find_handler(command, &form, &arguments);
     if (entry == NULL)
+    {
+        return _linkg_at_response_error(response, response_size, response_length);
+    }
+
+    if (entry->factory && !_linkg_at_auth_allowed(context))
     {
         return _linkg_at_response_error(response, response_size, response_length);
     }
