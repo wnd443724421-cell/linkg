@@ -1,0 +1,10 @@
+.rf-test-page .rf-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:16px 0; }
+.rf-test-page .rf-grid label,.rf-test-page .rf-grid div { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.rf-test-page .rf-grid input,.rf-test-page .rf-grid select { width:100%; box-sizing:border-box; padding:10px; border:1px solid #cbd5e1; border-radius:6px; background:transparent; color:inherit; font:inherit; }
+.rf-test-page .rf-grid input[readonly] { opacity:.75; }
+.rf-test-page .rf-grid small,.rf-test-page .rf-notice { font-size:13px; line-height:1.6; }
+.rf-test-page .rf-confirm { display:flex; gap:8px; align-items:center; margin:14px 0; }
+.rf-test-page .rf-actions { display:flex; gap:12px; }
+.rf-test-page .rf-message { line-height:1.6; overflow-wrap:anywhere; }
+.rf-test-page progress { width:100%; }
+@media(max-width:600px) { .rf-test-page .rf-grid { grid-template-columns:1fr; } }

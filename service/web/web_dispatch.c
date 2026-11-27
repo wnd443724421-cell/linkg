@@ -17,6 +17,7 @@
 #include "linkg_config.h"
 #include "linkg_lifecycle.h"
 #include "linkg_network_scan.h"
+#include "linkg_rf_test.h"
 
 /****************************** 内部类型 ******************************/
 
@@ -65,6 +66,9 @@ static const linkg_web_command_entry_t g_web_commands[] =
     {LINKG_WEB_CMD_WIFI_SCAN_START,      _linkg_web_handler_wifi_scan_start},
     {LINKG_WEB_CMD_WIFI_SCAN_GET,        _linkg_web_handler_wifi_scan_get},
     {LINKG_WEB_CMD_WIFI_SCAN_STOP,       _linkg_web_handler_wifi_scan_stop},
+    {LINKG_WEB_CMD_RF_TEST_START,         _linkg_web_handler_rf_test_start},
+    {LINKG_WEB_CMD_RF_TEST_GET,           _linkg_web_handler_rf_test_get},
+    {LINKG_WEB_CMD_RF_TEST_STOP,          _linkg_web_handler_rf_test_stop},
     {LINKG_WEB_CMD_INVALID,               NULL}
 };
 
@@ -197,7 +201,7 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
          cmd == LINKG_WEB_CMD_CONFIG_IMPORT ||
          cmd == LINKG_WEB_CMD_SYSTEM_REBOOT || cmd == LINKG_WEB_CMD_SYSTEM_FACTORY_RESET ||
          cmd == LINKG_WEB_CMD_UART_DIAG_START || cmd == LINKG_WEB_CMD_SPEEDTEST_START ||
-         cmd == LINKG_WEB_CMD_WIFI_SCAN_START))
+         cmd == LINKG_WEB_CMD_WIFI_SCAN_START || cmd == LINKG_WEB_CMD_RF_TEST_START))
     {
         cJSON_Delete(root);
         ret = _linkg_web_response_error(cmd, "服务正在停止或重启，请稍后重新连接", response);
@@ -209,7 +213,7 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
     }
 
     // 独占扫描和恢复期间冻结新配置及其他诊断，状态读取和取消继续开放。
-    if (linkg_network_scan_active() &&
+    if ((linkg_network_scan_active() || linkg_rf_test_active()) &&
         (cmd == LINKG_WEB_CMD_WIFI_CONFIG_SET || cmd == LINKG_WEB_CMD_CELLULAR_CONFIG_SET ||
          cmd == LINKG_WEB_CMD_TRAFFIC_CONFIG_SET || cmd == LINKG_WEB_CMD_UART_CONFIG_SET ||
          cmd == LINKG_WEB_CMD_NETWORK_BASIC_SET || cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART ||
@@ -217,10 +221,10 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
          cmd == LINKG_WEB_CMD_CONFIG_IMPORT || cmd == LINKG_WEB_CMD_UPGRADE_START ||
          cmd == LINKG_WEB_CMD_SYSTEM_REBOOT || cmd == LINKG_WEB_CMD_SYSTEM_FACTORY_RESET ||
          cmd == LINKG_WEB_CMD_UART_DIAG_START || cmd == LINKG_WEB_CMD_SPEEDTEST_START ||
-         cmd == LINKG_WEB_CMD_WIFI_SCAN_START))
+         cmd == LINKG_WEB_CMD_WIFI_SCAN_START || cmd == LINKG_WEB_CMD_RF_TEST_START))
     {
         cJSON_Delete(root);
-        ret = _linkg_web_response_error(cmd, "信道扫描或Wi-Fi恢复中，请等待任务结束", response);
+        ret = _linkg_web_response_error(cmd, "无线诊断或恢复中，请等待任务结束", response);
         if (ret == 0)
         {
             *response_length = strlen(*response);
@@ -234,12 +238,20 @@ int _linkg_web_dispatch_request(const char *request, size_t request_length, char
         cmd == LINKG_WEB_CMD_NETWORK_BASIC_RESTART ||
         cmd == LINKG_WEB_CMD_DEVICE_ROLE_SET || cmd == LINKG_WEB_CMD_DEVICE_RESTART ||
         cmd == LINKG_WEB_CMD_CONFIG_IMPORT || cmd == LINKG_WEB_CMD_WIFI_SCAN_START ||
-        cmd == LINKG_WEB_CMD_SYSTEM_REBOOT || cmd == LINKG_WEB_CMD_SYSTEM_FACTORY_RESET)
+        cmd == LINKG_WEB_CMD_RF_TEST_START || cmd == LINKG_WEB_CMD_SYSTEM_REBOOT || cmd == LINKG_WEB_CMD_SYSTEM_FACTORY_RESET)
     {
         ret = linkg_config_transaction_begin();
         if (ret == 0)
         {
-            ret = handler(param, response);
+            // 获取事务后再次检查，防止等待期间其他请求刚刚提交射频任务。
+            if (linkg_rf_test_active())
+            {
+                ret = _linkg_web_response_error(cmd, "射频诊断正在执行，请等待恢复", response);
+            }
+            else
+            {
+                ret = handler(param, response);
+            }
             linkg_config_transaction_end();
         }
         else

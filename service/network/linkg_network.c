@@ -849,6 +849,11 @@ int linkg_network_set_cellular_config(const linkg_cellular_config_t *config)
         return -ENODEV;
     }
 
+    if (linkg_network_cellular_task_active())
+    {
+        return -EBUSY;
+    }
+
     pthread_mutex_lock(&g_network.lock);
 
     if (g_network.state != LINKG_NETWORK_STATE_STOPPED &&

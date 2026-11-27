@@ -56,7 +56,10 @@ typedef enum
     LINKG_WEB_CMD_CONFIG_IMPORT        = 1032, // 导入配置并重载全部服务
     LINKG_WEB_CMD_WIFI_SCAN_START      = 1033, // 启动独占被动信道扫描
     LINKG_WEB_CMD_WIFI_SCAN_GET        = 1034, // 查询扫描与恢复结果
-    LINKG_WEB_CMD_WIFI_SCAN_STOP       = 1035  // 取消扫描并恢复Wi-Fi
+    LINKG_WEB_CMD_WIFI_SCAN_STOP       = 1035, // 取消扫描并恢复Wi-Fi
+    LINKG_WEB_CMD_RF_TEST_START         = 1036, // 启动独占蜂窝射频强发
+    LINKG_WEB_CMD_RF_TEST_GET           = 1037, // 获取射频测试状态及参数表
+    LINKG_WEB_CMD_RF_TEST_STOP          = 1038  // 停止强发并恢复蜂窝模块
 } linkg_web_cmd_t;
 
 /****************************** 类型定义 ******************************/
@@ -105,6 +108,9 @@ int  _linkg_web_handler_wifi_status_get(const cJSON *param, char **response);
 int  _linkg_web_handler_wifi_scan_start(const cJSON *param, char **response);
 int  _linkg_web_handler_wifi_scan_get(const cJSON *param, char **response);
 int  _linkg_web_handler_wifi_scan_stop(const cJSON *param, char **response);
+int  _linkg_web_handler_rf_test_start(const cJSON *param, char **response);
+int  _linkg_web_handler_rf_test_get(const cJSON *param, char **response);
+int  _linkg_web_handler_rf_test_stop(const cJSON *param, char **response);
 
 int  _linkg_web_handler_cellular_config_get(const cJSON *param, char **response);
 int  _linkg_web_handler_cellular_config_set(const cJSON *param, char **response);

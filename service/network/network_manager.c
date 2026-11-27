@@ -23,6 +23,7 @@
 #include "linkg_switch.h"
 #include "linkg_discovery.h"
 #include "linkg_network_task.h"
+#include "linkg_rf_test.h"
 
 /****************************** 模块常量 ******************************/
 
@@ -54,6 +55,21 @@ typedef struct
     bool                              task_released;               // 任务是否已经释放无线资源
     bool                              task_fault;                  // 资源未释放时禁止再次启动无线Owner
     bool                              task_cancel;                 // 任务取消请求
+
+    linkg_thread_t                    cell_task_thread;                 // 独占任务线程，不阻塞Wi-Fi管理
+    linkg_network_cellular_task_run_t cell_task_run;                    // 调用方提供的任务函数
+    linkg_network_cellular_task_finish_t cell_task_finish;                 // 恢复结束后通知调用方
+    void                             *cell_task_context;                // 调用方上下文，完成前必须有效
+    linkg_network_task_phase_t        cell_task_phase;                  // Cellular独占任务阶段
+    uint64_t                          cell_task_ready_at;               // 提交响应的发送宽限时间
+    int                               cell_task_error;                  // 独占操作结果
+    bool                              cell_task_released;               // 任务是否已经释放无线资源
+    bool                              cell_task_fault;                  // 资源未释放时禁止再次启动无线Owner
+    bool                              cell_task_cancel;                 // 任务取消请求
+
+    bool                              cell_task_restore;          // 任务前蜂窝配置是否启用
+    bool                              cell_task_preparing;        // 已进入停止原Owner阶段
+    bool                              cell_task_ready;            // 启动遗留FTM检查已完成
 
     int                               shutdown_result;             // Manager最近一次退出清理结果
 
@@ -758,6 +774,215 @@ static void _linkg_network_manager_process_task(void)
     }
 }
 
+/**
+ * @brief 在正常Cellular Owner释放AT通道后执行独占任务。
+ */
+static void _linkg_network_cell_task_thread(linkg_thread_t *thread, void *user_data)
+{
+    linkg_network_cellular_task_run_t run;
+    void                        *context;
+    bool                         cancelled;
+    bool                         released;
+    int                          ret;
+
+    (void)user_data;
+    pthread_mutex_lock(&g_network.lock);
+    run       = g_network_manager.cell_task_run;
+    context   = g_network_manager.cell_task_context;
+    cancelled = g_network_manager.cell_task_cancel;
+    pthread_mutex_unlock(&g_network.lock);
+
+    released = true;
+    ret = -ECANCELED;
+    if (!cancelled && linkg_thread_is_running(thread))
+    {
+        released = false;
+        ret = run(thread, context, &released);
+    }
+
+    pthread_mutex_lock(&g_network.lock);
+    g_network_manager.cell_task_error    = ret;
+    g_network_manager.cell_task_released = released;
+    pthread_mutex_unlock(&g_network.lock);
+    (void)linkg_thread_wakeup(&g_network.manager_thread);
+}
+
+/**
+ * @brief 结束独占任务，完成通知不得持有Network状态锁。
+ */
+static void _linkg_network_cell_task_finish(int task_error, int restore_error)
+{
+    linkg_network_cellular_task_finish_t finish;
+    void                            *context;
+
+    if (g_network_manager.cell_task_thread.initialized)
+    {
+        linkg_thread_deinit(&g_network_manager.cell_task_thread);
+    }
+    _linkg_network_manager_maintenance_end(&g_network.cellular_worker, LINKG_LINK_ACCESS_CELLULAR, "exclusive_task_finished");
+
+    pthread_mutex_lock(&g_network.lock);
+    finish = g_network_manager.cell_task_finish;
+    context = g_network_manager.cell_task_context;
+    g_network_manager.cell_task_fault = g_network_manager.cell_task_fault || !g_network_manager.cell_task_released;
+    g_network_manager.cell_task_phase = LINKG_NETWORK_TASK_IDLE;
+    g_network_manager.cell_task_run = NULL;
+    g_network_manager.cell_task_finish = NULL;
+    g_network_manager.cell_task_context = NULL;
+    pthread_mutex_unlock(&g_network.lock);
+
+    if (finish != NULL)
+    {
+        finish(context, task_error, restore_error);
+    }
+}
+
+/**
+ * @brief 推进停止、独占操作和恢复；耗时操作仅由独立任务线程执行。
+ */
+static void _linkg_network_manager_process_cell_task(void)
+{
+    linkg_network_worker_t     *worker;
+    linkg_network_task_phase_t  phase;
+    bool                        cancelled;
+    bool                        released;
+    bool                        restored;
+    int                         task_error;
+    int                         ret;
+
+    worker = &g_network.cellular_worker;
+    pthread_mutex_lock(&g_network.lock);
+    phase      = g_network_manager.cell_task_phase;
+    cancelled  = g_network_manager.cell_task_cancel;
+    task_error = g_network_manager.cell_task_error;
+    released   = g_network_manager.cell_task_released;
+    pthread_mutex_unlock(&g_network.lock);
+
+    if (phase == LINKG_NETWORK_TASK_PENDING)
+    {
+        if (linkg_time_elapsed_ms() < g_network_manager.cell_task_ready_at && !cancelled)
+        {
+            return;
+        }
+        if (cancelled && !g_network_manager.cell_task_preparing)
+        {
+            _linkg_network_cell_task_finish(-ECANCELED, 0);
+            return;
+        }
+        if (g_network_manager.cell_task_restore)
+        {
+            _linkg_network_manager_maintenance_begin(worker, LINKG_LINK_ACCESS_CELLULAR);
+        }
+        if (g_network_manager.cell_task_restore && !worker->maintenance_owned)
+        {
+            _linkg_network_cell_task_finish(-EBUSY, 0);
+            return;
+        }
+        g_network_manager.cell_task_preparing = true;
+        _linkg_network_manager_sync_cellular_discovery(false);
+        ret = _linkg_network_worker_stop(worker);
+        if (linkg_thread_is_started(&worker->thread))
+        {
+            return;
+        }
+        if (ret != 0 || worker->module_initialized)
+        {
+            worker->start_attempted = true;
+            pthread_mutex_lock(&g_network.lock);
+            g_network_manager.cell_task_released = false;
+            pthread_mutex_unlock(&g_network.lock);
+            _linkg_network_cell_task_finish(ret != 0 ? ret : -EBUSY, ret != 0 ? ret : -EBUSY);
+            return;
+        }
+
+        // 即使停止旧Owner期间收到取消，也必须先完成回收再按原配置恢复。
+        pthread_mutex_lock(&g_network.lock);
+        cancelled = g_network_manager.cell_task_cancel;
+        if (cancelled)
+        {
+            g_network_manager.cell_task_error = -ECANCELED;
+            g_network_manager.cell_task_phase = LINKG_NETWORK_TASK_RESTORING;
+            worker->start_attempted = false;
+        }
+        pthread_mutex_unlock(&g_network.lock);
+        if (cancelled)
+        {
+            return;
+        }
+
+        ret = linkg_thread_init(&g_network_manager.cell_task_thread, "cell-rf-task", _linkg_network_cell_task_thread, NULL);
+        if (ret == 0)
+        {
+            ret = linkg_thread_start(&g_network_manager.cell_task_thread);
+        }
+        pthread_mutex_lock(&g_network.lock);
+        if (ret == 0)
+        {
+            g_network_manager.cell_task_phase = LINKG_NETWORK_TASK_RUNNING;
+        }
+        else
+        {
+            g_network_manager.cell_task_error = ret;
+            g_network_manager.cell_task_released = true;
+            g_network_manager.cell_task_phase = LINKG_NETWORK_TASK_RESTORING;
+            worker->start_attempted = false;
+        }
+        pthread_mutex_unlock(&g_network.lock);
+        return;
+    }
+
+    if (phase == LINKG_NETWORK_TASK_RUNNING)
+    {
+        if (linkg_thread_is_running(&g_network_manager.cell_task_thread))
+        {
+            return;
+        }
+        ret = linkg_thread_stop(&g_network_manager.cell_task_thread);
+        if (ret != 0)
+        {
+            return;
+        }
+        // join后再读取完成结果；资源未释放时禁止启动正常蜂窝Owner。
+        pthread_mutex_lock(&g_network.lock);
+        task_error = g_network_manager.cell_task_error;
+        released = g_network_manager.cell_task_released;
+        if (released)
+        {
+            g_network_manager.cell_task_phase = LINKG_NETWORK_TASK_RESTORING;
+            worker->start_attempted = false;
+        }
+        pthread_mutex_unlock(&g_network.lock);
+        if (!released)
+        {
+            worker->start_attempted = true;
+            _linkg_network_cell_task_finish(task_error != 0 ? task_error : -EBUSY, -EBUSY);
+        }
+        return;
+    }
+
+    if (phase == LINKG_NETWORK_TASK_RESTORING)
+    {
+        if (!g_network_manager.cell_task_restore)
+        {
+            _linkg_network_cell_task_finish(task_error, 0);
+            return;
+        }
+        (void)_linkg_network_manager_process_worker(worker, true, false, LINKG_LINK_ACCESS_CELLULAR);
+        pthread_mutex_lock(&g_network.lock);
+        restored = worker->start_succeeded;
+        pthread_mutex_unlock(&g_network.lock);
+        if (restored && linkg_thread_is_running(&worker->thread))
+        {
+            _linkg_network_manager_sync_cellular_discovery(true);
+            _linkg_network_cell_task_finish(task_error, 0);
+        }
+        else if (worker->start_attempted && !linkg_thread_is_started(&worker->thread))
+        {
+            _linkg_network_cell_task_finish(task_error, worker->stop_result != 0 ? worker->stop_result : -EIO);
+        }
+    }
+}
+
 /****************************** Manager等待 ******************************/
 
 /**
@@ -824,6 +1049,8 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
     bool cellular_restart;
     bool processed;
     bool task_active;
+    bool cell_task_active;
+    bool cell_task_fault;
     bool health_restart;
     bool health_transaction;
     int  first_error;
@@ -838,6 +1065,17 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
 
     first_error = 0;
 
+    // 上次应用异常退出时先清理FTM，不允许正常Owner抢占AT通道。
+    ret = linkg_rf_test_recover_pending();
+    pthread_mutex_lock(&g_network.lock);
+    g_network_manager.cell_task_ready = true;
+    g_network_manager.cell_task_fault = ret != 0;
+    pthread_mutex_unlock(&g_network.lock);
+    if (ret != 0)
+    {
+        LINKG_LOG_ERROR("RF-TEST: startup cleanup failed, error=%d", ret);
+    }
+
     while (linkg_thread_is_running(thread))
     {
         /**
@@ -847,6 +1085,8 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
         pthread_mutex_lock(&g_network.lock);
 
         task_active      = g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE;
+        cell_task_active = g_network_manager.cell_task_phase != LINKG_NETWORK_TASK_IDLE;
+        cell_task_fault  = g_network_manager.cell_task_fault;
         wifi_enabled     = g_network.wifi_config.enabled;
         cellular_enabled = g_network.cellular_config.enabled;
 
@@ -905,10 +1145,18 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
             break;
         }
 
-        processed = _linkg_network_manager_process_worker(&g_network.cellular_worker, cellular_enabled, cellular_restart, LINKG_LINK_ACCESS_CELLULAR);
-        if (processed)
+        processed = true;
+        if (cell_task_active)
         {
-            _linkg_network_manager_maintenance_finish(&g_network.cellular_worker, LINKG_LINK_ACCESS_CELLULAR, cellular_enabled);
+            _linkg_network_manager_process_cell_task();
+        }
+        else if (!cell_task_fault)
+        {
+            processed = _linkg_network_manager_process_worker(&g_network.cellular_worker, cellular_enabled, cellular_restart, LINKG_LINK_ACCESS_CELLULAR);
+            if (processed)
+            {
+                _linkg_network_manager_maintenance_finish(&g_network.cellular_worker, LINKG_LINK_ACCESS_CELLULAR, cellular_enabled);
+            }
         }
         /**_linkg_network_worker_stop
          * 旧Owner尚未回收时，保留未完成的Cellular重启请求。
@@ -927,7 +1175,10 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
             break;
         }
 
-        _linkg_network_manager_sync_cellular_discovery(cellular_enabled);
+        if (!cell_task_active)
+        {
+            _linkg_network_manager_sync_cellular_discovery(cellular_enabled && !cell_task_fault);
+        }
 
         ret = _linkg_network_manager_wait(thread);
         if (ret != 0)
@@ -955,6 +1206,20 @@ static void _linkg_network_manager_thread(linkg_thread_t *thread, void *user_dat
                 _linkg_network_manager_record_error(&first_error, -EBUSY);
             }
             _linkg_network_task_finish(-ECANCELED, -ESHUTDOWN);
+        }
+    }
+
+    if (g_network_manager.cell_task_phase != LINKG_NETWORK_TASK_IDLE)
+    {
+        ret = g_network_manager.cell_task_thread.initialized ? linkg_thread_stop(&g_network_manager.cell_task_thread) : 0;
+        _linkg_network_manager_record_error(&first_error, ret);
+        if (ret == 0)
+        {
+            if (!g_network_manager.cell_task_released && g_network_manager.cell_task_phase == LINKG_NETWORK_TASK_RUNNING)
+            {
+                _linkg_network_manager_record_error(&first_error, -EBUSY);
+            }
+            _linkg_network_cell_task_finish(-ECANCELED, -ESHUTDOWN);
         }
     }
 
@@ -1086,7 +1351,7 @@ int _linkg_network_manager_stop(void)
 
     if (!linkg_thread_is_started(&g_network.manager_thread))
     {
-        return g_network_manager.task_fault ? -EBUSY : 0;
+        return (g_network_manager.task_fault || g_network_manager.cell_task_fault) ? -EBUSY : 0;
     }
 
     ret = linkg_thread_stop(&g_network.manager_thread);
@@ -1097,7 +1362,7 @@ int _linkg_network_manager_stop(void)
 
     pthread_mutex_lock(&g_network.lock);
 
-    ret = g_network_manager.task_fault ? -EBUSY : g_network_manager.shutdown_result;
+    ret = (g_network_manager.task_fault || g_network_manager.cell_task_fault) ? -EBUSY : g_network_manager.shutdown_result;
 
     pthread_mutex_unlock(&g_network.lock);
 
@@ -1160,7 +1425,8 @@ static int _linkg_network_manager_request_restart(bool wifi)
         return -ESHUTDOWN;
     }
 
-    if (wifi && (g_network_manager.task_fault || g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE))
+    if ((wifi && (g_network_manager.task_fault || g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE)) ||
+        (!wifi && (g_network_manager.cell_task_fault || g_network_manager.cell_task_phase != LINKG_NETWORK_TASK_IDLE)))
     {
         pthread_mutex_unlock(&g_network.lock);
         return -EBUSY;
@@ -1226,6 +1492,7 @@ int linkg_network_wifi_task_start(linkg_network_wifi_task_run_t run, linkg_netwo
     if (g_network_manager.task_fault || !g_network.wifi_config.enabled || !g_network.wifi_worker.start_succeeded ||
         !linkg_thread_is_running(&g_network.wifi_worker.thread) ||
         g_network_manager.wifi_restart_requested ||
+        g_network_manager.cell_task_phase != LINKG_NETWORK_TASK_IDLE ||
         g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE)
     {
         pthread_mutex_unlock(&g_network.lock);
@@ -1283,6 +1550,94 @@ bool linkg_network_wifi_task_active(void)
     }
     pthread_mutex_lock(&g_network.lock);
     active = g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE;
+    pthread_mutex_unlock(&g_network.lock);
+    return active;
+}
+
+/**
+ * @brief 提交Cellular独占维护任务，context有效期持续到finish返回。
+ *
+ * run仅在原Owner完整停止和反初始化后执行，且必须报告资源是否释放。
+ * finish在恢复原Owner后调用；恢复成功表示服务启动成功，不表示已经驻网。
+ */
+int linkg_network_cellular_task_start(linkg_network_cellular_task_run_t run, linkg_network_cellular_task_finish_t finish, void *context)
+{
+    if (run == NULL || finish == NULL)
+    {
+        return -EINVAL;
+    }
+    if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
+    {
+        return -ENODEV;
+    }
+    pthread_mutex_lock(&g_network.lock);
+    if (g_network.state != LINKG_NETWORK_STATE_RUNNING ||
+        !linkg_thread_is_running(&g_network.manager_thread))
+    {
+        pthread_mutex_unlock(&g_network.lock);
+        return -ESHUTDOWN;
+    }
+    if (!g_network_manager.cell_task_ready || g_network_manager.cell_task_fault || g_network_manager.cellular_restart_requested ||
+        g_network_manager.task_phase != LINKG_NETWORK_TASK_IDLE ||
+        g_network_manager.cell_task_phase != LINKG_NETWORK_TASK_IDLE)
+    {
+        pthread_mutex_unlock(&g_network.lock);
+        return -EBUSY;
+    }
+    g_network_manager.cell_task_preparing = false;
+    g_network_manager.cell_task_restore = g_network.cellular_config.enabled;
+    g_network_manager.cell_task_run = run;
+    g_network_manager.cell_task_finish = finish;
+    g_network_manager.cell_task_context = context;
+    g_network_manager.cell_task_ready_at = linkg_time_elapsed_ms() + 1000U;
+    g_network_manager.cell_task_error = 0;
+    g_network_manager.cell_task_released = true;
+    g_network_manager.cell_task_cancel = false;
+    g_network_manager.cell_task_phase = LINKG_NETWORK_TASK_PENDING;
+    pthread_mutex_unlock(&g_network.lock);
+    (void)linkg_thread_wakeup(&g_network.manager_thread);
+    return 0;
+}
+
+/**
+ * @brief 请求取消独占操作；即使取消仍必须等待资源释放与原服务恢复。
+ */
+int linkg_network_cellular_task_cancel(void)
+{
+    if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
+    {
+        return -ENODEV;
+    }
+    pthread_mutex_lock(&g_network.lock);
+    if (g_network_manager.cell_task_phase == LINKG_NETWORK_TASK_IDLE)
+    {
+        pthread_mutex_unlock(&g_network.lock);
+        return -ENOENT;
+    }
+    g_network_manager.cell_task_cancel = true;
+    if (g_network_manager.cell_task_phase == LINKG_NETWORK_TASK_RUNNING)
+    {
+        atomic_store(&g_network_manager.cell_task_thread.running, false);
+        (void)linkg_thread_wakeup(&g_network_manager.cell_task_thread);
+    }
+    pthread_mutex_unlock(&g_network.lock);
+    (void)linkg_thread_wakeup(&g_network.manager_thread);
+    return 0;
+}
+
+/**
+ * @brief 查询Cellular是否正处于独占维护事务中。
+ */
+bool linkg_network_cellular_task_active(void)
+{
+    bool active;
+
+    if (g_network.state == LINKG_NETWORK_STATE_UNINITIALIZED)
+    {
+        return false;
+    }
+    pthread_mutex_lock(&g_network.lock);
+    active = g_network_manager.cell_task_phase != LINKG_NETWORK_TASK_IDLE;
     pthread_mutex_unlock(&g_network.lock);
     return active;
 }
