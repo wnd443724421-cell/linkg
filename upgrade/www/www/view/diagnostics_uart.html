@@ -1,0 +1,193 @@
+<div id="uartDiagnosticPage" class="page uart-diag-page">
+    <div class="page-header uart-diag-header">
+        <div>
+            <h1 class="page-title">串口硬件诊断</h1>
+            <p class="page-description">检测 UART 普通回环及 UART0 的 SBUS 桥接路径，完成后自动恢复原串口运行状态</p>
+        </div>
+        <div class="uart-diag-header-actions">
+            <button id="uartDiagMenu" class="uart-diag-button uart-diag-mobile-menu" type="button"
+                aria-controls="appSidebar" aria-expanded="false">导航菜单</button>
+            <button id="uartDiagRefresh" class="uart-diag-button" type="button">刷新状态</button>
+        </div>
+    </div>
+
+    <button id="uartDiagMenuBackdrop" class="uart-diag-menu-backdrop" type="button"
+        aria-label="关闭导航菜单" hidden></button>
+
+    <section class="page-card uart-diag-notice" aria-label="诊断注意事项">
+        <div class="uart-diag-notice-icon" aria-hidden="true">!</div>
+        <div class="uart-diag-notice-content">
+            <strong>测试前确认</strong>
+            <p>诊断期间会临时停止 UART Manager 并接管串口测试路径，串口转发业务会短暂中断。请确认回环线路或测试治具已连接，并选择业务允许的维护时段。任务结束后系统会尝试恢复诊断前的 UART 初始化和运行状态。</p>
+        </div>
+    </section>
+
+    <div class="uart-diag-top-grid">
+        <section class="page-card uart-diag-control-card">
+            <div class="page-card-header">
+                <div>
+                    <h2 class="page-card-title">诊断范围</h2>
+                    <p class="uart-diag-card-description">选择测试对象后启动一次性硬件诊断</p>
+                </div>
+            </div>
+            <div class="uart-diag-card-body">
+                <div id="uartDiagModeGroup" class="uart-diag-mode-group" role="radiogroup" aria-label="诊断模式">
+                    <label class="uart-diag-mode-option">
+                        <input type="radio" name="uartDiagMode" value="single" checked>
+                        <span>单串口</span>
+                    </label>
+                    <label class="uart-diag-mode-option">
+                        <input type="radio" name="uartDiagMode" value="all">
+                        <span>全部串口</span>
+                    </label>
+                </div>
+
+                <label id="uartDiagPortWrap" class="uart-diag-select-field">
+                    <span>选择串口</span>
+                    <select id="uartDiagPort">
+                        <option value="0">UART 0</option>
+                        <option value="1">UART 1</option>
+                        <option value="2">UART 2</option>
+                    </select>
+                </label>
+
+                <div id="uartDiagPlanHint" class="uart-diag-plan-hint" aria-live="polite">
+                    UART 0：普通回环 + SBUS 桥接回环，共 2 项
+                </div>
+
+                <div class="uart-diag-action-row">
+                    <button id="uartDiagStart" class="uart-diag-button uart-diag-primary" type="button">开始诊断</button>
+                    <button id="uartDiagStop" class="uart-diag-button uart-diag-danger" type="button" disabled>取消诊断</button>
+                </div>
+                <p id="uartDiagMessage" class="uart-diag-message" role="status" aria-live="polite">正在读取最近一次诊断记录…</p>
+            </div>
+        </section>
+
+        <section class="page-card uart-diag-status-card">
+            <div class="page-card-header uart-diag-status-header">
+                <div>
+                    <h2 class="page-card-title">任务状态</h2>
+                    <p class="uart-diag-card-description">后台任务状态及测试进度</p>
+                </div>
+                <span id="uartDiagState" class="uart-diag-state-badge is-idle">尚未执行</span>
+            </div>
+            <div class="uart-diag-card-body">
+                <div class="uart-diag-metrics">
+                    <div class="uart-diag-metric">
+                        <span>任务编号</span>
+                        <strong id="uartDiagJobId">—</strong>
+                    </div>
+                    <div class="uart-diag-metric">
+                        <span>诊断模式</span>
+                        <strong id="uartDiagMode">—</strong>
+                    </div>
+                    <div class="uart-diag-metric">
+                        <span>当前项目</span>
+                        <strong id="uartDiagCurrent">—</strong>
+                    </div>
+                    <div class="uart-diag-metric">
+                        <span>总耗时</span>
+                        <strong id="uartDiagElapsed">—</strong>
+                    </div>
+                </div>
+
+                <div class="uart-diag-progress">
+                    <div class="uart-diag-progress-heading">
+                        <span>测试进度</span>
+                        <strong id="uartDiagProgressText">0 / 0</strong>
+                    </div>
+                    <div class="uart-diag-progress-track" role="progressbar" aria-label="测试项目完成进度"
+                        aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="uartDiagProgress">
+                        <span id="uartDiagProgressBar"></span>
+                    </div>
+                    <p id="uartDiagProgressHint" class="uart-diag-progress-hint">等待启动诊断任务</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <section class="page-card uart-diag-results-card">
+        <div class="page-card-header uart-diag-results-header">
+            <div>
+                <h2 class="page-card-title">测试结果</h2>
+                <p class="uart-diag-card-description">每项测试独立显示收发字节、数据错误及执行耗时</p>
+            </div>
+            <span id="uartDiagOverall" class="uart-diag-overall">暂无结果</span>
+        </div>
+
+        <div class="uart-diag-table-wrap">
+            <table class="uart-diag-table">
+                <thead>
+                    <tr>
+                        <th>测试项目</th>
+                        <th>状态</th>
+                        <th>TX 字节</th>
+                        <th>RX 字节</th>
+                        <th>错误字节</th>
+                        <th>SBUS 帧</th>
+                        <th>耗时</th>
+                    </tr>
+                </thead>
+                <tbody id="uartDiagResults"></tbody>
+            </table>
+        </div>
+        <p id="uartDiagResultsEmpty" class="uart-diag-empty">暂无测试结果。选择诊断范围并点击“开始诊断”。</p>
+    </section>
+
+    <section class="page-card uart-diag-restore-card">
+        <div class="page-card-header">
+            <div>
+                <h2 class="page-card-title">资源恢复与错误信息</h2>
+                <p class="uart-diag-card-description">诊断完成后重点确认 UART Manager 是否恢复</p>
+            </div>
+        </div>
+        <div class="uart-diag-restore-grid">
+            <div class="uart-diag-restore-item">
+                <span>诊断前 UART 状态</span>
+                <strong id="uartDiagOriginalState">—</strong>
+            </div>
+            <div class="uart-diag-restore-item">
+                <span>资源恢复状态</span>
+                <strong id="uartDiagRestoreState">—</strong>
+            </div>
+            <div class="uart-diag-restore-item">
+                <span>任务错误</span>
+                <strong id="uartDiagError">—</strong>
+            </div>
+            <div class="uart-diag-restore-item">
+                <span>恢复错误</span>
+                <strong id="uartDiagRestoreError">—</strong>
+            </div>
+        </div>
+    </section>
+
+    <section class="uart-diag-test-notes">
+        <h2>测试项目说明</h2>
+        <div class="uart-diag-note-grid">
+            <div>
+                <strong>普通 UART 回环</strong>
+                <p>UART 0、1、2 均支持。使用 100000 baud / 8E2，发送 6 组不同数据模式，每项共 1536 字节。</p>
+            </div>
+            <div>
+                <strong>SBUS 桥接回环</strong>
+                <p>仅 UART 0 支持。通过 SBUS 路径发送并校验 20 帧标准数据，每项共 500 字节；测试期间会切换 PD16 路径。</p>
+            </div>
+        </div>
+    </section>
+
+    <template id="uartDiagResultTemplate">
+        <tr>
+            <td>
+                <strong data-role="name"></strong>
+                <small data-role="path"></small>
+                <small data-role="detail" class="uart-diag-row-detail" hidden></small>
+            </td>
+            <td><span data-role="state" class="uart-diag-test-badge"></span></td>
+            <td data-role="tx">—</td>
+            <td data-role="rx">—</td>
+            <td data-role="errors">—</td>
+            <td data-role="frames">—</td>
+            <td data-role="elapsed">—</td>
+        </tr>
+    </template>
+</div>

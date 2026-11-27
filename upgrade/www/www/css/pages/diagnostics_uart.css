@@ -1,0 +1,655 @@
+/* UART硬件诊断页面：沿用LinkG基础卡片、配色和控件尺寸。 */
+
+.uart-diag-page [hidden] {
+    display: none !important;
+}
+
+.uart-diag-header,
+.uart-diag-header-actions,
+.uart-diag-action-row,
+.uart-diag-status-header,
+.uart-diag-results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.uart-diag-header {
+    align-items: flex-start;
+}
+
+.uart-diag-header-actions {
+    flex-wrap: wrap;
+}
+
+.uart-diag-mobile-menu,
+.uart-diag-menu-backdrop {
+    display: none;
+}
+
+.uart-diag-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding: 16px 18px;
+    border-color: #d8e5f7;
+    background: #f5f8fd;
+}
+
+.uart-diag-notice-icon {
+    width: 22px;
+    height: 22px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1px;
+    border-radius: 50%;
+    color: #ffffff;
+    background: var(--linkg-color-primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.uart-diag-notice-content {
+    min-width: 0;
+}
+
+.uart-diag-notice-content strong {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--linkg-color-text);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.uart-diag-notice-content p {
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.uart-diag-top-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.88fr) minmax(0, 1.35fr);
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.uart-diag-card-description {
+    margin-top: 4px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.uart-diag-card-body {
+    padding: 18px 20px 20px;
+}
+
+.uart-diag-mode-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 4px;
+    border-radius: var(--linkg-radius-medium);
+    background: var(--linkg-color-background);
+}
+
+.uart-diag-mode-option {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 1px solid transparent;
+    border-radius: var(--linkg-radius-medium);
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.uart-diag-mode-option.is-selected {
+    border-color: var(--linkg-color-border);
+    color: var(--linkg-color-primary);
+    background: var(--linkg-color-surface);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+}
+
+.uart-diag-mode-option input {
+    margin: 0;
+    accent-color: var(--linkg-color-primary);
+}
+
+.uart-diag-mode-option.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+}
+
+.uart-diag-select-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.uart-diag-select-field > span {
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+}
+
+.uart-diag-select-field select {
+    width: 100%;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+    color: var(--linkg-color-text);
+    background: var(--linkg-color-surface);
+    font-size: 14px;
+}
+
+.uart-diag-select-field select:focus {
+    outline: none;
+    border-color: var(--linkg-color-primary);
+    box-shadow: 0 0 0 3px var(--linkg-color-primary-soft);
+}
+
+.uart-diag-select-field select:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.uart-diag-plan-hint {
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    border: 1px solid var(--linkg-color-border-light);
+    border-radius: var(--linkg-radius-medium);
+    color: var(--linkg-color-text-secondary);
+    background: #fbfcfe;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.uart-diag-action-row {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+}
+
+.uart-diag-button {
+    min-height: 36px;
+    padding: 0 14px;
+    border: 1px solid var(--linkg-color-border);
+    border-radius: var(--linkg-radius-medium);
+    color: var(--linkg-color-text-secondary);
+    background: var(--linkg-color-surface);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.uart-diag-button:hover:not(:disabled) {
+    border-color: var(--linkg-color-primary);
+    color: var(--linkg-color-primary);
+}
+
+.uart-diag-button:focus-visible {
+    outline: 2px solid var(--linkg-color-primary);
+    outline-offset: 2px;
+}
+
+.uart-diag-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.uart-diag-primary {
+    border-color: var(--linkg-color-primary);
+    color: #ffffff;
+    background: var(--linkg-color-primary);
+}
+
+.uart-diag-primary:hover:not(:disabled) {
+    border-color: var(--linkg-color-primary-hover);
+    color: #ffffff;
+    background: var(--linkg-color-primary-hover);
+}
+
+.uart-diag-danger:hover:not(:disabled) {
+    border-color: var(--linkg-color-danger);
+    color: var(--linkg-color-danger);
+}
+
+.uart-diag-message {
+    min-height: 21px;
+    margin-top: 12px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.uart-diag-message.is-success {
+    color: var(--linkg-color-success);
+}
+
+.uart-diag-message.is-warning {
+    color: var(--linkg-color-warning);
+}
+
+.uart-diag-message.is-error {
+    color: var(--linkg-color-danger);
+}
+
+.uart-diag-state-badge,
+.uart-diag-test-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 2px 9px;
+    border-radius: 4px;
+    color: var(--linkg-color-text-secondary);
+    background: var(--linkg-color-background);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.uart-diag-state-badge.is-running,
+.uart-diag-state-badge.is-starting,
+.uart-diag-test-badge.is-running {
+    color: var(--linkg-color-primary);
+    background: var(--linkg-color-primary-soft);
+}
+
+.uart-diag-state-badge.is-restoring {
+    color: #9a6700;
+    background: #fff5d6;
+}
+
+.uart-diag-state-badge.is-completed,
+.uart-diag-test-badge.is-passed {
+    color: var(--linkg-color-success);
+    background: #eaf6ef;
+}
+
+.uart-diag-state-badge.is-cancelled,
+.uart-diag-test-badge.is-cancelled,
+.uart-diag-test-badge.is-skipped {
+    color: var(--linkg-color-warning);
+    background: #fff5e8;
+}
+
+.uart-diag-state-badge.is-failed,
+.uart-diag-test-badge.is-failed {
+    color: var(--linkg-color-danger);
+    background: #fef0f0;
+}
+
+.uart-diag-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.uart-diag-metric {
+    min-width: 0;
+    min-height: 68px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 7px;
+    padding: 10px 12px;
+    border: 1px solid var(--linkg-color-border-light);
+    border-radius: var(--linkg-radius-medium);
+    background: #fbfcfe;
+}
+
+.uart-diag-metric span {
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+}
+
+.uart-diag-metric strong {
+    overflow: hidden;
+    color: var(--linkg-color-text);
+    font-size: 15px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.uart-diag-progress {
+    margin-top: 20px;
+}
+
+.uart-diag-progress-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+}
+
+.uart-diag-progress-heading strong {
+    color: var(--linkg-color-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.uart-diag-progress-track {
+    height: 7px;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #edf0f4;
+}
+
+.uart-diag-progress-track > span {
+    width: 0;
+    height: 100%;
+    display: block;
+    border-radius: inherit;
+    background: var(--linkg-color-primary);
+    transition: width 0.18s ease;
+}
+
+.uart-diag-progress-hint {
+    margin-top: 8px;
+    color: var(--linkg-color-text-muted);
+    font-size: 12px;
+}
+
+.uart-diag-results-card {
+    margin-bottom: 16px;
+}
+
+.uart-diag-results-header {
+    align-items: center;
+}
+
+.uart-diag-overall {
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.uart-diag-overall.is-success {
+    color: var(--linkg-color-success);
+}
+
+.uart-diag-overall.is-warning {
+    color: var(--linkg-color-warning);
+}
+
+.uart-diag-overall.is-danger {
+    color: var(--linkg-color-danger);
+}
+
+.uart-diag-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.uart-diag-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.uart-diag-table th,
+.uart-diag-table td {
+    height: 48px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--linkg-color-border-light);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.uart-diag-table th {
+    height: 40px;
+    color: var(--linkg-color-text-secondary);
+    background: var(--linkg-color-background);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.uart-diag-table th:first-child,
+.uart-diag-table td:first-child {
+    width: 25%;
+    padding-left: 20px;
+}
+
+.uart-diag-table th:last-child,
+.uart-diag-table td:last-child {
+    padding-right: 20px;
+}
+
+.uart-diag-table td {
+    color: var(--linkg-color-text);
+}
+
+.uart-diag-table td strong,
+.uart-diag-table td small {
+    display: block;
+}
+
+.uart-diag-table td strong {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.uart-diag-table td small {
+    margin-top: 3px;
+    color: var(--linkg-color-text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.uart-diag-table td small.uart-diag-row-detail {
+    color: var(--linkg-color-danger);
+}
+
+.uart-diag-empty {
+    padding: 22px 12px;
+    color: var(--linkg-color-text-muted);
+    font-size: 13px;
+    text-align: center;
+}
+
+.uart-diag-restore-card {
+    margin-bottom: 16px;
+}
+
+.uart-diag-restore-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+}
+
+.uart-diag-restore-item {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 16px 18px;
+    border-right: 1px solid var(--linkg-color-border-light);
+}
+
+.uart-diag-restore-item:last-child {
+    border-right: 0;
+}
+
+.uart-diag-restore-item span {
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+}
+
+.uart-diag-restore-item strong {
+    color: var(--linkg-color-text);
+    font-size: 13px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.uart-diag-restore-item strong.is-success {
+    color: var(--linkg-color-success);
+}
+
+.uart-diag-restore-item strong.is-danger {
+    color: var(--linkg-color-danger);
+}
+
+.uart-diag-test-notes {
+    padding: 4px 2px 12px;
+}
+
+.uart-diag-test-notes h2 {
+    margin-bottom: 10px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.uart-diag-note-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.uart-diag-note-grid > div {
+    padding: 13px 15px;
+    border: 1px solid var(--linkg-color-border-light);
+    border-radius: var(--linkg-radius-medium);
+    background: var(--linkg-color-surface);
+}
+
+.uart-diag-note-grid strong {
+    color: var(--linkg-color-text);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.uart-diag-note-grid p {
+    margin-top: 5px;
+    color: var(--linkg-color-text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+    .uart-diag-top-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .uart-diag-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .uart-diag-restore-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .uart-diag-restore-item:nth-child(2) {
+        border-right: 0;
+    }
+
+    .uart-diag-restore-item:nth-child(-n + 2) {
+        border-bottom: 1px solid var(--linkg-color-border-light);
+    }
+}
+
+@media (max-width: 959px) {
+    body.uart-diagnostic-active {
+        min-width: 0;
+    }
+
+    body.uart-diagnostic-active .app-main {
+        margin-left: 0;
+    }
+
+    body.uart-diagnostic-active .app-sidebar {
+        z-index: 120;
+        visibility: hidden;
+        transform: translateX(-100%);
+        transition: transform 0.18s ease, visibility 0s linear 0.18s;
+    }
+
+    body.uart-diagnostic-active.uart-diagnostic-menu-open .app-sidebar {
+        visibility: visible;
+        transform: translateX(0);
+        box-shadow: 8px 0 24px rgba(31, 41, 55, 0.16);
+        transition-delay: 0s;
+    }
+
+    .uart-diag-mobile-menu {
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .uart-diag-menu-backdrop:not([hidden]) {
+        position: fixed;
+        z-index: 110;
+        top: var(--linkg-header-height);
+        right: 0;
+        bottom: 0;
+        left: 0;
+        display: block;
+        width: 100%;
+        height: auto;
+        background: rgba(31, 41, 55, 0.28);
+    }
+}
+
+@media (max-width: 700px) {
+    .uart-diag-header,
+    .uart-diag-status-header,
+    .uart-diag-results-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .uart-diag-header-actions {
+        width: 100%;
+    }
+
+    .uart-diag-card-body {
+        padding: 14px;
+    }
+
+    .uart-diag-restore-grid,
+    .uart-diag-note-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .uart-diag-restore-item {
+        border-right: 0;
+        border-bottom: 1px solid var(--linkg-color-border-light);
+    }
+
+    .uart-diag-restore-item:last-child {
+        border-bottom: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.uart-diagnostic-active .app-sidebar,
+    .uart-diag-progress-track > span {
+        transition: none;
+    }
+}

@@ -1,0 +1,74 @@
+/* LinkG 链路性能测试：沿用基础色彩和卡片体系。 */
+.speedtest-page [hidden] { display: none !important; }
+.speedtest-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.speedtest-tag { padding: 5px 10px; border: 1px solid #d7e4f8; border-radius: 5px; color: #2864c5; background: #f4f8ff; font-size: 12px; white-space: nowrap; }
+.speedtest-notice { display: flex; align-items: flex-start; gap: 12px; padding: 15px 18px; margin-bottom: 16px; border-color: #d7e4f8; background: #f5f8fe; }
+.speedtest-notice-symbol { display: grid; flex: none; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #2864c5; color: #fff; font-weight: 700; }
+.speedtest-notice strong { font-size: 13px; }
+.speedtest-notice p { margin: 5px 0 0; color: var(--linkg-color-text-secondary); font-size: 12px; line-height: 1.65; }
+.speedtest-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: stretch; }
+.speedtest-grid > .linkg-card { display: flex; flex-direction: column; min-width: 0; height: 100%; box-shadow: 0 6px 20px rgba(31, 52, 80, .05); }
+.speedtest-grid > .linkg-card > .linkg-card-body { display: flex; flex: 1; flex-direction: column; }
+.speedtest-card-hint { color: var(--linkg-color-text-muted); font-size: 12px; }
+.speedtest-fields { display: flex; flex-direction: column; gap: 18px; }
+#speedtestClientSettings, #speedtestServerSettings { display: flex; flex-direction: column; gap: 16px; }
+.speedtest-mode-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 6px; background: #f3f5f9; }
+.speedtest-mode-tab { flex: 1; padding: 10px 12px; border-radius: 5px; font-size: 13px; font-weight: 600; color: var(--linkg-color-text-secondary); cursor: pointer; }
+.speedtest-mode-tab.is-selected { color: var(--linkg-color-primary); background: white; box-shadow: 0 1px 5px #192f4d12; }
+.speedtest-mode-tab:disabled { opacity: .52; cursor: not-allowed; }
+.speedtest-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.speedtest-field label { font-size: 12px; font-weight: 600; color: #344054; }
+.speedtest-field input, .speedtest-field select { width: 100%; height: 42px; padding: 0 12px; border: 1px solid #d0d9e8; border-radius: 5px; background: #fff; color: #263244; font-size: 13px; outline: none; }
+.speedtest-field input:focus, .speedtest-field select:focus { border-color: #2864c5; box-shadow: 0 0 0 2px #2864c518; }
+.speedtest-field input:disabled, .speedtest-field select:disabled { color: #708198; background: #f6f8fb; }
+.speedtest-field small, .speedtest-field-note { margin: 0; font-size: 11px; line-height: 1.6; color: #72829b; }
+.speedtest-fields-row { display: flex; align-items: end; gap: 12px; }
+.speedtest-grow { flex: 1; }
+.speedtest-port { width: 120px; flex: none; }
+.speedtest-server-info { padding: 14px; border: 1px solid #deebfb; border-radius: 6px; background: #f6f9fd; }
+.speedtest-server-info strong { display: block; font-size: 13px; }
+.speedtest-server-info p { margin: 6px 0 0; font-size: 12px; line-height: 1.65; color: #667085; }
+.speedtest-server-endpoint { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; border: 1px solid #e3e9f2; border-radius: 6px; background: #f8fafc; font-size: 12px; }
+.speedtest-server-endpoint span { color: #667085; }
+.speedtest-server-endpoint strong { color: #1d4f9e; font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.speedtest-control-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: auto; padding-top: 18px; }
+.speedtest-actions { display: flex; flex: none; align-items: center; gap: 10px; }
+.speedtest-btn { min-height: 40px; padding: 0 18px; border-radius: 5px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.speedtest-btn-primary { color: white; background: var(--linkg-color-primary); }
+.speedtest-btn-secondary { color: #344054; border: 1px solid #dce4ee; background: white; }
+.speedtest-btn:disabled { color: #98a2b3; border: 1px solid #e5ebf4; background: #f8fafc; cursor: not-allowed; }
+.speedtest-message { min-height: 18px; margin: 0; color: #63758f; font-size: 12px; line-height: 1.6; text-align: right; overflow-wrap: anywhere; }
+.speedtest-message.is-error { color: var(--linkg-color-danger); }
+.speedtest-state { padding: 5px 8px; border-radius: 4px; background: #f2f4f7; color: #667085; font-size: 12px; }
+.speedtest-state.is-active { color: #1959b0; background: #edf4ff; }
+.speedtest-state.is-success { color: #168251; background: #e9f9f0; }
+.speedtest-state.is-error { color: #cf3030; background: #fff0ee; }
+.speedtest-rate-box { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 18px; padding: 18px 20px; border: 1px solid #dce6f3; border-radius: 8px; background: linear-gradient(135deg, #f8fbff 0%, #f2f6fc 100%); }
+.speedtest-rate-box > span { color: #667b9b; font-size: 12px; }
+.speedtest-rate-value { display: flex; grid-row: 1 / span 2; grid-column: 2; gap: 6px; align-items: baseline; color: #2358a8; }
+.speedtest-rate-value strong { font-size: 34px; font-weight: 650; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.speedtest-rate-value span, .speedtest-rate-box small { color: #788da9; font-size: 12px; }
+.speedtest-chart-panel { margin-top: 20px; }
+.speedtest-chart-heading, .speedtest-chart-axis, .speedtest-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.speedtest-chart-heading strong { font-size: 13px; color: #344054; }
+.speedtest-chart-heading span, .speedtest-chart-axis { color: #8190a4; font-size: 11px; }
+.speedtest-chart-container { position: relative; height: 206px; margin: 10px 0 4px; border: 1px solid #e9edf3; border-radius: 6px; background: #fbfcfe; overflow: hidden; }
+.speedtest-chart-container svg { display: block; width: 100%; height: 100%; }
+.speedtest-chart-line { fill: none; stroke: #2864c5; stroke-width: 2.8; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.speedtest-chart-area { fill: #2864c514; stroke: none; }
+.speedtest-chart-grid { stroke: #e7ecf3; stroke-width: 1; stroke-dasharray: 3 5; vector-effect: non-scaling-stroke; }
+.speedtest-chart-dots circle { fill: #2864c5; stroke: #fff; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.speedtest-chart-axis { padding: 0 2px; }
+.speedtest-chart-empty { position: absolute; top: 47%; left: 0; width: 100%; text-align: center; pointer-events: none; color: #98a2b3; font-size: 12px; }
+#speedtestProgressWrap { margin-top: 22px; }
+.speedtest-progress-heading { color: #6e7c92; font-size: 12px; }
+.speedtest-progress-track { height: 7px; margin-top: 8px; overflow: hidden; border-radius: 99px; background: #e5eaf2; }
+#speedtestProgressBar { width: 0%; height: 100%; border-radius: 99px; background: #2864c5; transition: width .3s ease; }
+.speedtest-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.speedtest-summary > div { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; padding: 13px 14px; border: 1px solid #e7edf5; border-radius: 7px; background: #fafcff; }
+.speedtest-summary > div span { color: #6b7b94; font-size: 12px; }
+.speedtest-summary > div strong { color: #24374d; font-size: 14px; font-variant-numeric: tabular-nums; }
+.speedtest-summary > div strong small { font-size: 11px; color: #8391a7; }
+.speedtest-result-hint { margin: 14px 0 0; color: #8b99b0; font-size: 11px; line-height: 1.65; }
+@media (max-width: 1180px) { .speedtest-grid { grid-template-columns: 1fr; } }
+@media (max-width: 650px) { .speedtest-header, .speedtest-control-footer { align-items: stretch; flex-direction: column; } .speedtest-fields-row { flex-wrap: wrap; } .speedtest-fields-row > .speedtest-field { flex: 1 1 180px; } .speedtest-fields-row .speedtest-port { flex: 0 1 125px; } .speedtest-message { text-align: left; } .speedtest-rate-box { grid-template-columns: 1fr; } .speedtest-rate-value { grid-row: auto; grid-column: auto; } .speedtest-summary { grid-template-columns: 1fr; } .speedtest-rate-value strong { font-size: 30px; } }

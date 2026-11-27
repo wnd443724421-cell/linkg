@@ -1,0 +1,88 @@
+<div id="serialPage" class="page serial-page">
+    <div class="page-header serial-header">
+        <div>
+            <h1 class="page-title">串口转发</h1>
+            <p class="page-description">配置串口通信参数及 TCP / UDP 转发规则，保存后仅重载串口服务</p>
+        </div>
+        <div class="serial-header-actions">
+            <button id="serialMenu" class="serial-button serial-mobile-menu" type="button" aria-controls="appSidebar" aria-expanded="false">导航菜单</button>
+            <button id="serialReload" class="serial-button" type="button">刷新配置</button>
+        </div>
+    </div>
+
+    <button id="serialMenuBackdrop" class="serial-menu-backdrop" type="button" aria-label="关闭导航菜单" hidden></button>
+
+    <div class="serial-summary" role="status" aria-live="polite">
+        <span>串口服务：<strong id="serialState">正在查询…</strong></span>
+        <span id="serialReadState">正在读取配置…</span>
+    </div>
+
+    <div class="serial-guide" aria-label="串口转发说明">
+        <p>启用串口并保存至少一条有效转发规则后，串口服务才会打开设备。应用修改时串口通信会短暂中断。</p>
+        <p><strong>转发方向：</strong>TX 为串口 → 网络，RX 为网络 → 串口；双向同时转发两个方向的数据。</p>
+        <p><strong>通信模式：</strong>Local 为本地监听，默认使用本机组网 IP；Remote 为指定远端目标，跨节点通信时填写对端设备的组网访问 IP。</p>
+    </div>
+
+    <form id="serialForm" novalidate>
+        <div id="serialPorts" class="serial-ports" aria-busy="true"></div>
+        <div class="serial-footer">
+            <p id="serialMessage" class="serial-message" role="status" aria-live="polite">正在读取配置…</p>
+            <div class="serial-actions">
+                <button id="serialReset" class="serial-button" type="button" disabled>放弃修改</button>
+                <button id="serialSave" class="serial-button serial-primary" type="submit" disabled>保存并应用</button>
+            </div>
+        </div>
+    </form>
+
+    <template id="serialPortTemplate">
+        <section class="page-card serial-port">
+            <div class="page-card-header serial-card-header">
+                <div>
+                    <h2 class="page-card-title" data-role="title"></h2>
+                    <p class="serial-note" data-role="device"></p>
+                </div>
+                <label class="serial-enable"><input data-field="present" type="checkbox">启用串口</label>
+            </div>
+            <div class="serial-body">
+                <p class="serial-status" data-role="status">正在查询设备状态…</p>
+                <div class="serial-physical">
+                    <label class="serial-field"><span>串口模式</span><select data-field="type"><option value="normal">普通串口</option></select></label>
+                    <label class="serial-field"><span>波特率（baud）</span><select data-field="baudrate"></select></label>
+                    <label class="serial-field"><span>数据位</span><select data-field="data_bits"><option value="7">7</option><option value="8">8</option></select></label>
+                    <label class="serial-field"><span>停止位</span><select data-field="stop_bits"><option value="1">1</option><option value="2">2</option></select></label>
+                    <label class="serial-field"><span>校验位</span><select data-field="parity"><option value="n">无校验</option><option value="e">偶校验</option><option value="o">奇校验</option></select></label>
+                </div>
+                <p class="serial-note" data-role="modeHint" hidden></p>
+                <p class="serial-note" data-role="baudHint" hidden></p>
+                <p class="serial-error" data-role="portError" role="alert" hidden></p>
+                <div class="serial-route-header">
+                    <h3>转发规则 <span data-role="count"></span></h3>
+                    <div class="serial-actions">
+                        <button class="serial-button" data-action="clear" type="button">清空规则</button>
+                        <button class="serial-button serial-add" data-action="add" type="button">新增规则</button>
+                    </div>
+                </div>
+                <div class="serial-routes" data-role="routes"></div>
+                <p class="serial-empty" data-role="empty">暂无转发规则，串口不会启动。</p>
+                <p class="serial-note serial-rate" data-role="rates"></p>
+                <p class="serial-note" data-role="counters"></p>
+            </div>
+        </section>
+    </template>
+
+    <template id="serialRouteTemplate">
+        <fieldset class="serial-route">
+            <legend>规则 <span data-role="index"></span></legend>
+            <div class="serial-route-fields">
+                <label class="serial-field"><span>协议</span><select data-route-field="proto"><option value="udp">UDP</option><option value="tcp">TCP</option></select></label>
+                <label class="serial-field"><span>通信模式</span><select data-route-field="endpoint"><option value="remote">远端目标（Remote）</option><option value="local">本地监听（Local）</option></select></label>
+                <label class="serial-field"><span>转发方向</span><select data-route-field="dir"><option value="rxtx">双向</option><option value="tx">TX（串口 → 网络）</option><option value="rx">RX（网络 → 串口）</option></select></label>
+                <label class="serial-field"><span data-role="ipLabel">远端目标 IP</span><input data-route-field="ip" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="172.28.1.1"></label>
+                <label class="serial-field"><span data-role="portLabel">远端目标端口</span><input data-route-field="port" type="number" min="1" max="65535" step="1" inputmode="numeric" placeholder="1–65535"></label>
+                <button class="serial-button serial-remove" data-action="remove" type="button">删除</button>
+            </div>
+            <p class="serial-note" data-role="routeHint"></p>
+            <p class="serial-error" data-role="error" role="alert" hidden></p>
+        </fieldset>
+    </template>
+</div>

@@ -1,0 +1,36 @@
+<div class="page system-action-page" id="systemReboot">
+    <div class="page-header">
+        <h1 class="page-title">重启设备</h1>
+        <p class="page-description">根据需要重启 LinkG 服务或整个 Linux 系统。重启过程中管理界面与业务连接会短暂中断。</p>
+    </div>
+
+    <p id="systemRebootStatus" class="system-action-notice" role="status" aria-live="polite">正在读取设备状态…</p>
+
+    <section class="page-card system-action-card" aria-labelledby="systemRebootServiceTitle">
+        <div class="page-card-header">
+            <h2 id="systemRebootServiceTitle" class="page-card-title">重启 LinkG 服务</h2>
+        </div>
+        <div class="page-card-body">
+            <p class="system-action-description">重新加载已保存配置，重新初始化 Wi-Fi、5G、组网及其他 LinkG 服务，不重启 Linux 系统。</p>
+            <div class="system-action-controls">
+                <button id="systemRebootServices" class="system-action-button system-action-button-primary" type="button" disabled>重启 LinkG</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="page-card system-action-card page-section" aria-labelledby="systemRebootSystemTitle">
+        <div class="page-card-header">
+            <h2 id="systemRebootSystemTitle" class="page-card-title">重启整机</h2>
+        </div>
+        <div class="page-card-body">
+            <p class="system-action-description">重启 Linux 操作系统，重新加载内核、驱动与 LinkG 服务。业务中断时间通常长于仅重启服务。</p>
+            <div class="system-action-controls">
+                <button id="systemRebootSystem" class="system-action-button" type="button" disabled>重启整机</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="system-action-footer">
+        <button id="systemRebootReload" class="system-action-button" type="button">刷新连接状态</button>
+    </div>
+</div>

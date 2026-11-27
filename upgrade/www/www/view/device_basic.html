@@ -1,0 +1,57 @@
+<div class="page device-basic-page">
+    <div class="page-header device-basic-page-header">
+        <div>
+            <h1 class="page-title">基础配置</h1>
+            <p class="page-description">查看出厂信息、软件版本与设备角色</p>
+        </div>
+        <button id="deviceBasicReload" class="device-basic-button device-basic-button-secondary" type="button">刷新状态</button>
+    </div>
+    <p id="deviceBasicStatus" class="device-basic-status" role="status" aria-live="polite">正在读取设备信息…</p>
+
+    <section class="page-card device-basic-section" aria-labelledby="deviceBasicInfoTitle">
+        <div class="page-card-header">
+            <h2 id="deviceBasicInfoTitle" class="page-card-title">设备信息</h2>
+            <span class="device-basic-note">出厂信息与软件构建信息</span>
+        </div>
+        <dl class="device-basic-list">
+            <div><dt>设备型号</dt><dd id="deviceBasicModel">—</dd></div>
+            <div><dt>设备序列号</dt><dd id="deviceBasicSerial">—</dd></div>
+            <div><dt>硬件版本</dt><dd id="deviceBasicHardwareVersion">—</dd></div>
+            <div><dt>软件版本</dt><dd id="deviceBasicSoftwareVersion">—</dd></div>
+            <div><dt>构建日期</dt><dd id="deviceBasicBuildDate">—</dd></div>
+            <div><dt>Wi-Fi 硬件类型</dt><dd id="deviceBasicWifiHardware">—</dd></div>
+        </dl>
+    </section>
+
+    <section class="page-card device-basic-section" aria-labelledby="deviceBasicRoleTitle">
+        <div class="page-card-header">
+            <h2 id="deviceBasicRoleTitle" class="page-card-title">设备角色</h2>
+            <span id="deviceBasicRoleNote" class="device-basic-note">正在读取配置</span>
+        </div>
+        <div class="device-basic-role-body">
+            <div class="device-basic-role-status">
+                <div><span>当前运行角色</span><strong id="deviceBasicRunningRole">—</strong></div>
+                <div><span>已保存角色</span><strong id="deviceBasicSavedRole">—</strong></div>
+            </div>
+            <div class="device-basic-role-setting">
+                <div class="device-basic-role-caption">
+                    <label class="device-basic-label" for="deviceBasicRole">运行角色</label>
+                    <span class="device-basic-subtitle">选择本机在 LinkG 组网中的工作角色</span>
+                </div>
+                <div class="device-basic-role-control">
+                    <select id="deviceBasicRole" class="device-basic-select" disabled>
+                        <option value="ap">AP — 管理节点</option>
+                        <option value="sta">STA — 接入节点</option>
+                    </select>
+                    <p id="deviceBasicRoleDescription" class="device-basic-role-description"></p>
+                </div>
+            </div>
+            <p class="device-basic-hint">切换 AP/STA 需要重启 LinkG 全部服务，连接会暂时中断；不会重启 Linux 系统。</p>
+        </div>
+        <div class="device-basic-actions">
+            <button id="deviceBasicReset" class="device-basic-button device-basic-button-secondary" type="button" disabled>还原修改</button>
+            <button id="deviceBasicRestart" class="device-basic-button device-basic-button-secondary" type="button" hidden>重启服务</button>
+            <button id="deviceBasicSave" class="device-basic-button device-basic-button-primary" type="button" disabled>保存角色</button>
+        </div>
+    </section>
+</div>
