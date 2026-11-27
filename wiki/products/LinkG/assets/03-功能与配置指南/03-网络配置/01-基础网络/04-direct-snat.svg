@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 436" role="img" aria-labelledby="title desc">
+  <title id="title">直连 SNAT 对请求和回包的影响</title>
+  <desc id="desc">电脑 A 访问设备 B。由 LinkG B 的直连 SNAT 开关决定设备 B 看到的源地址和所需的回程路由。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3d64a0"/>
+    </marker>
+  </defs>
+  <style>
+    text { fill: #172742; font: 16px 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif; }
+    .title { font-size: 22px; font-weight: 700; }
+    .name { font-size: 18px; font-weight: 700; }
+    .muted { fill: #485b74; font-size: 15px; }
+    .blue { fill: #184c96; }
+    .card { fill: #fff; stroke: #9eb5d2; }
+    .wire { stroke: #3d64a0; stroke-width: 2; fill: none; }
+  </style>
+  <rect x="10" y="8" width="1100" height="419" rx="14" fill="#f1f5fb" stroke="#c7d6e9"/>
+  <text class="title" x="29" y="45">LinkG B 的直连 SNAT</text>
+  <text class="muted" x="304" y="44">电脑 A 发起请求，设备 B 的目的地址始终是 172.28.2.120</text>
+
+  <rect class="card" x="29" y="68" width="204" height="69" rx="8"/>
+  <text class="name" x="131" y="96" text-anchor="middle">电脑 A</text>
+  <text x="131" y="120" text-anchor="middle">172.28.1.100</text>
+  <rect class="card" x="457" y="68" width="206" height="69" rx="8"/>
+  <text class="name" x="560" y="96" text-anchor="middle">LinkG B</text>
+  <text x="560" y="120" text-anchor="middle">接入 172.28.2.1</text>
+  <rect class="card" x="886" y="68" width="204" height="69" rx="8"/>
+  <text class="name" x="988" y="96" text-anchor="middle">设备 B</text>
+  <text x="988" y="120" text-anchor="middle">172.28.2.120</text>
+  <path class="wire" d="M237 107 H452" stroke-dasharray="7 4" marker-end="url(#arrow)"/>
+  <path class="wire" d="M668 107 H881" marker-end="url(#arrow)"/>
+  <text class="muted" x="344" y="93" text-anchor="middle">经 LinkG A 和组网</text>
+  <text class="muted" x="774" y="93" text-anchor="middle">本地以太网</text>
+
+  <rect class="card" x="29" y="159" width="520" height="251" rx="10"/>
+  <text class="name blue" x="49" y="193">开启 SNAT</text>
+  <text x="49" y="226">请求 → LinkG B 将源 IP 改为 172.28.2.1</text>
+  <rect x="49" y="244" width="480" height="43" rx="6" fill="#e8f0fc"/>
+  <text class="blue" x="64" y="271">设备 B 看到的源 IP　172.28.2.1</text>
+  <text x="49" y="322">回包 ← 设备 B 直接回复 172.28.2.1</text>
+  <text class="muted" x="49" y="352">LinkG B 还原转换，把回包转发给电脑 A</text>
+  <text class="muted" x="49" y="382">设备 B 通过本地以太网返回</text>
+
+  <rect class="card" x="570" y="159" width="520" height="251" rx="10"/>
+  <text class="name blue" x="590" y="193">关闭 SNAT</text>
+  <text x="590" y="226">请求 → LinkG B 保留源 IP 和源端口</text>
+  <rect x="590" y="244" width="480" height="43" rx="6" fill="#e8f0fc"/>
+  <text class="blue" x="605" y="271">设备 B 看到的源 IP　172.28.1.100</text>
+  <text x="590" y="322">回包 ← 设备 B 回复远端电脑 A</text>
+  <text class="muted" x="590" y="352">设备 B 需要经 LinkG B 到组网的路由，例如</text>
+  <text class="muted" x="590" y="382">172.28.0.0/16 via 172.28.2.1</text>
+</svg>

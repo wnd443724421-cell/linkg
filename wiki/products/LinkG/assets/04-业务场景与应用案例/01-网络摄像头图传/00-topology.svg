@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 213" role="img" aria-labelledby="title desc">
+  <title id="title">雄迈摄像头与两台 LinkG 的接线</title>
+  <desc id="desc">地面电脑以太网连接节点 1，雄迈摄像头以太网连接节点 2。地面端从 172.28.2.10 访问摄像头。</desc>
+  <style>
+    text { fill: #172742; font: 17px 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif; }
+    .title { font-size: 22px; font-weight: 700; }
+    .name { font-size: 19px; font-weight: 700; }
+    .label { fill: #3d64a0; font-size: 16px; }
+    .card { fill: #fff; stroke: #9eb5d2; }
+    .wire { stroke: #3d64a0; stroke-width: 2; }
+  </style>
+  <rect x="10" y="8" width="1100" height="196" rx="14" fill="#f1f5fb" stroke="#c7d6e9"/>
+  <text class="title" x="30" y="44">摄像头图传接线</text>
+  <rect class="card" x="30" y="67" width="182" height="83" rx="8"/>
+  <text class="name" x="44" y="99">地面电脑</text>
+  <text x="44" y="128">192.168.1.2</text>
+  <rect class="card" x="275" y="67" width="190" height="83" rx="8"/>
+  <text class="name" x="289" y="99">LinkG A · 节点 1</text>
+  <text x="289" y="128">组网 172.28.1.1</text>
+  <rect class="card" x="654" y="67" width="190" height="83" rx="8"/>
+  <text class="name" x="668" y="99">LinkG B · 节点 2</text>
+  <text x="668" y="128">组网 172.28.2.1</text>
+  <rect class="card" x="907" y="67" width="183" height="83" rx="8"/>
+  <text class="name" x="921" y="99">雄迈摄像头</text>
+  <text x="921" y="128">接网线并供电</text>
+  <path class="wire" d="M212 111 H275 M844 111 H907"/>
+  <path class="wire" d="M465 111 H654" stroke-dasharray="7 4"/>
+  <text class="label" x="243" y="95" text-anchor="middle">网线</text>
+  <text class="label" x="559" y="95" text-anchor="middle">LinkG 组网</text>
+  <text class="label" x="559" y="135" text-anchor="middle">172.28.0.0/16</text>
+  <text class="label" x="875" y="95" text-anchor="middle">网线</text>
+  <text class="label" x="30" y="183">地面电脑访问 172.28.2.10。在 NAT 模式下这是映射地址，在直连模式下这是摄像头实际地址。</text>
+</svg>

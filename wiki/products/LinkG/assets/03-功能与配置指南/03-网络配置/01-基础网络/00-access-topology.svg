@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 458" role="img" aria-labelledby="title desc">
+  <title id="title">LinkG 的 NAT 与直连接入拓扑</title>
+  <desc id="desc">两台 LinkG 通过组网相连，两端各接一台以太网设备。NAT 模式在组网使用映射地址，直连模式使用设备的实际地址。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3d64a0"/>
+    </marker>
+  </defs>
+  <style>
+    text { fill: #172742; font: 16px 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif; }
+    .title { font-size: 21px; font-weight: 700; }
+    .name { font-size: 18px; font-weight: 700; }
+    .muted { fill: #485b74; font-size: 15px; }
+    .blue { fill: #184c96; }
+    .panel { fill: #f1f5fb; stroke: #c7d6e9; }
+    .card { fill: #fff; stroke: #9eb5d2; }
+    .wire { stroke: #3d64a0; stroke-width: 2; fill: none; }
+    .group { stroke-dasharray: 7 4; }
+  </style>
+  <g transform="translate(0,0)">
+    <rect class="panel" x="10" y="8" width="1100" height="210" rx="14"/>
+    <text class="title" x="29" y="42">NAT 模式</text>
+    <text class="muted" x="154" y="41">两端各用本地接入网段，可在独立以太网上复用相同地址</text>
+    <path class="wire" d="M214 114 H273" marker-end="url(#arrow)"/>
+    <path class="wire" d="M845 114 H903" marker-end="url(#arrow)"/>
+    <path class="wire group" d="M475 114 H643" marker-end="url(#arrow)"/>
+    <text class="muted" x="243" y="100" text-anchor="middle">网线</text>
+    <text class="muted" x="875" y="100" text-anchor="middle">网线</text>
+    <text class="blue" x="559" y="94" text-anchor="middle">LinkG 组网</text>
+    <text class="muted" x="559" y="140" text-anchor="middle">172.28.0.0/16</text>
+    <g transform="translate(28,65)">
+      <rect class="card" width="184" height="99" rx="8"/>
+      <text class="name" x="13" y="28">电脑 A</text>
+      <text x="13" y="55">实际 192.168.1.100</text>
+      <text class="muted" x="13" y="80">映射 172.28.1.100</text>
+    </g>
+    <g transform="translate(276,65)">
+      <rect class="card" width="198" height="99" rx="8"/>
+      <text class="name" x="13" y="28">LinkG A · 节点 1</text>
+      <text x="13" y="55">接入 192.168.1.1</text>
+      <text class="muted" x="13" y="80">组网 172.28.1.1</text>
+    </g>
+    <g transform="translate(646,65)">
+      <rect class="card" width="198" height="99" rx="8"/>
+      <text class="name" x="13" y="28">LinkG B · 节点 2</text>
+      <text x="13" y="55">接入 192.168.1.1</text>
+      <text class="muted" x="13" y="80">组网 172.28.2.1</text>
+    </g>
+    <g transform="translate(906,65)">
+      <rect class="card" width="184" height="99" rx="8"/>
+      <text class="name" x="13" y="28">设备 B</text>
+      <text x="13" y="55">实际 192.168.1.120</text>
+      <text class="muted" x="13" y="80">映射 172.28.2.120</text>
+    </g>
+    <text class="blue" x="29" y="194">电脑 A 访问 172.28.2.120 → LinkG B 将目的地址映射为 192.168.1.120</text>
+  </g>
+  <g transform="translate(0,232)">
+    <rect class="panel" x="10" y="8" width="1100" height="210" rx="14"/>
+    <text class="title" x="29" y="42">直连模式</text>
+    <text class="muted" x="154" y="41">两端以太网分别使用节点 1 和节点 2 对应的组网子网</text>
+    <path class="wire" d="M214 114 H273" marker-end="url(#arrow)"/>
+    <path class="wire" d="M845 114 H903" marker-end="url(#arrow)"/>
+    <path class="wire group" d="M475 114 H643" marker-end="url(#arrow)"/>
+    <text class="muted" x="243" y="100" text-anchor="middle">网线</text>
+    <text class="muted" x="875" y="100" text-anchor="middle">网线</text>
+    <text class="blue" x="559" y="94" text-anchor="middle">LinkG 组网</text>
+    <text class="muted" x="559" y="140" text-anchor="middle">172.28.0.0/16</text>
+    <g transform="translate(28,65)">
+      <rect class="card" width="184" height="99" rx="8"/>
+      <text class="name" x="13" y="28">电脑 A</text>
+      <text x="13" y="55">实际 172.28.1.100</text>
+      <text class="muted" x="13" y="80">接入网段 172.28.1.0/24</text>
+    </g>
+    <g transform="translate(276,65)">
+      <rect class="card" width="198" height="99" rx="8"/>
+      <text class="name" x="13" y="28">LinkG A · 节点 1</text>
+      <text x="13" y="55">接入与组网 IP</text>
+      <text class="muted" x="13" y="80">172.28.1.1</text>
+    </g>
+    <g transform="translate(646,65)">
+      <rect class="card" width="198" height="99" rx="8"/>
+      <text class="name" x="13" y="28">LinkG B · 节点 2</text>
+      <text x="13" y="55">接入与组网 IP</text>
+      <text class="muted" x="13" y="80">172.28.2.1</text>
+    </g>
+    <g transform="translate(906,65)">
+      <rect class="card" width="184" height="99" rx="8"/>
+      <text class="name" x="13" y="28">设备 B</text>
+      <text x="13" y="55">实际 172.28.2.120</text>
+      <text class="muted" x="13" y="80">接入网段 172.28.2.0/24</text>
+    </g>
+    <text class="blue" x="29" y="194">电脑 A 访问 172.28.2.120 → 经两台 LinkG 转发到设备 B，目的地址保持不变</text>
+  </g>
+</svg>

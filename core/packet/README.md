@@ -1,6 +1,6 @@
 # LinkG Packet Pool 整理与审计 V1.0.0
 
-基线：2026-08-25 最新 `Linkg_v2.tar(3).gz`。
+基线：2026-08-25 最新 `Linkg_v1.tar.gz`。
 
 ## 本轮范围
 

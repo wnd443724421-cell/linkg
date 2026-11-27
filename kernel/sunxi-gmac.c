@@ -45,6 +45,8 @@
 #include <linux/hrtimer.h>
 #include <linux/sunxi-sid.h>
 #include <linux/reset.h>
+#include <linux/gpio/consumer.h>
+#include <linux/delay.h>
 
 #ifdef CONFIG_RTL8363_NB
 #include <smi.h>
@@ -59,6 +61,7 @@
 
 /****************************** 模块常量 ******************************/
 
+#define GETH_SWITCH_RESET_HOLD_MS       1000
 #define DMA_DESC_RX                     256                                       // 默认RX DMA描述符数量
 #define DMA_DESC_TX                     256                                       // 默认TX DMA描述符数量
 #define BUDGET                          (dma_desc_rx / 4)                         // NAPI默认轮询预算
@@ -3535,6 +3538,34 @@ static void geth_hw_release(struct platform_device *pdev)
 /****************************** 驱动生命周期 ******************************/
 
 /**
+ * geth_switch_reset - Reset external Ethernet switch once during probe.
+ * @pdev: platform device pointer
+ */
+static int geth_switch_reset(struct platform_device *pdev)
+{
+	struct gpio_desc *reset_gpio;
+
+	reset_gpio = devm_gpiod_get_optional(&pdev->dev,
+					    "switch-reset",
+					    GPIOD_OUT_HIGH);
+	if (IS_ERR(reset_gpio))
+		return PTR_ERR(reset_gpio);
+
+	if (!reset_gpio)
+		return 0;
+
+	msleep(GETH_SWITCH_RESET_HOLD_MS);
+
+	gpiod_set_value_cansleep(reset_gpio, 0);
+
+	dev_info(&pdev->dev,
+		 "Ethernet switch reset completed, hold=%d ms\n",
+		 GETH_SWITCH_RESET_HOLD_MS);
+
+	return 0;
+}
+
+/**
  * @brief 探测并注册Sunxi GMAC网络设备。
  */
 static int geth_probe(struct platform_device *pdev)
@@ -3570,6 +3601,13 @@ static int geth_probe(struct platform_device *pdev)
         pr_err("geth_hw_init fail!\n");
         goto hw_err;
     }
+    ret = geth_switch_reset(pdev);
+    if (ret) {
+        dev_err(&pdev->dev,
+            "Ethernet switch reset failed: %d\n", ret);
+        goto reg_err;
+    }
+
 #ifdef CONFIG_RTL8363_NB
     rtl8363nb_vb_init();
 #endif
