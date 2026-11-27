@@ -78,14 +78,21 @@ static const char *_rf_web_state(linkg_rf_state_t state)
 {
     switch (state)
     {
-        case LINKG_RF_IDLE:       return "idle";
-        case LINKG_RF_STARTING:   return "starting";
-        case LINKG_RF_ENTERING:   return "entering";
-        case LINKG_RF_RUNNING:    return "running";
-        case LINKG_RF_RESTORING:  return "restoring";
-        case LINKG_RF_COMPLETED:  return "completed";
-        case LINKG_RF_CANCELLED:  return "cancelled";
-        default:                  return "failed";
+        case LINKG_RF_IDLE:             return "idle";
+        case LINKG_RF_STARTING:         return "starting";
+        case LINKG_RF_OPENING:          return "opening";
+        case LINKG_RF_CHECKING:         return "checking";
+        case LINKG_RF_ENTERING:         return "entering";
+        case LINKG_RF_STARTING_TX:      return "starting_tx";
+        case LINKG_RF_RUNNING:          return "running";
+        case LINKG_RF_STOPPING_TX:      return "stopping_tx";
+        case LINKG_RF_EXITING:          return "exiting";
+        case LINKG_RF_RELEASING:        return "releasing";
+        case LINKG_RF_RESTORING:        return "restoring";
+        case LINKG_RF_COMPLETED:        return "completed";
+        case LINKG_RF_CANCELLED:        return "cancelled";
+        case LINKG_RF_RECOVERY_FAILED:  return "recovery_failed";
+        default:                       return "failed";
     }
 }
 
@@ -191,6 +198,10 @@ int _linkg_web_handler_rf_test_start(const cJSON *param, char **response)
     if (ret != 0)
     {
         cJSON_Delete(data);
+        if (ret == -EINPROGRESS)
+        {
+            return _linkg_web_response_error(LINKG_WEB_CMD_RF_TEST_START, "正在恢复蜂窝资源，本次不会启动强发，请稍后查看状态", response);
+        }
         return _linkg_web_response_error(LINKG_WEB_CMD_RF_TEST_START, "蜂窝资源正忙或未就绪，无法开始射频测试", response);
     }
     if (cJSON_AddNumberToObject(data, "job_id", job_id) == NULL)
@@ -237,6 +248,11 @@ int _linkg_web_handler_rf_test_get(const cJSON *param, char **response)
         cJSON_AddNumberToObject(data, "elapsed_ms", (double)status.elapsed_ms) == NULL ||
         cJSON_AddNumberToObject(data, "gain_dbm", 23) == NULL ||
         cJSON_AddNumberToObject(data, "test_error", status.test_error) == NULL ||
+        cJSON_AddStringToObject(data, "test_failed_at", _rf_web_state(status.test_failed_at)) == NULL ||
+        cJSON_AddStringToObject(data, "cleanup_failed_at", _rf_web_state(status.cleanup_failed_at)) == NULL ||
+        cJSON_AddBoolToObject(data, "recovery_blocked", status.recovery_blocked) == NULL ||
+        cJSON_AddBoolToObject(data, "recovery_active", status.recovery_active) == NULL ||
+        cJSON_AddNumberToObject(data, "recovery_error", status.recovery_error) == NULL ||
         cJSON_AddNumberToObject(data, "cleanup_error", status.cleanup_error) == NULL ||
         cJSON_AddNumberToObject(data, "restore_error", status.restore_error) == NULL ||
         cJSON_AddBoolToObject(data, "tx_confirmed", status.tx_confirmed) == NULL ||

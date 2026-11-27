@@ -39,17 +39,26 @@ typedef enum
 {
     LINKG_RF_IDLE = 0,        // 尚未测试
     LINKG_RF_STARTING,        // 等待资源或初始化
+    LINKG_RF_OPENING,         // 正在初始化独立AT通道
+    LINKG_RF_CHECKING,        // 正在查询初始FTM状态
     LINKG_RF_ENTERING,        // 进入FTM
+    LINKG_RF_STARTING_TX,     // 正在发送启用强发指令
     LINKG_RF_RUNNING,         // 强发命令已确认
-    LINKG_RF_RESTORING,       // 关闭强发并恢复
+    LINKG_RF_STOPPING_TX,     // 正在发送禁用强发指令
+    LINKG_RF_EXITING,         // 正在退出FTM并确认Online
+    LINKG_RF_RELEASING,       // 正在释放独立AT通道
+    LINKG_RF_RESTORING,       // 按原配置恢复Cellular Owner
     LINKG_RF_COMPLETED,       // 控制流程完成
     LINKG_RF_CANCELLED,       // 已取消
-    LINKG_RF_FAILED           // 控制或恢复失败
+    LINKG_RF_FAILED,          // 测试控制失败
+    LINKG_RF_RECOVERY_FAILED  // 清理或蜂窝恢复失败
 } linkg_rf_state_t;
 
 typedef struct
 {
     linkg_rf_params_t params;          // 本次请求参数
+    linkg_rf_state_t  test_failed_at;  // 测试首次失败阶段
+    linkg_rf_state_t  cleanup_failed_at; // 清理失败阶段
     linkg_rf_state_t  state;           // 任务状态
     uint32_t          job_id;          // 任务编号
     uint32_t          channel;         // 实际配置的信道号
@@ -59,6 +68,9 @@ typedef struct
     int               test_error;      // 测试控制错误
     int               cleanup_error;   // 关闭强发或退出FTM错误
     int               restore_error;   // 正常Owner恢复错误
+    int               recovery_error;  // 独立恢复最后一次执行结果
+    bool              recovery_active; // 独立恢复正在执行
+    bool              recovery_blocked; // 未确认安全释放，禁止交给正常Owner
     bool              active;          // 尚未完整收尾
     bool              tx_confirmed;    // 强发指令曾收到OK
     bool              mode_verified;   // 已确认FTM退出

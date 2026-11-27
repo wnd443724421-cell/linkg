@@ -8,6 +8,7 @@
 #include "network_internal.h"
 #include "network_manager.h"
 #include "linkg_network_task.h"
+#include "linkg_rf_test.h"
 #include "linkg_time.h"
 #include "linkg_switch.h"
 #include "linkg_config.h"
@@ -34,6 +35,9 @@ static atomic_int operation_error;
 static atomic_bool ap_recovery_required;
 static atomic_bool config_busy;
 static atomic_int config_attempts;
+static atomic_int cell_finishes;      // 结束的Cellular独占任务数
+static atomic_int cell_recoveries;    // 执行的RF安全恢复次数
+static atomic_int cell_recover_error; // 模拟安全恢复结果
 static atomic_int wifi_maintenance_begins;
 static atomic_int wifi_maintenance_ends;
 
@@ -47,6 +51,15 @@ static int owner_run(linkg_thread_t *thread)
         usleep(1000U);
     }
     return 0;
+}
+
+/**
+ * @brief 模拟RF安全状态检查，覆盖Manager阻止Owner的行为。
+ */
+int linkg_rf_test_recover_pending(void)
+{
+    atomic_fetch_add(&cell_recoveries, 1);
+    return atomic_load(&cell_recover_error);
 }
 
 /**
@@ -231,6 +244,29 @@ static void wait_count(atomic_int *counter, int expected)
 }
 
 /**
+ * @brief 模拟RF任务未能释放串口。
+ */
+static int cell_task_unreleased(linkg_thread_t *thread, void *context, bool *released)
+{
+    (void)thread;
+    (void)context;
+    assert(!linkg_thread_is_started(&g_network.cellular_worker.thread));
+    assert(linkg_thread_is_running(&g_network.wifi_worker.thread));
+    *released = false;
+    return -EREMOTEIO;
+}
+
+/**
+ * @brief 验证RF清理失败未误报为正常Owner恢复失败。
+ */
+static void cell_task_finished(void *context, int task_error, int restore_error, bool released)
+{
+    (void)context;
+    assert(task_error == -EREMOTEIO && restore_error == 0 && !released);
+    atomic_fetch_add(&cell_finishes, 1);
+}
+
+/**
  * @brief 覆盖成功、重复提交、独立蜂窝重启、取消、测量错误和恢复失败。
  */
 int main(void)
@@ -298,6 +334,21 @@ int main(void)
     assert(_linkg_network_manager_request_wifi_restart() == 0);
     wait_count(&wifi_starts, previous_starts + 1);
     usleep(10000U);
+    int previous_cell_starts = atomic_load(&cell_starts);
+    assert(linkg_network_cellular_task_start(cell_task_unreleased, cell_task_finished, NULL) == 0);
+    wait_count(&cell_finishes, 1);
+    assert(!linkg_thread_is_started(&g_network.cellular_worker.thread));
+    atomic_store(&cell_recover_error, -ENODEV);
+    assert(linkg_network_cellular_task_start(cell_task_unreleased, cell_task_finished, NULL) == -EINPROGRESS);
+    wait_count(&cell_recoveries, 2);
+    usleep(200000U);
+    assert(atomic_load(&cell_starts) == previous_cell_starts);
+    atomic_store(&cell_recover_error, 0);
+    assert(linkg_network_cellular_task_start(cell_task_unreleased, cell_task_finished, NULL) == -EINPROGRESS);
+    wait_count(&cell_recoveries, 3);
+    wait_count(&cell_starts, previous_cell_starts + 1);
+    assert(atomic_load(&cell_finishes) == 1);
+
     atomic_store(&hold_task, true);
     int previous_runs = atomic_load(&runs);
     assert(linkg_network_wifi_task_start(task, finished, NULL) == 0);

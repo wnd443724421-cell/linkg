@@ -12,6 +12,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <string.h>
 #include <unistd.h>
@@ -25,13 +26,17 @@
 
 /****************************** 模块常量 ******************************/
 
-#define LINKG_RF_AT_DEVICE   "/dev/ttyUSB1"         // RG255 AT控制串口
-#define LINKG_RF_AT_BAUDRATE 115200                 // AT波特率
-#define LINKG_RF_READY_MS    30000U                 // AT就绪等待上限
-#define LINKG_RF_RETRY_MS    500U                   // AT重试周期
-#define LINKG_RF_TICK_MS     100U                   // 强发取消检查周期
-#define LINKG_RF_MARKER      "/tmp/linkg-rf-pending" // 进程异常退出恢复标记
-#define LINKG_RF_BW_BIT(code) (1U << (code))          // FTM带宽编码位图
+#define LINKG_RF_AT_DEVICE      "/dev/ttyUSB1"         // RG255 AT控制串口
+#define LINKG_RF_AT_BAUDRATE    115200                 // AT波特率
+#define LINKG_RF_READY_MS       30000U                 // AT就绪等待上限
+#define LINKG_RF_RETRY_MS       500U                   // AT重试周期
+#define LINKG_RF_TICK_MS        100U                   // 强发取消检查周期
+#define LINKG_RF_MODE_TRIES     5U                     // 模式切换后最多查询次数
+#define LINKG_RF_MODE_POLL_MS   200U                   // 模式切换后查询间隔
+#define LINKG_RF_MARKER_DIR     "/app"                 // 应用持久状态目录
+#define LINKG_RF_MARKER         LINKG_RF_MARKER_DIR "/.linkg-rf-pending" // 设备重启后仍保留
+#define LINKG_RF_LEGACY_MARKER  "/tmp/linkg-rf-pending" // 兼容旧版本的遗留任务
+#define LINKG_RF_BW_BIT(code)   (1U << (code))          // FTM带宽编码位图
 
 /****************************** 频段配置 ******************************/
 
@@ -57,6 +62,8 @@ static const linkg_rf_band_t g_rf_bands[] =
 
 static pthread_mutex_t   g_rf_lock = PTHREAD_MUTEX_INITIALIZER; // 状态快照锁
 static linkg_rf_status_t  g_rf_status;                           // 最近一次诊断任务
+static bool               g_rf_requires_online;                 // 需要验证Online后才能恢复原Owner
+static at_channel_t     *g_rf_unreleased_channel;              // 持有尚未成功停止的AT通道
 static uint32_t           g_rf_last_rat;                         // 上一次尝试FTM的制式，仅任务线程访问
 
 /****************************** 参数校验 ******************************/
@@ -171,6 +178,7 @@ static int _rf_open(linkg_thread_t *thread, at_channel_t **out)
     uint64_t      deadline;
     at_channel_t *channel;
     int           ret;
+    int           last_error = -ENODEV;
 
     memset(&config, 0, sizeof(config));
     config.baudrate = LINKG_RF_AT_BAUDRATE;
@@ -190,9 +198,13 @@ static int _rf_open(linkg_thread_t *thread, at_channel_t **out)
         if (channel != NULL)
         {
             ret = at_channel_start(channel);
+            last_error = ret;
+            LINKG_LOG_INFO("RF-TEST: independent AT channel start device=%s error=%d", LINKG_RF_AT_DEVICE, ret);
             if (ret == 0)
             {
                 ret = rg255_cmd_test(channel);
+                last_error = ret;
+                LINKG_LOG_INFO("RF-TEST: AT readiness error=%d", ret);
             }
             if (ret == 0)
             {
@@ -210,7 +222,81 @@ static int _rf_open(linkg_thread_t *thread, at_channel_t **out)
         (void)linkg_time_sleep_ms(LINKG_RF_RETRY_MS);
     }
     while (linkg_time_elapsed_ms() < deadline);
-    return -ETIMEDOUT;
+    LINKG_LOG_WARN("RF-TEST: AT readiness deadline, last_error=%d", last_error);
+    return last_error;
+}
+
+/**
+ * @brief 停止AT接收线程并销毁通道，失败时保留所有权。
+ */
+static int _rf_close(at_channel_t **channel)
+{
+    int ret;
+
+    if (*channel == NULL)
+    {
+        return 0;
+    }
+    ret = at_channel_stop(*channel);
+    LINKG_LOG_INFO("RF-TEST: AT channel stop error=%d", ret);
+    if (ret == 0)
+    {
+        at_channel_destroy(*channel);
+        *channel = NULL;
+    }
+    return ret;
+}
+
+/**
+ * @brief 等待已应答的模式切换生效，仅重复查询当前模式。
+ */
+static int _rf_wait_mode(at_channel_t *channel, unsigned int expected)
+{
+    unsigned int mode;
+    unsigned int attempt;
+    int          ret;
+
+    for (attempt = 0U; attempt < LINKG_RF_MODE_TRIES; attempt++)
+    {
+        ret = rg255_rf_get_mode(channel, &mode);
+        if (ret != 0 || mode == expected)
+        {
+            return ret;
+        }
+        if (attempt + 1U < LINKG_RF_MODE_TRIES)
+        {
+            (void)linkg_time_sleep_ms(LINKG_RF_MODE_POLL_MS);
+        }
+    }
+    return -EIO;
+}
+
+/**
+ * @brief 重启模组，重新打开AT通道并确认Online。
+ */
+static int _rf_restart(at_channel_t **channel)
+{
+    int restart_ret;
+    int ret;
+
+    restart_ret = rg255_cmd_restart(*channel);
+    LINKG_LOG_INFO("RF-TEST: AT cmd=AT+CFUN=1,1 error=%d, reopening modem", restart_ret);
+    if (restart_ret != 0 && restart_ret != -ETIMEDOUT)
+    {
+        return restart_ret;
+    }
+    ret = _rf_close(channel);
+    if (ret != 0)
+    {
+        return ret;
+    }
+    (void)linkg_time_sleep_ms(2000U);
+    ret = _rf_open(NULL, channel);
+    if (ret != 0)
+    {
+        return ret;
+    }
+    return _rf_wait_mode(*channel, 0U);
 }
 
 /**
@@ -218,88 +304,164 @@ static int _rf_open(linkg_thread_t *thread, at_channel_t **out)
  */
 static int _rf_exit(at_channel_t **channel)
 {
-    unsigned int mode;
-    int          ret;
+    int ret;
 
     if (*channel == NULL)
     {
         return -ENODEV;
     }
-    (void)rg255_rf_set_mode(*channel, false);
-    ret = rg255_rf_get_mode(*channel, &mode);
-    if (ret == 0 && mode == 0U)
+    ret = rg255_rf_set_mode(*channel, false);
+    if (ret != 0)
+    {
+        LINKG_LOG_WARN("RF-TEST: FTM disable error=%d, verifying modem state", ret);
+    }
+    ret = _rf_wait_mode(*channel, 0U);
+    if (ret == 0)
     {
         return 0;
     }
 
     LINKG_LOG_WARN("RF-TEST: FTM exit not confirmed, restarting modem");
-    (void)rg255_cmd_restart(*channel);
-    ret = at_channel_stop(*channel);
-    if (ret != 0)
-    {
-        return ret;
-    }
-    at_channel_destroy(*channel);
-    *channel = NULL;
-    (void)linkg_time_sleep_ms(2000U);
-    ret = _rf_open(NULL, channel);
-    if (ret != 0)
-    {
-        return ret;
-    }
-    ret = rg255_rf_get_mode(*channel, &mode);
-    return ret != 0 ? ret : mode == 0U ? 0 : -EIO;
+    return _rf_restart(channel);
 }
 
 /**
- * @brief 在进入FTM前创建进程级恢复标记。
+ * @brief 检查持久和旧版临时标记，返回1表示需恢复。
  */
-static int _rf_mark(void)
+static int _rf_pending(void)
 {
-    int fd = open(LINKG_RF_MARKER, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (g_rf_requires_online || access(LINKG_RF_MARKER, F_OK) == 0)
+    {
+        return 1;
+    }
+    if (errno != ENOENT)
+    {
+        return -errno;
+    }
+    if (access(LINKG_RF_LEGACY_MARKER, F_OK) == 0)
+    {
+        return 1;
+    }
+    return errno == ENOENT ? 0 : -errno;
+}
 
+/**
+ * @brief 同步持久目录的标记变更。
+ */
+static int _rf_sync_marker_dir(void)
+{
+    int fd;
+    int ret;
+
+    fd = open(LINKG_RF_MARKER_DIR, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0)
     {
         return -errno;
     }
-    if (close(fd) != 0)
+    ret = fsync(fd) == 0 ? 0 : -errno;
+    (void)close(fd);
+    return ret;
+}
+
+/**
+ * @brief 在改变模组状态前创建并同步恢复标记。
+ */
+static int _rf_mark(void)
+{
+    int fd;
+    int ret;
+
+    fd = open(LINKG_RF_MARKER, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0)
     {
         return -errno;
     }
-    return 0;
+    ret = fsync(fd) == 0 ? 0 : -errno;
+    if (close(fd) != 0 && ret == 0)
+    {
+        ret = -errno;
+    }
+    return ret != 0 ? ret : _rf_sync_marker_dir();
+}
+
+/**
+ * @brief 仅在已验证Online并释放串口后删除恢复标记。
+ */
+static int _rf_clear_marker(void)
+{
+    int ret = 0;
+
+    if (unlink(LINKG_RF_LEGACY_MARKER) != 0 && errno != ENOENT)
+    {
+        return -errno;
+    }
+    if (unlink(LINKG_RF_MARKER) == 0)
+    {
+        ret = _rf_sync_marker_dir();
+    }
+    else if (errno != ENOENT)
+    {
+        ret = -errno;
+    }
+    if (ret == 0)
+    {
+        g_rf_requires_online = false;
+    }
+    return ret;
 }
 
 /**
  * @brief 启动正常Owner前恢复上一次应用异常退出遗留的FTM。
  */
-int linkg_rf_test_recover_pending(void)
+static int _rf_recover_pending(void)
 {
     at_channel_t *channel;
     int           ret;
     int           stop_ret;
 
-    if (access(LINKG_RF_MARKER, F_OK) != 0)
+    ret = _rf_close(&g_rf_unreleased_channel);
+    if (ret != 0)
     {
-        return errno == ENOENT ? 0 : -errno;
+        return ret;
     }
+    ret = _rf_pending();
+    if (ret <= 0)
+    {
+        return ret;
+    }
+    g_rf_requires_online = true;
     ret = _rf_open(NULL, &channel);
     if (ret == 0)
     {
         ret = _rf_exit(&channel);
     }
-    if (channel != NULL)
+    stop_ret = _rf_close(&channel);
+    if (stop_ret != 0)
     {
-        stop_ret = at_channel_stop(channel);
-        if (stop_ret != 0)
-        {
-            return stop_ret;
-        }
-        at_channel_destroy(channel);
+        g_rf_unreleased_channel = channel;
+        return stop_ret;
     }
-    if (ret == 0 && unlink(LINKG_RF_MARKER) != 0)
-    {
-        ret = -errno;
-    }
+    return ret != 0 ? ret : _rf_clear_marker();
+}
+
+/**
+ * @brief 发布独立恢复状态，同时保留上一次射频任务的错误。
+ */
+int linkg_rf_test_recover_pending(void)
+{
+    int ret;
+
+    pthread_mutex_lock(&g_rf_lock);
+    g_rf_status.recovery_active = true;
+    pthread_mutex_unlock(&g_rf_lock);
+
+    ret = _rf_recover_pending();
+
+    pthread_mutex_lock(&g_rf_lock);
+    g_rf_status.recovery_error = ret;
+    g_rf_status.recovery_blocked = ret != 0;
+    g_rf_status.recovery_active = false;
+    pthread_mutex_unlock(&g_rf_lock);
     return ret;
 }
 
@@ -313,6 +475,7 @@ static void _rf_state(linkg_rf_state_t state)
     pthread_mutex_lock(&g_rf_lock);
     g_rf_status.state = state;
     pthread_mutex_unlock(&g_rf_lock);
+    LINKG_LOG_INFO("RF-TEST: phase=%d", state);
 }
 
 /**
@@ -323,6 +486,8 @@ static int _rf_run(linkg_thread_t *thread, void *context, bool *released)
     linkg_rf_status_t status;
     at_channel_t     *channel;
     unsigned int      mode;
+    linkg_rf_state_t   failure_phase;
+    linkg_rf_state_t   cleanup_phase;
     uint64_t          deadline;
     int               ret;
     int               cleanup;
@@ -335,29 +500,50 @@ static int _rf_run(linkg_thread_t *thread, void *context, bool *released)
     marked = false;
     tx_attempted = false;
     cleanup = 0;
+    failure_phase = LINKG_RF_OPENING;
+    cleanup_phase = LINKG_RF_IDLE;
     linkg_rf_test_get(&status);
+    ret = _rf_pending();
+    if (ret != 0)
+    {
+        g_rf_requires_online = ret > 0;
+        *released = false;
+        channel = NULL;
+        ret = ret < 0 ? ret : -EBUSY;
+        goto done;
+    }
+    _rf_state(failure_phase);
     ret = _rf_open(thread, &channel);
     if (ret != 0)
     {
         goto done;
     }
 
+    failure_phase = LINKG_RF_CHECKING;
+    _rf_state(failure_phase);
     ret = rg255_rf_get_mode(channel, &mode);
-    if (ret != 0 || mode != 0U)
+    if (ret != 0)
     {
-        // 不继承未知FTM状态。
-        cleanup = _rf_exit(&channel);
-        if (cleanup != 0)
+        // 当前没有遗留标记，也未发送改变模式的命令，保留查询失败结果。
+        goto done;
+    }
+    if (mode != 0U)
+    {
+        // 已确认存在FTM时，记录待恢复状态后再执行恢复。
+        g_rf_requires_online = true;
+        stop_ret = _rf_mark();
+        if (stop_ret == 0)
         {
-            ret = cleanup;
+            marked = true;
+        }
+        else
+        {
+            cleanup = stop_ret;
+            cleanup_phase = LINKG_RF_CHECKING;
             *released = false;
-            (void)_rf_mark();
-            goto done;
         }
-        if (ret != 0)
-        {
-            goto done;
-        }
+        ret = -EIO;
+        goto done;
     }
     if (!linkg_thread_is_running(thread))
     {
@@ -366,52 +552,39 @@ static int _rf_run(linkg_thread_t *thread, void *context, bool *released)
     }
     if (g_rf_last_rat != 0U && g_rf_last_rat != status.params.rat)
     {
-        (void)rg255_cmd_restart(channel);
-        stop_ret = at_channel_stop(channel);
-        if (stop_ret != 0)
-        {
-            ret = stop_ret;
-            *released = false;
-            goto done;
-        }
-        at_channel_destroy(channel);
-        channel = NULL;
-        (void)linkg_time_sleep_ms(2000U);
-        ret = _rf_open(thread, &channel);
+        ret = _rf_mark();
         if (ret != 0)
         {
+            *released = false;
             goto done;
         }
-        ret = rg255_rf_get_mode(channel, &mode);
-        if (ret != 0 || mode != 0U)
+        marked = true;
+        ret = _rf_restart(&channel);
+        if (ret != 0 || !linkg_thread_is_running(thread))
         {
-            ret = ret != 0 ? ret : -EIO;
-            *released = false;
-            (void)_rf_mark();
+            ret = ret != 0 ? ret : -ECANCELED;
             goto done;
         }
     }
-    ret = _rf_mark();
-    if (ret != 0)
+    else
     {
-        // 已有标记意味着不能确认之前的测试资源安全释放。
-        if (ret == -EEXIST)
+        ret = _rf_mark();
+        if (ret != 0)
         {
-            *released = false;
+            *released = _rf_pending() == 0;
+            g_rf_requires_online = !*released;
+            goto done;
         }
-        goto done;
+        marked = true;
     }
-    marked = true;
+    g_rf_requires_online = true;
     g_rf_last_rat = status.params.rat;
-    _rf_state(LINKG_RF_ENTERING);
+    failure_phase = LINKG_RF_ENTERING;
+    _rf_state(failure_phase);
     ret = rg255_rf_set_mode(channel, true);
     if (ret == 0)
     {
-        ret = rg255_rf_get_mode(channel, &mode);
-        if (ret == 0 && mode != 1U)
-        {
-            ret = -EIO;
-        }
+        ret = _rf_wait_mode(channel, 1U);
     }
     if (ret != 0 || !linkg_thread_is_running(thread))
     {
@@ -421,6 +594,8 @@ static int _rf_run(linkg_thread_t *thread, void *context, bool *released)
         }
         goto done;
     }
+    failure_phase = LINKG_RF_STARTING_TX;
+    _rf_state(failure_phase);
     tx_attempted = true;
     ret = rg255_rf_set_tx(channel, status.params.rat, status.params.band, status.params.bandwidth_code, status.channel, true);
     if (ret != 0)
@@ -434,11 +609,13 @@ static int _rf_run(linkg_thread_t *thread, void *context, bool *released)
     deadline = g_rf_status.started_ms + status.params.duration_sec * 1000ULL;
     pthread_mutex_unlock(&g_rf_lock);
 
+    LINKG_LOG_INFO("RF-TEST: job=%" PRIu32 " TX enabled duration_s=%" PRIu32, status.job_id, status.params.duration_sec);
     while (linkg_thread_is_running(thread) && linkg_time_elapsed_ms() < deadline)
     {
         (void)linkg_time_sleep_ms(LINKG_RF_TICK_MS);
     }
     ret = linkg_thread_is_running(thread) ? 0 : -ECANCELED;
+    LINKG_LOG_INFO("RF-TEST: job=%" PRIu32 " TX timer finished error=%d", status.job_id, ret);
 
 done:
     pthread_mutex_lock(&g_rf_lock);
@@ -446,18 +623,28 @@ done:
     {
         g_rf_status.elapsed_ms = linkg_time_elapsed_ms() - g_rf_status.started_ms;
     }
-    g_rf_status.state = LINKG_RF_RESTORING;
+    if (ret != 0 && ret != -ECANCELED)
+    {
+        g_rf_status.test_failed_at = failure_phase;
+    }
     pthread_mutex_unlock(&g_rf_lock);
     if (marked)
     {
         if (tx_attempted)
         {
+            _rf_state(LINKG_RF_STOPPING_TX);
             cleanup = rg255_rf_set_tx(channel, status.params.rat, status.params.band, status.params.bandwidth_code, status.channel, false);
+            if (cleanup != 0)
+            {
+                cleanup_phase = LINKG_RF_STOPPING_TX;
+            }
         }
+        _rf_state(LINKG_RF_EXITING);
         stop_ret = _rf_exit(&channel);
         if (stop_ret != 0)
         {
             cleanup = stop_ret;
+            cleanup_phase = LINKG_RF_EXITING;
             *released = false;
         }
         else
@@ -467,44 +654,58 @@ done:
             pthread_mutex_unlock(&g_rf_lock);
         }
     }
-    if (channel != NULL)
-    {
-        stop_ret = at_channel_stop(channel);
-        if (stop_ret == 0)
-        {
-            at_channel_destroy(channel);
-        }
-        else
-        {
-            *released = false;
-            cleanup = stop_ret;
-        }
-    }
-    if (marked && *released && unlink(LINKG_RF_MARKER) != 0)
+    _rf_state(LINKG_RF_RELEASING);
+    stop_ret = _rf_close(&channel);
+    if (stop_ret != 0)
     {
         *released = false;
-        if (cleanup == 0)
+        cleanup = stop_ret;
+        cleanup_phase = LINKG_RF_RELEASING;
+        g_rf_unreleased_channel = channel;
+    }
+    if (marked && *released)
+    {
+        stop_ret = _rf_clear_marker();
+        if (stop_ret != 0)
         {
-            cleanup = -errno;
+            *released = false;
+            if (cleanup == 0)
+            {
+                cleanup = stop_ret;
+                cleanup_phase = LINKG_RF_RELEASING;
+            }
         }
     }
     pthread_mutex_lock(&g_rf_lock);
     g_rf_status.cleanup_error = cleanup;
+    g_rf_status.cleanup_failed_at = cleanup_phase;
     pthread_mutex_unlock(&g_rf_lock);
-    return ret != 0 ? ret : cleanup;
+    if (*released)
+    {
+        g_rf_requires_online = false;
+        _rf_state(LINKG_RF_RESTORING);
+    }
+    LINKG_LOG_INFO("RF-TEST: job=%" PRIu32 " test_error=%d cleanup_error=%d released=%d",
+                   status.job_id, ret, cleanup, *released);
+    return ret;
 }
 
 /**
  * @brief 独立记录测试与正常蜂窝恢复结果。
  */
-static void _rf_finish(void *context, int task_error, int restore_error)
+static void _rf_finish(void *context, int task_error, int restore_error, bool released)
 {
     (void)context;
     pthread_mutex_lock(&g_rf_lock);
+    if (task_error != 0 && task_error != -ECANCELED && g_rf_status.test_failed_at == LINKG_RF_IDLE)
+    {
+        g_rf_status.test_failed_at = g_rf_status.state;
+    }
     g_rf_status.test_error = task_error;
     g_rf_status.restore_error = restore_error;
     g_rf_status.active = false;
-    g_rf_status.state = restore_error != 0 || g_rf_status.cleanup_error != 0 ? LINKG_RF_FAILED :
+    g_rf_status.recovery_blocked = !released;
+    g_rf_status.state = !released || restore_error != 0 || g_rf_status.cleanup_error != 0 ? LINKG_RF_RECOVERY_FAILED :
                         task_error == -ECANCELED ? LINKG_RF_CANCELLED :
                         task_error == 0 ? LINKG_RF_COMPLETED : LINKG_RF_FAILED;
     pthread_mutex_unlock(&g_rf_lock);
@@ -546,6 +747,7 @@ int linkg_rf_test_start(const linkg_rf_params_t *params, uint32_t *job_id)
     g_rf_status.state = LINKG_RF_STARTING;
     g_rf_status.active = true;
     ret = linkg_network_cellular_task_start(_rf_run, _rf_finish, NULL);
+    LINKG_LOG_INFO("RF-TEST: submit job=%" PRIu32 " channel=%" PRIu32 " error=%d", g_rf_status.job_id, channel, ret);
     if (ret != 0)
     {
         g_rf_status = previous;
@@ -568,6 +770,7 @@ int linkg_rf_test_cancel(uint32_t job_id)
     pthread_mutex_lock(&g_rf_lock);
     ret = job_id != 0U && g_rf_status.job_id == job_id && g_rf_status.active ?
           linkg_network_cellular_task_cancel() : -ENOENT;
+    LINKG_LOG_INFO("RF-TEST: cancel job=%" PRIu32 " error=%d", job_id, ret);
     pthread_mutex_unlock(&g_rf_lock);
     return ret;
 }

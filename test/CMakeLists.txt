@@ -221,3 +221,15 @@ add_linkg_logic_test(test_scan_state
     "${LINKG_ROOT}/modules/wifi/wifi_scan_result.c"
 )
 target_include_directories(test_scan_state PRIVATE "${LINKG_ROOT}/include/linkg/service/network")
+
+add_linkg_logic_test(test_network_rf
+    unit/test_network_rf.c
+    "${LINKG_ROOT}/service/network/network_rf_test.c"
+    "${LINKG_ROOT}/platform/cellular/rg255/rg255_rf.c"
+)
+target_include_directories(test_network_rf PRIVATE
+    "${LINKG_ROOT}/include/linkg/service/network"
+    "${LINKG_ROOT}/platform/cellular/at"
+    "${LINKG_ROOT}/platform/cellular/rg255"
+)
+target_link_options(test_network_rf PRIVATE -Wl,--wrap=open,--wrap=access,--wrap=unlink)

@@ -1,7 +1,24 @@
 (function () {
     "use strict";
 
-    const STATES = {idle:"尚未测试",starting:"正在接管蜂窝资源",entering:"正在进入 FTM",running:"强发命令已确认",restoring:"正在停止并恢复",completed:"控制流程完成",cancelled:"已取消",failed:"执行或恢复失败"};
+    const STATES = {
+        idle: "尚未测试",
+        starting: "等待接管蜂窝资源",
+        opening: "正在初始化 AT 通道",
+        checking: "正在查询 FTM 状态",
+        entering: "正在进入 FTM",
+        starting_tx: "正在启动强发",
+        running: "强发命令已确认",
+        stopping_tx: "正在停止强发",
+        exiting: "正在退出 FTM",
+        releasing: "正在释放 AT 通道",
+        restoring: "正在恢复蜂窝模块",
+        completed: "控制流程完成",
+        cancelled: "已取消",
+        failed: "测试失败",
+        recovery_failed: "清理或恢复失败"
+    };
+    const CLEANUP_STATES = ["stopping_tx", "exiting", "releasing", "restoring"];
     let root = null;
     let session = 0;
     let timer = null;
@@ -70,10 +87,10 @@
         field("rfActual").value = r ? frequency(r.actual) : "--";
         field("rfValidation").textContent = r ? "标称信道范围：" + frequency(r.actual-r.width.khz/2) + "～" + frequency(r.actual+r.width.khz/2) + " MHz" : "请选择有效频段、带宽及中心频率（最多三位小数）。";
         const active = !!(status && status.active);
-        const locked = busy || active || !loaded;
+        const locked = busy || active || !loaded || !!(status && status.recovery_active);
         ["rfRat","rfBand","rfBw","rfFreq","rfDuration","rfConfirm"].forEach(id => { field(id).disabled = locked; });
         field("rfStart").disabled = locked || !r || !field("rfConfirm").checked || !status || !status.instance;
-        field("rfStop").disabled = busy || !loaded || !active || status.state === "restoring";
+        field("rfStop").disabled = busy || !loaded || !active || CLEANUP_STATES.includes(status.state);
         field("rfMeterFrequency").textContent = active ? (status.actual_khz ? frequency(status.actual_khz)+" MHz" : "--") : r ? frequency(r.actual)+" MHz" : "--";
         field("rfMeterBw").textContent = active ? (status.bandwidth_khz ? status.bandwidth_khz/1000+" MHz" : "--") : r ? r.width.khz/1000+" MHz" : "--";
     }
@@ -82,6 +99,7 @@
         const changed = !status || status.instance !== data.instance;
         const jobChanged = !status || status.job_id !== data.job_id;
         status = data;
+        if (changed || jobChanged || data.active) { message = ""; }
         if (changed || !bands.length)
         {
             bands = data.bands;
@@ -98,16 +116,37 @@
             field("rfFreq").value = String(data.frequency_khz / 1000);
             field("rfDuration").value = String(data.duration_sec);
         }
-        field("rfState").textContent = STATES[data.state] || "未知";
+        field("rfState").textContent = data.recovery_active ? "正在验证并恢复蜂窝资源" : STATES[data.state] || "未知";
         const elapsed = Math.floor(data.elapsed_ms/1000);
         field("rfElapsed").textContent = data.job_id ? elapsed+" / "+data.duration_sec+" 秒" : "--";
         field("rfProgress").max = Math.max(1, data.duration_sec);
         field("rfProgress").value = Math.min(elapsed, data.duration_sec);
         field("rfResult").textContent = data.job_id ? (data.tx_confirmed ? "强发命令 OK" : "未确认强发") + (data.mode_verified ? "；已确认退出 FTM" : "") : "--";
-        field("rfMessage").textContent = message || (data.restore_error || data.cleanup_error ? "清理或恢复失败（"+data.cleanup_error+" / "+data.restore_error+"），请保持射频通路连接并联系研发。" :
-            data.state === "failed" ? "测试控制失败（"+data.test_error+"）。请核对模组型号、固件及参数。" :
-            data.active ? "任务在设备后台运行，关闭页面不会停止；到期自动停止并恢复。" :
-            data.job_id ? "上次测试：" + (data.rat === 2 ? "n" : "B") + data.band + " / " + frequency(data.actual_khz) + " MHz / " + data.bandwidth_khz/1000 + " MHz；功率合格与否以仪表及验收标准为准。" : "请确认测试通路后启动。");
+        const errors = [];
+        if (data.test_error && data.state !== "cancelled" && data.test_failed_at !== "idle")
+        {
+            if (data.test_failed_at === "checking" && data.test_error === -121)
+            {
+                errors.push("模组拒绝查询 FTM 模式（-121），程序尚未执行强发");
+            }
+            else
+            {
+                errors.push("测试阶段「" + (STATES[data.test_failed_at] || "未知") + "」失败（" + data.test_error + "）");
+            }
+        }
+        if (data.cleanup_error)
+        {
+            errors.push("清理阶段「" + (STATES[data.cleanup_failed_at] || "未知") + "」失败（" + data.cleanup_error + "）");
+        }
+        if (data.recovery_blocked)
+        {
+            errors.push("资源未确认安全释放，正常蜂窝仍被阻止");
+            if (data.recovery_error) { errors.push("独立恢复失败（" + data.recovery_error + "）"); }
+        }
+        if (data.restore_error) { errors.push("正常蜂窝恢复失败（" + data.restore_error + "）"); }
+        field("rfMessage").textContent = (data.recovery_active ? "" : message) || (errors.length ? errors.join("；") :
+            data.active ? "任务在设备后台运行，关闭页面后仍由设备到期停止并恢复。" :
+            data.job_id ? "上次测试：" + (data.rat === 2 ? "n" : "B") + data.band + " / " + frequency(data.actual_khz) + " MHz / " + data.bandwidth_khz/1000 + " MHz" : "请确认测试通路后启动。");
         update();
     }
     async function refresh(token)
